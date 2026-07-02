@@ -54,6 +54,15 @@ gate → merge → terminal, sans jamais devenir un chemin obligatoire du métie
     — un gate vert sans `go` renvoie `hold`, jamais un merge (le LLM ne merge jamais seul). Les overrides
     `t1_override`/`t15_override` (raison explicite, tracée) ne lèvent qu'un 🔴 reviewer ou un Tier-1.5 —
     **jamais** un veto Tier-0 / toolchain native déterministe.
+11. **Terminal = xterm.js ↔ WS PTY, convention de frames respectée** (V5). L'onglet Terminal relie
+    `@xterm/xterm` + `addon-fit` à `WS /ws/terminal/{project}` (backend déjà prêt) : frames **BINAIRES** =
+    frappes (`onData` → `TextEncoder`, jamais une frame texte que le daemon prendrait pour un contrôle JSON),
+    frames **TEXTE** = contrôle `{"type":"resize",cols,rows}` (`onResize`/`ResizeObserver` → `fit`). Le PTY
+    (`bash -l`, cwd = racine projet) ferme le socket à la sortie du shell. Thème xterm lu depuis les **tokens
+    CSS** (`@theme`, source unique — pas de hex dupliqué en TS) ; xterm est **code-split** (lazy, ~290 kB
+    hors bundle principal). Capture de la boucle visuelle : surface **intrinsèquement WS** → le runner
+    `wait_for_text` (repère DOM, ex. bannière cliente) + court répit, car `networkidle` ne suit pas les
+    WebSockets (cf. le piège WS documenté).
 
 ## Vérification (par vague)
 

@@ -226,8 +226,8 @@ def _seed_gate_states(home: Path, proj: str) -> None:
         conn.close()
 
 
-def shoot(routes: list[str], *, port: int, viewport: dict | None, full_page: bool,
-          out_dir: Path, runner: Path, timeout_ms: int, seed: bool) -> list[dict]:
+def shoot(routes: list[str], *, port: int, viewport: dict | None, full_page: bool, out_dir: Path,
+          runner: Path, timeout_ms: int, seed: bool, wait_text: str | None = None) -> list[dict]:
     out_dir.mkdir(parents=True, exist_ok=True)
     home = Path(tempfile.mkdtemp(prefix="cockpit-uishot-"))
     env = {**os.environ, "COCKPIT_HOME": str(home / "home"),
@@ -251,6 +251,8 @@ def shoot(routes: list[str], *, port: int, viewport: dict | None, full_page: boo
                              "timeout_ms": timeout_ms, "full_page": full_page}
             if viewport:
                 payload["viewport"] = viewport
+            if wait_text:                                   # surface WS (terminal) : attendre le repère
+                payload["wait_for_text"] = wait_text
             try:
                 p = subprocess.run(["node", str(runner), json.dumps(payload)],
                                    capture_output=True, text=True, timeout=timeout_ms / 1000 + 20)
@@ -280,6 +282,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--runner", default=str(DEFAULT_RUNNER), help="render_check.js (playwright)")
     ap.add_argument("--no-seed", action="store_true", help="ne pas créer de projets démo")
     ap.add_argument("--build", action="store_true", help="npm run build avant de servir")
+    ap.add_argument("--wait-text", help="attendre ce texte dans le DOM avant capture (surface WS : terminal)")
     ap.add_argument("--timeout-ms", type=int, default=15000)
     a = ap.parse_args(argv)
 
@@ -292,7 +295,7 @@ def main(argv: list[str] | None = None) -> int:
 
     results = shoot(a.routes, port=a.port, viewport=_parse_viewport(a.viewport),
                     full_page=a.full_page, out_dir=Path(a.out), runner=Path(a.runner),
-                    timeout_ms=a.timeout_ms, seed=not a.no_seed)
+                    timeout_ms=a.timeout_ms, seed=not a.no_seed, wait_text=a.wait_text)
     for r in results:
         flag = "✓" if r["ok"] else "✗"
         print(f"{flag} {r['route']:24} → {r['png']}" + (f"   [{r['error']}]" if r.get("error") else ""))

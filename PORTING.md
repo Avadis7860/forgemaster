@@ -75,7 +75,7 @@ projet + onglets (option A). Boucle visuelle : `web/tools/ui_shot.py`.
 | V2 — Roadmap DAG | roadmap **classée** (backend : `resolver.classify` + NEXT/feature) + workspace à onglets (option A) + **un graphe node-link par feature** (layering `lib/dag.ts`, couches topologiques + colonne cycle) + deep-link `?feature=` | ✅ |
 | V3 — Dispatch live | `WS /ws/dispatch/{job}` (backend, boucle `jobs.read_events`) + découverte `GET …/jobs` + onglet Dispatch (transcript live WS / at-rest HTTP) | ✅ |
 | V4 — Gate & merge | GET gate enrichi (`merge.evaluate_gate` : statut brut review/verify **+ décision composée** en preview GO=false) + onglet Gate (décision, évidence Tier-1/Tier-1.5, overrides) + **bouton GO humain** (fail-closed) | ✅ |
-| V5 — Terminal | xterm.js ↔ `WS /ws/terminal/{project}` (backend déjà prêt) | ⬜ |
+| V5 — Terminal | xterm.js + addon-fit ↔ `WS /ws/terminal/{project}` (backend déjà prêt) : frappes binaires / resize texte, thème depuis tokens, lazy-split | ✅ |
 | V6 — Harmonisation | états unifiés, responsive, raffinement, a11y (optionnelle) | ⬜ |
 
 **V1 — vérif** : `npm run build` + `vitest` (6) + `eslint` + `front_conformance` verts ; daemon sert `dist`
@@ -99,6 +99,18 @@ lu **at-rest par HTTP** (`GET /api/jobs/{id}`) — pas de socket ouvert pour un 
 déterministe. Le POST dispatch bloque jusqu'à la fin → le front **découvre** le job en cours via `…/jobs`
 (baseline capturée au clic) plutôt que d'attendre le `job_id` du POST. Gate/Terminal = onglets désactivés
 jusqu'à V4/V5.
+
+**V5 — vérif** : onglet Terminal — `@xterm/xterm` + `addon-fit` ↔ `WS /ws/terminal/{project}` (backend déjà
+prêt, aucun changement) : `onData` → frames **binaires** (frappes ; une frame texte serait prise pour un
+contrôle JSON côté daemon), `onResize`/`ResizeObserver` → frames **texte** `{type:'resize',cols,rows}` ;
+thème xterm lu depuis les **tokens CSS** (source unique, pas de hex en TS) ; xterm **code-split** (lazy —
+291 kB gzip 69 kB hors bundle principal, revenu à 403 kB). IA option A **complète** (4 onglets navigables ;
+`WorkspaceTabs` simplifié — plus d'onglet désactivé). `wsUrl` extrait en `lib/ws` (partagé dispatch+terminal,
+testé). `npm run build` + `vitest` (**20**, dont `lib/ws.test`) + `eslint` + `front_conformance` verts ;
+`ruff`/`mypy`/`pytest` **75** inchangés (V5 ne touche pas le backend). **Boucle visuelle** : le contenu du
+terminal arrive par WS **après** `networkidle` → **runner enrichi** (`wait_for_text` : sonde un repère DOM +
+court répit, cf. le piège WS) ; screenshot montre la bannière cliente **+ le MOTD réel du login shell**
+(preuve du round-trip PTY↔WS) rendu en xterm thémé — Read & critiqué.
 
 **V4 — vérif** : refactor backend `merge.evaluate_gate` (préambule read-only extrait de `run_merge`, **source
 unique** de l'évaluation) → le `GET /api/gate/{p}/{f}` renvoie désormais le statut brut **+ la décision

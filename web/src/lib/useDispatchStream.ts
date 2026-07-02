@@ -4,13 +4,9 @@
 // conversationnels et isole la frame terminale `{type:'job'}`. Le daemon clôt le socket en fin de run.
 import { useEffect, useState } from 'react'
 import { TranscriptEventSchema, type JobFrame, type TranscriptEvent } from './schemas'
+import { wsUrl } from './ws'
 
 export type StreamStatus = 'idle' | 'connecting' | 'open' | 'closed' | 'error'
-
-function wsUrl(path: string): string {
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${proto}//${window.location.host}${path}`
-}
 
 export interface DispatchStream {
   events: Exclude<TranscriptEvent, JobFrame>[]
