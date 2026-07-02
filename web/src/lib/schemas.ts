@@ -13,6 +13,8 @@ export const ProjectSchema = z.object({
   sot_path: z.string(),
   mirror_remote: z.string().nullable(),
   backend: z.string(),
+  kind: z.string(),                 // 'project' | 'tool' (v3) — classification, pilote le rail 2 sections
+  owner: z.string().nullable(),     // compat multi-utilisateur (v3, nullable en mono-user)
   created_at: z.string(),
 })
 export type Project = z.infer<typeof ProjectSchema>
@@ -75,6 +77,7 @@ export interface CreateProjectInput {
   slug: string
   name?: string | null
   mirror_remote?: string | null
+  kind?: string             // 'project' (défaut) | 'tool'
 }
 
 // -- V3 dispatch : job (run worker) + rapport de dispatch + événements de transcript (streamés en WS) --

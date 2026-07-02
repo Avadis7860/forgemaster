@@ -14,6 +14,7 @@ class ProjectCreate(BaseModel):
     slug: str
     name: str | None = None
     mirror_remote: str | None = None
+    kind: str = "project"            # 'project' | 'tool' (validé par registry.create_project → 400 si autre)
 
 
 def make_projects_router() -> APIRouter:
@@ -32,7 +33,7 @@ def make_projects_router() -> APIRouter:
         conn = deps.open_db()
         try:
             return registry.create_project(conn, deps.settings, slug=body.slug, name=body.name,
-                                           mirror_remote=body.mirror_remote)
+                                           mirror_remote=body.mirror_remote, kind=body.kind)
         finally:
             conn.close()
 

@@ -11,13 +11,15 @@ task-next-resolver-dag) dérive le séquencement ; le schéma ne fait que porter
 
 Historique de version : v1 = projects/features/tasks/dispatch_jobs (4 tables). v2 = `dispatch_jobs`
 gagne `session_id` (LA clé de suivi live — le chemin du transcript en dérive) + les métriques
-`num_turns`/`cost_usd`/`wall_s`/`engine` ; nouvelle table `port_reservations`.
+`num_turns`/`cost_usd`/`wall_s`/`engine` ; nouvelle table `port_reservations`. v3 = `projects` gagne
+`kind` (`project|tool` — classification, une seule table plutôt que deux) + `owner` (nullable, compat
+multi-utilisateur : à qui appartient l'entité).
 """
 from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Ordre = ordre de création (les FK pointent vers des tables déjà créées). Chaque table porte les
 # invariants durs en contraintes SQL (NOT NULL, UNIQUE, FK, CHECK sur les enums de statut).
@@ -31,6 +33,9 @@ DDL: tuple[str, ...] = (
         mirror_remote TEXT,                          -- miroir GitHub best-effort (jamais bloquant), nullable
         backend       TEXT NOT NULL DEFAULT 'internal'
                           CHECK (backend IN ('internal', 'github')),
+        kind          TEXT NOT NULL DEFAULT 'project'   -- classification (v3) : projet travaillé vs outil
+                          CHECK (kind IN ('project', 'tool')),
+        owner         TEXT,                            -- à qui appartient l'entité (v3, nullable : mono-user)
         created_at    TEXT NOT NULL
     )
     """,
@@ -101,6 +106,10 @@ _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
         ("session_id", "TEXT"), ("num_turns", "INTEGER"), ("cost_usd", "REAL"),
         ("wall_s", "REAL"), ("engine", "TEXT"),
     ),
+    # v3 : ALTER exige un défaut LITTÉRAL pour une colonne NOT NULL (d'où 'project'). La contrainte CHECK
+    # n'est pas re-portable par ALTER en SQLite → l'invariant `kind∈{project,tool}` est tenu côté DDL (base
+    # neuve) ET validé par `registry.create_project` (toute base) — jamais un kind hors-enum inséré.
+    "projects": (("kind", "TEXT NOT NULL DEFAULT 'project'"), ("owner", "TEXT")),
 }
 
 # Index de service (accès par clé étrangère / statut — les chemins chauds du résolveur et du dispatch).
@@ -130,6 +139,8 @@ def ensure_columns(conn: sqlite3.Connection) -> None:
     COLUMN` seulement si absente). Sans effet sur une base neuve (les colonnes sont déjà dans `DDL`)."""
     for table, cols in _ADDED_COLUMNS.items():
         existing = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if not existing:
+            continue                 # table absente (PRAGMA vide) → rien à migrer (le DDL la créera)
         for name, decl in cols:
             if name not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")

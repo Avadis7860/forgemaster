@@ -18,7 +18,8 @@ from cockpit.db import store
 from cockpit.git.internal import InternalGit
 from cockpit.provision import load_payload
 
-_COLS = ("id", "slug", "name", "sot_path", "mirror_remote", "backend", "created_at")
+_COLS = ("id", "slug", "name", "sot_path", "mirror_remote", "backend", "kind", "owner", "created_at")
+_KINDS = ("project", "tool")   # classification (v3) : entité travaillée vs outil générique du framework
 
 
 def _now() -> str:
@@ -31,19 +32,25 @@ def sot_path_for(settings: Settings, slug: str) -> Path:
 
 
 def create_project(conn: sqlite3.Connection, settings: Settings, *,
-                   slug: str, name: str | None = None, mirror_remote: str | None = None) -> dict:
-    """Crée un projet (row DB) et **initialise son SoT bare local** (idempotent), semé du « toolkit
-    auto-travaillable » (CLAUDE.md mince + `.docsmap.toml` + stub `docs/` + skills work-loop/quality-gate +
-    settings) → chaque projet naît auto-travaillable seul. Lève `ValueError` si slug invalide, `KeyError`
-    (via IntegrityError → ValueError) si le slug existe déjà."""
+                   slug: str, name: str | None = None, mirror_remote: str | None = None,
+                   kind: str = "project", owner: str | None = None) -> dict:
+    """Crée une entité (row DB) et **initialise son SoT bare local** (idempotent), semé du « toolkit
+    auto-travaillable » (CLAUDE.md mince + configs d'index + stub `docs/` + skills + settings) → chaque
+    entité naît auto-travaillable seule. `kind` classe l'entité (`project` travaillé vs `tool` générique du
+    framework) ; `owner` (nullable) = compat multi-utilisateur. Lève `ValueError` si slug ou `kind` invalide,
+    ou si le slug existe déjà (via IntegrityError)."""
     ids.ensure_slug(slug, field="project")
+    if kind not in _KINDS:
+        raise ValueError(f"kind invalide : {kind!r} (attendu {' | '.join(_KINDS)})")
     sot = sot_path_for(settings, slug)
     row = {"id": ids.new_id(), "slug": slug, "name": name or slug, "sot_path": str(sot),
-           "mirror_remote": mirror_remote, "backend": "internal", "created_at": _now()}
+           "mirror_remote": mirror_remote, "backend": "internal", "kind": kind, "owner": owner,
+           "created_at": _now()}
     try:
         conn.execute(
-            "INSERT INTO projects (id, slug, name, sot_path, mirror_remote, backend, created_at) "
-            "VALUES (:id, :slug, :name, :sot_path, :mirror_remote, :backend, :created_at)", row)
+            "INSERT INTO projects (id, slug, name, sot_path, mirror_remote, backend, kind, owner, "
+            "created_at) VALUES (:id, :slug, :name, :sot_path, :mirror_remote, :backend, :kind, :owner, "
+            ":created_at)", row)
         conn.commit()
     except sqlite3.IntegrityError as exc:
         raise ValueError(f"projet déjà existant : {slug!r}") from exc
@@ -69,11 +76,12 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     conn = store.open_db(settings)
     try:
         if args.action == "create":
-            p = create_project(conn, settings, slug=args.slug, name=args.name)
-            print(f"projet créé : {p['slug']} — SoT {p['sot_path']}")
+            p = create_project(conn, settings, slug=args.slug, name=args.name,
+                               kind=getattr(args, "kind", "project"))
+            print(f"{p['kind']} créé : {p['slug']} — SoT {p['sot_path']}")
         elif args.action == "list":
             for p in list_projects(conn):
-                print(f"{p['slug']}\t{p['backend']}\t{p['name']}")
+                print(f"{p['slug']}\t{p['kind']}\t{p['backend']}\t{p['name']}")
         elif args.action == "get":
             print(json.dumps(get_project(conn, args.slug), ensure_ascii=False, indent=2))
     except (ValueError, KeyError) as exc:

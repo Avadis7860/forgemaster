@@ -25,13 +25,15 @@ def ctx(tmp_path: Path):
     conn.close()
 
 
-# -- schéma v2 --------------------------------------------------------------------------------------
+# -- schéma courant (v3) ----------------------------------------------------------------------------
 
-def test_schema_v2_columns_and_port_table(ctx):
+def test_schema_current_columns_and_port_table(ctx):
     _, conn = ctx
-    assert schema.schema_version(conn) == 2
+    assert schema.schema_version(conn) == schema.SCHEMA_VERSION   # base neuve = version courante
     cols = {r[1] for r in conn.execute("PRAGMA table_info(dispatch_jobs)")}
     assert {"session_id", "num_turns", "cost_usd", "wall_s", "engine"} <= cols
+    pcols = {r[1] for r in conn.execute("PRAGMA table_info(projects)")}
+    assert {"kind", "owner"} <= pcols                             # v3
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert "port_reservations" in tables
 

@@ -4,12 +4,14 @@ Trois schémas sont un **contrat** : une couche produit, une autre consomme. On 
 librement ; changer un **schéma** exige une entrée CHANGELOG + un bump. Un schéma partiel qui se dit complet
 est un bug (jamais de cap silencieux).
 
-## 1. Schéma SQLite (`db/schema.py`, `SCHEMA_VERSION` = **2**)
+## 1. Schéma SQLite (`db/schema.py`, `SCHEMA_VERSION` = **3**)
 
 Base unique sous `settings.db_path` (`$COCKPIT_HOME/cockpit.db`). Modèle **feature-groupe-des-tasks**.
 
 - **`projects`** — `id` (uuid), `slug` (kebab, unique), `name`, `sot_path` (repo bare LOCAL co-localisé),
-  `mirror_remote` (miroir GitHub best-effort, nullable), `backend` (`internal`|`github`), `created_at`.
+  `mirror_remote` (miroir GitHub best-effort, nullable), `backend` (`internal`|`github`), `kind`
+  (`project`|`tool`, v3 — classification : entité travaillée vs outil générique du framework ; une seule
+  table plutôt que deux), `owner` (nullable, v3 — compat multi-utilisateur), `created_at`.
 - **`features`** — `id`, `project_id`→projects (cascade), `slug`, `title`, `branch` (`feature/<slug>`),
   `worktree_path` (nullable hors-vol), `status` (`planned`|`active`|`ready`|`merged`|`cancelled`),
   `created_at` ; unique `(project_id, slug)`.
@@ -30,6 +32,12 @@ sur les slugs scopés. `PRAGMA foreign_keys=ON`, `journal_mode=WAL` (concurrence
 **Migration v1→v2** : `dispatch_jobs` gagne `session_id`+métriques (via `ensure_columns`, `ALTER ADD COLUMN`
 idempotent) ; nouvelle table `port_reservations`. Une base neuve reçoit tout par `DDL` ; une base v1
 existante est mise à niveau en place par `create_schema`.
+
+**Migration v2→v3** : `projects` gagne `kind` (`TEXT NOT NULL DEFAULT 'project'`) + `owner` (`TEXT`,
+nullable), via `ensure_columns` (`ALTER ADD COLUMN` idempotent — les lignes existantes prennent le défaut
+littéral `kind='project'`). La contrainte `CHECK (kind IN ('project','tool'))` vit dans le `DDL` (base neuve)
+et l'invariant est **re-validé** par `registry.create_project` (toute base) — un `ALTER` SQLite ne re-porte
+pas le CHECK, mais aucun `kind` hors-enum ne peut être inséré. Ajout **non-breaking** (colonnes à défaut).
 
 ## 2. Schéma `.cockpit/roadmap.yaml` (in-repo, `roadmap/model.py`)
 

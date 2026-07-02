@@ -41,6 +41,8 @@ DEFAULT_RUNNER = Path(
     )
 )
 DEMO_PROJECTS = ["atlas-demo", "nebula-demo"]           # slugs FICTIFS (jamais un vrai basename)
+# Outils démo (kind='tool') — rendent la 2ᵉ section « Outils » du rail VOYANTE (miroir des repos framework).
+DEMO_TOOLS = ["docsmap-tool", "codemap-tool"]           # slugs FICTIFS
 _SLUG = re.compile(r"[^a-z0-9]+")
 
 # Roadmap démo seedée dans le PREMIER projet (atlas-demo) : deps INTRA-feature (le modèle réel), qui
@@ -137,6 +139,9 @@ def _seed(port: int, slugs: list[str], *, home: Path) -> None:
     (mêmes settings via l'env COCKPIT_HOME) — aucune API ne fabrique un run sans spawner un vrai `claude`."""
     for slug in slugs:
         _post(port, "/api/projects", {"slug": slug, "name": slug.replace("-", " ").title()})
+    for slug in DEMO_TOOLS:            # rail 2 sections : les outils peuplent la section « Outils »
+        _post(port, "/api/projects", {"slug": slug, "name": slug.replace("-", " ").title(),
+                                      "kind": "tool"})
     proj = slugs[0]
     for feature, tasks in SEED_ROADMAP.items():
         _post(port, f"/api/projects/{proj}/features", {"slug": feature})

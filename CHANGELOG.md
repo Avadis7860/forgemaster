@@ -49,6 +49,18 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
   workdir borné par `core.fs.safe_path` (#4). Exposé en WebSocket `/ws/terminal/{project}`.
 - Config ruff : `flake8-bugbear.extend-immutable-calls` (idiome FastAPI `Depends` en défaut d'argument).
 
+### Modèle d'entité projet/outil (phase cockpit-productization P3)
+- **Schéma SQLite v3** (bump `SCHEMA_VERSION=3`) : `projects` gagne `kind` (`project`|`tool`, CHECK,
+  défaut `project`) + `owner` (nullable, compat multi-user). **Une seule table + discriminateur** (pas deux).
+  Migration en place idempotente (`ensure_columns` — défaut littéral `kind='project'` sur l'existant) ;
+  garde ajoutée : `ensure_columns` **saute** une table absente (ALTER sûr sur base partielle). Cf.
+  `docs/schema-contract.md` §1 + migration v2→v3. Ajout **non-breaking**.
+- `registry.create_project` accepte `kind`/`owner` (valide `kind∈{project,tool}` → `ValueError`/400) ; CLI
+  `project create --kind {project,tool}` ; route `POST /api/projects` expose `kind`.
+- **Front** : rail **2 sections** (`ProjectRail` → **Projets** / **Outils** partitionnés par `kind`) sous
+  « Espace de travail » ; `ProjectSchema` + `kind`/`owner`, `CreateProjectInput.kind`. `ui_shot` seede des
+  outils démo (section « Outils » VOYANTE). Feature-verified visuellement (`/`).
+
 ### Vue Git (phase cockpit-productization P2)
 - **Route read-only** `GET /api/projects/{p}/git` (nouveau `routes/git`, monté dans `app.build_app`) : vue du
   SoT bare — branches, avance/retard `main` vs `dev` (le signal « main rattrape dev »), log court par réf

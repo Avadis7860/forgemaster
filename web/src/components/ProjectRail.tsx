@@ -4,8 +4,42 @@ import { useCreateProject, useProjects } from '@/lib/queries'
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { Alert, Badge, Button, Card, Eyebrow, EmptyState, Input, LoadingState } from '@/components/ui'
+import type { Project } from '@/lib/schemas'
 
-/** Rail de gauche = la vue « Projets » : liste sélectionnable + création. Contexte global du shell. */
+/** Une entité du rail (projet ou outil) : carte sélectionnable → workspace. */
+function EntityCard({ p, active }: { p: Project; active: string | undefined }) {
+  const isActive = p.slug === active
+  return (
+    <Card
+      as="li"
+      className={cn('transition-colors', isActive && 'border-accent-500/50 bg-surface-raised')}
+    >
+      <Link to="/$project" params={{ project: p.slug }} className="block rounded-card px-3 py-2">
+        <div className="flex items-center justify-between gap-2">
+          <span className="truncate text-sm font-medium text-fg">{p.slug}</span>
+          <Badge tone={isActive ? 'accent' : 'neutral'}>{p.backend}</Badge>
+        </div>
+        {p.name && <p className="truncate text-xs text-muted">{p.name}</p>}
+      </Link>
+    </Card>
+  )
+}
+
+/** Une section titrée du rail (Projets / Outils), rendue seulement si elle a des entités. */
+function EntitySection({ label, items, active }: { label: string; items: Project[]; active: string | undefined }) {
+  if (items.length === 0) return null
+  return (
+    <div className="space-y-1.5">
+      <Eyebrow>{label}</Eyebrow>
+      <ul className="space-y-1.5">
+        {items.map((p) => <EntityCard key={p.id} p={p} active={active} />)}
+      </ul>
+    </div>
+  )
+}
+
+/** Rail de gauche = l'espace de travail : entités classées en **Projets** (travaillés) et **Outils**
+ *  (génériques du framework) via `kind`, sélectionnables + création. Contexte global du shell. */
 export function ProjectRail() {
   const projects = useProjects()
   const active = useParams({ strict: false }).project
@@ -33,43 +67,31 @@ export function ProjectRail() {
   return (
     <aside className="z-(--z-rail) flex w-72 shrink-0 flex-col border-r border-border bg-surface/40">
       <div className="border-b border-border px-4 py-3">
-        <Eyebrow>Projets</Eyebrow>
+        <Eyebrow>Espace de travail</Eyebrow>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto p-3">
+      <div className="min-h-0 flex-1 space-y-4 overflow-auto p-3">
         {projects.isPending ? (
-          <LoadingState label="Chargement des projets…" />
+          <LoadingState label="Chargement de l’espace…" />
         ) : projects.isError ? (
           <Alert tone="danger" title="Daemon injoignable">
             Vérifie que <code>cockpit serve</code> tourne.
           </Alert>
         ) : projects.data.length === 0 ? (
-          <EmptyState title="Aucun projet" description="Crée le premier ci-dessous." />
+          <EmptyState title="Espace vide" description="Crée le premier projet ci-dessous." />
         ) : (
-          <ul className="space-y-1.5">
-            {projects.data.map((p) => {
-              const isActive = p.slug === active
-              return (
-                <Card
-                  as="li"
-                  key={p.id}
-                  className={cn('transition-colors', isActive && 'border-accent-500/50 bg-surface-raised')}
-                >
-                  <Link
-                    to="/$project"
-                    params={{ project: p.slug }}
-                    className="block rounded-card px-3 py-2"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-sm font-medium text-fg">{p.slug}</span>
-                      <Badge tone={isActive ? 'accent' : 'neutral'}>{p.backend}</Badge>
-                    </div>
-                    {p.name && <p className="truncate text-xs text-muted">{p.name}</p>}
-                  </Link>
-                </Card>
-              )
-            })}
-          </ul>
+          <>
+            <EntitySection
+              label="Projets"
+              items={projects.data.filter((p) => p.kind !== 'tool')}
+              active={active}
+            />
+            <EntitySection
+              label="Outils"
+              items={projects.data.filter((p) => p.kind === 'tool')}
+              active={active}
+            />
+          </>
         )}
       </div>
 

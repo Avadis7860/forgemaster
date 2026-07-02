@@ -47,6 +47,11 @@ def test_projects_crud_over_http(client):
     assert c.get("/api/projects/proj").json()["slug"] == "proj"
     assert c.get("/api/projects/nope").status_code == 404          # KeyError → 404 (handler global)
     assert c.post("/api/projects", json={"slug": "proj"}).status_code == 400   # doublon → ValueError → 400
+    # kind (v3) : défaut 'project', 'tool' accepté, hors-enum → 400 (ValueError → handler global)
+    assert c.get("/api/projects/proj").json()["kind"] == "project"
+    assert c.post("/api/projects", json={"slug": "a-tool", "kind": "tool"}).status_code == 201
+    assert c.get("/api/projects/a-tool").json()["kind"] == "tool"
+    assert c.post("/api/projects", json={"slug": "bad", "kind": "widget"}).status_code == 400
 
 
 # -- service SPA + CORS ----------------------------------------------------------------------------
