@@ -215,6 +215,23 @@ def test_gate_review_fails_closed_when_feature_never_dispatched(client):
     assert c.post("/api/gate/proj/feat/review", json={"findings": []}).status_code == 422
 
 
+# -- vue git read-only -----------------------------------------------------------------------------
+
+def test_git_view_read_only_over_http(client):
+    c, _ = client
+    c.post("/api/projects", json={"slug": "proj"})   # SoT neuf : dev + main sur le commit racine seedé
+    v = c.get("/api/projects/proj/git")
+    assert v.status_code == 200
+    body = v.json()
+    assert {b["name"] for b in body["branches"]} == {"dev", "main"}
+    assert all(b["sha"] and b["subject"] == "root: cockpit seed" for b in body["branches"])
+    # dev == main sur un SoT neuf → 0 ahead / 0 behind (aucun merge encore)
+    assert body["ahead_behind"] == {"base": "main", "head": "dev", "ahead": 0, "behind": 0}
+    assert body["logs"]["dev"][0]["subject"] == "root: cockpit seed"
+    # projet inconnu → 404 (handler KeyError global), jamais un demi-état inventé
+    assert c.get("/api/projects/ghost/git").status_code == 404
+
+
 # -- terminal PTY local ----------------------------------------------------------------------------
 
 def test_resolve_workdir_is_bounded_and_control_parsed(tmp_path):

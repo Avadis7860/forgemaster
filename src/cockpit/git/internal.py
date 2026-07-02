@@ -298,6 +298,37 @@ class InternalGit:
         Tier-1 (une citation de finding doit apparaître dans une ligne ajoutée). Read-only."""
         return _checked(sot, "diff", f"{base}...{head}").stdout
 
+    # -- lectures read-only pour la vue git (bare-safe : ni index ni working-tree requis) ------------
+
+    def branches(self, sot: Path) -> list[dict]:
+        """Branches locales du SoT bare (`for-each-ref refs/heads`) → `[{name, sha, subject}]`, triées par
+        nom. Read-only, bare-safe (aucun working-tree). `%09` = tab dans le format for-each-ref."""
+        fmt = "%(refname:short)%09%(objectname:short)%09%(contents:subject)"
+        out = _checked(sot, "for-each-ref", "--sort=refname", f"--format={fmt}", "refs/heads").stdout
+        rows: list[dict] = []
+        for line in out.splitlines():
+            if not line.strip():
+                continue
+            name, _, rest = line.partition("\t")
+            sha, _, subject = rest.partition("\t")
+            rows.append({"name": name, "sha": sha, "subject": subject})
+        return rows
+
+    def log(self, sot: Path, ref: str, *, n: int = 20) -> list[dict]:
+        """Log court d'une réf sur le SoT bare (`log --oneline -n <n> <ref>`, parsé PUR). Read-only,
+        bare-safe. `--no-decorate` → sujet propre (pas de `(HEAD -> …)`). Lève si la réf est introuvable."""
+        out = _checked(sot, "log", f"--max-count={n}", "--oneline", "--no-decorate", ref).stdout
+        return parse_log(out)
+
+    def ahead_behind(self, sot: Path, *, base: str, head: str) -> dict:
+        """Avance/retard de `head` vs `base` (`rev-list --left-right --count base...head` → `L\\tR`) :
+        `behind` = commits de `base` absents de `head` (L, gauche), `ahead` = commits de `head` absents de
+        `base` (R, droite). En sot:local (main-suit-dev), `base=main head=dev` → `ahead` = ce que main doit
+        rattraper. Read-only, bare-safe. Lève si une réf est introuvable."""
+        out = _checked(sot, "rev-list", "--left-right", "--count", f"{base}...{head}").stdout
+        left, _, right = out.strip().partition("\t")
+        return {"base": base, "head": head, "behind": int(left or 0), "ahead": int(right or 0)}
+
     def commit_worktree(self, worktree: Path, *, message: str, identity: tuple[str, str]) -> str | None:
         """Committe le travail de l'ouvrier dans son worktree (`add -A` puis `commit`). Le worker `claude -p`
         écrit le code mais **ne touche pas au cycle git** (mandat) : la forge committe après son run. Identité

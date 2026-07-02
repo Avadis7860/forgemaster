@@ -145,6 +145,7 @@ def _seed(port: int, slugs: list[str], *, home: Path) -> None:
                   {"slug": task, "title": title, "depends_on": deps})
     _seed_dispatch_job(home, proj)
     _seed_gate_states(home, proj)
+    _seed_git_state(home, proj)
 
 
 def _seed_dispatch_job(home: Path, proj: str) -> None:
@@ -224,6 +225,24 @@ def _seed_gate_states(home: Path, proj: str) -> None:
                                  sha=head_sha, diff_text=diff_text)
     finally:
         conn.close()
+
+
+def _seed_git_state(home: Path, proj: str) -> None:
+    """Avance `dev` d'un cran au-dessus de `main` (ff dev sur une feature déjà committée par le seed Gate),
+    pour rendre l'onglet Git VOYANT : la bannière montre « main en retard de N sur dev » (le signal
+    main-rattrape-dev), sans toucher main. Aucune API ne fait ça — plumbing direct sur le SoT jetable."""
+    try:
+        from cockpit.config import Settings
+        from cockpit.git.internal import GitOpError, InternalGit
+        from cockpit.projects import registry
+    except ImportError:
+        return  # build-only → vue à 0/0, sans casser le screenshot
+    settings = Settings.resolve(home=home / "home", projects_root=home / "projects")
+    sot = registry.sot_path_for(settings, proj)
+    try:
+        InternalGit().merge_ff(sot, into="dev", source="feature/gate-green-demo")  # dev avance, main reste
+    except GitOpError:
+        return  # feature absente (seed Gate sauté) → vue à 0/0, sans casser le screenshot
 
 
 def shoot(routes: list[str], *, port: int, viewport: dict | None, full_page: bool, out_dir: Path,

@@ -5,6 +5,7 @@ import { ProjectWorkspace } from './pages/ProjectWorkspace'
 import { RoadmapTab } from './pages/RoadmapTab'
 import { DispatchTab } from './pages/DispatchTab'
 import { GateTab } from './pages/GateTab'
+import { GitTab } from './pages/GitTab'
 import { TerminalTab } from './pages/TerminalTab'
 
 // Routing code-based (pas de codegen) — l'échelle du cockpit ne justifie pas le file-based.
@@ -18,11 +19,12 @@ const projectRoute = createRoute({ getParentRoute: () => rootRoute, path: '/$pro
 const roadmapRoute = createRoute({ getParentRoute: () => projectRoute, path: '/', component: RoadmapTab })
 const dispatchRoute = createRoute({ getParentRoute: () => projectRoute, path: 'dispatch', component: DispatchTab })
 const gateRoute = createRoute({ getParentRoute: () => projectRoute, path: 'gate', component: GateTab })
+const gitRoute = createRoute({ getParentRoute: () => projectRoute, path: 'git', component: GitTab })
 const terminalRoute = createRoute({ getParentRoute: () => projectRoute, path: 'terminal', component: TerminalTab })
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
-  projectRoute.addChildren([roadmapRoute, dispatchRoute, gateRoute, terminalRoute]),
+  projectRoute.addChildren([roadmapRoute, dispatchRoute, gateRoute, gitRoute, terminalRoute]),
 ])
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' })

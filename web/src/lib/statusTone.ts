@@ -70,6 +70,14 @@ export const GATE_SEVERITY_TONE: Record<'red' | 'yellow' | 'purple', Tone> = {
   purple: 'purple',
 }
 
+/** Ton d'une branche du SoT (vue Git) : réfs protégées distinctes (main=ok, dev=info), features en accent. */
+export function gitBranchTone(name: string): Tone {
+  if (name === 'main') return 'ok'
+  if (name === 'dev') return 'info'
+  if (name.startsWith('feature/')) return 'accent'
+  return 'neutral'
+}
+
 /** Résout une valeur métier en Tone via une map, avec repli neutre. */
 export function toneFor(map: Record<string, Tone>, value: string | null | undefined): Tone {
   return (value && map[value]) || 'neutral'

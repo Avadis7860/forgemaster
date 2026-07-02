@@ -9,6 +9,7 @@ export const qk = {
   projects: ['projects'] as const,
   project: (slug: string) => ['projects', slug] as const,
   roadmap: (project: string) => ['roadmap', project] as const,
+  git: (project: string) => ['git', project] as const,
   next: (project: string, feature: string) => ['next', project, feature] as const,
   jobs: (project: string, feature: string) => ['jobs', project, feature] as const,
   job: (jobId: string) => ['job', jobId] as const,
@@ -40,6 +41,15 @@ export function useRoadmap(project: string) {
   return useQuery({
     queryKey: qk.roadmap(project),
     queryFn: () => api.getRoadmap(project),
+    enabled: Boolean(project),
+  })
+}
+
+// Vue Git read-only d'un projet (branches · ahead/behind · log). GET idempotent, pas de poll.
+export function useGit(project: string) {
+  return useQuery({
+    queryKey: qk.git(project),
+    queryFn: () => api.getGit(project),
     enabled: Boolean(project),
   })
 }

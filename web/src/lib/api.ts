@@ -5,6 +5,7 @@ import type { z } from 'zod'
 import {
   DispatchReportSchema,
   GateStatusSchema,
+  GitViewSchema,
   HealthSchema,
   JobDetailSchema,
   JobsListSchema,
@@ -58,6 +59,11 @@ export const api = {
 
   getRoadmap: (project: string) =>
     request(`/api/projects/${encodeURIComponent(project)}/roadmap`, RoadmapSchema),
+
+  // Vue Git read-only du SoT bare (branches · ahead/behind main↔dev · log par réf). GET idempotent —
+  // aucun effet (le runner de boucle visuelle goto-only l'atteint sans risque).
+  getGit: (project: string) =>
+    request(`/api/projects/${encodeURIComponent(project)}/git`, GitViewSchema),
   getNext: (project: string, feature: string) =>
     request(
       `/api/features/${encodeURIComponent(project)}/${encodeURIComponent(feature)}/next`,

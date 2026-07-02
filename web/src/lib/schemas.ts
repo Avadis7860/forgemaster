@@ -213,3 +213,33 @@ export interface MergeInput {
   t1_override?: string
   t15_override?: string
 }
+
+// -- Vue Git (read-only) : branches + avance/retard main↔dev + log par réf ------------------------
+
+// Une entrée de `git log --oneline` (parser pur Python) : sha court + sujet.
+export const GitLogEntrySchema = z.object({ sha: z.string(), subject: z.string() })
+export type GitLogEntry = z.infer<typeof GitLogEntrySchema>
+
+// Une branche locale du SoT bare (for-each-ref) : nom + sha court + sujet du commit de tête.
+export const GitBranchSchema = z.object({ name: z.string(), sha: z.string(), subject: z.string() })
+export type GitBranch = z.infer<typeof GitBranchSchema>
+
+// Avance/retard de `head` vs `base` : `ahead` = commits de head absents de base ; `behind` l'inverse.
+// En sot:local (main-suit-dev), base=main head=dev ⇒ `ahead` = ce que main doit rattraper.
+export const GitAheadBehindSchema = z.object({
+  base: z.string(),
+  head: z.string(),
+  ahead: z.number(),
+  behind: z.number(),
+})
+export type GitAheadBehind = z.infer<typeof GitAheadBehindSchema>
+
+// GET /api/projects/{p}/git : vue read-only du SoT bare. `ahead_behind` null si dev/main pas tous deux
+// présents ; `logs` = log court par réf protégée existante. Une seule lecture idempotente sert la vue.
+export const GitViewSchema = z.object({
+  project: z.string(),
+  branches: z.array(GitBranchSchema),
+  ahead_behind: GitAheadBehindSchema.nullable(),
+  logs: z.record(z.string(), z.array(GitLogEntrySchema)),
+})
+export type GitView = z.infer<typeof GitViewSchema>

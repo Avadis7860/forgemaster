@@ -39,7 +39,7 @@ def build_app(settings: Settings) -> FastAPI:
     from fastapi.responses import JSONResponse
 
     from cockpit.daemon.deps import Deps
-    from cockpit.daemon.routes import dispatch, gate, projects, roadmap, terminal
+    from cockpit.daemon.routes import dispatch, gate, git, projects, roadmap, terminal
 
     app = FastAPI(title="cockpit", version=__version__)
     app.state.deps = Deps(settings)                      # conteneur DI unique, lu par get_deps
@@ -59,7 +59,7 @@ def build_app(settings: Settings) -> FastAPI:
 
     for make_router in (projects.make_projects_router, roadmap.make_roadmap_router,
                         dispatch.make_dispatch_router, gate.make_gate_router,
-                        terminal.make_terminal_router):
+                        git.make_git_router, terminal.make_terminal_router):
         app.include_router(make_router())
 
     @app.exception_handler(KeyError)

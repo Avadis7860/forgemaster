@@ -110,6 +110,46 @@ def test_merge_ff_advances_and_rejects_non_ff(tmp_path: Path):
         git.merge_ff(sot, into="feature/x", source="dev")  # dev derrière feature/x → non-ff
 
 
+def test_git_view_reads_branches_log_and_ahead_behind(tmp_path: Path):
+    """Les primitives read-only de la vue git : branches (nom·sha·sujet), log par réf, et ahead/behind
+    `main` vs `dev` — bare-safe (aucun working-tree du SoT), et le signal « main rattrape dev »."""
+    git = InternalGit()
+    sot = _seed_bare(tmp_path)  # main + dev sur le même commit « seed »
+
+    # branches : dev + main, triées, chacune avec sha court + sujet du commit de tête
+    branches = git.branches(sot)
+    assert [b["name"] for b in branches] == ["dev", "main"]
+    assert all(b["sha"] and b["subject"] == "seed" for b in branches)
+
+    # log court d'une réf → [{sha, subject}] (parser pur)
+    log_dev = git.log(sot, "dev", n=5)
+    assert len(log_dev) == 1 and log_dev[0]["subject"] == "seed"
+
+    # au départ dev == main → 0 ahead / 0 behind
+    assert git.ahead_behind(sot, base="main", head="dev") == {
+        "base": "main", "head": "dev", "ahead": 0, "behind": 0}
+
+    # dev avance d'un commit (feature ff'd dans dev) → dev en avance de 1 sur main (main doit rattraper)
+    wt = tmp_path / "wt"
+    git.add_worktree(sot, wt, branch="feature/x", base="dev")
+    (wt / "f.txt").write_text("work\n", encoding="utf-8")
+    _run("add", "-A", cwd=wt)
+    _run("commit", "-q", "-m", "feature work", cwd=wt)
+    git.merge_ff(sot, into="dev", source="feature/x")
+    ab = git.ahead_behind(sot, base="main", head="dev")
+    assert ab == {"base": "main", "head": "dev", "ahead": 1, "behind": 0}
+    assert len(git.log(sot, "dev", n=5)) == 2  # seed + feature work
+
+
+def test_git_read_ops_raise_on_missing_ref(tmp_path: Path):
+    git = InternalGit()
+    sot = _seed_bare(tmp_path)
+    with pytest.raises(GitOpError):
+        git.log(sot, "nope")
+    with pytest.raises(GitOpError):
+        git.ahead_behind(sot, base="main", head="nope")
+
+
 def test_writeback_env_injects_identity_without_mutating_os_environ():
     before = dict(os.environ)
     env = writeback_env(("Vault Writeback", "wb@example.invalid"))

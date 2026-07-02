@@ -69,6 +69,10 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
 - **gate** — `POST /api/gate/{p}/{f}/review` `{findings, base?}` (verdict Tier-1 SHA-bound ; **422** si
   branche/diff absent ou diff vide — fail-closed) · `GET /api/gate/{p}/{f}` (statut review + verify,
   ancré HEAD) · `POST /api/merge/{p}/{f}` `{go, t1_override?, t15_override?}` (`run_merge` sous GO humain).
+- **git** — `GET /api/projects/{p}/git` (vue **read-only** du SoT bare : `branches` `[{name, sha, subject}]`,
+  `ahead_behind` `{base, head, ahead, behind}` de `main` vs `dev` — `ahead` = ce que main doit rattraper,
+  `null` si dev/main pas tous deux présents — et `logs` `{ref: [{sha, subject}]}` par réf protégée). Aucune
+  mutation (le cycle git vit dans `gate/merge`) ; **404** projet absent, **422** SoT illisible.
 - **terminal** — `WS /ws/terminal/{project}` (PTY **local** `bash -l`, workdir borné).
 
 Un endpoint qui borne/tronque le **signale** dans sa réponse. `WS /ws/dispatch/{job}` (streaming live du
