@@ -28,9 +28,11 @@ est*). On importe les décisions distillées comme specs (`docs/specs/`) — auc
 | `projects/registry.py` | `routers/projects.py` | #1 / #4 | ✅ |
 | `roadmap/model.py` | (schéma roadmap.yaml) | #9 | ✅ |
 | `roadmap/resolver.py` | `lib/vault_tasks.py` | #9 | ✅ |
-| `dispatch/worktree.py` | `routers/devserver.py` (broker) + `worktree_dispatch.py` | #7 / #12 | ⬜ |
-| `dispatch/worker.py` | `routers/orchestrator.py` (dispatch) | #2 / #3 | ⬜ |
-| `dispatch/jobs.py` | `routers/dispatch_ws.py` | #5 | ⬜ |
+| `roadmap/prompt.py` | `lib/plan_prompt.py` (pattern, sans corpus vault) | #9 | ✅ |
+| `dispatch/ports.py` | `services/aggregator/ports.py` (`PortStore`, mono-hôte) | — | ✅ |
+| `dispatch/worktree.py` | `routers/devserver.py` (broker) + `worktree_dispatch.py` | #7 / #12 | ✅ |
+| `dispatch/worker.py` | `lib/worker_dispatch.py` + `dispatch_run.py` | #2 / #3 | ✅ |
+| `dispatch/jobs.py` | `dispatch_ws.py` + `transcript_norm.py` | #5 | ✅ |
 | `gate/review.py` | `loops/review_state.py` | #13 | ⬜ |
 | `gate/verify.py` | `loops/feature_verify.py` | #10 / #13 | ⬜ |
 | `gate/merge.py` | `loops/worker_merge_gate.py` + `orchestrator.py` (merge) | #3 / #8 | ⬜ |

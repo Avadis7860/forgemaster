@@ -18,4 +18,14 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
   hook post-edit, templates), `.gitattributes` (eol=lf), `PORTING.md`, ce changelog.
 
 ### Portage (phase port-tools)
-- _(à venir — chunk suivant, sur retour utilisateur)_
+- Couches **git/internal**, **projects/registry**, **roadmap/model**, **roadmap/resolver** portées (SoT bare
+  local, worktree flock, DAG `classify`+`eff_prio`).
+- **Schéma SQLite v2** (bump `SCHEMA_VERSION=2`) : `dispatch_jobs` gagne `session_id` + métriques
+  (`num_turns`/`cost_usd`/`wall_s`/`engine`) ; nouvelle table `port_reservations` (broker de ports mono-hôte).
+  Migration en place idempotente (`ensure_columns`).
+- Couche **dispatch** : `ports` (broker déterministe simplifié mono-hôte), `worktree` (réserve worktree+port,
+  cleanup avant delete-branch), `worker` (spawn `claude -p` **local** via runner injectable, prompt sur stdin,
+  gate **no-task-no-dispatch**), `jobs` (état + suivi de log **incrémental** offset/inode, normaliseur porté).
+- Couche **roadmap/prompt** : synthétiseur de prompt worker (pattern `plan_prompt`, contexte in-repo, sans
+  corpus vault).
+- `git/internal.init_sot` **amorce** désormais `dev`+`main` (commit racine) pour qu'une feature ait une base.

@@ -83,12 +83,12 @@ def test_core_fs_jsonl_roundtrip(tmp_path: Path):
 
 
 # --- socle db : le schéma se crée -----------------------------------------------------------------
-def test_db_schema_creates_four_tables(tmp_path: Path):
+def test_db_schema_creates_all_tables(tmp_path: Path):
     conn = store.connect(tmp_path / "cockpit.db")
     store.migrate(conn)
     names = sorted(r[0] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'"))
-    assert names == ["dispatch_jobs", "features", "projects", "tasks"]
+    assert names == ["dispatch_jobs", "features", "port_reservations", "projects", "tasks"]
     assert schema.schema_version(conn) == schema.SCHEMA_VERSION
 
 

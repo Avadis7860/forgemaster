@@ -1,0 +1,199 @@
+"""Tests de la couche dispatch : schéma v2, broker de ports, cycle de worktree (SoT bare réel), gate
+no-task-no-dispatch + spawn worker (runner INJECTÉ — aucun vrai `claude`), lecture incrémentale du log."""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from cockpit.config import Settings
+from cockpit.core import run
+from cockpit.db import schema, store
+from cockpit.dispatch import jobs, ports, worker, worktree
+from cockpit.git.internal import InternalGit
+from cockpit.projects import registry
+from cockpit.roadmap import model, prompt
+
+
+@pytest.fixture
+def ctx(tmp_path: Path):
+    settings = Settings.resolve(home=tmp_path / "home", projects_root=tmp_path / "projects")
+    conn = store.open_db(settings)
+    yield settings, conn
+    conn.close()
+
+
+# -- schéma v2 --------------------------------------------------------------------------------------
+
+def test_schema_v2_columns_and_port_table(ctx):
+    _, conn = ctx
+    assert schema.schema_version(conn) == 2
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(dispatch_jobs)")}
+    assert {"session_id", "num_turns", "cost_usd", "wall_s", "engine"} <= cols
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "port_reservations" in tables
+
+
+def test_ensure_columns_upgrades_a_v1_db(tmp_path: Path):
+    # base v1 minimale (dispatch_jobs sans les colonnes v2) → ensure_columns doit les ajouter
+    import sqlite3
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE dispatch_jobs (id TEXT PRIMARY KEY, task_id TEXT, worktree_path TEXT)")
+    conn.execute("PRAGMA user_version = 1")
+    schema.ensure_columns(conn)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(dispatch_jobs)")}
+    assert {"session_id", "num_turns", "cost_usd", "wall_s", "engine"} <= cols
+
+
+# -- broker de ports --------------------------------------------------------------------------------
+
+def test_ports_reserve_is_idempotent_and_release(ctx):
+    _, conn = ctx
+    no_probe = None
+    a = ports.reserve(conn, project="p", purpose="worktree:f", probe=no_probe)
+    b = ports.reserve(conn, project="p", purpose="worktree:f", probe=no_probe)
+    assert a["port"] == b["port"]                      # même (projet,purpose) → port STABLE
+    other = ports.reserve(conn, project="p", purpose="worktree:g", probe=no_probe)
+    assert other["port"] != a["port"]                  # unicité globale (mono-hôte)
+    assert ports.release(conn, project="p", purpose="worktree:f")["port"] == a["port"]
+    assert ports.release(conn, project="p", purpose="worktree:f") is None   # idempotent
+
+
+def test_ports_free_port_skips_taken_and_probe(ctx):
+    _, conn = ctx
+    lo = ports.DEFAULT_RANGE[0]
+    # sonde qui déclare lo occupé → free_port saute à lo+1
+    assert ports.free_port(conn, probe=lambda port: port == lo) == lo + 1
+    ports.reserve(conn, project="p", purpose="a", probe=None)   # prend lo
+    assert ports.free_port(conn, probe=None) == lo + 1          # lo réservé → suivant
+
+
+def test_ports_pool_exhausted(ctx):
+    _, conn = ctx
+    with pytest.raises(ports.PortPoolExhausted):
+        ports.free_port(conn, port_range=(6000, 6000), probe=lambda port: True)
+
+
+# -- cycle de worktree (SoT bare réel) --------------------------------------------------------------
+
+def _seed_project(conn, settings, *, project="proj", feature="feat", task="schema") -> None:
+    registry.create_project(conn, settings, slug=project)   # init_sot seedé (dev+main)
+    model.add_feature(conn, project_slug=project, slug=feature)
+    model.add_task(conn, feature_ref=f"{project}/{feature}", slug=task)
+
+
+def test_worktree_reserve_release_audit(ctx):
+    settings, conn = ctx
+    git = InternalGit()
+    _seed_project(conn, settings)
+    res = worktree.reserve(conn, settings, git, project="proj", feature="feat", probe=None)
+    assert res["path"].is_dir() and res["branch"] == "feature/feat"
+    assert git.current_branch(res["path"]) == "feature/feat"
+    again = worktree.reserve(conn, settings, git, project="proj", feature="feat", probe=None)
+    assert again["port"] == res["port"]                      # idempotent
+    assert worktree.audit(conn, settings) == []             # pas d'orphelin
+    # release : worktree retiré + port relâché
+    worktree.release(conn, settings, git, project="proj", feature="feat")
+    assert not res["path"].exists()
+    assert ports.list_reservations(conn) == []
+    assert worktree.audit(conn, settings) == []
+
+
+# -- gate no-task-no-dispatch + spawn (runner injecté) ----------------------------------------------
+
+def _ok_runner(argv, *, cwd, input_text, timeout):
+    sid = argv[argv.index("--session-id") + 1]
+    out = json.dumps({"is_error": False, "result": "fait", "session_id": sid,
+                      "total_cost_usd": 0.02, "num_turns": 2})
+    return run.RunResult(argv=list(argv), returncode=0, stdout=out, stderr="")
+
+
+def _fail_runner(argv, *, cwd, input_text, timeout):
+    return run.RunResult(argv=list(argv), returncode=1, stdout="boom", stderr="err")
+
+
+def test_dispatch_refused_when_feature_has_no_task(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj")
+    model.add_feature(conn, project_slug="proj", slug="feat")
+    report = worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=_ok_runner)
+    assert report["dispatched"] is False and "aucune task" in report["reason"]
+
+
+def test_dispatch_happy_path_records_job_and_worktree(ctx):
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    report = worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=_ok_runner)
+    assert report["dispatched"] is True and report["result"]["ok"] is True
+    assert report["task"] == "schema"
+    job = jobs.get_job(conn, report["job_id"])
+    assert job["status"] == "done" and job["num_turns"] == 2 and job["session_id"]
+    assert job["port"] and Path(job["worktree_path"]).is_dir()
+    # la task passe in_progress (sérialisation) → un 2e dispatch est refusé (gate no-ready)
+    task = conn.execute("SELECT status FROM tasks WHERE slug='schema'").fetchone()
+    assert task["status"] == "in_progress"
+    again = worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=_ok_runner)
+    assert again["dispatched"] is False and "READY" in again["reason"]
+
+
+def test_dispatch_failure_reverts_task_to_todo(ctx):
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    report = worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=_fail_runner)
+    assert report["dispatched"] is True and report["result"]["ok"] is False
+    job = jobs.get_job(conn, report["job_id"])
+    assert job["status"] == "failed"
+    task = conn.execute("SELECT status FROM tasks WHERE slug='schema'").fetchone()
+    assert task["status"] == "todo"        # re-dispatchable
+
+
+# -- suivi de log incrémental + normaliseur ---------------------------------------------------------
+
+def test_read_events_incremental_and_partial_line(tmp_path: Path):
+    log = tmp_path / "t.jsonl"
+    a = json.dumps({"type": "assistant", "timestamp": "T0",
+                    "message": {"content": [{"type": "text", "text": "salut"}]}})
+    log.write_text(a + "\n", encoding="utf-8")
+    first = jobs.read_events(log)
+    assert len(first["events"]) == 1 and first["events"][0]["text"] == "salut"
+    # ligne partielle (écriture en cours) → non consommée
+    with log.open("a", encoding="utf-8") as f:
+        f.write('{"type":"assistant","message":{"content":[{"type":"text","text":"partiel"')
+    mid = jobs.read_events(log, offset=first["offset"], inode=first["inode"])
+    assert mid["events"] == [] and mid["offset"] == first["offset"]
+    # la ligne se complète → lue au prochain passage
+    with log.open("a", encoding="utf-8") as f:
+        f.write("}]}}\n")
+    last = jobs.read_events(log, offset=mid["offset"], inode=mid["inode"])
+    assert len(last["events"]) == 1 and last["events"][0]["text"] == "partiel"
+
+
+def test_normalize_line_tool_use_and_result_and_noise():
+    tool = json.dumps({"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "Bash", "input": {"command": "ls -la /tmp"}}]}})
+    ev = jobs.normalize_line(tool)
+    assert ev["tools"][0] == {"name": "Bash", "input_summary": "ls -la /tmp"}
+    res = json.dumps({"type": "user", "message": {"content": [
+        {"type": "tool_result", "content": "ok", "is_error": False}]}})
+    assert jobs.normalize_line(res)["results"][0] == {"ok": True, "summary": "ok"}
+    assert jobs.normalize_line("not json") is None
+    assert jobs.normalize_line(json.dumps({"type": "queue-operation"})) is None
+
+
+# -- prompt-builder ---------------------------------------------------------------------------------
+
+def test_build_worker_prompt_uses_project_docs(tmp_path: Path):
+    root = tmp_path / "wt"
+    (root / "docs").mkdir(parents=True)
+    (root / "docs" / "design.md").write_text("# Intention\nUn super produit.", encoding="utf-8")
+    project = {"slug": "proj", "name": "Proj"}
+    feature = {"slug": "feat", "title": "Feature", "branch": "feature/feat"}
+    task = {"slug": "schema", "title": "Schéma SQLite", "priority": "P0"}
+    text = prompt.build_worker_prompt(project, feature, task, root=root)
+    assert "schema — Schéma SQLite (priorité P0)" in text
+    assert "worker autonome" in text and "NE touche PAS au cycle git" in text
+    assert "Un super produit." in text and "docs/design.md" in text
+    # projet sans docs → fallback explicite, jamais un crash
+    bare = prompt.build_worker_prompt(project, feature, task, root=tmp_path / "empty")
+    assert "aucun `docs/`" in bare

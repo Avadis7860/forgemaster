@@ -161,13 +161,33 @@ class InternalGit:
     """Adapter GitBackend sur repo bare local. Zéro réseau (le miroir est best-effort et opt-in)."""
 
     def init_sot(self, sot: Path) -> None:
-        """Initialise un repo bare local (idempotent : ne réinitialise pas un bare existant)."""
+        """Initialise un repo bare local **amorcé** (idempotent). Un `init --bare` nu n'a AUCUNE branche →
+        `add_worktree(..., base='dev')` échouerait ; on **seed** donc `dev` et `main` sur un commit racine
+        (vide) dès la création, pour que la 1ʳᵉ feature ait une base d'où partir (main-suit-dev)."""
         sot = Path(sot)
         sot.mkdir(parents=True, exist_ok=True)
         probe = _git(sot, "rev-parse", "--is-bare-repository")
-        if probe.ok and probe.stdout.strip() == "true":
+        if not (probe.ok and probe.stdout.strip() == "true"):
+            _checked(sot, "init", "--bare")
+        self._seed_base(sot)
+
+    def _seed_base(self, sot: Path) -> None:
+        """Pose un commit racine (arbre vide) sur `dev` et `main` si `dev` n'existe pas encore. Plumbing pur
+        (`mktree`/`commit-tree`/`update-ref`) → fonctionne sur un bare sans index ni worktree. Identité
+        injectée le temps du commit-tree (jamais persistée), corrige « empty ident name »."""
+        if _git(sot, "show-ref", "--verify", "--quiet", "refs/heads/dev").ok:
             return
-        _checked(sot, "init", "--bare")
+        env = writeback_env(("cockpit", "cockpit@localhost"))
+        tree = run.run(["git", "-C", str(sot), "mktree"], input_text="", env=env)
+        if not tree.ok:
+            raise GitOpError(f"seed mktree @ {sot}: {tree.stderr.strip()[:200]}")
+        commit = run.run(
+            ["git", "-C", str(sot), "commit-tree", tree.stdout.strip(), "-m", "root: cockpit seed"], env=env)
+        if not commit.ok:
+            raise GitOpError(f"seed commit-tree @ {sot}: {commit.stderr.strip()[:200]}")
+        sha = commit.stdout.strip()
+        for base in ("dev", "main"):
+            _checked(sot, "update-ref", f"refs/heads/{base}", sha)
 
     def add_worktree(self, sot: Path, worktree: Path, *, branch: str, base: str) -> None:
         """Crée un worktree attaché au SoT sur `branch`, ancré sur `base` (`add -B <branch> <path> <base>`,

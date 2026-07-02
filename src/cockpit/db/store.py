@@ -25,7 +25,8 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
 
 def migrate(conn: sqlite3.Connection) -> int:
     """Applique le schéma si la base est vierge (ou en retard). Idempotent. Retourne la version finale.
-    V1 : création directe (pas encore de chemin de migration multi-version à gérer)."""
+    `create_schema` gère à la fois la base neuve (tout par DDL) et l'évolution en place d'une base d'une
+    version antérieure (tables neuves via `IF NOT EXISTS`, colonnes neuves via `ensure_columns`)."""
     if schema.schema_version(conn) < schema.SCHEMA_VERSION:
         schema.create_schema(conn)
     return schema.schema_version(conn)
