@@ -116,7 +116,8 @@ export function TerminalPane({ project }: { project: string }) {
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs text-faint">
-          Login shell (<span className="font-mono">bash -l</span>) dans la racine du projet.
+          Login shell (<span className="font-mono">bash -l</span>) — tape{' '}
+          <span className="font-mono">claude</span> pour lier ton compte (1ʳᵉ fois : login).
         </p>
         <Badge tone={st.tone} dot>
           {st.label}

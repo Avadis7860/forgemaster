@@ -8,6 +8,8 @@ _EXPECTED = (
     "CLAUDE.md",
     ".gitignore",
     ".docsmap.toml",
+    ".codemap.toml",
+    ".frontmap.toml",
     "docs/architecture.md",
     ".claude/settings.json",
     ".claude/skills/work-loop/SKILL.md",

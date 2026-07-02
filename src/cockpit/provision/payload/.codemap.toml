@@ -1,0 +1,20 @@
+# .codemap.toml — carte de code de ce projet (code-map). Vit à la RACINE du repo indexé.
+# Tout est optionnel : sans valeurs, code-map applique des défauts génériques (tout le repo,
+# sous-système = 1er segment de chemin, pas de câblage non-import). L'index est per-racine et gitignoré.
+
+[perimeter]
+include = []            # répertoires à indexer (relatifs à la racine) ; vide = racine entière
+exclude = []            # exclusions en plus des défauts (.git .venv node_modules __pycache__ dist build)
+
+[engines]
+select = "auto"         # "auto" détecte py/ts selon les extensions ; sinon "python" | "ts" | "both"
+
+[subsystem]
+strategy = "top-segment"  # "top-segment" (1er segment) | "depth:N"
+split = []                # ex. ["services", "packages"] pour éclater un monorepo plus finement
+
+[wiring]
+sources = []            # câblage non-import (globs scannés pour des basenames) ; vide = désactivé
+
+[git]
+last_commit = false     # enrichir chaque fichier de son dernier commit (nécessite git ; off = multi-OS sûr)

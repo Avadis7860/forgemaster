@@ -1,0 +1,15 @@
+# .frontmap.toml — carte du design-system de ce projet (front-map). Vit à la RACINE du repo.
+# Sans lui, front-map applique les conventions cockpit (web/ Vite+React) ET auto-détecte le
+# router/les primitives. L'index est per-racine et gitignoré. Adapte les chemins à ton arborescence.
+
+[sources]
+tokens = "web/src/index.css"                       # design tokens (bloc @theme + :root)
+primitives_barrel = "web/src/components/ui/index.ts"  # convention barrel : ses exports = les primitives
+primitives_dir = "web/src/components/ui"           # convention dir-scan : un .tsx par primitive
+router = "web/src/router.tsx"                       # def des routes (TanStack) ou le JSX react-router
+web_root = "web/src"                                # racine des consommateurs
+alias = "@/"                                        # alias d'import local → web_root
+
+[conventions]
+router = "auto"         # auto | tanstack | react-router
+primitives = "auto"     # auto | barrel | dir-scan
