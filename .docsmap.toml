@@ -1,0 +1,12 @@
+# .docsmap.toml — carte de doc de ce repo (docs-map, injecté). Valeurs = défauts sauf `extra`.
+# Sert aussi de repère de racine. Sans lui, docs-map applique les défauts génériques (`docs/**/*.md`).
+
+[sources]
+# Racine de la prose markdown à indexer (relative à la racine du repo). Couvre `docs/` ET `docs/specs/`.
+docs = "docs"
+
+# Motif des fichiers sous `docs` (récursif). Markdown seulement (carte de headings).
+glob = "**/*.md"
+
+# Markdown SUPPLÉMENTAIRE hors `docs` à inclure. Ici le journal de portage cité dans l'Index.
+extra = ["PORTING.md"]

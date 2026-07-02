@@ -2,7 +2,7 @@
 
 > Lu au début de **chaque** session dans ce repo. Persona `tool-builder`.
 > Ce fichier = **règles + index + outils**, PAS la spec. Le détail (mission, cadre verrouillé,
-> schémas, décisions distillées, points faibles) vit dans `docs/` — lis-les, ne les recopie pas ici.
+> schémas, décisions distillées, points faibles) vit dans `docs/` — **interroge-le** (`docsmap where`), ne le recopie pas ici.
 
 ## Règles (non négociables)
 
@@ -16,8 +16,9 @@
   (merge/destroy) = **feu vert humain, fail-closed**.
 - **Anti-boucle** : pas de signature d'API inventée (`fastapi`, `sqlite3`, `git`) — lis la doc / le code.
   MCP `vault-catalogs` best-effort s'il est branché.
-- **Anti-archéologie** : interroge `codemap` (`where`/`callers`/`imports`) — et `frontmap` pour `web/` — au
-  lieu de grep à l'aveugle.
+- **Anti-archéologie** : interroge les index au lieu de fouiller/lire à l'aveugle — `codemap`
+  (`where`/`callers`/`imports`) pour le **code**, `frontmap` pour `web/`, `docsmap where` pour la **prose**
+  de `docs/` (jamais lue en bloc pour s'orienter).
 - **Invariants de la forge** (détail + correctif `#N` dans `docs/weak-points.md`, specs dans `docs/specs/`) :
   **spine = CLI + cœur déterministe** (daemon et web sont des vues ; toute I/O — exécution locale, git —
   **injectable**) · **injection explicite** (`settings` + deps en argument, **jamais** de god-module
@@ -28,7 +29,17 @@
   **fraîcheur par SHA de HEAD**, jamais mtime · **merge/destroy jamais en autonomie** (fail-closed).
 - Fixtures minuscules, **noms fictifs** (jamais un vrai basename de projet).
 
-## Index (la spec — lis-la avant de coder)
+## Index (interroge, ne lis pas en bloc)
+
+La spec vit dans `docs/` (dont `docs/specs/`). **Ne la lis pas en bloc pour t'orienter** — `docs-map`
+(injecté, zéro-dép) répond à l'intention ; lis ensuite **seulement** la tranche `fichier:lignes` renvoyée :
+
+```
+docsmap where "<intention>"     # → docs/…:lignes de la section pertinente
+docsmap sections                # table des matières
+```
+
+Ce que couvre chaque doc (cibles de `docsmap where`) :
 
 - `docs/architecture.md` — la spine (cœur / daemon / web), les couches, frontières.
 - `docs/specs/*.md` — les **décisions distillées** portées comme specs (contraintes verrouillées +
@@ -46,6 +57,7 @@
 - **Hook** (`.claude/hooks/post-edit-check.py`) : `py_compile` + `ruff` sur le `.py` touché à chaque édition.
 - **Persona** (`.claude/output-styles/tool-builder.md`) : posture outilleur déterministe.
 - **Index de code** : `codemap` (py + tsx) et `frontmap` (design-system `web/`) — injectables, auto-interrogeables.
+- **Carte de doc** : `docsmap where/sections/read/check` sur la prose `docs/` (+`docs/specs/`) de ce repo (injecté, zéro-dép).
 - **Doc tierce** : MCP `vault-catalogs` (`query_catalog` scopé, `read_doc`) s'il est branché.
 
 ## Ce repo EST la forge (rapport aux autres)
