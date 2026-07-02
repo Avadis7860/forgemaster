@@ -23,7 +23,7 @@ est*). On importe les décisions distillées comme specs (`docs/specs/`) — auc
 | Module | Source vault | Refactor | Statut |
 |---|---|---|---|
 | `git/backend.py` | (interface neuve) | #1 (frontière DI) | ✅ signatures figées |
-| `git/internal.py` | `git_ops.py` | #2 / #6 / #7 / #12 | ⬜ |
+| `git/internal.py` | `git_ops.py` | #2 / #6 / #7 / #12 | ✅ |
 | `git/github.py` | — | (P6) | ⏸ |
 | `projects/registry.py` | `routers/projects.py` | #1 / #4 | ⬜ |
 | `roadmap/model.py` | (schéma roadmap.yaml) | #9 | ⬜ |

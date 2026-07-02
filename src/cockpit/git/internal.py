@@ -1,49 +1,216 @@
-"""internal — `InternalGit` : adapter `GitBackend` sur un **repo bare LOCAL** (zéro réseau). C'est
-l'implémentation V1 par défaut (décision internal-first).
+"""internal — `InternalGit` : adapter `GitBackend` sur un **repo bare LOCAL** (zéro réseau). Adapter V1
+par défaut (décision internal-first).
 
-Port : `services/aggregator/git_ops.py` (builders de commandes purs : status/diff/log/branch/merge +
-classification d'erreurs 409/502 + validateurs de branche). Refactor appliqué :
+Port de `services/aggregator/git_ops.py` (builders purs + parsers `parse_status`/`parse_log` + classifieurs
+d'erreur). Refactors appliqués :
 - **#2** : les builders `cd <workdir> && git …` étaient exécutés par `ssh dev@ip` ; ici on exécute via
-  `core.run(argv, cwd=workdir)` LOCAL (argv liste, plus de shell).
-- **#6** : le `pull` legacy faisait `reset --hard && clean -fd` (destructif) → pull non destructif.
-- **#7/#12** : worktree attaché au SoT partagé, `add -B <branch> origin/<base>`, sérialisé par flock sur
-  `.git/cockpit-worktree.lock` (spec sot-local-worker-vs-clone-split).
+  `core.run(["git", "-C", <repo>, …])` LOCAL — argv liste, plus de shell, plus d'IP/clé ssh.
+- **#6** : le `pull`/`sync` legacy faisait `reset --hard && clean -fd` (destructif) ; `align_worktree`
+  ne fait qu'un `merge --ff-only` (jamais de `reset --hard` implicite).
+- **#7/#12** : worktree **attaché au SoT partagé** (`worktree add -B <branch> <path> <base>`, jamais
+  `checkout -B <base>`), création **sérialisée par `flock`** sur `<sot>/cockpit-worktree.lock` (le git-dir
+  du bare EST le dossier du SoT) — pas un lock in-process.
 
-Statut : stub. Signatures figées par `git/backend.py`.
+Le flux d'orchestration du merge (ordre gates → merge → cleanup worktree → writeback) vit dans
+`gate/merge.py` ; ici on ne fournit que les **primitives** git.
 """
 from __future__ import annotations
 
+import fcntl
+import os
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 
-_SRC = "services/aggregator/git_ops.py"
+from cockpit.core import run
+
+PROTECTED_BRANCHES = ("main", "dev")
+_LOCK_NAME = "cockpit-worktree.lock"
+
+
+class GitOpError(RuntimeError):
+    """Échec dur d'une op git (le message porte stderr). Les échecs best-effort ne lèvent pas."""
+
+
+def _git(repo: str | Path, *args: str, env: Mapping[str, str] | None = None) -> run.RunResult:
+    """`git -C <repo> <args>` local, sans shell. Ne lève pas (l'appelant inspecte `.ok`/classifie)."""
+    return run.run(["git", "-C", str(repo), *args], env=env)
+
+
+def _checked(repo: str | Path, *args: str, env: Mapping[str, str] | None = None) -> run.RunResult:
+    r = _git(repo, *args, env=env)
+    if not r.ok:
+        raise GitOpError(f"git {' '.join(args)} @ {repo}: {r.stderr.strip()[:200]}")
+    return r
+
+
+# -- parsers PURS (portés verbatim de git_ops.py) ---------------------------------------------------
+
+def _file_entry(index: str, worktree: str, path: str) -> dict:
+    return {"path": path, "index": index, "worktree": worktree, "staged": index not in (".", "?")}
+
+
+def parse_status(stdout: str) -> dict:
+    """Parse `git status --porcelain=v2 -b` → {branch, upstream, ahead, behind, files, clean}. PUR."""
+    branch = upstream = None
+    ahead = behind = 0
+    files: list[dict] = []
+    for line in (stdout or "").splitlines():
+        if not line:
+            continue
+        if line.startswith("# "):
+            parts = line.split()
+            key = parts[1] if len(parts) > 1 else ""
+            if key == "branch.head" and len(parts) >= 3:
+                branch = parts[2]
+            elif key == "branch.upstream" and len(parts) >= 3:
+                upstream = parts[2]
+            elif key == "branch.ab" and len(parts) >= 4:
+                try:
+                    ahead = int(parts[2].lstrip("+"))
+                    behind = int(parts[3].lstrip("-"))
+                except ValueError:
+                    pass
+            continue
+        tag = line[0]
+        if tag in ("1", "2"):
+            maxsplit = 8 if tag == "1" else 9
+            f = line.split(None, maxsplit)
+            if len(f) <= maxsplit:
+                continue
+            xy = f[1]
+            path = f[maxsplit].split("\t", 1)[0] if tag == "2" else f[maxsplit]
+            files.append(_file_entry(xy[0], xy[1], path))
+        elif tag == "u":
+            f = line.split(None, 10)
+            if len(f) <= 10:
+                continue
+            xy = f[1]
+            files.append(_file_entry(xy[0], xy[1], f[10]))
+        elif tag == "?":
+            path = line[2:]
+            if path:
+                files.append(_file_entry("?", "?", path))
+    return {"branch": branch, "upstream": upstream, "ahead": ahead, "behind": behind,
+            "files": files, "clean": not files}
+
+
+def parse_log(stdout: str) -> list[dict]:
+    """Parse `git log --oneline` → [{sha, subject}]. PUR."""
+    out: list[dict] = []
+    for line in (stdout or "").splitlines():
+        if not line.strip():
+            continue
+        sha, _, subject = line.partition(" ")
+        out.append({"sha": sha, "subject": subject})
+    return out
+
+
+def classify_push_error(stdout: str, stderr: str) -> str:
+    """Échec de push → 'behind' / 'pat-scope' / 'auth' / 'other'. PUR (porté de git_ops)."""
+    blob = f"{stdout}\n{stderr}".lower()
+    if "non-fast-forward" in blob or "fetch first" in blob or \
+            ("rejected" in blob and "behind" in blob) or "tip of your current branch is behind" in blob:
+        return "behind"
+    if "write access to repository not granted" in blob or \
+            ("permission to" in blob and "denied to" in blob) or \
+            "the requested url returned error: 403" in blob or "error: 403" in blob:
+        return "pat-scope"
+    if "could not read username" in blob or "authentication failed" in blob or \
+            "permission denied" in blob or "terminal prompts disabled" in blob or \
+            "no credential" in blob or "could not read password" in blob:
+        return "auth"
+    return "other"
+
+
+def is_protected_branch(branch: str | None) -> bool:
+    """True si `branch` est protégée (push direct interdit : main/dev). PUR."""
+    return (branch or "").strip() in PROTECTED_BRANCHES
+
+
+# -- injection d'identité writeback (spec merge-writeback : env ponctuel, non persisté) --------------
+
+def writeback_env(identity: tuple[str, str], *, base: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Compose un env avec l'identité git INJECTÉE (auteur + committer), à partir de `base` (défaut
+    `os.environ`). **Ne mute pas** `os.environ` — l'env est ponctuel (spec merge-writeback : le temps de
+    l'op, jamais persisté). Corrige la cause racine « empty ident name »."""
+    name, email = identity
+    env = dict(base if base is not None else os.environ)
+    env.update({
+        "GIT_AUTHOR_NAME": name, "GIT_AUTHOR_EMAIL": email,
+        "GIT_COMMITTER_NAME": name, "GIT_COMMITTER_EMAIL": email,
+    })
+    return env
+
+
+@contextmanager
+def _worktree_lock(sot: str | Path) -> Iterator[None]:
+    """Sérialise les mutations de worktree par `flock` sur `<sot>/cockpit-worktree.lock` (le git-dir du
+    bare = le dossier du SoT). Couvre des process/relais concurrents, contrairement à un lock in-process."""
+    lock_path = Path(sot) / _LOCK_NAME
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "w") as fd:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 class InternalGit:
-    """Adapter GitBackend sur repo bare local. À porter depuis git_ops.py (refactor #2/#6/#7/#12)."""
+    """Adapter GitBackend sur repo bare local. Zéro réseau (le miroir est best-effort et opt-in)."""
 
     def init_sot(self, sot: Path) -> None:
-        raise NotImplementedError(f"port: {_SRC} — #2")
+        """Initialise un repo bare local (idempotent : ne réinitialise pas un bare existant)."""
+        sot = Path(sot)
+        sot.mkdir(parents=True, exist_ok=True)
+        probe = _git(sot, "rev-parse", "--is-bare-repository")
+        if probe.ok and probe.stdout.strip() == "true":
+            return
+        _checked(sot, "init", "--bare")
 
     def add_worktree(self, sot: Path, worktree: Path, *, branch: str, base: str) -> None:
-        raise NotImplementedError(f"port: {_SRC} — #7 (worktree attaché au SoT, add -B origin/base)")
+        """Crée un worktree attaché au SoT sur `branch`, ancré sur `base` (`add -B <branch> <path> <base>`,
+        jamais `checkout -B <base>`). Sérialisé par flock (spec sot-local, #7/#12)."""
+        with _worktree_lock(sot):
+            _checked(sot, "worktree", "add", "-B", branch, str(worktree), base)
 
     def remove_worktree(self, sot: Path, worktree: Path) -> None:
-        raise NotImplementedError(f"port: {_SRC} — #7 (remove AVANT delete_branch)")
+        """Retire le worktree (à appeler AVANT `delete_branch` — spec worktree-cleanup). Sérialisé."""
+        with _worktree_lock(sot):
+            _checked(sot, "worktree", "remove", "--force", str(worktree))
 
     def delete_branch(self, sot: Path, branch: str) -> None:
-        raise NotImplementedError(f"port: {_SRC} — #2")
+        """Supprime la branche (après `remove_worktree` si elle y était sortie)."""
+        _checked(sot, "branch", "-D", branch)
 
     def current_branch(self, workdir: Path) -> str:
-        raise NotImplementedError(f"port: {_SRC} — #2")
+        """Nom de la branche courante du worktree (`rev-parse --abbrev-ref HEAD`)."""
+        return _checked(workdir, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
 
     def status(self, workdir: Path) -> dict:
-        raise NotImplementedError(f"port: {_SRC} — #2 (parse_status)")
+        """Status machine-lisible (`--porcelain=v2 -b`, parsé)."""
+        return parse_status(_checked(workdir, "status", "--porcelain=v2", "-b").stdout)
 
     def merge_ff(self, sot: Path, *, into: str, source: str) -> None:
-        raise NotImplementedError(f"port: {_SRC} — #2")
+        """Merge **fast-forward** `source` dans `into` sur le SoT bare : `into` doit être ancêtre de
+        `source` (sinon `GitOpError` non-ff). Sur un bare, un ff = avancer la ref (`branch -f`)."""
+        if not _git(sot, "merge-base", "--is-ancestor", into, source).ok:
+            raise GitOpError(f"merge non-ff : {into} n'est pas ancêtre de {source}")
+        _checked(sot, "branch", "-f", into, source)
 
     def merge_writeback(self, sot: Path, *, creds_ref: str | None, identity: tuple[str, str]) -> None:
-        raise NotImplementedError("port: services/loops/worker_merge_gate — #8 (creds+identité injectés)")
+        """Writeback post-merge avec identité injectée (non persistée). En sot:local le SoT bare EST la
+        vérité (les refs sont déjà à jour après `merge_ff`) : le writeback se réduit à l'identité + un push
+        miroir **best-effort** si un remote est configuré (`creds_ref` résolu en amont, via l'env). Ne lève
+        jamais sur échec miroir (spec forge-sot-local)."""
+        env = writeback_env(identity)
+        for remote in ("origin", "mirror"):
+            if _git(sot, "remote", "get-url", remote).ok:
+                _git(sot, "push", remote, "--all", env=env)  # best-effort, non bloquant
+                break
 
     def push_mirror(self, sot: Path, remote: str) -> bool:
-        raise NotImplementedError(f"port: {_SRC} — #2 (best-effort, ne lève jamais une fois porté)")
+        """Pousse toutes les branches vers `remote`. **Best-effort** : retourne False sur échec, ne lève
+        jamais (la vérité est le SoT local — spec forge-sot-local)."""
+        return _git(sot, "push", remote, "--all").ok
