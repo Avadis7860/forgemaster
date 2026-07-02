@@ -39,7 +39,7 @@ def test_create_project_seeds_selfworkable_toolkit(ctx):
     sot = registry.sot_path_for(settings, "seeded")
     # le SoT `dev` porte le toolkit auto-travaillable (semé à la création)
     names = run.run(["git", "-C", str(sot), "ls-tree", "-r", "--name-only", "dev"]).stdout.split()
-    for expected in ("CLAUDE.md", ".docsmap.toml", "docs/architecture.md",
+    for expected in ("CLAUDE.md", ".gitignore", ".docsmap.toml", "docs/architecture.md",
                      ".claude/settings.json", ".claude/skills/work-loop/SKILL.md",
                      ".claude/skills/quality-gate/SKILL.md"):
         assert expected in names, f"toolkit manque {expected} — {names}"

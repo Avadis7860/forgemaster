@@ -6,6 +6,7 @@ from cockpit.provision import load_payload
 # Fichiers-clés attendus dans le payload (dont dotfiles / dossiers cachés).
 _EXPECTED = (
     "CLAUDE.md",
+    ".gitignore",
     ".docsmap.toml",
     "docs/architecture.md",
     ".claude/settings.json",

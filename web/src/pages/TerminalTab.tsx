@@ -1,6 +1,6 @@
 import { Suspense, lazy } from 'react'
 import { useParams } from '@tanstack/react-router'
-import { Card, EmptyState, LoadingState, SectionTitle } from '@/components/ui'
+import { EmptyState, LoadingState } from '@/components/ui'
 
 // xterm.js est lourd (~290 kB) et n'est utile que sur cet onglet → code-split : le pane (et sa dépendance
 // xterm) ne se charge QUE quand on ouvre le terminal, le bundle principal reste léger.
@@ -22,13 +22,10 @@ export function TerminalTab() {
   }
 
   return (
-    <div className="space-y-6 p-6">
-      <SectionTitle eyebrow="shell" title="Terminal" />
-      <Card className="p-4">
-        <Suspense fallback={<LoadingState label="Chargement du terminal…" />}>
-          <TerminalPane key={project} project={project} />
-        </Suspense>
-      </Card>
+    <div className="p-6">
+      <Suspense fallback={<LoadingState label="Chargement du terminal…" />}>
+        <TerminalPane key={project} project={project} />
+      </Suspense>
     </div>
   )
 }
