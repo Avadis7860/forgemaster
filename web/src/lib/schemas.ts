@@ -76,3 +76,66 @@ export interface CreateProjectInput {
   name?: string | null
   mirror_remote?: string | null
 }
+
+// -- V3 dispatch : job (run worker) + rapport de dispatch + événements de transcript (streamés en WS) --
+
+// Une ligne de `dispatch_jobs` enrichie du `task_slug` (join list_jobs). Champs consommés déclarés ;
+// les colonnes non listées sont ignorées par Zod (pas de bruit côté front).
+export const JobSchema = z.object({
+  id: z.string(),
+  task_slug: z.string().nullish(),
+  status: z.string(),
+  num_turns: z.number().nullish(),
+  cost_usd: z.number().nullish(),
+  wall_s: z.number().nullish(),
+  started_at: z.string().nullish(),
+  ended_at: z.string().nullish(),
+})
+export type Job = z.infer<typeof JobSchema>
+
+export const JobsListSchema = z.object({ jobs: z.array(JobSchema) })
+
+// Rapport du POST dispatch (worker.dispatch_next) : bloquant, rendu à la FIN du run.
+export const DispatchReportSchema = z.object({
+  dispatched: z.boolean(),
+  reason: z.string(),
+  task: z.string().nullish(),
+  job_id: z.string().nullish(),
+})
+export type DispatchReport = z.infer<typeof DispatchReportSchema>
+
+// Événement de transcript normalisé (jobs.normalize_line) poussé par le WS. `job` = frame terminale
+// synthétique (fin de run) émise par stream.stream_job. Le front ne fabrique jamais ces formes.
+const AssistantToolSchema = z.object({ name: z.string().nullable(), input_summary: z.string() })
+const ToolResultItemSchema = z.object({ ok: z.boolean(), summary: z.string() })
+
+export const TranscriptEventSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('assistant'),
+    ts: z.string().nullish(),
+    text: z.string().optional(),
+    tools: z.array(AssistantToolSchema).optional(),
+    usage: z
+      .object({ output_tokens: z.number().optional(), web_search_requests: z.number().optional() })
+      .optional(),
+  }),
+  z.object({
+    type: z.literal('tool_result'),
+    ts: z.string().nullish(),
+    results: z.array(ToolResultItemSchema),
+  }),
+  z.object({
+    type: z.literal('job'),
+    status: z.string(),
+    num_turns: z.number().nullish(),
+    cost_usd: z.number().nullish(),
+    wall_s: z.number().nullish(),
+  }),
+])
+export type TranscriptEvent = z.infer<typeof TranscriptEventSchema>
+export type JobFrame = Extract<TranscriptEvent, { type: 'job' }>
+
+// Détail d'un job (GET /api/jobs/{id}) : la ligne job + son transcript normalisé lu one-shot (jobs.tail).
+// Sert la vue AT-REST d'un run terminé (pas de socket ouvert) ; le WS ne streame que le live d'un run en cours.
+export const JobDetailSchema = z.object({ job: JobSchema, events: z.array(TranscriptEventSchema) })
+export type JobDetail = z.infer<typeof JobDetailSchema>

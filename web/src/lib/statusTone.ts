@@ -54,6 +54,15 @@ export const FEATURE_STATUS_TONE: Record<string, Tone> = {
   cancelled: 'neutral',
 }
 
+/** Statut d'un job de dispatch (colonne dispatch_jobs). */
+export const JOB_STATUS_TONE: Record<string, Tone> = {
+  pending: 'neutral',
+  running: 'info',
+  done: 'ok',
+  failed: 'danger',
+  killed: 'danger',
+}
+
 /** Sévérité d'un finding de gate (🔴 rouge / 🟡 jaune / 🟣 violet). */
 export const GATE_SEVERITY_TONE: Record<'red' | 'yellow' | 'purple', Tone> = {
   red: 'danger',

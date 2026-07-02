@@ -10,6 +10,8 @@ export const qk = {
   project: (slug: string) => ['projects', slug] as const,
   roadmap: (project: string) => ['roadmap', project] as const,
   next: (project: string, feature: string) => ['next', project, feature] as const,
+  jobs: (project: string, feature: string) => ['jobs', project, feature] as const,
+  job: (jobId: string) => ['job', jobId] as const,
 }
 
 export function useHealth() {
@@ -46,5 +48,38 @@ export function useNext(project: string, feature: string) {
     queryKey: qk.next(project, feature),
     queryFn: () => api.getNext(project, feature),
     enabled: Boolean(project && feature),
+  })
+}
+
+// Jobs d'une feature. `pollMs` active un rafraîchissement (utilisé pendant un dispatch pour DÉCOUVRIR le
+// nouveau job en cours — le POST bloque et ne rend le job_id qu'à la fin).
+export function useFeatureJobs(project: string, feature: string, pollMs: number | false = false) {
+  return useQuery({
+    queryKey: qk.jobs(project, feature),
+    queryFn: () => api.listFeatureJobs(project, feature),
+    enabled: Boolean(project && feature),
+    refetchInterval: pollMs,
+  })
+}
+
+// Détail + transcript AT-REST d'un job (run terminé) — lecture HTTP one-shot, sans socket.
+export function useJob(jobId: string | null) {
+  return useQuery({
+    queryKey: qk.job(jobId ?? ''),
+    queryFn: () => api.getJob(jobId as string),
+    enabled: Boolean(jobId),
+  })
+}
+
+// Déclenche le dispatch de la NEXT task d'une feature (POST long bloquant). À la résolution, invalide la
+// roadmap (la task passe in_progress→done|todo) et la liste des jobs (le run est journalisé).
+export function useDispatch(project: string, feature: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.dispatch(project, feature),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: qk.roadmap(project) })
+      qc.invalidateQueries({ queryKey: qk.jobs(project, feature) })
+    },
   })
 }

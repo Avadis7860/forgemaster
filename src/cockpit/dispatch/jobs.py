@@ -62,6 +62,16 @@ def get_job(conn: sqlite3.Connection, job_id: str) -> dict:
     return dict(r)
 
 
+def list_jobs(conn: sqlite3.Connection, feature_id: str) -> list[dict]:
+    """Jobs d'une feature (join `tasks`), du plus récent au plus ancien ; `task_slug` joint pour l'affichage.
+    Sert la **découverte** du job à streamer (le POST dispatch bloque jusqu'à la fin → le front trouve le job
+    en cours par cette liste) et l'**historique** des runs. Tri `started_at` DESC (ISO → lexical = réel)."""
+    rows = conn.execute(
+        "SELECT j.*, t.slug AS task_slug FROM dispatch_jobs j JOIN tasks t ON j.task_id = t.id "
+        "WHERE t.feature_id = ? ORDER BY j.started_at DESC, j.id DESC", (feature_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
 # -- résolution du transcript + lecture incrémentale (#5) -------------------------------------------
 
 def expected_transcript_path(session_id: str, cwd: str | Path, *, home: Path | None = None) -> Path:

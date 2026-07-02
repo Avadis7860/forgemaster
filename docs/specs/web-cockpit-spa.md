@@ -37,6 +37,13 @@ gate → merge → terminal, sans jamais devenir un chemin obligatoire du métie
    état (pas de 2ᵉ résolveur en TS qui dériverait) ; il ne fait que du **layering** géométrique (`lib/dag.ts`,
    pur/testé). `depends_on` est **intra-feature** → la roadmap se rend comme **un graphe node-link par
    feature** (couches topologiques + colonne cycle), pas un graphe inter-feature.
+9. **Suivi de dispatch : live par WS, at-rest par HTTP** (V3). Le POST dispatch **bloque** jusqu'à la fin du
+   run et ne rend le `job_id` qu'alors → le front **découvre** le job en cours via `GET /api/dispatch/{p}/{f}/jobs`
+   (baseline capturée au clic), il n'attend pas le POST. Un run **EN COURS** est streamé en **live** par
+   `WS /ws/dispatch/{job}` (boucle `jobs.read_events`, offset/inode ; frame terminale `{type:'job'}`). Un run
+   **TERMINÉ** est lu **at-rest** par `GET /api/jobs/{id}` (`jobs.tail`) — **jamais de socket ouvert pour un
+   run fini**. Le contrat d'événement est **unique** (`jobs.normalize_line` : assistant `text`/`tools`,
+   `tool_result`) : seule la source diffère, le rendu (log structuré, pas un PTY) est identique.
 
 ## Vérification (par vague)
 

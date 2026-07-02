@@ -110,8 +110,31 @@ def _post(port: int, path: str, body: dict) -> None:
             raise
 
 
-def _seed(port: int, slugs: list[str]) -> None:
-    """Crée les projets démo + une roadmap dans le premier (pour rendre le graphe)."""
+# Transcript démo (JSONL au format Claude Code) pour rendre l'onglet Dispatch VOYANT : normalize_line le
+# transforme en tours assistant (texte + outils) et résultats d'outils. Contenu FICTIF, représentatif.
+_DEMO_TRANSCRIPT = [
+    {"type": "assistant", "message": {"content": [
+        {"type": "text", "text": "J’analyse le contrat de schéma existant avant d’écrire le parseur."},
+        {"type": "tool_use", "name": "Read", "input": {"file_path": "src/ingest/schema.py"}},
+        {"type": "tool_use", "name": "Grep", "input": {"pattern": "class .*Contract"}}]}},
+    {"type": "user", "message": {"content": [
+        {"type": "tool_result", "content": "2 fichiers, 1 classe SchemaContract", "is_error": False}]}},
+    {"type": "assistant", "message": {"content": [
+        {"type": "text", "text": "J’implémente le contrat et je couvre le cas de la ligne partielle."},
+        {"type": "tool_use", "name": "Write", "input": {"file_path": "src/ingest/schema.py"}},
+        {"type": "tool_use", "name": "Bash", "input": {"command": "python -m pytest tests/test_schema.py -q"}}]}},
+    {"type": "user", "message": {"content": [
+        {"type": "tool_result", "content": "4 passed in 0.62s", "is_error": False}]}},
+    {"type": "assistant", "message": {"content": [
+        {"type": "text", "text": "Tests verts — le contrat de schéma est prêt à merger."}],
+        "usage": {"output_tokens": 1840}}},
+]
+
+
+def _seed(port: int, slugs: list[str], *, home: Path) -> None:
+    """Crée les projets démo + une roadmap dans le premier (graphe), et un JOB terminé avec transcript pour
+    rendre l'onglet Dispatch (transcript live). Le job est inséré EN DIRECT dans la DB jetable du daemon
+    (mêmes settings via l'env COCKPIT_HOME) — aucune API ne fabrique un run sans spawner un vrai `claude`."""
     for slug in slugs:
         _post(port, "/api/projects", {"slug": slug, "name": slug.replace("-", " ").title()})
     proj = slugs[0]
@@ -120,6 +143,36 @@ def _seed(port: int, slugs: list[str]) -> None:
         for task, title, deps in tasks:
             _post(port, f"/api/features/{proj}/{feature}/tasks",
                   {"slug": task, "title": title, "depends_on": deps})
+    _seed_dispatch_job(home, proj)
+
+
+def _seed_dispatch_job(home: Path, proj: str) -> None:
+    """Insère un job `done` + son transcript dans la DB du daemon (import local des couches cockpit)."""
+    try:
+        from cockpit.config import Settings
+        from cockpit.db import store
+        from cockpit.dispatch import jobs
+    except ImportError:
+        return  # cockpit non importable (build-only) → on saute le seed du run, sans casser le screenshot
+    settings = Settings.resolve(home=home / "home", projects_root=home / "projects")
+    transcript = home / "demo-transcript.jsonl"
+    transcript.write_text("".join(json.dumps(o) + "\n" for o in _DEMO_TRANSCRIPT), encoding="utf-8")
+    conn = store.open_db(settings)
+    try:
+        # 1ʳᵉ task de la 1ʳᵉ feature (ordre list_tasks) — un run terminé y est rattaché.
+        row = conn.execute(
+            "SELECT t.id FROM tasks t JOIN features f ON t.feature_id = f.id "
+            "JOIN projects p ON f.project_id = p.id WHERE p.slug = ? ORDER BY f.slug, t.slug LIMIT 1",
+            (proj,)).fetchone()
+        if row is None:
+            return
+        job_id = jobs.record_start(conn, task_id=row[0], worktree=str(home / "wt"),
+                                   session_id="demo-sess", log_path=str(transcript))
+        conn.execute("UPDATE dispatch_jobs SET status = 'done', num_turns = 5, cost_usd = 0.1421 "
+                     "WHERE id = ?", (job_id,))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def shoot(routes: list[str], *, port: int, viewport: dict | None, full_page: bool,
@@ -138,7 +191,7 @@ def shoot(routes: list[str], *, port: int, viewport: dict | None, full_page: boo
             tail = proc.stdout.read()[-1500:] if proc.stdout else ""
             raise SystemExit(f"le daemon n'a pas démarré sur :{port}\n{tail}")
         if seed:
-            _seed(port, DEMO_PROJECTS)
+            _seed(port, DEMO_PROJECTS, home=home)
         for route in routes:
             path = route if route.startswith("/") else "/" + route
             url = f"http://127.0.0.1:{port}{path}"          # browser-history (fallback SPA côté serveur)

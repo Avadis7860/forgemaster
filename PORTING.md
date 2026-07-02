@@ -73,7 +73,7 @@ projet + onglets (option A). Boucle visuelle : `web/tools/ui_shot.py`.
 |---|---|---|
 | V1 — Fondation | scaffold + daemon (CORS + StaticFiles fallback SPA) + tokens `@theme` + `statusTone` + primitives (`components/ui/`) + client API typé (Zod) + shell/rail/routing + **vue Projets** + harnais visuel + gate front (`front_conformance` R1-R5) | ✅ |
 | V2 — Roadmap DAG | roadmap **classée** (backend : `resolver.classify` + NEXT/feature) + workspace à onglets (option A) + **un graphe node-link par feature** (layering `lib/dag.ts`, couches topologiques + colonne cycle) + deep-link `?feature=` | ✅ |
-| V3 — Dispatch live | `WS /ws/dispatch/{job}` (backend, boucle `jobs.read_events`) + transcript live | ⬜ |
+| V3 — Dispatch live | `WS /ws/dispatch/{job}` (backend, boucle `jobs.read_events`) + découverte `GET …/jobs` + onglet Dispatch (transcript live WS / at-rest HTTP) | ✅ |
 | V4 — Gate & merge | statuts review/verify + rapport merge + **bouton GO humain** (fail-closed) | ⬜ |
 | V5 — Terminal | xterm.js ↔ `WS /ws/terminal/{project}` (backend déjà prêt) | ⬜ |
 | V6 — Harmonisation | états unifiés, responsive, raffinement, a11y (optionnelle) | ⬜ |
@@ -88,3 +88,14 @@ screenshotés & Read & critiqués). Onglets Roadmap/Dispatch/Gate/Terminal = V2�
 screenshotés & Read & critiqués — fan-out, colonne cycle, NEXT/feature). Correction de modèle actée :
 `depends_on` est **intra-feature** → un graphe **par feature** (≠ mockup inter-feature). Dispatch/Gate/
 Terminal = onglets désactivés jusqu'à V3/V4/V5.
+
+**V3 — vérif** : `WS /ws/dispatch/{job}` streame les événements normalisés puis une frame terminale
+(`test_daemon` : transcript jetable → assistant/tool_result/job ; job inconnu → refus 1008) ; découverte
+`GET /api/dispatch/{p}/{f}/jobs` (join `tasks`, `task_slug`) ; `npm run build` + `vitest` (13, dont
+`Transcript.test` : chips outils + ok/erreur + usage) + `eslint` + `front_conformance` verts ; **boucle
+visuelle** (Dispatch peuplé — transcript rendu, chips, résultats, usage, historique — + état vide, Read &
+critiqués). Modèle de suivi acté : un run **EN COURS** est streamé en **live (WS)** ; un run **TERMINÉ** est
+lu **at-rest par HTTP** (`GET /api/jobs/{id}`) — pas de socket ouvert pour un run fini, et capture
+déterministe. Le POST dispatch bloque jusqu'à la fin → le front **découvre** le job en cours via `…/jobs`
+(baseline capturée au clic) plutôt que d'attendre le `job_id` du POST. Gate/Terminal = onglets désactivés
+jusqu'à V4/V5.

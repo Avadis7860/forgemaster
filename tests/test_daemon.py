@@ -4,15 +4,17 @@ et le pont PTY **local** (`pty_bridge` sur un shell local, plus de ssh)."""
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from cockpit.config import Settings
 from cockpit.daemon import app as app_mod
 from cockpit.db import store
-from cockpit.dispatch import worktree
+from cockpit.dispatch import jobs, worktree
 from cockpit.git.identity import resolve_identity
 from cockpit.git.internal import InternalGit
 from cockpit.projects import registry
@@ -97,6 +99,58 @@ def test_dispatch_refused_without_task_no_spawn(client):
     r = c.post("/api/dispatch/proj/empty").json()        # feature sans task → refus AVANT tout spawn
     assert r["dispatched"] is False and "aucune task" in r["reason"]
     assert c.get("/api/jobs/inexistant").status_code == 404
+
+
+def _seed_job(settings, log_path: str, *, status: str = "running") -> str:
+    """Seed projet/feature/task + un `dispatch_job` (sans spawn) pointant sur `log_path`. Rend le job_id."""
+    conn = store.open_db(settings)
+    registry.create_project(conn, settings, slug="proj")
+    model.add_feature(conn, project_slug="proj", slug="feat")
+    task = model.add_task(conn, feature_ref="proj/feat", slug="schema")
+    job_id = jobs.record_start(conn, task_id=task["id"], worktree="/tmp/wt",
+                               session_id="sess", log_path=log_path)
+    if status != "running":
+        conn.execute("UPDATE dispatch_jobs SET status = ?, num_turns = 3 WHERE id = ?", (status, job_id))
+    conn.commit()
+    conn.close()
+    return job_id
+
+
+def test_feature_jobs_listing_for_discovery(client):
+    c, settings = client
+    job_id = _seed_job(settings, "/tmp/none.jsonl")
+    r = c.get("/api/dispatch/proj/feat/jobs")
+    assert r.status_code == 200
+    body = r.json()["jobs"]
+    assert len(body) == 1 and body[0]["id"] == job_id
+    assert body[0]["task_slug"] == "schema" and body[0]["status"] == "running"
+    assert c.get("/api/dispatch/proj/nope/jobs").status_code == 404   # feature absente → 404
+
+
+def test_dispatch_ws_streams_normalized_transcript_then_terminal_frame(client, tmp_path):
+    c, settings = client
+    log = tmp_path / "transcript.jsonl"                  # transcript JETABLE (jamais un vrai `claude`)
+    log.write_text(
+        json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "Je démarre la task."},
+            {"type": "tool_use", "name": "Read", "input": {"file_path": "core.py"}}]}}) + "\n"
+        + json.dumps({"type": "user", "message": {"content": [
+            {"type": "tool_result", "content": "lu", "is_error": False}]}}) + "\n",
+        encoding="utf-8")
+    job_id = _seed_job(settings, str(log), status="done")   # terminal → le stream draine puis clôt
+
+    with c.websocket_connect(f"/ws/dispatch/{job_id}") as ws:
+        e1 = ws.receive_json()
+        assert e1["type"] == "assistant" and "démarre" in e1["text"]
+        assert e1["tools"][0] == {"name": "Read", "input_summary": "core.py"}
+        e2 = ws.receive_json()
+        assert e2["type"] == "tool_result" and e2["results"][0]["ok"] is True
+        e3 = ws.receive_json()                              # frame terminale de fin de job
+        assert e3["type"] == "job" and e3["status"] == "done" and e3["num_turns"] == 3
+
+    # job inconnu → refus 1008, jamais un flux
+    with pytest.raises(WebSocketDisconnect), c.websocket_connect("/ws/dispatch/inexistant") as ws:
+        ws.receive_json()
 
 
 # -- gate + merge e2e (SoT bare réel) --------------------------------------------------------------

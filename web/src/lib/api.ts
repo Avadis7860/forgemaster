@@ -3,7 +3,10 @@
 // Rappels de contrat : chemins ASYMÉTRIQUES (/api/projects/{p}/… vs /api/features/{p}/{f}/…).
 import type { z } from 'zod'
 import {
+  DispatchReportSchema,
   HealthSchema,
+  JobDetailSchema,
+  JobsListSchema,
   NextSchema,
   ProjectSchema,
   ProjectsListSchema,
@@ -56,5 +59,21 @@ export const api = {
     request(
       `/api/features/${encodeURIComponent(project)}/${encodeURIComponent(feature)}/next`,
       NextSchema,
+    ),
+
+  // Jobs d'une feature (récents d'abord) — sert la découverte du job en cours à streamer + l'historique.
+  listFeatureJobs: (project: string, feature: string) =>
+    request(
+      `/api/dispatch/${encodeURIComponent(project)}/${encodeURIComponent(feature)}/jobs`,
+      JobsListSchema,
+    ).then((r) => r.jobs),
+  // Détail + transcript AT-REST d'un job (run terminé) — pas de socket ouvert pour un run fini.
+  getJob: (jobId: string) => request(`/api/jobs/${encodeURIComponent(jobId)}`, JobDetailSchema),
+  // POST dispatch = LONG bloquant (spawn `claude -p`, ≤30 min) : rendu à la fin du run (rapport + job_id).
+  dispatch: (project: string, feature: string) =>
+    request(
+      `/api/dispatch/${encodeURIComponent(project)}/${encodeURIComponent(feature)}`,
+      DispatchReportSchema,
+      { method: 'POST', body: '{}' },
     ),
 }

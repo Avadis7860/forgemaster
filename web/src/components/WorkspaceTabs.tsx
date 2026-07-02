@@ -1,16 +1,23 @@
 import { Link } from '@tanstack/react-router'
 import { cn } from '@/lib/cn'
 
-// Onglets du workspace projet (IA option A). Roadmap est livré (V2) ; les autres arrivent dans leurs
-// vagues (Dispatch V3, Gate V4, Terminal V5) — rendus désactivés, jamais masqués (la structure se voit).
-const TABS: { key: string; label: string; enabled: boolean }[] = [
-  { key: 'roadmap', label: 'Roadmap', enabled: true },
-  { key: 'dispatch', label: 'Dispatch', enabled: false },
+// Onglets du workspace projet (IA option A). Roadmap + Dispatch sont livrés (V2/V3) ; les autres arrivent
+// dans leurs vagues (Gate V4, Terminal V5) — rendus désactivés, jamais masqués (la structure se voit).
+type Tab =
+  | { key: string; label: string; enabled: true; to: string; exact: boolean }
+  | { key: string; label: string; enabled: false }
+
+const TABS: Tab[] = [
+  { key: 'roadmap', label: 'Roadmap', enabled: true, to: '/$project', exact: true },
+  { key: 'dispatch', label: 'Dispatch', enabled: true, to: '/$project/dispatch', exact: false },
   { key: 'gate', label: 'Gate', enabled: false },
   { key: 'terminal', label: 'Terminal', enabled: false },
 ]
 
-/** Barre d'onglets du workspace. V2 : seul Roadmap est navigable (route index de /$project). */
+const BASE = 'border-b-2 px-3 py-2 text-sm font-medium transition-colors'
+
+/** Barre d'onglets du workspace. V3 : Roadmap (route index) + Dispatch navigables ; l'onglet actif est
+ *  souligné par l'accent via `activeProps` (le routeur sait quel onglet est courant). */
 export function WorkspaceTabs({ project, className }: { project: string; className?: string }) {
   return (
     <nav className={cn('-mb-px flex items-center gap-1', className)}>
@@ -18,9 +25,11 @@ export function WorkspaceTabs({ project, className }: { project: string; classNa
         t.enabled ? (
           <Link
             key={t.key}
-            to="/$project"
+            to={t.to}
             params={{ project }}
-            className="border-b-2 border-accent-500 px-3 py-2 text-sm font-medium text-fg"
+            activeOptions={{ exact: t.exact }}
+            className={cn(BASE, 'border-transparent text-muted hover:text-fg')}
+            activeProps={{ className: cn(BASE, 'border-accent-500 text-fg') }}
           >
             {t.label}
           </Link>
@@ -28,7 +37,7 @@ export function WorkspaceTabs({ project, className }: { project: string; classNa
           <span
             key={t.key}
             title="à venir"
-            className="cursor-not-allowed border-b-2 border-transparent px-3 py-2 text-sm text-faint"
+            className={cn(BASE, 'cursor-not-allowed border-transparent text-faint')}
           >
             {t.label}
           </span>
