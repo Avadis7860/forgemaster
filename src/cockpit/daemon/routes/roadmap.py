@@ -26,11 +26,19 @@ def make_roadmap_router() -> APIRouter:
 
     @router.get("/api/projects/{project}/roadmap")
     def roadmap(project: str, deps: Deps = Depends(get_deps)) -> dict:
+        # Roadmap CLASSÉE : chaque task porte son état DAG (resolver.classify) et chaque feature son
+        # NEXT dispatchable. Le graphe reste l'unique autorité de séquencement — le front n'infère
+        # jamais l'état lui-même (pas de 2ᵉ résolveur en TS qui dériverait). Un seul GET = tout le board.
         conn = deps.open_db()
         try:
             features = model.list_features(conn, project)
             for f in features:
-                f["tasks"] = model.list_tasks(conn, f["id"])
+                tasks = model.list_tasks(conn, f["id"])
+                index = {t["slug"]: t for t in tasks}
+                classified = resolver.classify(index)
+                f["tasks"] = [classified[t["slug"]] for t in tasks]   # ordre list_tasks préservé
+                nxt = resolver.resolve_next(index) if index else None
+                f["next"] = nxt["slug"] if nxt else None
             return {"project": project, "features": features}
         finally:
             conn.close()

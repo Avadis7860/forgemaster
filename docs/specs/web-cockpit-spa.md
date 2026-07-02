@@ -32,6 +32,11 @@ gate → merge → terminal, sans jamais devenir un chemin obligatoire du métie
 7. **Contrat API = SoT typé** (`lib/schemas.ts`, Zod) : miroir exact du daemon. Rappels — chemins
    asymétriques `/api/projects/{p}/…` vs `/api/features/{p}/{f}/…` ; `depends_on` déjà en liste ; POST
    dispatch **long bloquant** ; **GO humain** obligatoire (gate vert sans `go` ⇒ `hold`, jamais merge).
+8. **L'état DAG vient du backend, jamais du front** (V2) : `GET /…/roadmap` renvoie les tasks **classées**
+   (`resolver.classify` : READY/BLOCKED_DEPS/CYCLE/…) + le NEXT par feature. Le front ne recalcule aucun
+   état (pas de 2ᵉ résolveur en TS qui dériverait) ; il ne fait que du **layering** géométrique (`lib/dag.ts`,
+   pur/testé). `depends_on` est **intra-feature** → la roadmap se rend comme **un graphe node-link par
+   feature** (couches topologiques + colonne cycle), pas un graphe inter-feature.
 
 ## Vérification (par vague)
 

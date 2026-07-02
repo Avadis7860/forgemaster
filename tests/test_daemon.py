@@ -78,7 +78,14 @@ def test_roadmap_features_tasks_and_next(client):
     nxt = c.get("/api/features/proj/feat/next").json()
     assert nxt["next"]["slug"] == "schema" and nxt["n_tasks"] == 2   # api est bloquée par schema
     rm = c.get("/api/projects/proj/roadmap").json()
-    assert rm["features"][0]["slug"] == "feat" and len(rm["features"][0]["tasks"]) == 2
+    feat = rm["features"][0]
+    assert feat["slug"] == "feat" and len(feat["tasks"]) == 2
+    # la roadmap est CLASSÉE : chaque task porte son état DAG, la feature porte son NEXT dispatchable
+    states = {t["slug"]: t["state"] for t in feat["tasks"]}
+    assert states == {"schema": "READY", "api": "BLOCKED_DEPS"}
+    assert feat["next"] == "schema"
+    api_task = next(t for t in feat["tasks"] if t["slug"] == "api")
+    assert api_task["blockers"] == ["schema (todo)"] and api_task["depends_on"] == ["schema"]
 
 
 # -- dispatch (gate no-task-no-dispatch, sans spawn) -----------------------------------------------

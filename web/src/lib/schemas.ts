@@ -49,7 +49,12 @@ export const TaskClassifiedSchema = TaskSchema.extend({
 })
 export type TaskClassified = z.infer<typeof TaskClassifiedSchema>
 
-export const FeatureWithTasksSchema = FeatureSchema.extend({ tasks: z.array(TaskSchema) })
+// La roadmap est CLASSÉE côté daemon : tasks avec état DAG (resolver.classify) + NEXT dispatchable
+// de la feature (slug, ou null si aucune READY). Le front ne recalcule jamais l'état (source unique Python).
+export const FeatureWithTasksSchema = FeatureSchema.extend({
+  tasks: z.array(TaskClassifiedSchema),
+  next: z.string().nullable(),
+})
 export type FeatureWithTasks = z.infer<typeof FeatureWithTasksSchema>
 
 export const RoadmapSchema = z.object({

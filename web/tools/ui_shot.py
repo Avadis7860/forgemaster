@@ -43,6 +43,34 @@ DEFAULT_RUNNER = Path(
 DEMO_PROJECTS = ["atlas-demo", "nebula-demo"]           # slugs FICTIFS (jamais un vrai basename)
 _SLUG = re.compile(r"[^a-z0-9]+")
 
+# Roadmap démo seedée dans le PREMIER projet (atlas-demo) : deps INTRA-feature (le modèle réel), qui
+# produisent READY/BLOCKED_DEPS/CYCLE + un NEXT par feature + un fan-out — de quoi juger le layout du
+# graphe. nebula-demo reste vide (test de l'état vide). Slugs FICTIFS. (Tasks todo : DONE/ACTIVE sont
+# des variantes de couleur couvertes par la légende + les tests unitaires, non seedées ici.)
+# (slug, titre FR, deps) — des titres ≠ slug rendent le graphe représentatif (pas de titre défaut = slug).
+SEED_ROADMAP: dict[str, list[tuple[str, str, list[str]]]] = {
+    "ingest-pipeline": [
+        ("schema-contract", "Contrat de schéma", []),
+        ("parser-core", "Cœur du parseur", ["schema-contract"]),
+        ("stream-reader", "Lecteur de flux", ["parser-core"]),
+        ("backpressure", "Contre-pression", ["stream-reader"]),
+    ],
+    "query-layer": [
+        ("index-builder", "Constructeur d’index", []),
+        ("fts-adapter", "Adaptateur FTS", ["index-builder"]),
+        ("ranking", "Scoring / ranking", ["fts-adapter"]),
+    ],
+    "web-console": [
+        ("auth-shell", "Coquille d’auth", []),
+        ("dashboard", "Tableau de bord", ["auth-shell"]),
+        ("settings", "Réglages", ["auth-shell"]),
+    ],
+    "nightly-gc": [
+        ("sweep-planner", "Planificateur de balayage", ["sweep-runner"]),
+        ("sweep-runner", "Exécuteur de balayage", ["sweep-planner"]),
+    ],
+}
+
 
 def _slug(route: str) -> str:
     return _SLUG.sub("-", route.lower()).strip("-") or "root"
@@ -69,19 +97,29 @@ def _wait_health(port: int, *, tries: int = 60, delay: float = 0.5) -> bool:
     return False
 
 
+def _post(port: int, path: str, body: dict) -> None:
+    """POST JSON sur l'API démo (idempotent : un doublon 400 est ignoré)."""
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}{path}", data=json.dumps(body).encode(),
+        headers={"content-type": "application/json"}, method="POST",
+    )
+    try:
+        urllib.request.urlopen(req, timeout=5).read()      # noqa: S310 — localhost fixe
+    except urllib.error.HTTPError as e:
+        if e.code != 400:                                  # 400 = doublon → ok
+            raise
+
+
 def _seed(port: int, slugs: list[str]) -> None:
-    """Crée des projets démo via l'API réelle (idempotent : un doublon 400 est ignoré)."""
+    """Crée les projets démo + une roadmap dans le premier (pour rendre le graphe)."""
     for slug in slugs:
-        body = json.dumps({"slug": slug, "name": slug.replace("-", " ").title()}).encode()
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{port}/api/projects", data=body,
-            headers={"content-type": "application/json"}, method="POST",
-        )
-        try:
-            urllib.request.urlopen(req, timeout=5).read()  # noqa: S310 — localhost fixe
-        except urllib.error.HTTPError as e:
-            if e.code != 400:                              # 400 = doublon → ok
-                raise
+        _post(port, "/api/projects", {"slug": slug, "name": slug.replace("-", " ").title()})
+    proj = slugs[0]
+    for feature, tasks in SEED_ROADMAP.items():
+        _post(port, f"/api/projects/{proj}/features", {"slug": feature})
+        for task, title, deps in tasks:
+            _post(port, f"/api/features/{proj}/{feature}/tasks",
+                  {"slug": task, "title": title, "depends_on": deps})
 
 
 def shoot(routes: list[str], *, port: int, viewport: dict | None, full_page: bool,

@@ -72,7 +72,7 @@ projet + onglets (option A). Boucle visuelle : `web/tools/ui_shot.py`.
 | Vague | Contenu | Statut |
 |---|---|---|
 | V1 — Fondation | scaffold + daemon (CORS + StaticFiles fallback SPA) + tokens `@theme` + `statusTone` + primitives (`components/ui/`) + client API typé (Zod) + shell/rail/routing + **vue Projets** + harnais visuel + gate front (`front_conformance` R1-R5) | ✅ |
-| V2 — Roadmap DAG | features×tasks, états READY/BLOCKED, NEXT, arêtes depends_on ; onglet Roadmap | ⬜ |
+| V2 — Roadmap DAG | roadmap **classée** (backend : `resolver.classify` + NEXT/feature) + workspace à onglets (option A) + **un graphe node-link par feature** (layering `lib/dag.ts`, couches topologiques + colonne cycle) + deep-link `?feature=` | ✅ |
 | V3 — Dispatch live | `WS /ws/dispatch/{job}` (backend, boucle `jobs.read_events`) + transcript live | ⬜ |
 | V4 — Gate & merge | statuts review/verify + rapport merge + **bouton GO humain** (fail-closed) | ⬜ |
 | V5 — Terminal | xterm.js ↔ `WS /ws/terminal/{project}` (backend déjà prêt) | ⬜ |
@@ -81,3 +81,10 @@ projet + onglets (option A). Boucle visuelle : `web/tools/ui_shot.py`.
 **V1 — vérif** : `npm run build` + `vitest` (6) + `eslint` + `front_conformance` verts ; daemon sert `dist`
 + fallback SPA + CORS (`test_daemon` : 2 tests) ; **boucle visuelle** (accueil + overview projet
 screenshotés & Read & critiqués). Onglets Roadmap/Dispatch/Gate/Terminal = V2→V5.
+
+**V2 — vérif** : `GET /…/roadmap` classée (`test_daemon` : state READY/BLOCKED_DEPS + NEXT + blockers) ;
+`npm run build` + `vitest` (11, dont `lib/dag.test` : layering chaîne/fan/diamant/cycle/vide) + `eslint`
++ `front_conformance` verts ; **boucle visuelle** (roadmap peuplée + état vide + deep-link `?feature=`
+screenshotés & Read & critiqués — fan-out, colonne cycle, NEXT/feature). Correction de modèle actée :
+`depends_on` est **intra-feature** → un graphe **par feature** (≠ mockup inter-feature). Dispatch/Gate/
+Terminal = onglets désactivés jusqu'à V3/V4/V5.
