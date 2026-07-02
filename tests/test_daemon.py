@@ -15,6 +15,7 @@ from cockpit.config import Settings
 from cockpit.daemon import app as app_mod
 from cockpit.db import store
 from cockpit.dispatch import jobs, worktree
+from cockpit.gate import toolchain
 from cockpit.git.identity import resolve_identity
 from cockpit.git.internal import InternalGit
 from cockpit.projects import registry
@@ -169,6 +170,11 @@ def _seed_committed_feature(settings) -> str:
     git.commit_worktree(res["path"], message="feat: work",
                         identity=resolve_identity("proj", "dev", role="worker"))
     sha = git.feature_sha(registry.sot_path_for(settings, "proj"), "feature/feat")
+    # verdict Tier-0-natif vert (core.py ⇒ toolchain backend applicable) : sinon le gate bloque sur
+    # « toolchain non exécutée ». Écrit directement (le vrai run tourne dans la preuve dogfood, pas ici).
+    toolchain.write_verdict(settings, "proj", "feat",
+                            [{"group": "backend", "name": "ruff", "cmd": "ruff check .",
+                              "exit_code": 0, "ok": True}], sha=sha)
     conn.close()
     return sha
 

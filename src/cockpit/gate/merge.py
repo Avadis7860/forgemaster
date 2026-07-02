@@ -27,7 +27,7 @@ from pathlib import Path
 
 from cockpit.config import Settings
 from cockpit.dispatch import worktree
-from cockpit.gate import review, verify
+from cockpit.gate import review, toolchain, verify
 from cockpit.git.identity import resolve_identity
 from cockpit.git.internal import GitOpError, InternalGit
 from cockpit.projects.registry import get_project
@@ -177,11 +177,16 @@ def evaluate_gate(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
     ui_touched = False
     decision: dict | None = None
     if head_sha is not None:
-        ui_touched = verify.has_ui(git.diff_names(sot, base=BASE_BRANCH, head=branch))
+        diff_files = git.diff_names(sot, base=BASE_BRANCH, head=branch)   # unique appel — sert UI + natif
+        ui_touched = verify.has_ui(diff_files)
+        # Tier-0 natif : injecté (tests) sinon LU depuis le verdict toolchain SHA-bound (jamais exécuté ici —
+        # evaluate_gate est appelé par le GET gate poll-é ; l'exécution est un step séparé, cf. toolchain).
+        native_status = native if native is not None else toolchain.status(
+            settings, project_slug, feature_slug, current_sha=head_sha, diff_files=diff_files)
         decision = compose_merge_decision(
             tier0 or {"red": 0, "yellow": 0}, tier1_status, human_go=human_go,
             t15_status=t15_status if ui_touched else None, ui_touched=ui_touched,
-            t15_override=t15_override, native_status=native, t1_override=t1_override)
+            t15_override=t15_override, native_status=native_status, t1_override=t1_override)
     return {"feature": feature, "project_slug": project_slug, "feature_slug": feature_slug,
             "branch": branch, "sot": sot, "head_sha": head_sha, "ui_touched": ui_touched,
             "tier1_status": tier1_status, "t15_status": t15_status, "decision": decision}

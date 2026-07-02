@@ -9,7 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from cockpit.daemon.deps import Deps, get_deps
-from cockpit.gate import merge, review
+from cockpit.dispatch import worktree
+from cockpit.gate import merge, review, toolchain
 from cockpit.git.internal import GitOpError, InternalGit
 from cockpit.projects.registry import get_project
 from cockpit.roadmap.model import resolve_feature
@@ -56,6 +57,24 @@ def make_gate_router() -> APIRouter:
         return review.write_verdict(deps.settings, project, feature,
                                     {"findings": body.findings, "base": body.base},
                                     sha=sha, diff_text=diff_text)
+
+    @router.post("/api/gate/{project}/{feature}/toolchain", status_code=201)
+    def run_toolchain_gate(project: str, feature: str, deps: Deps = Depends(get_deps)) -> dict:
+        """Exécute la toolchain Tier-0 native (front/backend selon le diff) dans le worktree de la feature et
+        écrit le verdict SHA-bound. Action EXPLICITE (jamais un poll — miroir du POST …/review) : c'est un
+        step de gate, pas le GET idempotent. Fail-closed : worktree/branche absents → 422 (rien écrit)."""
+        sot, branch = _resolve_sot_and_branch(deps, project, feature)
+        wt = worktree.worktree_path_for(deps.settings, project, feature)
+        if not wt.is_dir():
+            raise HTTPException(status_code=422, detail=f"worktree absent : {wt} — feature non dispatchée")
+        git = InternalGit()
+        try:
+            sha = git.feature_sha(sot, branch)
+            diff_files = git.diff_names(sot, base="dev", head=branch)
+        except GitOpError as exc:
+            raise HTTPException(status_code=422, detail=f"branche/diff introuvable : {exc}") from exc
+        results = toolchain.run_toolchain(wt, diff_files)
+        return toolchain.write_verdict(deps.settings, project, feature, results, sha=sha)
 
     @router.get("/api/gate/{project}/{feature}")
     def gate_status(project: str, feature: str, deps: Deps = Depends(get_deps)) -> dict:

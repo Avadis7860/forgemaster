@@ -123,3 +123,18 @@ sans GO », `gate-blocked-demo` → **bloqué** avec bloqueurs + override + GO d
 Read & critiqués). Invariant **fail-closed** rendu : le front ne recompose jamais la décision (source unique
 Python via `compose_merge_decision`) ; le GET est idempotent (aucun POST pour la preview) ; le **POST /api/merge**
 (GO humain) est la seule mutation, `allow = gate_green ET go`. Terminal = onglet désactivé jusqu'à V5.
+
+**P5a — Tier-0 natif (toolchain gate)** : peuple le slot `native_status` de `compose_merge_decision`
+(conçu mais jamais alimenté) → referme « vitest hors gate » ET le trou symétrique backend. Nouveau
+`gate/toolchain.py` (miroir de `gate/verify.py`) : runner qui lance la toolchain **auto-détectée par
+convention** (`web/package.json` script `gate` → `npm run gate` ; `pyproject.toml` → ruff→mypy→pytest),
+**applicabilité dérivée du diff** (front↔`web/`, backend↔`*.py`), **verdict SHA-bound caché** — `evaluate_gate`
+le **LIT** seulement (jamais de run dans le GET poll-é ; exécution via `cockpit gate toolchain` /
+`POST …/toolchain`). **Fail-CLOSED** non-overridable : applicable + absent/périmé/rouge → merge bloqué ; N/A si
+rien de déclenché. `compose_merge_decision` **inchangé** (on lui fournit le natif peuplé). Vérif : `pytest`
+**85** (purs détection/applicabilité/verdict/status + fail-closed binaire-absent + intégration compose +
+run_merge front bloqué-sans-verdict-puis-mergé + daemon HTTP), ruff+mypy propres, front gate (eslint+vitest
+20+build) vert. **Dogfood live** : `run_toolchain` sur le vrai `web/` du cockpit → **vert** quand le front
+passe, **rouge** (`failed_step=npm-run-gate`, exit 1) quand un vitest casse ; backend live (ruff+mypy+pytest)
+vert — le RÉSULTAT prouvé, pas la plomberie. Zéro changement front (le natif remonte via `decision.reasons`/
+`blockers` déjà rendus). Spec : `docs/specs/tier0-native-toolchain-gate.md`.

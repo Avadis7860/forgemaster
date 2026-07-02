@@ -4,7 +4,7 @@ de sorte que le parser se construit sans tirer fastapi/uvicorn ni aucune couche 
 
 Sous-commandes = la surface de la spine (phases du produit) :
   project (create|list|get) · roadmap (add-feature|show) · task (add|next) ·
-  dispatch · gate (review|verify) · merge · serve
+  dispatch · gate (review|verify|toolchain) · merge · serve
 
 Chaque handler reçoit `(settings, args)` et retourne un code de sortie. Tant que les couches sont des
 stubs, l'appel lève `NotImplementedError("port: … — #N")` — c'est voulu (le câblage est prouvé, la
@@ -71,6 +71,9 @@ def build_parser() -> argparse.ArgumentParser:
     gr.add_argument("feature")
     gv = p_gate_sub.add_parser("verify", parents=[common], help="gate feature-verified e2e")
     gv.add_argument("feature")
+    gt = p_gate_sub.add_parser("toolchain", parents=[common],
+                               help="gate Tier-0 natif (toolchain front/backend déterministe)")
+    gt.add_argument("feature")
 
     # -- merge --------------------------------------------------------------------------------------
     p_merge = sub.add_parser("merge", parents=[common], help="merger une feature complète (+ cleanup)")
@@ -121,8 +124,9 @@ def _h_dispatch(settings: Settings, args: argparse.Namespace) -> int:
 
 
 def _h_gate(settings: Settings, args: argparse.Namespace) -> int:
-    from cockpit.gate import review, verify
-    return (review if args.action == "review" else verify).cli_dispatch(settings, args)
+    from cockpit.gate import review, toolchain, verify
+    mod = {"review": review, "verify": verify, "toolchain": toolchain}[args.action]
+    return mod.cli_dispatch(settings, args)
 
 
 def _h_merge(settings: Settings, args: argparse.Namespace) -> int:
