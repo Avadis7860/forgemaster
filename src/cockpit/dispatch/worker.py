@@ -24,6 +24,7 @@ from cockpit.core import ids, run
 from cockpit.db import store
 from cockpit.dispatch import jobs, worktree
 from cockpit.git.backend import GitBackend
+from cockpit.git.identity import resolve_identity
 from cockpit.git.internal import InternalGit
 from cockpit.projects.registry import get_project
 from cockpit.roadmap import model, resolver
@@ -145,7 +146,13 @@ def dispatch_next(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
                   "error": str(exc)}
     wall_s = time.monotonic() - started
     jobs.record_finish(conn, job_id, parsed, wall_s=wall_s)
-    if not parsed.get("ok"):
+    if parsed.get("ok"):
+        # Le worker écrit le code mais NE fait PAS de git (mandat) → la forge committe son travail sur la
+        # branche de feature dès le run réussi, pour que le gate SHA-bound ait un HEAD à ancrer. Arbre propre
+        # (le worker n'a rien changé) → no-op propre (la feature reste alignée sur sa base).
+        git.commit_worktree(res["path"], message=f"feat({feature}): {nxt['slug']} (worker dispatch)",
+                            identity=resolve_identity(project, worktree.WORKTREE_BASE, role="worker"))
+    else:
         conn.execute("UPDATE tasks SET status = 'todo' WHERE id = ?", (nxt["id"],))   # re-dispatchable
         conn.commit()
     return {"dispatched": True, "reason": "ok" if parsed.get("ok") else (parsed.get("error") or "échec"),

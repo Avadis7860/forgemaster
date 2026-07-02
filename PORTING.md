@@ -22,8 +22,9 @@ est*). On importe les décisions distillées comme specs (`docs/specs/`) — auc
 
 | Module | Source vault | Refactor | Statut |
 |---|---|---|---|
-| `git/backend.py` | (interface neuve) | #1 (frontière DI) | ✅ signatures figées |
-| `git/internal.py` | `git_ops.py` | #2 / #6 / #7 / #12 | ✅ |
+| `git/backend.py` | (interface neuve) | #1 (frontière DI) | ✅ signatures figées (+ reads/commit gate) |
+| `git/internal.py` | `git_ops.py` | #2 / #6 / #7 / #12 | ✅ (+ `feature_sha`/`diff_*`/`commit_worktree`) |
+| `git/identity.py` | `lib/worker_identity.py` | — | ✅ |
 | `git/github.py` | — | (P6) | ⏸ |
 | `projects/registry.py` | `routers/projects.py` | #1 / #4 | ✅ |
 | `roadmap/model.py` | (schéma roadmap.yaml) | #9 | ✅ |
@@ -33,9 +34,9 @@ est*). On importe les décisions distillées comme specs (`docs/specs/`) — auc
 | `dispatch/worktree.py` | `routers/devserver.py` (broker) + `worktree_dispatch.py` | #7 / #12 | ✅ |
 | `dispatch/worker.py` | `lib/worker_dispatch.py` + `dispatch_run.py` | #2 / #3 | ✅ |
 | `dispatch/jobs.py` | `dispatch_ws.py` + `transcript_norm.py` | #5 | ✅ |
-| `gate/review.py` | `loops/review_state.py` | #13 | ⬜ |
-| `gate/verify.py` | `loops/feature_verify.py` | #10 / #13 | ⬜ |
-| `gate/merge.py` | `loops/worker_merge_gate.py` + `orchestrator.py` (merge) | #3 / #8 | ⬜ |
+| `gate/review.py` | `loops/review_state.py` | #13 | ✅ |
+| `gate/verify.py` | `loops/feature_verify.py` | #10 / #13 | ✅ |
+| `gate/merge.py` | `lib/worker_merge_gate.py` + `lib/forge_merge.py` | #3 / #8 | ✅ |
 | `daemon/app.py` | `server.py` (`build_app`) | #1 / #3 | ⬜ |
 | `daemon/routes/*` | `routers/*` | #3 | ⬜ |
 | `terminal/pty.py` | `terminal.py` (pty_bridge) | #2 / #4 | ⬜ |
@@ -46,8 +47,9 @@ est*). On importe les décisions distillées comme specs (`docs/specs/`) — auc
       dispatch → worktree isolé → gate → merge → cleanup worktree`.
 - [ ] Gate « pas de task, pas de dispatch » vérifié (dispatch refusé si feature sans task).
 - [ ] Multi-worktree : ≥2 features en parallèle, chacune son worktree, isolation prouvée (flock).
-- [ ] Merge : creds+identité injectés, cleanup worktree AVANT `branch -D`, writeback prouvé par signaux.
-- [ ] Gates : review Tier-1 lié SHA (non-overridable) + feature-verified Tier-1.5 (fail-closed, N/A-safe).
+- [x] Merge : identité injectée, cleanup worktree AVANT `branch -D`, ff `feature→dev→main` (main-suit-dev).
+- [x] Gates : review Tier-1 lié SHA (garde de process non-overridable) + feature-verified Tier-1.5
+      (fail-closed, N/A-safe) + chaîne d'autorité `compose_merge_decision` + GO humain.
 - [ ] Daemon FastAPI : DI explicite (aucun god-module), routers découpés par domaine.
 - [ ] `ruff` + `mypy` + `pytest` + smoke réponse **verts**. Portabilité WSL prouvée (Debian best-effort).
 

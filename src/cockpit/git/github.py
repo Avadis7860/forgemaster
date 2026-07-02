@@ -38,3 +38,15 @@ class GitHubGit:
 
     def push_mirror(self, sot: Path, remote: str) -> bool:
         raise NotImplementedError("différé (P6) : backend GitHub")
+
+    def feature_sha(self, sot: Path, ref: str) -> str:
+        raise NotImplementedError("différé (P6) : backend GitHub")
+
+    def diff_names(self, sot: Path, *, base: str, head: str) -> list[str]:
+        raise NotImplementedError("différé (P6) : backend GitHub")
+
+    def diff_text(self, sot: Path, *, base: str, head: str) -> str:
+        raise NotImplementedError("différé (P6) : backend GitHub")
+
+    def commit_worktree(self, worktree: Path, *, message: str, identity: tuple[str, str]) -> str | None:
+        raise NotImplementedError("différé (P6) : backend GitHub")

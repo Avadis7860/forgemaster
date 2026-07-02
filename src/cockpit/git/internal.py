@@ -234,3 +234,33 @@ class InternalGit:
         """Pousse toutes les branches vers `remote`. **Best-effort** : retourne False sur échec, ne lève
         jamais (la vérité est le SoT local — spec forge-sot-local)."""
         return _git(sot, "push", remote, "--all").ok
+
+    # -- lectures pour le gate (SHA d'ancrage + diff base...head, read-only) -------------------------
+
+    def feature_sha(self, sot: Path, ref: str) -> str:
+        """SHA d'une réf (branche) sur le SoT bare (`rev-parse <ref>`). Ancre de fraîcheur du verdict
+        Tier-1/Tier-1.5 (le gate le compare au `reviewed_sha`). Lève si la réf est introuvable."""
+        return _checked(sot, "rev-parse", ref).stdout.strip()
+
+    def diff_names(self, sot: Path, *, base: str, head: str) -> list[str]:
+        """Fichiers changés par `head` vs `base` (`diff --name-only base...head`, three-dot = merge-base).
+        Sert `feature_verify.has_ui` (détection de surface UI). Read-only."""
+        out = _checked(sot, "diff", "--name-only", f"{base}...{head}").stdout
+        return [line.strip() for line in out.splitlines() if line.strip()]
+
+    def diff_text(self, sot: Path, *, base: str, head: str) -> str:
+        """Diff unifié complet `base...head` (three-dot). Corpus de la garde `evidence ⊂ diff` du verdict
+        Tier-1 (une citation de finding doit apparaître dans une ligne ajoutée). Read-only."""
+        return _checked(sot, "diff", f"{base}...{head}").stdout
+
+    def commit_worktree(self, worktree: Path, *, message: str, identity: tuple[str, str]) -> str | None:
+        """Committe le travail de l'ouvrier dans son worktree (`add -A` puis `commit`). Le worker `claude -p`
+        écrit le code mais **ne touche pas au cycle git** (mandat) : la forge committe après son run. Identité
+        INJECTÉE le temps du commit (non persistée — spec merge-writeback). Rien à committer (arbre propre) →
+        `None` (no-op propre, la feature reste alignée sur sa base). Sinon le SHA du commit créé."""
+        env = writeback_env(identity)
+        _checked(worktree, "add", "-A")
+        if _git(worktree, "diff", "--cached", "--quiet").ok:   # rc 0 = rien de stagé → no-op
+            return None
+        _checked(worktree, "commit", "-m", message, env=env)
+        return _checked(worktree, "rev-parse", "HEAD").stdout.strip()

@@ -75,6 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     # -- merge --------------------------------------------------------------------------------------
     p_merge = sub.add_parser("merge", parents=[common], help="merger une feature complète (+ cleanup)")
     p_merge.add_argument("feature")
+    p_merge.add_argument("--go", action="store_true", help="GO humain — sans lui, un gate vert affiche hold")
 
     # -- serve --------------------------------------------------------------------------------------
     p_serve = sub.add_parser("serve", parents=[common], help="démarrer le daemon FastAPI (web + API)")

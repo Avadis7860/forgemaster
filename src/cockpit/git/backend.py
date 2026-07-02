@@ -60,3 +60,20 @@ class GitBackend(Protocol):
         """Pousse vers le miroir (GitHub). **Best-effort** : retourne False sur échec, ne lève JAMAIS
         (la vérité est le SoT local ; le miroir ne bloque rien — spec forge-sot-local)."""
         ...
+
+    def feature_sha(self, sot: Path, ref: str) -> str:
+        """SHA d'une réf (branche) sur le SoT — ancre de fraîcheur des verdicts SHA-bound du gate."""
+        ...
+
+    def diff_names(self, sot: Path, *, base: str, head: str) -> list[str]:
+        """Fichiers changés par `head` vs `base` (three-dot). Read-only (détection de surface UI)."""
+        ...
+
+    def diff_text(self, sot: Path, *, base: str, head: str) -> str:
+        """Diff unifié `base...head` (three-dot). Read-only (garde `evidence ⊂ diff` du verdict Tier-1)."""
+        ...
+
+    def commit_worktree(self, worktree: Path, *, message: str, identity: tuple[str, str]) -> str | None:
+        """Committe le travail de l'ouvrier (le worker ne fait pas de git — la forge committe après son run).
+        Identité injectée le temps de l'op. Arbre propre → None (no-op)."""
+        ...
