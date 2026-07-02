@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from cockpit.daemon.deps import Deps, get_deps
-from cockpit.gate import merge, review, verify
+from cockpit.gate import merge, review
 from cockpit.git.internal import GitOpError, InternalGit
 from cockpit.projects.registry import get_project
 from cockpit.roadmap.model import resolve_feature
@@ -59,16 +59,19 @@ def make_gate_router() -> APIRouter:
 
     @router.get("/api/gate/{project}/{feature}")
     def gate_status(project: str, feature: str, deps: Deps = Depends(get_deps)) -> dict:
-        """Statut composé des gates (review Tier-1 + verify Tier-1.5), ancré sur le SHA courant de la
-        feature. Branche jamais créée (feature non dispatchée) → `head_sha=None` (verdicts « absents »)."""
-        sot, branch = _resolve_sot_and_branch(deps, project, feature)
+        """Vue Gate ancrée sur le SHA courant : le statut BRUT (review Tier-1 + verify Tier-1.5) ET la
+        **décision composée** en *preview GO=false* (`decision`: hold/merge, `gate_green`, `blockers`,
+        `reasons`, overrides), via `merge.evaluate_gate` — **sans jamais muter**. Le front rend « gate vert
+        sans GO » depuis ce seul GET idempotent (le POST /api/merge reste réservé au vrai GO humain, et le
+        runner de boucle visuelle *goto-only* ne POSTe donc rien). Branche jamais créée → `head_sha=None`,
+        `decision=None` (verdicts « absents »)."""
+        conn = deps.open_db()
         try:
-            sha: str | None = InternalGit().feature_sha(sot, branch)
-        except GitOpError:
-            sha = None
-        return {"head_sha": sha,
-                "review": review.status(deps.settings, project, feature, current_sha=sha),
-                "verify": verify.status(deps.settings, project, feature, current_sha=sha)}
+            ev = merge.evaluate_gate(conn, deps.settings, feature_ref=f"{project}/{feature}", human_go=False)
+        finally:
+            conn.close()
+        return {"head_sha": ev["head_sha"], "ui_touched": ev["ui_touched"],
+                "review": ev["tier1_status"], "verify": ev["t15_status"], "decision": ev["decision"]}
 
     @router.post("/api/merge/{project}/{feature}")
     def do_merge(project: str, feature: str, body: MergeBody,

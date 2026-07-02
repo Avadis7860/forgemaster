@@ -4,14 +4,17 @@
 import type { z } from 'zod'
 import {
   DispatchReportSchema,
+  GateStatusSchema,
   HealthSchema,
   JobDetailSchema,
   JobsListSchema,
+  MergeReportSchema,
   NextSchema,
   ProjectSchema,
   ProjectsListSchema,
   RoadmapSchema,
   type CreateProjectInput,
+  type MergeInput,
 } from './schemas'
 
 export class ApiError extends Error {
@@ -75,5 +78,21 @@ export const api = {
       `/api/dispatch/${encodeURIComponent(project)}/${encodeURIComponent(feature)}`,
       DispatchReportSchema,
       { method: 'POST', body: '{}' },
+    ),
+
+  // Vue Gate : statut brut (review/verify) + décision composée en preview GO=false (hold). GET idempotent —
+  // aucun effet (le runner de boucle visuelle goto-only peut l'atteindre sans risque).
+  getGate: (project: string, feature: string) =>
+    request(
+      `/api/gate/${encodeURIComponent(project)}/${encodeURIComponent(feature)}`,
+      GateStatusSchema,
+    ),
+  // POST merge SOUS GO HUMAIN — la SEULE mutation. `go:false` ne merge jamais (fail-closed) ; overrides
+  // t1/t15 explicites tracés (lèvent un 🔴 reviewer / un Tier-1.5, JAMAIS un Tier-0/natif déterministe).
+  merge: (project: string, feature: string, body: MergeInput) =>
+    request(
+      `/api/merge/${encodeURIComponent(project)}/${encodeURIComponent(feature)}`,
+      MergeReportSchema,
+      { method: 'POST', body: JSON.stringify(body) },
     ),
 }

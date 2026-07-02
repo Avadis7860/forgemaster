@@ -2,7 +2,7 @@
 // V1 : projets (+ santé). Roadmap/next exposés (stables, consommés dès V2). Dispatch/gate/merge : leurs vagues.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
-import type { CreateProjectInput } from './schemas'
+import type { CreateProjectInput, MergeInput } from './schemas'
 
 export const qk = {
   health: ['health'] as const,
@@ -12,6 +12,7 @@ export const qk = {
   next: (project: string, feature: string) => ['next', project, feature] as const,
   jobs: (project: string, feature: string) => ['jobs', project, feature] as const,
   job: (jobId: string) => ['job', jobId] as const,
+  gate: (project: string, feature: string) => ['gate', project, feature] as const,
 }
 
 export function useHealth() {
@@ -78,6 +79,30 @@ export function useDispatch(project: string, feature: string) {
   return useMutation({
     mutationFn: () => api.dispatch(project, feature),
     onSettled: () => {
+      qc.invalidateQueries({ queryKey: qk.roadmap(project) })
+      qc.invalidateQueries({ queryKey: qk.jobs(project, feature) })
+    },
+  })
+}
+
+// Vue Gate d'une feature : statut brut + décision composée (preview GO=false). GET idempotent, pas de poll.
+export function useGate(project: string, feature: string) {
+  return useQuery({
+    queryKey: qk.gate(project, feature),
+    queryFn: () => api.getGate(project, feature),
+    enabled: Boolean(project && feature),
+  })
+}
+
+// Merge sous GO humain (la seule mutation). À la résolution, invalide gate (branche potentiellement
+// supprimée), roadmap (feature merged, tasks done) et jobs. Le backend reste fail-closed : la mutation
+// ne merge que si gate vert ET go — le front n'anticipe jamais la décision (source unique Python).
+export function useMerge(project: string, feature: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: MergeInput) => api.merge(project, feature, body),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: qk.gate(project, feature) })
       qc.invalidateQueries({ queryKey: qk.roadmap(project) })
       qc.invalidateQueries({ queryKey: qk.jobs(project, feature) })
     },

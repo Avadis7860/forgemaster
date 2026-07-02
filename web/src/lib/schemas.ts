@@ -139,3 +139,77 @@ export type JobFrame = Extract<TranscriptEvent, { type: 'job' }>
 // Sert la vue AT-REST d'un run terminé (pas de socket ouvert) ; le WS ne streame que le live d'un run en cours.
 export const JobDetailSchema = z.object({ job: JobSchema, events: z.array(TranscriptEventSchema) })
 export type JobDetail = z.infer<typeof JobDetailSchema>
+
+// -- V4 gate & merge : statut brut des gates (review Tier-1 + verify Tier-1.5) + décision composée --------
+
+// Counts de sévérité reviewer (🔴 red / 🟡 yellow / 🟣 purple) — null si aucun verdict.
+export const GateCountsSchema = z.object({ red: z.number(), yellow: z.number(), purple: z.number() })
+
+// Statut du verdict Tier-1 (review.status) : présent / frais (reviewed_sha == HEAD) / bloquant (≥1 🔴).
+export const ReviewStatusSchema = z.object({
+  present: z.boolean(),
+  fresh: z.boolean(),
+  blocking: z.boolean(),
+  counts: GateCountsSchema.nullish(),
+  reviewed_sha: z.string().nullish(),
+})
+export type ReviewStatus = z.infer<typeof ReviewStatusSchema>
+
+// Statut du verdict Tier-1.5 (verify.status) : rendu prouvé (feature-verified). N/A hors surface UI.
+export const VerifyStatusSchema = z.object({
+  present: z.boolean(),
+  fresh: z.boolean(),
+  ok: z.boolean().nullish(),
+  blocking: z.boolean(),
+  n_targets: z.number().nullish(),
+  n_failed: z.number().nullish(),
+  reviewed_sha: z.string().nullish(),
+})
+export type VerifyStatus = z.infer<typeof VerifyStatusSchema>
+
+// La décision composée (compose_merge_decision) : le front ne la RECALCULE jamais (source unique Python).
+// `decision` = 'hold' | 'merge' ; gate vert SANS go ⇒ hold ; overrides tracés séparément.
+export const MergeDecisionSchema = z.object({
+  allow: z.boolean(),
+  decision: z.string(),
+  gate_green: z.boolean(),
+  human_go: z.boolean(),
+  ui_touched: z.boolean(),
+  t15_overridden: z.boolean(),
+  t1_overridden: z.boolean(),
+  blockers: z.array(z.string()),
+  reasons: z.array(z.string()),
+})
+export type MergeDecision = z.infer<typeof MergeDecisionSchema>
+
+// GET /api/gate/{p}/{f} : statut brut + décision en preview GO=false (hold). `decision`=null si la feature
+// n'a pas de branche (jamais dispatchée). Une seule lecture idempotente sert toute la vue Gate.
+export const GateStatusSchema = z.object({
+  head_sha: z.string().nullish(),
+  ui_touched: z.boolean(),
+  review: ReviewStatusSchema,
+  verify: VerifyStatusSchema,
+  decision: MergeDecisionSchema.nullish(),
+})
+export type GateStatus = z.infer<typeof GateStatusSchema>
+
+// POST /api/merge/{p}/{f} : rapport de merge sous GO humain. `merged` prouve la mutation ; `decision`
+// reflète l'évaluation (même forme que le preview). `merge_sha` = SHA promu sur dev/main si mergé.
+export const MergeReportSchema = z.object({
+  merged: z.boolean(),
+  allow: z.boolean(),
+  decision: MergeDecisionSchema.nullish(),
+  feature: z.string(),
+  head_sha: z.string().nullish(),
+  merge_sha: z.string().nullish(),
+  closed_tasks: z.array(z.string()),
+  pending_tasks: z.array(z.string()),
+  reason: z.string(),
+})
+export type MergeReport = z.infer<typeof MergeReportSchema>
+
+export interface MergeInput {
+  go: boolean
+  t1_override?: string
+  t15_override?: string
+}

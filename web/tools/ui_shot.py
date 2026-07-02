@@ -122,7 +122,7 @@ _DEMO_TRANSCRIPT = [
     {"type": "assistant", "message": {"content": [
         {"type": "text", "text": "J’implémente le contrat et je couvre le cas de la ligne partielle."},
         {"type": "tool_use", "name": "Write", "input": {"file_path": "src/ingest/schema.py"}},
-        {"type": "tool_use", "name": "Bash", "input": {"command": "python -m pytest tests/test_schema.py -q"}}]}},
+        {"type": "tool_use", "name": "Bash", "input": {"command": "pytest tests/test_schema.py -q"}}]}},
     {"type": "user", "message": {"content": [
         {"type": "tool_result", "content": "4 passed in 0.62s", "is_error": False}]}},
     {"type": "assistant", "message": {"content": [
@@ -144,6 +144,7 @@ def _seed(port: int, slugs: list[str], *, home: Path) -> None:
             _post(port, f"/api/features/{proj}/{feature}/tasks",
                   {"slug": task, "title": title, "depends_on": deps})
     _seed_dispatch_job(home, proj)
+    _seed_gate_states(home, proj)
 
 
 def _seed_dispatch_job(home: Path, proj: str) -> None:
@@ -171,6 +172,56 @@ def _seed_dispatch_job(home: Path, proj: str) -> None:
         conn.execute("UPDATE dispatch_jobs SET status = 'done', num_turns = 5, cost_usd = 0.1421 "
                      "WHERE id = ?", (job_id,))
         conn.commit()
+    finally:
+        conn.close()
+
+
+# Features de démo pour l'onglet Gate — chacune a une VRAIE branche committée sur le SoT bare + un verdict
+# Tier-1 ancré, pour rendre la décision composée VOYANTE : (slug, titre, verdict-🔴 ?). `core.py` (≠ UI) →
+# Tier-1.5 N/A. La verte (0 🔴, fraîche) donne le HOLD « gate vert sans GO » ; la rouge donne le bloqué.
+_GATE_FEATURES = [
+    ("gate-green-demo", "Gate vert (prêt à merger)", False),
+    ("gate-blocked-demo", "Gate rouge (revue bloquante)", True),
+]
+
+
+def _seed_gate_states(home: Path, proj: str) -> None:
+    """Seed des features avec branche committée + verdict Tier-1 pour rendre l'onglet Gate (hold / bloqué).
+    Réplique le patron des tests (worktree réservé → commit worker → `review.write_verdict` SHA-bound) en
+    direct sur la DB jetable — aucune API ne fabrique une branche sans dispatcher un vrai worker."""
+    try:
+        from cockpit.config import Settings
+        from cockpit.db import store
+        from cockpit.dispatch import worktree
+        from cockpit.gate import review
+        from cockpit.git.identity import resolve_identity
+        from cockpit.git.internal import InternalGit
+        from cockpit.projects import registry
+        from cockpit.roadmap import model
+    except ImportError:
+        return  # build-only → on saute (le screenshot montrera « aucune branche à merger »)
+    settings = Settings.resolve(home=home / "home", projects_root=home / "projects")
+    git = InternalGit()
+    sot = registry.sot_path_for(settings, proj)
+    conn = store.open_db(settings)
+    try:
+        for slug, title, red in _GATE_FEATURES:
+            model.add_feature(conn, project_slug=proj, slug=slug, title=title)
+            model.add_task(conn, feature_ref=f"{proj}/{slug}", slug="impl", title="Implémentation")
+            conn.execute("UPDATE tasks SET status = 'in_progress' WHERE slug = 'impl' AND feature_id = "
+                         "(SELECT f.id FROM features f JOIN projects p ON f.project_id = p.id "
+                         "WHERE f.slug = ? AND p.slug = ?)", (slug, proj))
+            conn.commit()
+            res = worktree.reserve(conn, settings, git, project=proj, feature=slug, probe=None)
+            (res["path"] / "core.py").write_text("value = 1\n", encoding="utf-8")
+            git.commit_worktree(res["path"], message="feat: work",
+                                identity=resolve_identity(proj, "dev", role="worker"))
+            head_sha = git.feature_sha(sot, f"feature/{slug}")
+            diff_text = git.diff_text(sot, base="dev", head=f"feature/{slug}")
+            findings = ([{"severity": "🔴", "file": "core.py", "line": 1,
+                          "evidence": "core.py:1 — value = 1"}] if red else [])
+            review.write_verdict(settings, proj, slug, {"findings": findings},
+                                 sha=head_sha, diff_text=diff_text)
     finally:
         conn.close()
 

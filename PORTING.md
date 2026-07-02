@@ -74,7 +74,7 @@ projet + onglets (option A). Boucle visuelle : `web/tools/ui_shot.py`.
 | V1 — Fondation | scaffold + daemon (CORS + StaticFiles fallback SPA) + tokens `@theme` + `statusTone` + primitives (`components/ui/`) + client API typé (Zod) + shell/rail/routing + **vue Projets** + harnais visuel + gate front (`front_conformance` R1-R5) | ✅ |
 | V2 — Roadmap DAG | roadmap **classée** (backend : `resolver.classify` + NEXT/feature) + workspace à onglets (option A) + **un graphe node-link par feature** (layering `lib/dag.ts`, couches topologiques + colonne cycle) + deep-link `?feature=` | ✅ |
 | V3 — Dispatch live | `WS /ws/dispatch/{job}` (backend, boucle `jobs.read_events`) + découverte `GET …/jobs` + onglet Dispatch (transcript live WS / at-rest HTTP) | ✅ |
-| V4 — Gate & merge | statuts review/verify + rapport merge + **bouton GO humain** (fail-closed) | ⬜ |
+| V4 — Gate & merge | GET gate enrichi (`merge.evaluate_gate` : statut brut review/verify **+ décision composée** en preview GO=false) + onglet Gate (décision, évidence Tier-1/Tier-1.5, overrides) + **bouton GO humain** (fail-closed) | ✅ |
 | V5 — Terminal | xterm.js ↔ `WS /ws/terminal/{project}` (backend déjà prêt) | ⬜ |
 | V6 — Harmonisation | états unifiés, responsive, raffinement, a11y (optionnelle) | ⬜ |
 
@@ -99,3 +99,15 @@ lu **at-rest par HTTP** (`GET /api/jobs/{id}`) — pas de socket ouvert pour un 
 déterministe. Le POST dispatch bloque jusqu'à la fin → le front **découvre** le job en cours via `…/jobs`
 (baseline capturée au clic) plutôt que d'attendre le `job_id` du POST. Gate/Terminal = onglets désactivés
 jusqu'à V4/V5.
+
+**V4 — vérif** : refactor backend `merge.evaluate_gate` (préambule read-only extrait de `run_merge`, **source
+unique** de l'évaluation) → le `GET /api/gate/{p}/{f}` renvoie désormais le statut brut **+ la décision
+composée** en preview GO=false (`test_daemon` : gate vert ⇒ `decision.decision == "hold"`, `gate_green` true,
+`human_go` false, sans muter) ; `run_merge` réutilise `evaluate_gate` (tests `test_gate` inchangés : hold/merge,
+🔴 bloquant, périmé). `npm run build` + `vitest` (**19**, dont `gate/GateReport.test` : hold vs bloqué, counts
+🔴/🟡/🟣, Tier-1.5 N/A) + `eslint` + `front_conformance` verts ; `ruff`/`mypy`/`pytest` (**75**) verts. **Boucle
+visuelle** (seed de features avec branche committée + verdict Tier-1 : `gate-green-demo` → **HOLD** « gate vert
+sans GO », `gate-blocked-demo` → **bloqué** avec bloqueurs + override + GO désactivé ; roadmap non-régressée —
+Read & critiqués). Invariant **fail-closed** rendu : le front ne recompose jamais la décision (source unique
+Python via `compose_merge_decision`) ; le GET est idempotent (aucun POST pour la preview) ; le **POST /api/merge**
+(GO humain) est la seule mutation, `allow = gate_green ET go`. Terminal = onglet désactivé jusqu'à V5.

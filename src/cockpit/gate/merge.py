@@ -153,37 +153,63 @@ def _close_feature_tasks(conn: sqlite3.Connection, feature_id: str) -> list[str]
     return closed
 
 
+def evaluate_gate(conn: sqlite3.Connection, settings: Settings, *, feature_ref: str, human_go: bool,
+                  git: InternalGit | None = None, tier0: dict | None = None, native: dict | None = None,
+                  t1_override: str = "", t15_override: str = "") -> dict:
+    """Évalue le gate SANS RIEN MUTER : résout le SHA de la branche de feature, lit les verdicts Tier-1
+    (review) et Tier-1.5 (verify) ancrés sur ce SHA, détecte si l'UI est touchée, compose la décision
+    (`compose_merge_decision`). **Source unique** de l'évaluation : `run_merge` la réutilise (puis agit si
+    `allow`) et le GET gate l'expose en *preview* (`human_go=False` → `hold`) pour rendre l'état « gate vert
+    sans GO » sans jamais POSTer un merge. Retourne `{feature, project_slug, feature_slug, branch, sot,
+    head_sha, ui_touched, tier1_status, t15_status, decision}` ; `head_sha`/`decision`=None si la feature n'a
+    pas de branche (jamais dispatchée)."""
+    git = git or InternalGit()
+    project_slug, feature_slug = feature_ref.split("/", 1) if "/" in feature_ref else ("", feature_ref)
+    feature = resolve_feature(conn, feature_ref)          # KeyError/ValueError si absent
+    branch = feature["branch"]
+    sot = Path(get_project(conn, project_slug)["sot_path"])
+    try:
+        head_sha: str | None = git.feature_sha(sot, branch)   # ancre de fraîcheur des verdicts
+    except GitOpError:
+        head_sha = None                                       # jamais dispatchée → pas encore de branche
+    tier1_status = review.status(settings, project_slug, feature_slug, current_sha=head_sha)
+    t15_status = verify.status(settings, project_slug, feature_slug, current_sha=head_sha)
+    ui_touched = False
+    decision: dict | None = None
+    if head_sha is not None:
+        ui_touched = verify.has_ui(git.diff_names(sot, base=BASE_BRANCH, head=branch))
+        decision = compose_merge_decision(
+            tier0 or {"red": 0, "yellow": 0}, tier1_status, human_go=human_go,
+            t15_status=t15_status if ui_touched else None, ui_touched=ui_touched,
+            t15_override=t15_override, native_status=native, t1_override=t1_override)
+    return {"feature": feature, "project_slug": project_slug, "feature_slug": feature_slug,
+            "branch": branch, "sot": sot, "head_sha": head_sha, "ui_touched": ui_touched,
+            "tier1_status": tier1_status, "t15_status": t15_status, "decision": decision}
+
+
 def run_merge(conn: sqlite3.Connection, settings: Settings, *, feature_ref: str, human_go: bool,
               git: InternalGit | None = None, tier0: dict | None = None, native: dict | None = None,
               t1_override: str = "", t15_override: str = "") -> dict:
     """Merge de `feature_ref` (`"projet/feature"`) SOUS GO HUMAIN, internal-first. Retourne un rapport
     `{merged, allow, decision, feature, head_sha, merge_sha, closed_tasks, pending_tasks, reason}`.
 
-    Compose le gate (Tier-0 injecté défaut propre ; Tier-0 natif injecté défaut N/A ; Tier-1/Tier-1.5 lus,
-    ancrés sur le SHA de la branche de feature). **Aucune mutation** tant que `decision['allow']` est faux.
-    Si autorisé : ff `feature→dev`, ff `dev→main` (main-suit-dev), writeback identité injectée (miroir
-    best-effort), **`worktree.release` (remove worktree) AVANT `delete_branch`**, puis clôture DB."""
+    Évalue le gate via `evaluate_gate` (Tier-0 injecté défaut propre ; Tier-0 natif injecté défaut N/A ;
+    Tier-1/Tier-1.5 lus, ancrés sur le SHA de la branche de feature). **Aucune mutation** tant que
+    `decision['allow']` est faux. Si autorisé : ff `feature→dev`, ff `dev→main` (main-suit-dev), writeback
+    identité injectée (miroir best-effort), **`worktree.release` AVANT `delete_branch`**, puis clôture DB."""
     git = git or InternalGit()
-    project_slug, feature_slug = feature_ref.split("/", 1) if "/" in feature_ref else ("", feature_ref)
-    feature = resolve_feature(conn, feature_ref)          # KeyError/ValueError si absent
-    branch = feature["branch"]
-    sot = Path(get_project(conn, project_slug)["sot_path"])
+    ev = evaluate_gate(conn, settings, feature_ref=feature_ref, human_go=human_go, git=git,
+                       tier0=tier0, native=native, t1_override=t1_override, t15_override=t15_override)
+    feature, feature_slug = ev["feature"], ev["feature_slug"]
+    project_slug, branch, sot, head_sha = ev["project_slug"], ev["branch"], ev["sot"], ev["head_sha"]
+    decision = ev["decision"]
 
     # Une feature planifiée mais jamais dispatchée n'a pas encore de branche git (créée au 1ᵉʳ worktree) →
     # rien à merger. Outcome DOMAINE propre (pas un traceback) : `decision=None`, la CLI le rend lisible.
-    try:
-        head_sha = git.feature_sha(sot, branch)           # ancre de fraîcheur des verdicts
-    except GitOpError:
+    if decision is None:
         return {"merged": False, "allow": False, "decision": None, "feature": feature_slug,
                 "head_sha": None, "merge_sha": None, "closed_tasks": [], "pending_tasks": [],
                 "reason": f"branche {branch} absente — feature jamais dispatchée (rien à merger)"}
-    tier1_status = review.status(settings, project_slug, feature_slug, current_sha=head_sha)
-    ui_touched = verify.has_ui(git.diff_names(sot, base=BASE_BRANCH, head=branch))
-    t15_status = (verify.status(settings, project_slug, feature_slug, current_sha=head_sha)
-                  if ui_touched else None)
-    decision = compose_merge_decision(
-        tier0 or {"red": 0, "yellow": 0}, tier1_status, human_go=human_go, t15_status=t15_status,
-        ui_touched=ui_touched, t15_override=t15_override, native_status=native, t1_override=t1_override)
 
     report = {"merged": False, "allow": decision["allow"], "decision": decision,
               "feature": feature_slug, "head_sha": head_sha, "merge_sha": None,

@@ -185,6 +185,9 @@ def test_gate_review_status_and_merge_over_http(client):
     assert c.post("/api/gate/proj/feat/review", json={"findings": []}).status_code == 201
     st1 = c.get("/api/gate/proj/feat").json()
     assert st1["review"]["present"] and st1["review"]["fresh"] and not st1["review"]["blocking"]
+    # décision composée exposée par le GET (preview GO=false) : gate vert → HOLD, sans muter (core.py ≠ UI)
+    assert st1["decision"]["decision"] == "hold" and st1["decision"]["gate_green"] is True
+    assert st1["decision"]["human_go"] is False and st1["ui_touched"] is False
 
     # merge sans go → hold (gate vert, pas de mutation)
     hold = c.post("/api/merge/proj/feat", json={"go": False}).json()

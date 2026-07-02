@@ -1,8 +1,8 @@
 import { Link } from '@tanstack/react-router'
 import { cn } from '@/lib/cn'
 
-// Onglets du workspace projet (IA option A). Roadmap + Dispatch sont livrés (V2/V3) ; les autres arrivent
-// dans leurs vagues (Gate V4, Terminal V5) — rendus désactivés, jamais masqués (la structure se voit).
+// Onglets du workspace projet (IA option A). Roadmap + Dispatch + Gate sont livrés (V2/V3/V4) ; Terminal
+// arrive en V5 — rendu désactivé, jamais masqué (la structure se voit).
 type Tab =
   | { key: string; label: string; enabled: true; to: string; exact: boolean }
   | { key: string; label: string; enabled: false }
@@ -10,14 +10,14 @@ type Tab =
 const TABS: Tab[] = [
   { key: 'roadmap', label: 'Roadmap', enabled: true, to: '/$project', exact: true },
   { key: 'dispatch', label: 'Dispatch', enabled: true, to: '/$project/dispatch', exact: false },
-  { key: 'gate', label: 'Gate', enabled: false },
+  { key: 'gate', label: 'Gate', enabled: true, to: '/$project/gate', exact: false },
   { key: 'terminal', label: 'Terminal', enabled: false },
 ]
 
 const BASE = 'border-b-2 px-3 py-2 text-sm font-medium transition-colors'
 
-/** Barre d'onglets du workspace. V3 : Roadmap (route index) + Dispatch navigables ; l'onglet actif est
- *  souligné par l'accent via `activeProps` (le routeur sait quel onglet est courant). */
+/** Barre d'onglets du workspace. V4 : Roadmap (route index) + Dispatch + Gate navigables ; l'onglet actif
+ *  est souligné par l'accent via `activeProps` (le routeur sait quel onglet est courant). */
 export function WorkspaceTabs({ project, className }: { project: string; className?: string }) {
   return (
     <nav className={cn('-mb-px flex items-center gap-1', className)}>

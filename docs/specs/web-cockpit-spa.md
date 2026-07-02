@@ -44,6 +44,16 @@ gate → merge → terminal, sans jamais devenir un chemin obligatoire du métie
    **TERMINÉ** est lu **at-rest** par `GET /api/jobs/{id}` (`jobs.tail`) — **jamais de socket ouvert pour un
    run fini**. Le contrat d'événement est **unique** (`jobs.normalize_line` : assistant `text`/`tools`,
    `tool_result`) : seule la source diffère, le rendu (log structuré, pas un PTY) est identique.
+10. **Gate = un seul GET idempotent, GO = la seule mutation** (V4). `GET /api/gate/{p}/{f}` renvoie le
+    statut BRUT (review Tier-1 counts/fresh/blocking, verify Tier-1.5 n_targets/n_failed, `head_sha`,
+    `ui_touched`) **ET** la **décision composée** en *preview GO=false* (`decision`: hold/merge, `gate_green`,
+    `blockers`, `reasons`, overrides) — via `merge.evaluate_gate` (source unique, réutilisée par `run_merge`),
+    **sans jamais muter**. Le front rend « gate vert sans GO ⇒ **hold** » depuis ce seul GET (jamais de
+    recomposition côté TS) ; le runner de boucle visuelle *goto-only* l'atteint sans risque. Le **POST
+    /api/merge** (bouton **GO humain**) est la seule mutation, **fail-closed** : `allow = gate_green ET go`
+    — un gate vert sans `go` renvoie `hold`, jamais un merge (le LLM ne merge jamais seul). Les overrides
+    `t1_override`/`t15_override` (raison explicite, tracée) ne lèvent qu'un 🔴 reviewer ou un Tier-1.5 —
+    **jamais** un veto Tier-0 / toolchain native déterministe.
 
 ## Vérification (par vague)
 
