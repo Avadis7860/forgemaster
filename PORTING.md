@@ -27,7 +27,7 @@ est*). On importe les décisions distillées comme specs (`docs/specs/`) — auc
 | `git/github.py` | — | (P6) | ⏸ |
 | `projects/registry.py` | `routers/projects.py` | #1 / #4 | ✅ |
 | `roadmap/model.py` | (schéma roadmap.yaml) | #9 | ✅ |
-| `roadmap/resolver.py` | `lib/vault_tasks.py` | #9 | 🟡 (add ✅ ; next différé) |
+| `roadmap/resolver.py` | `lib/vault_tasks.py` | #9 | ✅ |
 | `dispatch/worktree.py` | `routers/devserver.py` (broker) + `worktree_dispatch.py` | #7 / #12 | ⬜ |
 | `dispatch/worker.py` | `routers/orchestrator.py` (dispatch) | #2 / #3 | ⬜ |
 | `dispatch/jobs.py` | `routers/dispatch_ws.py` | #5 | ⬜ |
