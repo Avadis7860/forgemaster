@@ -5,9 +5,10 @@ dans un projet) démarre câblée, orientée, et gated — sans configuration ma
 
 | Élément | Rôle |
 |---|---|
-| [`../CLAUDE.md`](../CLAUDE.md) | Constitution : mission, framework **verrouillé**, comment travailler, anti-patterns. |
+| [`../CLAUDE.md`](../CLAUDE.md) | Constitution **mince** : règles non négociables + **index** vers `docs/` (+ `docs/specs/`) + **outils** embarqués (le détail vit dans `docs/`, pas ici). |
 | [`../PORTING.md`](../PORTING.md) | Journal de réimplémentation *couche par couche* (état vivant : quel module porté/testé). |
 | `output-styles/tool-builder.md` | Persona : déterministe d'abord, schéma figé, zéro cap silencieux, générique par config. |
+| `skills/work-loop/` | Boucle de travail **sûre et lightweight** (worktree feature depuis `dev` → gate → `dev` ff-only → `main` promu) — la forge l'**automatise**, ici on la **dogfoode** à la main. |
 | `skills/quality-gate/` | Gate ruff + mypy + pytest + **smoke réponse** (CLI/daemon/socle/DB) — avant chaque commit. |
 | `skills/port-tool/` | Le workflow récurrent : porter un stub (source vault → refactor `#N` → module + test → gate). |
 | `hooks/post-edit-check.py` | `PostToolUse` (Write\|Edit) : `py_compile` + ruff léger sur le `.py`/`.json`/`.toml` touché, non bloquant. |
