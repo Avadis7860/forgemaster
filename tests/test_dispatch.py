@@ -3,6 +3,7 @@ no-task-no-dispatch + spawn worker (runner INJECTÉ — aucun vrai `claude`), le
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -98,6 +99,59 @@ def test_worktree_reserve_release_audit(ctx):
     assert not res["path"].exists()
     assert ports.list_reservations(conn) == []
     assert worktree.audit(conn, settings) == []
+
+
+def test_two_features_reserve_isolated_worktrees_and_ports(ctx):
+    """≥2 features en parallèle : chacune son worktree + port + branche distincts, cycle de vie
+    indépendant (release de l'une n'affecte pas l'autre). Isolation ressources du modèle feature=mutex."""
+    settings, conn = ctx
+    git = InternalGit()
+    registry.create_project(conn, settings, slug="proj")
+    for f in ("feat-a", "feat-b"):
+        model.add_feature(conn, project_slug="proj", slug=f)
+        model.add_task(conn, feature_ref=f"proj/{f}", slug="t")
+    a = worktree.reserve(conn, settings, git, project="proj", feature="feat-a", probe=None)
+    b = worktree.reserve(conn, settings, git, project="proj", feature="feat-b", probe=None)
+    # les deux coexistent, ressources disjointes
+    assert a["path"] != b["path"] and a["path"].is_dir() and b["path"].is_dir()
+    assert a["port"] != b["port"]
+    assert {a["branch"], b["branch"]} == {"feature/feat-a", "feature/feat-b"}
+    assert git.current_branch(a["path"]) == "feature/feat-a"
+    assert git.current_branch(b["path"]) == "feature/feat-b"
+    assert worktree.audit(conn, settings) == []
+    # release de feat-a : feat-b survit intacte, aucun orphelin
+    worktree.release(conn, settings, git, project="proj", feature="feat-a")
+    assert not a["path"].exists() and b["path"].is_dir()
+    assert {r["purpose"] for r in ports.list_reservations(conn)} == {"worktree:feat-b"}
+    assert worktree.audit(conn, settings) == []
+
+
+def test_concurrent_add_worktree_serialized_by_flock(ctx):
+    """Deux `add_worktree` concurrents sur le même SoT bare : flock (`git/internal`, #12) sérialise les
+    mutations du git-dir partagé → les deux worktrees se créent, aucune corruption `index.lock`/`already
+    exists`. Preuve directe du mutex, à la couche git (hors DB, sûr en multi-thread)."""
+    settings, conn = ctx
+    git = InternalGit()
+    registry.create_project(conn, settings, slug="proj")   # seed le SoT bare (dev + main)
+    sot = registry.sot_path_for(settings, "proj")
+    wt_root = settings.projects_root / "proj" / "worktrees"
+    errors: list[Exception] = []
+
+    def _add(name: str) -> None:
+        try:
+            git.add_worktree(sot, wt_root / name, branch=f"feature/{name}", base="dev")
+        except Exception as exc:  # noqa: BLE001 — collecté pour l'assert hors-thread
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_add, args=(n,)) for n in ("wa", "wb")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []                                    # flock a sérialisé, aucune collision git-dir
+    assert (wt_root / "wa").is_dir() and (wt_root / "wb").is_dir()
+    assert git.current_branch(wt_root / "wa") == "feature/wa"
+    assert git.current_branch(wt_root / "wb") == "feature/wb"
 
 
 # -- gate no-task-no-dispatch + spawn (runner injecté) ----------------------------------------------

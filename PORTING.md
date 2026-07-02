@@ -47,14 +47,16 @@ est*). On importe les décisions distillées comme specs (`docs/specs/`) — auc
 - [x] Boucle CLI end-to-end : `project create → roadmap add-feature → task add → (dispatch) → worktree
       isolé → gate review → merge --go → cleanup worktree` (dispatch réel = spawn `claude -p`, prouvé par
       runner injecté ; le reste prouvé sur SoT bare réel + smoke CLI).
-- [ ] Gate « pas de task, pas de dispatch » vérifié (dispatch refusé si feature sans task).
-- [ ] Multi-worktree : ≥2 features en parallèle, chacune son worktree, isolation prouvée (flock).
+- [x] Gate « pas de task, pas de dispatch » vérifié (`test_dispatch_refused_when_feature_has_no_task`).
+- [x] Multi-worktree : ≥2 features en parallèle, chacune son worktree + port + branche distincts, cycle de
+      vie indépendant (`test_two_features_reserve_isolated_worktrees_and_ports`) + flock prouvé sous
+      concurrence réelle 2 threads (`test_concurrent_add_worktree_serialized_by_flock`).
 - [x] Merge : identité injectée, cleanup worktree AVANT `branch -D`, ff `feature→dev→main` (main-suit-dev).
 - [x] Gates : review Tier-1 lié SHA (garde de process non-overridable) + feature-verified Tier-1.5
       (fail-closed, N/A-safe) + chaîne d'autorité `compose_merge_decision` + GO humain.
 - [x] Daemon FastAPI : DI explicite (`Deps` sur `app.state`, aucun god-module), routers découpés par domaine
       (projects/roadmap/dispatch/gate + terminal WS PTY local). Import serveur paresseux (app importable sans).
-- [ ] `ruff` + `mypy` + `pytest` + smoke réponse **verts**. Portabilité WSL prouvée (Debian best-effort).
+- [x] `ruff` + `mypy` + `pytest` (71) + smoke réponse **verts** sous WSL. Portabilité Debian = best-effort (⏸).
 
 ### Structure (fait)
 - [x] Squelette src-layout + socle fonctionnel (config/core/db/cli).
