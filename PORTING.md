@@ -37,20 +37,23 @@ est*). On importe les décisions distillées comme specs (`docs/specs/`) — auc
 | `gate/review.py` | `loops/review_state.py` | #13 | ✅ |
 | `gate/verify.py` | `loops/feature_verify.py` | #10 / #13 | ✅ |
 | `gate/merge.py` | `lib/worker_merge_gate.py` + `lib/forge_merge.py` | #3 / #8 | ✅ |
-| `daemon/app.py` | `server.py` (`build_app`) | #1 / #3 | ⬜ |
-| `daemon/routes/*` | `routers/*` | #3 | ⬜ |
-| `terminal/pty.py` | `terminal.py` (pty_bridge) | #2 / #4 | ⬜ |
+| `daemon/deps.py` | (conteneur DI neuf) | #1 | ✅ |
+| `daemon/app.py` | `server.py` (`build_app`) | #1 / #3 | ✅ |
+| `daemon/routes/*` | `routers/*` | #3 | ✅ (projects/roadmap/dispatch/gate/terminal) |
+| `terminal/pty.py` | `terminal.py` (pty_bridge) | #2 / #4 | ✅ |
 
 ## Definition of Done (repo cockpit)
 
-- [ ] `pip install -e .` puis boucle CLI end-to-end : `project create → roadmap add-feature → task add →
-      dispatch → worktree isolé → gate → merge → cleanup worktree`.
+- [x] Boucle CLI end-to-end : `project create → roadmap add-feature → task add → (dispatch) → worktree
+      isolé → gate review → merge --go → cleanup worktree` (dispatch réel = spawn `claude -p`, prouvé par
+      runner injecté ; le reste prouvé sur SoT bare réel + smoke CLI).
 - [ ] Gate « pas de task, pas de dispatch » vérifié (dispatch refusé si feature sans task).
 - [ ] Multi-worktree : ≥2 features en parallèle, chacune son worktree, isolation prouvée (flock).
 - [x] Merge : identité injectée, cleanup worktree AVANT `branch -D`, ff `feature→dev→main` (main-suit-dev).
 - [x] Gates : review Tier-1 lié SHA (garde de process non-overridable) + feature-verified Tier-1.5
       (fail-closed, N/A-safe) + chaîne d'autorité `compose_merge_decision` + GO humain.
-- [ ] Daemon FastAPI : DI explicite (aucun god-module), routers découpés par domaine.
+- [x] Daemon FastAPI : DI explicite (`Deps` sur `app.state`, aucun god-module), routers découpés par domaine
+      (projects/roadmap/dispatch/gate + terminal WS PTY local). Import serveur paresseux (app importable sans).
 - [ ] `ruff` + `mypy` + `pytest` + smoke réponse **verts**. Portabilité WSL prouvée (Debian best-effort).
 
 ### Structure (fait)

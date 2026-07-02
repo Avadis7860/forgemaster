@@ -53,12 +53,26 @@ features:
 `phases:`, comportement identique au `depends_on` seul (opt-in rétro-compatible). Cf. spec
 `task-next-resolver-dag`.
 
-## 3. Contrat API HTTP (`daemon/`, à figer à la phase logique)
+## 3. Contrat API HTTP (`daemon/`, porté)
 
-Le daemon expose le cœur ; le web (P5) le consomme. Routers par domaine (correctif #3) :
-`/api/projects`, `/api/roadmap`, `/api/dispatch`, `/api/gate`, `/ws/terminal/{project}`,
-`/ws/dispatch/{job}`. Le contrat détaillé (payloads, codes) sera figé ici quand la couche daemon est
-portée — un endpoint qui borne/tronque le **signale** dans sa réponse.
+Le daemon expose le cœur ; le web (P5) le consomme. **DI explicite** (`Deps` sur `app.state`, lu par
+`get_deps` — aucun god-module) ; routers **fins** par domaine (correctif #3) ; erreurs domaine mappées
+globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Routes portées :
+
+- **projects** — `GET /api/projects` · `POST /api/projects` `{slug, name?, mirror_remote?}` (201, init SoT) ·
+  `GET /api/projects/{slug}`.
+- **roadmap** — `GET /api/projects/{p}/roadmap` (features + tasks) · `POST /api/projects/{p}/features`
+  `{slug, title?}` · `POST /api/features/{p}/{f}/tasks` `{slug, title?, depends_on?, priority?}` ·
+  `GET /api/features/{p}/{f}/next` (résolveur DAG → `{next, n_tasks}`).
+- **dispatch** — `POST /api/dispatch/{p}/{f}` (spawn worker en threadpool ; gate no-task-no-dispatch) ·
+  `GET /api/jobs/{id}` (job + `tail` d'événements normalisés).
+- **gate** — `POST /api/gate/{p}/{f}/review` `{findings, base?}` (verdict Tier-1 SHA-bound ; **422** si
+  branche/diff absent ou diff vide — fail-closed) · `GET /api/gate/{p}/{f}` (statut review + verify,
+  ancré HEAD) · `POST /api/merge/{p}/{f}` `{go, t1_override?, t15_override?}` (`run_merge` sous GO humain).
+- **terminal** — `WS /ws/terminal/{project}` (PTY **local** `bash -l`, workdir borné).
+
+Un endpoint qui borne/tronque le **signale** dans sa réponse. `WS /ws/dispatch/{job}` (streaming live du
+transcript) reste **différé P5** (le `tail` par pull couvre l'observabilité V1).
 
 ## Politique de versionnage
 
