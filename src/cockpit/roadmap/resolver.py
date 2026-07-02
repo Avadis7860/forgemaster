@@ -15,10 +15,26 @@ from __future__ import annotations
 import argparse
 
 from cockpit.config import Settings
+from cockpit.db import store
+from cockpit.roadmap import model
 
 _SRC = "services/aggregator/lib/vault_tasks.py (task-graph-v1)"
 
 
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
-    """Route `cockpit task <action>` (add|next). `next` = résolveur DAG. À porter (refactor #9)."""
-    raise NotImplementedError(f"port: {_SRC} — #9 (action={args.action!r})")
+    """Route `cockpit task <action>` (add|next). `add` = saisie (data layer) ; `next` = résolveur DAG
+    (différé à sa propre couche, refactor #9)."""
+    if args.action == "add":
+        conn = store.open_db(settings)
+        try:
+            t = model.add_task(conn, feature_ref=args.feature, slug=args.slug, title=args.title,
+                               depends_on=args.depends_on, priority="P1")
+            print(f"task créée : {args.feature}/{t['slug']} (priorité {t['priority']})")
+        except (ValueError, KeyError) as exc:
+            print(f"erreur : {exc}")
+            return 1
+        finally:
+            conn.close()
+        return 0
+    # action == "next"
+    raise NotImplementedError(f"port: {_SRC} — #9 (résolveur DAG next — couche dédiée)")

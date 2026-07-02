@@ -1,0 +1,86 @@
+"""Tests du data layer : projects/registry + roadmap/model sur une DB + projects_root jetables."""
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+import yaml
+
+from cockpit.config import Settings
+from cockpit.core import run
+from cockpit.db import store
+from cockpit.projects import registry
+from cockpit.roadmap import model
+
+
+@pytest.fixture
+def ctx(tmp_path: Path):
+    settings = Settings.resolve(home=tmp_path / "home", projects_root=tmp_path / "projects")
+    conn = store.open_db(settings)
+    yield settings, conn
+    conn.close()
+
+
+def test_create_project_inits_bare_sot_and_persists(ctx):
+    settings, conn = ctx
+    p = registry.create_project(conn, settings, slug="demo-project", name="Demo")
+    assert p["backend"] == "internal"
+    # SoT bare réellement initialisé
+    sot = registry.sot_path_for(settings, "demo-project")
+    assert run.run(["git", "-C", str(sot), "rev-parse", "--is-bare-repository"]).stdout.strip() == "true"
+    # persistance
+    assert [x["slug"] for x in registry.list_projects(conn)] == ["demo-project"]
+    assert registry.get_project(conn, "demo-project")["name"] == "Demo"
+
+
+def test_create_project_rejects_duplicate_and_bad_slug(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj")
+    with pytest.raises(ValueError):
+        registry.create_project(conn, settings, slug="proj")   # doublon
+    with pytest.raises(ValueError):
+        registry.create_project(conn, settings, slug="Bad Slug")  # kebab invalide
+    with pytest.raises(KeyError):
+        registry.get_project(conn, "absent")
+
+
+def test_add_feature_and_task_with_depends_on(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj")
+    f = model.add_feature(conn, project_slug="proj", slug="login", title="Login")
+    assert f["branch"] == "feature/login"
+    model.add_task(conn, feature_ref="proj/login", slug="schema", title="Schéma")
+    model.add_task(conn, feature_ref="proj/login", slug="api", depends_on=["schema"], priority="P0")
+    feat = model.resolve_feature(conn, "proj/login")
+    tasks = {t["slug"]: t for t in model.list_tasks(conn, feat["id"])}
+    assert tasks["api"]["depends_on"] == ["schema"]
+    assert tasks["api"]["priority"] == "P0"
+
+
+def test_add_task_validates_refs_and_priority(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj")
+    model.add_feature(conn, project_slug="proj", slug="feat")
+    with pytest.raises(ValueError):
+        model.add_task(conn, feature_ref="proj/feat", slug="t", priority="P9")   # priorité hors vocab
+    with pytest.raises(ValueError):
+        model.add_task(conn, feature_ref="nofeatureref", slug="t")               # ref sans '/'
+    with pytest.raises(KeyError):
+        model.add_task(conn, feature_ref="proj/absent", slug="t")                # feature absente
+
+
+def test_roadmap_to_yaml_contract(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj")
+    model.add_feature(conn, project_slug="proj", slug="feat", title="Feat")
+    model.add_task(conn, feature_ref="proj/feat", slug="a")
+    model.add_task(conn, feature_ref="proj/feat", slug="b", depends_on=["a"])
+    features = model.list_features(conn, "proj")
+    for f in features:
+        f["tasks"] = model.list_tasks(conn, f["id"])
+    doc = yaml.safe_load(model.to_yaml("proj", features))
+    assert doc["version"] == model.ROADMAP_VERSION
+    assert doc["project"] == "proj"
+    assert doc["features"][0]["slug"] == "feat"
+    b = next(t for t in doc["features"][0]["tasks"] if t["slug"] == "b")
+    assert b["depends_on"] == ["a"]
