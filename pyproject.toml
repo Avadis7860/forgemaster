@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cockpit"
+version = "0.1.0"
+description = "Forge/orchestrateur local : projet → roadmap (features + tasks DAG) → dispatch worker claude en worktree → gate → merge. Spine CLI + daemon FastAPI, édition lightweight WSL (zéro Proxmox/GPU/CT)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "AvAgency", email = "contact@avagency.pro" }]
+keywords = ["orchestrator", "forge", "worktree", "dispatch", "fastapi", "cli"]
+# Comme mcp-catalogs (et contrairement à code-map stdlib-pur), le cockpit EST un service : il porte de
+# vraies dépendances runtime. fastapi+uvicorn (daemon + web/PTY), PyYAML (roadmap.yaml in-repo). Le socle
+# (config/core/db) reste stdlib-pur ; ces imports sont PARESSEUX (le package s'importe sans le serveur).
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5", "mypy>=1.10", "httpx>=0.27", "types-PyYAML"]
+
+[project.scripts]
+# Une porte unifiée : project / roadmap / task / dispatch / gate / merge / serve.
+cockpit = "cockpit.cli:main"
+
+[project.urls]
+Repository = "https://github.com/Avadis7860/cockpit"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cockpit"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["cockpit"]
+mypy_path = "src"
+ignore_missing_imports = true  # fastapi / uvicorn : typage lâche des dépendances serveur (imports paresseux)
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+# Les fixtures sont des mini-arborescences d'échantillon — jamais des tests à collecter.
+norecursedirs = ["fixtures"]

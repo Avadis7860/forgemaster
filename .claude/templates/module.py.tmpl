@@ -1,0 +1,16 @@
+"""{module} — {rôle en une ligne}.
+
+Port : {fichier source vault} ({partie portée}). Correctif appliqué : #{N} de docs/weak-points.md
+({résumé du correctif}). Schéma consommé figé — cf. docs/schema-contract.md.
+"""
+from __future__ import annotations
+
+# Imports RELATIFS de package uniquement (jamais de sys.path.insert, jamais `from vault import …`) :
+# from ..config import Settings
+# from . import catalogs, content
+# Lecture pure : paramétrée par dossier (catalogs_dir / decisions_dir), aucune résolution de racine ici.
+
+
+def {fonction}(...):
+    """{contrat}. Read-only ; anti-traversal ; zéro cap silencieux (toute borne est signalée)."""
+    ...

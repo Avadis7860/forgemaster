@@ -1,0 +1,14 @@
+# Déterminisme multi-OS (cf. docs/multi-os.md).
+# On force LF au checkout : le MÊME fichier source produit le MÊME comportement sur WSL, Debian et macOS,
+# quel que soit le git core.autocrlf de la machine.
+* text=auto eol=lf
+
+# Données textuelles structurées (roadmap in-repo, logs de jobs) : toujours LF.
+*.yaml text eol=lf
+*.yml text eol=lf
+*.jsonl text eol=lf
+
+# Bases SQLite : binaires, jamais de conversion (base d'état + fixtures de test éventuelles).
+*.db binary
+*.sqlite3 binary
+*.png binary

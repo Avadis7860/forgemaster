@@ -1,0 +1,31 @@
+"""Tests de {module} — correction sur la DATA_ROOT de fixture.
+
+Fixture : tests/fixtures/data/ (mini-catalog + index prébuild + mini decisions.jsonl). JAMAIS la donnée
+live. Un outil de recherche se teste AUSSI sur le fallback (bm25.db absent → lexical-v1, jamais un crash).
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+from mcp_catalogs.config import Settings
+
+DATA = Path(__file__).parent / "fixtures" / "data"
+
+
+def _settings() -> Settings:
+    return Settings.resolve(data_root=DATA)
+
+
+def test_{cas}_correction():
+    """{ce que le module doit produire} sur la fixture minimale."""
+    # from mcp_catalogs.{module} import {fonction}
+    # result = {fonction}(_settings().catalogs_dir, ...)
+    # assert ...
+    ...
+
+
+def test_{cas}_scope_et_traversal():
+    """Silo étanche : un nom de catalog hors périmètre / un chemin traversant est refusé."""
+    # with pytest.raises((ValueError, FileNotFoundError)):
+    #     {fonction}(_settings().catalogs_dir, "../etc", ...)
+    ...

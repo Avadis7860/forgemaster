@@ -7,7 +7,7 @@
 Fait partie d'un framework en 3 repos :
 - **`cockpit`** — l'orchestrateur (ce repo).
 - **`code-map`** — index de code déterministe (Python + TSX), injecté dans chaque projet géré.
-- **`catalog-mcp`** — serveur MCP servant la doc (catalogs) et les décisions aux workers.
+- **`mcp-catalogs`** — serveur MCP servant la doc (catalogs) et les décisions aux workers.
 
 ## Modèle cœur
 
@@ -28,7 +28,19 @@ Multi-worktree = plusieurs features en parallèle. Backend git **internal-first*
 
 ## Développement
 
-_À compléter au fil de P1._ La boucle CLI (P0→P4) est le MVP opérationnel ; le web (P5) est une surface par-dessus.
+Réimplémentation propre de l'orchestrateur legacy (pas un fork) : les décisions distillées sont importées
+comme **specs** (`docs/specs/`), le registre `docs/weak-points.md` liste les dettes refusées + le refactor.
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e '.[dev]'
+cockpit --help          # la spine répond
+ruff check src tests && mypy && pytest -q   # gate qualité (cf. .claude/skills/quality-gate)
+```
+
+**Phase structure livrée** : squelette src-layout + socle fonctionnel (`config`/`core`/`db`/`cli`) + docs
+complètes + stubs documentés (un par couche, pointeur de port + refactor `#N`). La boucle CLI (P0→P4) est
+le MVP opérationnel ; le web (P5) est une surface par-dessus. Voir [`PORTING.md`](./PORTING.md) pour l'état.
 
 ## Licence
 
