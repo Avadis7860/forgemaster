@@ -27,8 +27,10 @@ def _mandate() -> str:
         "Tu es un worker autonome dispatché sur UNE task précise, dans un worktree git isolé (ta branche "
         "est déjà créée et checkout). Implémente la task de bout en bout : lis le contexte du repo, écris "
         "le code et les tests, vérifie qu'ils passent. Travaille SANS poser de question (tu tournes en "
-        "headless : aucun interlocuteur). NE touche PAS au cycle git (pas de branch/commit/push) — la forge "
-        "s'en charge après ton run. Reste STRICTEMENT dans le périmètre de la task ; ne déborde pas."
+        "headless : aucun interlocuteur). Le projet porte sa propre doc dans `docs/` — interroge-la avec "
+        "`docsmap where \"<intention>\"` (→ fichier:lignes de la section pertinente) plutôt que de tout lire "
+        "en bloc. NE touche PAS au cycle git (pas de branch/commit/push) — la forge s'en charge après ton "
+        "run. Reste STRICTEMENT dans le périmètre de la task ; ne déborde pas."
     )
 
 

@@ -160,34 +160,79 @@ def _worktree_lock(sot: str | Path) -> Iterator[None]:
 class InternalGit:
     """Adapter GitBackend sur repo bare local. Zéro réseau (le miroir est best-effort et opt-in)."""
 
-    def init_sot(self, sot: Path) -> None:
+    def init_sot(self, sot: Path, payload: Mapping[str, str] | None = None) -> None:
         """Initialise un repo bare local **amorcé** (idempotent). Un `init --bare` nu n'a AUCUNE branche →
         `add_worktree(..., base='dev')` échouerait ; on **seed** donc `dev` et `main` sur un commit racine
-        (vide) dès la création, pour que la 1ʳᵉ feature ait une base d'où partir (main-suit-dev)."""
+        dès la création, pour que la 1ʳᵉ feature ait une base d'où partir (main-suit-dev).
+
+        `payload` (optionnel, mapping `chemin-relatif → contenu`) sème un arbre non vide dans la racine
+        (« toolkit auto-travaillable » injecté par le provisioning) ; absent → arbre vide (compat historique).
+        La **policy** (quel payload) vit dans `provision`/`registry` — ici on ne fait que la plomberie."""
         sot = Path(sot)
         sot.mkdir(parents=True, exist_ok=True)
         probe = _git(sot, "rev-parse", "--is-bare-repository")
         if not (probe.ok and probe.stdout.strip() == "true"):
             _checked(sot, "init", "--bare")
-        self._seed_base(sot)
+        self._seed_base(sot, payload)
 
-    def _seed_base(self, sot: Path) -> None:
-        """Pose un commit racine (arbre vide) sur `dev` et `main` si `dev` n'existe pas encore. Plumbing pur
-        (`mktree`/`commit-tree`/`update-ref`) → fonctionne sur un bare sans index ni worktree. Identité
-        injectée le temps du commit-tree (jamais persistée), corrige « empty ident name »."""
+    def _seed_base(self, sot: Path, payload: Mapping[str, str] | None = None) -> None:
+        """Pose un commit racine sur `dev` et `main` si `dev` n'existe pas encore (early-return =
+        idempotence). Plumbing pur (`mktree`/`commit-tree`/`update-ref`) → fonctionne sur un bare sans index
+        ni worktree. `payload` non vide → l'arbre racine le porte ; vide/None → arbre vide. Identité injectée
+        le temps du commit-tree (jamais persistée), corrige « empty ident name »."""
         if _git(sot, "show-ref", "--verify", "--quiet", "refs/heads/dev").ok:
             return
         env = writeback_env(("cockpit", "cockpit@localhost"))
-        tree = run.run(["git", "-C", str(sot), "mktree"], input_text="", env=env)
-        if not tree.ok:
-            raise GitOpError(f"seed mktree @ {sot}: {tree.stderr.strip()[:200]}")
+        tree_sha = self._seed_tree_with_payload(sot, dict(payload or {}), env)
         commit = run.run(
-            ["git", "-C", str(sot), "commit-tree", tree.stdout.strip(), "-m", "root: cockpit seed"], env=env)
+            ["git", "-C", str(sot), "commit-tree", tree_sha, "-m", "root: cockpit seed"], env=env)
         if not commit.ok:
             raise GitOpError(f"seed commit-tree @ {sot}: {commit.stderr.strip()[:200]}")
         sha = commit.stdout.strip()
         for base in ("dev", "main"):
             _checked(sot, "update-ref", f"refs/heads/{base}", sha)
+
+    def _seed_tree_with_payload(
+        self, sot: Path, files: Mapping[str, str], env: Mapping[str, str],
+    ) -> str:
+        """Construit un arbre git à partir d'un mapping `chemin-relatif → contenu` et renvoie le SHA de
+        l'arbre racine, par plumbing pur : `hash-object -w --stdin` par blob, `mktree` imbriqué par
+        sous-dossier. `files` vide → arbre vide (le `mktree` sur stdin vide donne l'empty-tree). **Primitive**
+        bare-safe (ni index ni worktree) : aucune policy ici — le QUOI vendoré vit dans `provision/`."""
+        nested: dict[str, object] = {}
+        for rel, content in files.items():
+            parts = [p for p in rel.split("/") if p]
+            if not parts:
+                continue
+            node = nested
+            for part in parts[:-1]:
+                child = node.setdefault(part, {})
+                if not isinstance(child, dict):
+                    raise GitOpError(f"seed payload: {part!r} est à la fois fichier et dossier")
+                node = child
+            node[parts[-1]] = content
+        return self._mktree(sot, nested, env)
+
+    def _mktree(self, sot: Path, node: Mapping[str, object], env: Mapping[str, str]) -> str:
+        """Écrit un niveau d'arbre et renvoie son SHA : `100644 blob` pour les feuilles (contenu str),
+        `040000 tree` récursif pour les sous-dossiers (dict). Entrées **triées** → déterministe."""
+        lines: list[str] = []
+        for name in sorted(node):
+            value = node[name]
+            if isinstance(value, dict):
+                sub = self._mktree(sot, value, env)
+                lines.append(f"040000 tree {sub}\t{name}")
+            else:
+                blob = run.run(["git", "-C", str(sot), "hash-object", "-w", "--stdin"],
+                               input_text=str(value), env=env)
+                if not blob.ok:
+                    raise GitOpError(f"seed hash-object {name!r} @ {sot}: {blob.stderr.strip()[:200]}")
+                lines.append(f"100644 blob {blob.stdout.strip()}\t{name}")
+        tree = run.run(["git", "-C", str(sot), "mktree"],
+                       input_text=("\n".join(lines) + "\n") if lines else "", env=env)
+        if not tree.ok:
+            raise GitOpError(f"seed mktree @ {sot}: {tree.stderr.strip()[:200]}")
+        return tree.stdout.strip()
 
     def add_worktree(self, sot: Path, worktree: Path, *, branch: str, base: str) -> None:
         """Crée un worktree attaché au SoT sur `branch`, ancré sur `base` (`add -B <branch> <path> <base>`,

@@ -1,0 +1,10 @@
+# .docsmap.toml — carte de doc de ce projet (docs-map). Tout est optionnel : les défauts ci-dessous
+# conviennent à un projet standard (prose markdown sous `docs/`).
+
+[sources]
+docs = "docs"           # racine de la prose markdown à indexer
+glob = "**/*.md"         # motif des fichiers indexés
+# extra = ["README.md"]  # fichiers hors `docs/` à inclure (décommente au besoin)
+
+[conventions]
+format = "auto"          # parseur de headings (auto = ATX markdown `#`)

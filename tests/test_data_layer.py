@@ -33,6 +33,21 @@ def test_create_project_inits_bare_sot_and_persists(ctx):
     assert registry.get_project(conn, "demo-project")["name"] == "Demo"
 
 
+def test_create_project_seeds_selfworkable_toolkit(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="seeded")
+    sot = registry.sot_path_for(settings, "seeded")
+    # le SoT `dev` porte le toolkit auto-travaillable (semé à la création)
+    names = run.run(["git", "-C", str(sot), "ls-tree", "-r", "--name-only", "dev"]).stdout.split()
+    for expected in ("CLAUDE.md", ".docsmap.toml", "docs/architecture.md",
+                     ".claude/settings.json", ".claude/skills/work-loop/SKILL.md",
+                     ".claude/skills/quality-gate/SKILL.md"):
+        assert expected in names, f"toolkit manque {expected} — {names}"
+    # CLAUDE.md non vide et oriente vers l'outil (le levier « interroge, ne lis pas en bloc »)
+    claude = run.run(["git", "-C", str(sot), "show", "dev:CLAUDE.md"]).stdout
+    assert "docsmap where" in claude
+
+
 def test_create_project_rejects_duplicate_and_bad_slug(ctx):
     settings, conn = ctx
     registry.create_project(conn, settings, slug="proj")

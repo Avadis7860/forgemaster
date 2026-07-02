@@ -46,7 +46,31 @@ def test_init_sot_idempotent(tmp_path: Path):
     sot = tmp_path / "bare"
     git.init_sot(sot)
     assert run.run(["git", "-C", str(sot), "rev-parse", "--is-bare-repository"]).stdout.strip() == "true"
+    # sans payload → arbre racine vide (compat historique)
+    assert run.run(["git", "-C", str(sot), "ls-tree", "dev"]).stdout.strip() == ""
     git.init_sot(sot)  # 2e appel : no-op, ne lève pas
+
+
+def test_init_sot_seeds_payload_tree_on_dev_and_main(tmp_path: Path):
+    git = InternalGit()
+    sot = tmp_path / "bare"
+    payload = {
+        "CLAUDE.md": "# rules\n",
+        ".docsmap.toml": '[sources]\ndocs = "docs"\n',       # dotfile à la racine
+        "docs/architecture.md": "# arch\n",                   # sous-arbre imbriqué
+        ".claude/skills/work-loop/SKILL.md": "# work-loop\n",  # sous-arbre profond sous dotdir
+    }
+    git.init_sot(sot, payload=payload)
+    for branch in ("dev", "main"):
+        listed = run.run(["git", "-C", str(sot), "ls-tree", "-r", "--name-only", branch]).stdout.split()
+        assert set(listed) == set(payload), f"{branch}: {listed}"
+    # contenu fidèle (le blob = le contenu exact fourni)
+    for rel, content in payload.items():
+        assert run.run(["git", "-C", str(sot), "show", f"dev:{rel}"]).stdout == content
+    # idempotence : un 2e init (autre payload) ne clobbere pas la racine déjà semée
+    git.init_sot(sot, payload={"OTHER.md": "x\n"})
+    again = run.run(["git", "-C", str(sot), "ls-tree", "-r", "--name-only", "dev"]).stdout.split()
+    assert "OTHER.md" not in again and "CLAUDE.md" in again
 
 
 def test_worktree_lifecycle_and_branch(tmp_path: Path):

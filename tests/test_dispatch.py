@@ -248,6 +248,8 @@ def test_build_worker_prompt_uses_project_docs(tmp_path: Path):
     assert "schema — Schéma SQLite (priorité P0)" in text
     assert "worker autonome" in text and "NE touche PAS au cycle git" in text
     assert "Un super produit." in text and "docs/design.md" in text
+    # conscience de la carte de doc : le mandat oriente vers `docsmap where`
+    assert "docsmap where" in text
     # projet sans docs → fallback explicite, jamais un crash
     bare = prompt.build_worker_prompt(project, feature, task, root=tmp_path / "empty")
     assert "aucun `docs/`" in bare
