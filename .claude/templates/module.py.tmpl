@@ -1,16 +1,18 @@
 """{module} — {rôle en une ligne}.
 
-Port : {fichier source vault} ({partie portée}). Correctif appliqué : #{N} de docs/weak-points.md
-({résumé du correctif}). Schéma consommé figé — cf. docs/schema-contract.md.
+Port : {fichier source legacy aggregator} ({partie portée}). Correctif appliqué : #{N} de
+docs/weak-points.md ({résumé du correctif}). Schéma consommé figé — cf. docs/schema-contract.md.
 """
 from __future__ import annotations
 
-# Imports RELATIFS de package uniquement (jamais de sys.path.insert, jamais `from vault import …`) :
+# Imports RELATIFS de package uniquement (jamais de sys.path.insert, jamais `import server`) :
 # from ..config import Settings
-# from . import catalogs, content
-# Lecture pure : paramétrée par dossier (catalogs_dir / decisions_dir), aucune résolution de racine ici.
+# from . import worktree, jobs
+# I/O INJECTÉE (exécution locale via core.run, git via GitBackend) : le cœur reste pur, testable hors-live.
+# Racines par Settings (COCKPIT_HOME / COCKPIT_PROJECTS_ROOT) — aucun chemin en dur, aucune notion d'hôte.
 
 
 def {fonction}(...):
-    """{contrat}. Read-only ; anti-traversal ; zéro cap silencieux (toute borne est signalée)."""
+    """{contrat}. Déterministe-d'abord ; transport local injectable ; zéro cap silencieux (toute borne —
+    tail de log, diff, limit — est signalée). Un gate qui touche à l'irréversible est fail-closed."""
     ...

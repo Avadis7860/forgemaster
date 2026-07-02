@@ -1,31 +1,33 @@
-"""Tests de {module} — correction sur la DATA_ROOT de fixture.
+"""Tests de {module} — sur une fixture jetable (tmp_path), jamais un état live.
 
-Fixture : tests/fixtures/data/ (mini-catalog + index prébuild + mini decisions.jsonl). JAMAIS la donnée
-live. Un outil de recherche se teste AUSSI sur le fallback (bm25.db absent → lexical-v1, jamais un crash).
+Cœur pur : paramétré par Settings + deps injectées. Si la couche touche au git, monte un SoT bare RÉEL
+via InternalGit (worktree, ff-merge) ; l'exécution worker est un runner FAKE injecté, jamais un vrai
+`claude` ni un hôte distant. Un gate se teste AUSSI fail-closed (verdict absent/périmé → hold, jamais vert).
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-from mcp_catalogs.config import Settings
-
-DATA = Path(__file__).parent / "fixtures" / "data"
-
-
-def _settings() -> Settings:
-    return Settings.resolve(data_root=DATA)
+from cockpit.config import Settings
+from cockpit.db import store
 
 
-def test_{cas}_correction():
-    """{ce que le module doit produire} sur la fixture minimale."""
-    # from mcp_catalogs.{module} import {fonction}
-    # result = {fonction}(_settings().catalogs_dir, ...)
+def _settings(tmp_path: Path) -> Settings:
+    return Settings.resolve(home=tmp_path / "home", projects_root=tmp_path / "projects")
+
+
+def test_{cas}_nominal(tmp_path: Path):
+    """{ce que la couche doit produire} sur une base + SoT minimal."""
+    s = _settings(tmp_path)
+    conn = store.open_db(s)
+    # from cockpit.{module} import {fonction}
+    # result = {fonction}(conn, s, ...)
     # assert ...
-    ...
+    conn.close()
 
 
-def test_{cas}_scope_et_traversal():
-    """Silo étanche : un nom de catalog hors périmètre / un chemin traversant est refusé."""
-    # with pytest.raises((ValueError, FileNotFoundError)):
-    #     {fonction}(_settings().catalogs_dir, "../etc", ...)
+def test_{cas}_fail_closed(tmp_path: Path):
+    """Bord dur : précondition absente / acte irréversible sans feu vert → refus, aucune mutation."""
+    # with pytest.raises((ValueError, KeyError)):
+    #     {fonction}(conn, s, ...)
     ...
