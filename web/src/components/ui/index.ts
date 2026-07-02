@@ -1,0 +1,14 @@
+// Barrel des primitives partagées. Tout écran consomme ces primitives + les tokens —
+// « plus aucun écran sans passer par ici » (doctrine design-system).
+export { Alert } from './Alert'
+export { Badge } from './Badge'
+export { Button, type ButtonProps } from './Button'
+export { Card } from './Card'
+export { EmptyState } from './EmptyState'
+export { Eyebrow } from './Eyebrow'
+export { Input } from './Input'
+export { LoadingState } from './LoadingState'
+export { RefreshButton } from './RefreshButton'
+export { SectionTitle } from './SectionTitle'
+export { Skeleton } from './Skeleton'
+export { Spinner } from './Spinner'

@@ -46,6 +46,27 @@ def test_projects_crud_over_http(client):
     assert c.post("/api/projects", json={"slug": "proj"}).status_code == 400   # doublon → ValueError → 400
 
 
+# -- service SPA + CORS ----------------------------------------------------------------------------
+
+def test_spa_served_with_client_side_fallback_when_build_present(client):
+    c, _ = client
+    if not (app_mod.web_dist_dir() / "index.html").exists():
+        pytest.skip("build web/dist absent (mode API pure)")
+    root = c.get("/")
+    assert root.status_code == 200 and "text/html" in root.headers["content-type"]
+    # deep-link rafraîchi (route client-side inconnue du serveur) → index.html, pas 404
+    deep = c.get("/void-runner")
+    assert deep.status_code == 200 and "text/html" in deep.headers["content-type"]
+    # une API inexistante reste un 404 JSON (jamais l'index servi à sa place)
+    assert c.get("/api/bogus").status_code == 404
+
+
+def test_cors_allows_vite_dev_origin(client):
+    c, _ = client
+    r = c.get("/health", headers={"Origin": "http://localhost:5173"})
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+
 # -- roadmap ---------------------------------------------------------------------------------------
 
 def test_roadmap_features_tasks_and_next(client):

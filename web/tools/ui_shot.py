@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+"""ui_shot.py — boucle visuelle d'ITÉRATION de la SPA cockpit (rend l'assistant VOYANT).
+
+Après un changement `web/`, screenshote une ou plusieurs routes et imprime les chemins PNG — que
+l'assistant LIT (Read) pour critiquer le rendu, au lieu de coder en aveugle. C'est l'ITÉRATION, pas le
+GATE : aucun marqueur, aucun verdict SHA (≠ feature-verified). Adapté du ui_shot legacy mais **sans auth**
+(le daemon local n'a pas de session) et en **browser-history** (le fallback SPA sert index.html, donc un
+deep-link `/slug` s'ouvre côté serveur — pas de `#`).
+
+Mécanique : build (optionnel) → home cockpit JETABLE seedé de projets démo → `cockpit serve` sert la dist
+→ pour chaque route, le runner Playwright `render_check.js` fait goto+screenshot → PNG. Teardown par PID
+(jamais `pkill`). Le runner est celui du vault (playwright-core vendoré) ; override par COCKPIT_UI_RUNNER.
+
+Usage :
+  python web/tools/ui_shot.py /                       # accueil (rail projets)
+  python web/tools/ui_shot.py / /atlas-demo --viewport 1600x1000 --full-page
+  python web/tools/ui_shot.py / --viewport 390x844    # largeur mobile
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]             # web/tools/ui_shot.py → repo
+WEB = REPO / "web"
+DIST = WEB / "dist"
+VENV_COCKPIT = REPO / ".venv" / "bin" / "cockpit"
+DEFAULT_RUNNER = Path(
+    os.environ.get(
+        "COCKPIT_UI_RUNNER",
+        "/home/avadis/Documents/Vault-V1/.claude/skills/playwright/render_check.js",
+    )
+)
+DEMO_PROJECTS = ["atlas-demo", "nebula-demo"]           # slugs FICTIFS (jamais un vrai basename)
+_SLUG = re.compile(r"[^a-z0-9]+")
+
+
+def _slug(route: str) -> str:
+    return _SLUG.sub("-", route.lower()).strip("-") or "root"
+
+
+def _parse_viewport(s: str | None) -> dict | None:
+    if not s:
+        return {"width": 1600, "height": 1000}
+    m = re.fullmatch(r"(\d+)x(\d+)", s.strip())
+    if not m:
+        raise SystemExit(f"--viewport attendu WxH (ex. 1600x1000), reçu {s!r}")
+    return {"width": int(m.group(1)), "height": int(m.group(2))}
+
+
+def _wait_health(port: int, *, tries: int = 60, delay: float = 0.5) -> bool:
+    url = f"http://127.0.0.1:{port}/health"
+    for _ in range(tries):
+        try:
+            with urllib.request.urlopen(url, timeout=2) as r:  # noqa: S310 — localhost fixe
+                if r.status == 200:
+                    return True
+        except (urllib.error.URLError, OSError):
+            time.sleep(delay)
+    return False
+
+
+def _seed(port: int, slugs: list[str]) -> None:
+    """Crée des projets démo via l'API réelle (idempotent : un doublon 400 est ignoré)."""
+    for slug in slugs:
+        body = json.dumps({"slug": slug, "name": slug.replace("-", " ").title()}).encode()
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/projects", data=body,
+            headers={"content-type": "application/json"}, method="POST",
+        )
+        try:
+            urllib.request.urlopen(req, timeout=5).read()  # noqa: S310 — localhost fixe
+        except urllib.error.HTTPError as e:
+            if e.code != 400:                              # 400 = doublon → ok
+                raise
+
+
+def shoot(routes: list[str], *, port: int, viewport: dict | None, full_page: bool,
+          out_dir: Path, runner: Path, timeout_ms: int, seed: bool) -> list[dict]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    home = Path(tempfile.mkdtemp(prefix="cockpit-uishot-"))
+    env = {**os.environ, "COCKPIT_HOME": str(home / "home"),
+           "COCKPIT_PROJECTS_ROOT": str(home / "projects")}
+    proc = subprocess.Popen(
+        [str(VENV_COCKPIT), "serve", "--host", "127.0.0.1", "--port", str(port)],
+        env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+    )
+    results: list[dict] = []
+    try:
+        if not _wait_health(port):
+            tail = proc.stdout.read()[-1500:] if proc.stdout else ""
+            raise SystemExit(f"le daemon n'a pas démarré sur :{port}\n{tail}")
+        if seed:
+            _seed(port, DEMO_PROJECTS)
+        for route in routes:
+            path = route if route.startswith("/") else "/" + route
+            url = f"http://127.0.0.1:{port}{path}"          # browser-history (fallback SPA côté serveur)
+            png = out_dir / f"{_slug(path)}.png"
+            payload: dict = {"url": url, "markers": [], "screenshot": str(png),
+                             "timeout_ms": timeout_ms, "full_page": full_page}
+            if viewport:
+                payload["viewport"] = viewport
+            try:
+                p = subprocess.run(["node", str(runner), json.dumps(payload)],
+                                   capture_output=True, text=True, timeout=timeout_ms / 1000 + 20)
+                data = json.loads(p.stdout or "{}")
+                results.append({"route": route, "url": url, "png": str(png),
+                                "ok": bool(data.get("screenshot")) and png.exists(),
+                                "title": data.get("title"), "error": data.get("error") or (p.stderr or None)})
+            except (subprocess.TimeoutExpired, OSError, ValueError) as e:  # noqa: BLE001
+                results.append({"route": route, "url": url, "png": str(png), "ok": False,
+                                "error": f"{type(e).__name__}: {e}"})
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    return results
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("routes", nargs="+", help="routes SPA (ex. '/' ou '/atlas-demo')")
+    ap.add_argument("--port", type=int, default=8799, help="port du daemon jetable (défaut 8799)")
+    ap.add_argument("--viewport", help="taille WxH (défaut 1600x1000 ; mobile 390x844)")
+    ap.add_argument("--full-page", action="store_true", help="capture toute la hauteur scrollable")
+    ap.add_argument("--out", default=str(WEB / ".ui-shots"), help="dossier de sortie des PNG")
+    ap.add_argument("--runner", default=str(DEFAULT_RUNNER), help="render_check.js (playwright)")
+    ap.add_argument("--no-seed", action="store_true", help="ne pas créer de projets démo")
+    ap.add_argument("--build", action="store_true", help="npm run build avant de servir")
+    ap.add_argument("--timeout-ms", type=int, default=15000)
+    a = ap.parse_args(argv)
+
+    if a.build:
+        subprocess.run(["npm", "run", "build"], cwd=WEB, check=True)
+    if not (DIST / "index.html").exists():
+        raise SystemExit(f"build absent : {DIST}/index.html — lance avec --build ou `npm run build`")
+    if not Path(a.runner).exists():
+        raise SystemExit(f"runner playwright introuvable : {a.runner} (override COCKPIT_UI_RUNNER)")
+
+    results = shoot(a.routes, port=a.port, viewport=_parse_viewport(a.viewport),
+                    full_page=a.full_page, out_dir=Path(a.out), runner=Path(a.runner),
+                    timeout_ms=a.timeout_ms, seed=not a.no_seed)
+    for r in results:
+        flag = "✓" if r["ok"] else "✗"
+        print(f"{flag} {r['route']:24} → {r['png']}" + (f"   [{r['error']}]" if r.get("error") else ""))
+    return 0 if all(r["ok"] for r in results) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

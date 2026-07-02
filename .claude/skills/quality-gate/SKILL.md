@@ -36,13 +36,33 @@ $VENV/pytest -q                 # 3. tests (socle + câblage)
      import tempfile, pathlib; d=pathlib.Path(tempfile.mkdtemp()); \
      s=Settings.resolve(home=d); c=store.open_db(s); \
      print(sorted(r[0] for r in c.execute(\"select name from sqlite_master where type='table'\")))"
-   # → ['dispatch_jobs','features','projects','tasks'] : le socle SQLite se crée
+   # → ['dispatch_jobs','features','port_reservations','projects','tasks'] : le socle SQLite se crée
    ```
    (Remplace le double-build byte-identique de `code-map` : le cockpit n'est pas un générateur
    déterministe — il garantit que la **spine démarre et répond**, pas une sortie byte-identique. À mesure
    que les couches sont portées, ajouter un smoke qui prouve que le RÉSULTAT s'affiche, jamais juste un 200.)
 
+## Front (`web/`) — quand le diff touche `web/src/`
+
+Node via **nvm** (`. ~/.nvm/nvm.sh && nvm use 22`), depuis `web/` :
+
+```bash
+npm run lint            # 1. eslint (+ react-hooks)
+npm run test            # 2. vitest (primitives + logique) — HORS Tier-0, lancé à la main
+npm run build           # 3. tsc --noEmit && vite build (types + bundle)
+python tools/front_conformance.py   # 4. design-system (R1-R5 : primitive/token/statusTone)
+```
+
+- **Design-system d'abord** : toute vue consomme les primitives (`components/ui/`) + les tokens
+  (`@theme` dans `index.css`) ; `front_conformance.py` refuse bouton brut / z-index·couleur arbitraires /
+  teinte de statut inline (échappatoire `cockpit:allow` motivée). Exempte `components/ui/` et les tests.
+- **Boucle visuelle AVANT de livrer** (mandat, pas optionnel) : `python tools/ui_shot.py <route> …` →
+  **Read** le PNG → critique (hiérarchie, 1 action primaire, états vide/chargement, densité) → edit →
+  re-shoot. C'est l'itération (aucun verdict) ; le gate SHA-bound feature-verified prouve avant merge.
+- vitest peut être 🟡 (rouge front non bloquant Tier-0) mais **doit être lancé à la main avant tout merge
+  `web/`**. Le build (types) et la conformance, eux, sont bloquants.
+
 ## Sortie
 
-Un rapport concis par étage (lint / types / tests / smoke) : **PASS** ou la première erreur.
+Un rapport concis par étage (lint / types / tests / smoke / front) : **PASS** ou la première erreur.
 **Tout doit être PASS** pour committer. Sinon : corriger la cause (pas déplacer un seuil), re-lancer.

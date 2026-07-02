@@ -62,3 +62,22 @@ est*). On importe les décisions distillées comme specs (`docs/specs/`) — auc
 - [x] Squelette src-layout + socle fonctionnel (config/core/db/cli).
 - [x] `docs/` complètes (architecture / schema-contract / weak-points / multi-os / specs×6).
 - [x] `.claude/` vendoré (CLAUDE.md, persona, skills, hook, templates, settings) + `pyproject` + tests-fumée.
+
+## Phase 5 — SPA web (`web/`, vue par-dessus le cœur)
+
+Spec figée : `docs/specs/web-cockpit-spa.md`. Stack : Vite + React 19 + Tailwind v4 (`@theme`) + TanStack
+Query/Router + Zod. Ordre verrouillé `tokens → layout → primitives → écrans → raffinement`. IA = workspace
+projet + onglets (option A). Boucle visuelle : `web/tools/ui_shot.py`.
+
+| Vague | Contenu | Statut |
+|---|---|---|
+| V1 — Fondation | scaffold + daemon (CORS + StaticFiles fallback SPA) + tokens `@theme` + `statusTone` + primitives (`components/ui/`) + client API typé (Zod) + shell/rail/routing + **vue Projets** + harnais visuel + gate front (`front_conformance` R1-R5) | ✅ |
+| V2 — Roadmap DAG | features×tasks, états READY/BLOCKED, NEXT, arêtes depends_on ; onglet Roadmap | ⬜ |
+| V3 — Dispatch live | `WS /ws/dispatch/{job}` (backend, boucle `jobs.read_events`) + transcript live | ⬜ |
+| V4 — Gate & merge | statuts review/verify + rapport merge + **bouton GO humain** (fail-closed) | ⬜ |
+| V5 — Terminal | xterm.js ↔ `WS /ws/terminal/{project}` (backend déjà prêt) | ⬜ |
+| V6 — Harmonisation | états unifiés, responsive, raffinement, a11y (optionnelle) | ⬜ |
+
+**V1 — vérif** : `npm run build` + `vitest` (6) + `eslint` + `front_conformance` verts ; daemon sert `dist`
++ fallback SPA + CORS (`test_daemon` : 2 tests) ; **boucle visuelle** (accueil + overview projet
+screenshotés & Read & critiqués). Onglets Roadmap/Dispatch/Gate/Terminal = V2→V5.

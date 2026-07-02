@@ -1,0 +1,92 @@
+@import "tailwindcss";
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Tokens — véhicule UNIQUE du design-system (Tailwind v4 @theme → CSS custom
+   properties + utilitaires générés). Charte cockpit : accent teal AVAgency,
+   élévation à 2 rôles, motion à 2 rôles. V1 = dark-first (thème unique) : les
+   surfaces vivent dans @theme sans flip ; un light-theme migrera vers :root/.dark
+   (nesting interdit par @theme) le jour venu. Aucune valeur magique hors d'ici.
+   ──────────────────────────────────────────────────────────────────────────── */
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "Fira Code", "SFMono-Regular", monospace;
+
+  /* Surfaces (dark-first) — du fond au premier plan */
+  --color-bg: #0a0f1a;
+  --color-surface: #111a2b;
+  --color-surface-raised: #16233b;
+  --color-border: #243049;
+  --color-border-strong: #33415e;
+  --color-fg: #e7eef8;
+  --color-muted: #93a1b8;
+  --color-faint: #64748b;
+
+  /* Accent teal AVAgency — 500 = marque, 600 calé AA 4.9:1 sur texte clair */
+  --color-accent-400: #3cb4a4;
+  --color-accent-500: #2a9d8f;
+  --color-accent-600: #248b7e;
+  --color-accent-700: #1c6c62;
+
+  /* Teintes sémantiques de statut (consommées via lib/statusTone.ts, source unique) */
+  --color-ok-500: #22a06b;
+  --color-warn-500: #d99a2b;
+  --color-danger-500: #dc5a5a;
+  --color-info-500: #3b82c4;
+  --color-purple-500: #8b6fd6;
+
+  --radius-card: 0.625rem;
+  --radius-pill: 9999px;
+
+  /* Élévation — 2 rôles nommés, ombres teintées slate-900 */
+  --shadow-raised: 0 1px 2px rgb(2 6 16 / 0.4), 0 1px 3px rgb(2 6 16 / 0.3);
+  --shadow-overlay: 0 12px 32px rgb(2 6 16 / 0.55), 0 4px 8px rgb(2 6 16 / 0.4);
+
+  /* Motion — 2 rôles ; désactivés sous prefers-reduced-motion (cf. plus bas) */
+  --animate-enter: enter 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-pulse-live: pulse-live 1.6s ease-in-out infinite;
+}
+
+/* Échelle z-index NOMMÉE — pas de namespace @theme en v4 : vars CSS + utilitaire z-(--z-*) */
+:root {
+  --z-header: 30;
+  --z-rail: 20;
+  --z-dock: 40;
+  --z-drawer: 50;
+  --z-overlay: 60;
+}
+
+@keyframes enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulse-live {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after { animation: none !important; transition: none !important; }
+}
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbars dark-aware (hors @theme — valeurs de thème brutes) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: var(--radius-pill);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
