@@ -5,6 +5,17 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Production serve — service systemd + `docs/install.md` (P3 turnkey-install)
+- **`cockpit install-service`** (nouvelle sous-commande) : génère une unité systemd pour `cockpit serve` —
+  portée **user** (défaut, sans root, `~/.config/systemd/user/`) ou **`--system`**. Écrit aussi un
+  `cockpit.env` gabarit (store/bind, jamais un secret ; conf existante préservée) et **imprime** les
+  commandes `systemctl` (n'exécute pas systemctl → pas de footgun privilège). `Environment=HOME` épinglé
+  (sinon git ne lit pas le helper de credentials). Module pur `cockpit.service` + gabarit manuel
+  `deploy/cockpit.service`.
+- **`docs/install.md`** : guide turnkey self-hosted — wheel packagé (aucun Node) vs sources, wizard 1er
+  démarrage, service systemd + note reverse-proxy/TLS (pas d'auth intégrée), coffre file/BWS, mise à jour.
+  README + index docs mis à jour.
+
 ### Wizard 1er-démarrage guidé (`/setup`) + first-run (P2 turnkey-install)
 - **`GET /api/onboarding`** gagne `project_count` + **`first_run`** (aucun projet → instance neuve). Corrige
   le faux « complet » sur une instance vide : le wizard **guide** (« crée ton 1er projet ») au lieu d'annoncer

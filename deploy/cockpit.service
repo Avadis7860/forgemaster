@@ -1,0 +1,30 @@
+# cockpit.service — unité systemd de référence pour `cockpit serve` (self-hosted).
+#
+# Le plus simple : `cockpit install-service` (service utilisateur, sans root) ou
+# `cockpit install-service --system --host 0.0.0.0` (service système). Ce fichier est un GABARIT manuel :
+# remplace @VENV@ / @HOME@ / @COCKPIT_HOME@ / @USER@ et copie-le au bon endroit
+# (~/.config/systemd/user/ en user, /etc/systemd/system/ en système).
+#
+# Environment=HOME est OBLIGATOIRE : sans lui, git ne lit pas le helper de credentials → fetch/push non
+# authentifiés en silence. L'EnvironmentFile porte COCKPIT_HOME / le backend de coffre (aucun secret).
+
+[Unit]
+Description=cockpit — forge/orchestrateur local (daemon FastAPI + web)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# --- portée système uniquement (décommente) ---
+# User=@USER@
+# Group=@USER@
+Environment=HOME=@HOME@
+Environment=COCKPIT_HOME=@COCKPIT_HOME@
+EnvironmentFile=-@COCKPIT_HOME@/cockpit.env
+ExecStart=@VENV@/bin/cockpit serve --host 127.0.0.1 --port 8700
+Restart=on-failure
+RestartSec=3
+
+[Install]
+# user : default.target — système : multi-user.target
+WantedBy=default.target

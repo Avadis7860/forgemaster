@@ -26,6 +26,19 @@ Multi-worktree = plusieurs features en parallèle. Backend git **internal-first*
 - **Persistance** : un seul SQLite (projets, features, tasks, jobs de dispatch).
 - **Front** (vue par-dessus) : Vite + React 19 + TanStack (Query/Virtual/Router) + xterm.js — terminal PTY parlant la CLI, panneaux DAG / worktrees / logs live.
 
+## Installation (self-hosted)
+
+Héberge ta propre instance — guide complet : [`docs/install.md`](docs/install.md).
+
+```bash
+# le plus simple : wheel packagé, l'UI est incluse (aucun Node requis)
+pip install cockpit-0.1.0-py3-none-any.whl
+cockpit serve                 # http://127.0.0.1:8700 → wizard /setup au 1er démarrage
+```
+
+Depuis les sources : `pip install -e .` puis `cockpit setup` (build l'UI, Node requis). Service systemd :
+`cockpit install-service`.
+
 ## Développement
 
 Réimplémentation propre de l'orchestrateur legacy (pas un fork) : les décisions distillées sont importées
@@ -34,6 +47,7 @@ comme **specs** (`docs/specs/`), le registre `docs/weak-points.md` liste les det
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
 pip install -e '.[dev]'
+cockpit setup           # build l'UI (Node) — sinon daemon API-only
 cockpit --help          # la spine répond
 ruff check src tests && mypy && pytest -q   # gate qualité (cf. .claude/skills/quality-gate)
 ```

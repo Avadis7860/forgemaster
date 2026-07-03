@@ -1,0 +1,96 @@
+# Installer le cockpit (self-hosted)
+
+Guide turnkey pour héberger **ta propre** instance de cockpit. Chacun lance la sienne — pas de compte
+serveur, pas de secret en clair. Deux chemins d'installation : un **wheel packagé** (le plus simple, aucun
+Node requis) ou **depuis les sources** (clone + build du front).
+
+## Prérequis
+
+- **Python ≥ 3.11** (toujours).
+- **Node ≥ 18** — **uniquement** pour installer *depuis les sources* (le wheel packagé embarque déjà l'UI).
+- Git (le cockpit orchestre des dépôts).
+
+## Installer
+
+### A. Depuis un wheel packagé — recommandé (aucun Node)
+
+L'interface web voyage **dans le wheel** : `pip install` suffit, rien à builder.
+
+```bash
+python3 -m venv ~/.venvs/cockpit && . ~/.venvs/cockpit/bin/activate
+pip install cockpit-0.1.0-py3-none-any.whl     # le wheel fourni
+cockpit --version
+```
+
+Pour le coffre Bitwarden (optionnel) : `pip install 'cockpit[bws]'` (voir *Coffre de secrets*).
+
+### B. Depuis les sources (clone) — Node requis
+
+```bash
+git clone https://github.com/Avadis7860/cockpit && cd cockpit
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e .            # (ajoute [dev] pour l'outillage qualité)
+cockpit setup               # build l'UI (npm) — nécessite Node ; fail-loud sinon
+```
+
+`cockpit setup` construit `web/dist`. Sans lui (ou sans Node), le daemon tourne en **API-only** et sert une
+page d'aide à `/` expliquant quoi faire — jamais un écran blanc silencieux.
+
+## Premier démarrage
+
+```bash
+cockpit serve                       # http://127.0.0.1:8700
+cockpit serve --host 0.0.0.0        # exposé au réseau local (LAN)
+```
+
+Ouvre l'URL : sur une **instance neuve**, un **wizard `/setup`** te guide —
+
+1. **Coffre de secrets** — prêt par défaut (fichier chiffré local, zéro-config).
+2. **Ton premier projet** — crée-le (le miroir GitHub est optionnel).
+3. **Miroir + token** — si le projet pousse vers GitHub, lie un token de push (jamais stocké en clair).
+4. **Prêt** — ouvre le projet et lance la forge.
+
+Le wizard est **non bloquant** et ré-ouvrable depuis **Réglages**. En ligne de commande : `cockpit onboard
+status` (code de sortie `0` si complet, `1` sinon — utilisable comme sonde) et `cockpit onboard link`.
+
+## Servir en production (systemd)
+
+Le plus simple — un **service utilisateur** (sans root), qui redémarre tout seul et survit au reboot :
+
+```bash
+cockpit install-service --host 0.0.0.0        # écrit ~/.config/systemd/user/cockpit.service
+systemctl --user daemon-reload && systemctl --user enable --now cockpit
+loginctl enable-linger "$USER"                 # démarrer sans session ouverte (serveur headless)
+```
+
+Ou un **service système** (root) : `cockpit install-service --system --host 0.0.0.0` puis
+`sudo systemctl daemon-reload && sudo systemctl enable --now cockpit`.
+
+La commande écrit aussi un `cockpit.env` (EnvironmentFile) sous `COCKPIT_HOME` — c'est là que se règlent le
+`COCKPIT_HOME`, le backend de coffre et le bind (jamais un secret). Gabarit manuel :
+[`deploy/cockpit.service`](../deploy/cockpit.service).
+
+**Réseau / TLS.** Le cockpit n'a **pas d'authentification** (outil mono-utilisateur, frontière de confiance =
+LAN/localhost). Ne l'expose pas nu sur Internet : mets-le derrière un reverse-proxy (TLS + auth) ou un VPN.
+
+## Coffre de secrets
+
+| Backend | Quand | Config |
+|---|---|---|
+| `file` (défaut) | poste perso / lightweight | **aucune** — clé chiffrée créée à la 1ʳᵉ écriture sous `COCKPIT_HOME/secrets/` |
+| `bws` | Bitwarden Secrets Manager | `pip install 'cockpit[bws]'` + `COCKPIT_SECRET_STORE=bws` + `BWS_ACCESS_TOKEN` (ou `BWS_ACCESS_TOKEN_FILE`) |
+
+La base ne stocke **jamais** un token — seulement une **référence** ; la valeur vit dans le coffre. Le choix
+du backend se fait à l'installation (env / `cockpit.env`), pas à chaud.
+
+## Emplacements
+
+- `COCKPIT_HOME` (défaut `~/.cockpit`) — base SQLite, logs, coffre fichier, `cockpit.env`.
+- `COCKPIT_PROJECTS_ROOT` (défaut `~/projects`) — racine des dépôts orchestrés.
+
+## Mettre à jour
+
+- Wheel : `pip install --upgrade <nouveau wheel>` puis redémarre le service.
+- Sources : `git pull && pip install -e . && cockpit setup` puis redémarre.
+
+Le schéma SQLite **migre en place** au démarrage (idempotent) — aucune action manuelle.

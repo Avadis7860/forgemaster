@@ -4,7 +4,7 @@ de sorte que le parser se construit sans tirer fastapi/uvicorn ni aucune couche 
 
 Sous-commandes = la surface de la spine (phases du produit) :
   project (create|list|get) · roadmap (add-feature|show) · task (add|next) ·
-  dispatch · gate (review|verify|toolchain) · merge · onboard · serve · setup
+  dispatch · gate (review|verify|toolchain) · merge · onboard · serve · setup · install-service
 
 Chaque handler reçoit `(settings, args)` et retourne un code de sortie. Tant que les couches sont des
 stubs, l'appel lève `NotImplementedError("port: … — #N")` — c'est voulu (le câblage est prouvé, la
@@ -105,6 +105,13 @@ def build_parser() -> argparse.ArgumentParser:
                         help="build l'UI depuis les sources (from-clone ; inutile pour un wheel packagé)")
     ps.add_argument("--no-clean", action="store_true", help="npm install au lieu de npm ci")
 
+    # -- install-service ----------------------------------------------------------------------------
+    pi = sub.add_parser("install-service", parents=[common],
+                        help="installer une unité systemd pour `cockpit serve` (self-hosted)")
+    pi.add_argument("--system", action="store_true", help="unité système (root) au lieu d'un service user")
+    pi.add_argument("--host", default="127.0.0.1", help="bind du daemon (0.0.0.0 pour le réseau local)")
+    pi.add_argument("--port", type=int, default=8700)
+
     return parser
 
 
@@ -179,6 +186,16 @@ def _h_setup(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+def _h_install_service(settings: Settings, args: argparse.Namespace) -> int:
+    from cockpit import service
+    scope = "system" if args.system else "user"
+    unit, env, hint = service.install_service(settings, host=args.host, port=args.port, scope=scope)
+    print(f"unité systemd écrite → {unit}")
+    print(f"EnvironmentFile     → {env} (réglages : store, bind ; aucun secret)")
+    print(f"active-la           : {hint}")
+    return 0
+
+
 _HANDLERS = {
     "project": _h_project,
     "roadmap": _h_roadmap,
@@ -189,4 +206,5 @@ _HANDLERS = {
     "onboard": _h_onboard,
     "serve": _h_serve,
     "setup": _h_setup,
+    "install-service": _h_install_service,
 }
