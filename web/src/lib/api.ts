@@ -5,6 +5,8 @@ import type { z } from 'zod'
 import {
   DispatchReportSchema,
   GateStatusSchema,
+  GitBlobSchema,
+  GitTreeSchema,
   GitViewSchema,
   HealthSchema,
   JobDetailSchema,
@@ -72,6 +74,19 @@ export const api = {
   // aucun effet (le runner de boucle visuelle goto-only l'atteint sans risque).
   getGit: (project: string) =>
     request(`/api/projects/${encodeURIComponent(project)}/git`, GitViewSchema),
+  // Exploration read-only : arbre d'un dossier + contenu d'un fichier à une réf. GET idempotents.
+  getGitTree: (project: string, ref: string, path: string) =>
+    request(
+      `/api/projects/${encodeURIComponent(project)}/git/tree` +
+        `?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent(path)}`,
+      GitTreeSchema,
+    ),
+  getGitBlob: (project: string, ref: string, path: string) =>
+    request(
+      `/api/projects/${encodeURIComponent(project)}/git/blob` +
+        `?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent(path)}`,
+      GitBlobSchema,
+    ),
   getNext: (project: string, feature: string) =>
     request(
       `/api/features/${encodeURIComponent(project)}/${encodeURIComponent(feature)}/next`,

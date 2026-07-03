@@ -10,6 +10,8 @@ export const qk = {
   project: (slug: string) => ['projects', slug] as const,
   roadmap: (project: string) => ['roadmap', project] as const,
   git: (project: string) => ['git', project] as const,
+  gitTree: (project: string, ref: string, path: string) => ['git-tree', project, ref, path] as const,
+  gitBlob: (project: string, ref: string, path: string) => ['git-blob', project, ref, path] as const,
   next: (project: string, feature: string) => ['next', project, feature] as const,
   jobs: (project: string, feature: string) => ['jobs', project, feature] as const,
   job: (jobId: string) => ['job', jobId] as const,
@@ -52,6 +54,24 @@ export function useGit(project: string) {
     queryKey: qk.git(project),
     queryFn: () => api.getGit(project),
     enabled: Boolean(project),
+  })
+}
+
+// Arbre d'un dossier du dépôt à une réf (explorateur). GET idempotent, pas de poll.
+export function useGitTree(project: string, ref: string, path: string) {
+  return useQuery({
+    queryKey: qk.gitTree(project, ref, path),
+    queryFn: () => api.getGitTree(project, ref, path),
+    enabled: Boolean(project && ref),
+  })
+}
+
+// Contenu d'un fichier à une réf (explorateur). Activé seulement quand un fichier est sélectionné.
+export function useGitBlob(project: string, ref: string, path: string) {
+  return useQuery({
+    queryKey: qk.gitBlob(project, ref, path),
+    queryFn: () => api.getGitBlob(project, ref, path),
+    enabled: Boolean(project && ref && path),
   })
 }
 

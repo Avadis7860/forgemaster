@@ -248,6 +248,39 @@ export const GitViewSchema = z.object({
 })
 export type GitView = z.infer<typeof GitViewSchema>
 
+// Une entrée d'arbre (dossier du dépôt à une réf) : blob (fichier), tree (dossier) ou commit (sous-module).
+// `size` = null pour un arbre.
+export const GitTreeEntrySchema = z.object({
+  name: z.string(),
+  type: z.enum(['blob', 'tree', 'commit']),
+  size: z.number().nullable(),
+  sha: z.string(),
+})
+export type GitTreeEntry = z.infer<typeof GitTreeEntrySchema>
+
+// GET /api/projects/{p}/git/tree?ref=&path= : entrées d'un dossier (dossiers d'abord). Read-only idempotent.
+export const GitTreeSchema = z.object({
+  project: z.string(),
+  ref: z.string(),
+  path: z.string(),
+  entries: z.array(GitTreeEntrySchema),
+})
+export type GitTree = z.infer<typeof GitTreeSchema>
+
+// GET /api/projects/{p}/git/blob?ref=&path= : contenu d'un fichier. Gardes L4 : `binary`/`too_large`
+// → `content` vide (jamais d'octets bruts) ; `truncated` si le contenu affiché a été coupé.
+export const GitBlobSchema = z.object({
+  project: z.string(),
+  path: z.string(),
+  ref: z.string(),
+  size: z.number(),
+  binary: z.boolean(),
+  truncated: z.boolean(),
+  too_large: z.boolean(),
+  content: z.string(),
+})
+export type GitBlob = z.infer<typeof GitBlobSchema>
+
 // -- Onboarding self-hosted (phase 4c) : check config-requise + credential par entité ---------------
 
 // Racine de confiance du store actif : joignable ? (file = zéro-config ; bws = BWS_ACCESS_TOKEN présent).

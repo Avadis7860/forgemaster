@@ -1,6 +1,7 @@
 import { useParams } from '@tanstack/react-router'
 import { Alert, Badge, Card, EmptyState, LoadingState, RefreshButton } from '@/components/ui'
 import { ProjectCredentialCard } from '@/components/credential/ProjectCredentialCard'
+import { RepoExplorer } from '@/components/git/RepoExplorer'
 import { ApiError } from '@/lib/api'
 import { useGit } from '@/lib/queries'
 import { gitBranchTone } from '@/lib/statusTone'
@@ -54,6 +55,8 @@ export function GitTab() {
           {refs.map((ref) => <LogCard key={ref} refName={ref} entries={data.logs[ref]} />)}
         </div>
       )}
+
+      {data.branches.length > 0 && <RepoExplorer project={project} branches={data.branches} />}
     </div>
   )
 }
