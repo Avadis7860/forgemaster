@@ -5,6 +5,18 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Orchestrateur parallèle — cœur `run_project` (P1 cockpit-typed-bundles, Phase 4)
+- **`dispatch/orchestrator.py`** (nouveau) : `run_project(conn, settings, *, project, max_parallel=2, git,
+  runner)` draine la roadmap et **parallélise les features indépendantes prêtes** (feature = worktree =
+  mutex ; N features prêtes ⇒ N workers). `ThreadPoolExecutor`, `in_flight` muté **à la soumission** (seul
+  le thread principal assigne → zéro double-dispatch), `_dispatch_one` en **connexion par thread** (réutilise
+  `dispatch_next` intact). **La boucle possède la transition `done`** (le dispatch mono laisse `in_progress`) :
+  sans elle le résolveur ne ferait jamais avancer le DAG. Tolérance à l'échec (feature KO → task revenue
+  `todo` + exclue du run) ; terminaison garantie (le travail restant décroît strictement).
+- +5 tests (`test_orchestrator.py`, DB fichier + git réel + runner injecté qui mesure la concurrence) :
+  drainage DAG intra-feature, parallélisme borné (`peak==max_parallel`), mutex par feature (`feature_peak==1`),
+  isolation d'échec, terminaison. **Pas** de merge auto : la boucle ne produit que des commits sur branches.
+
 ### Facette de feature — activation + prompt (P1 cockpit-typed-bundles, Phase 3)
 - **`provision/facet.py`** (nouveau) : `resolve_facet(root, feature_facet)` (feature.facet → default_facet du
   `.cockpit/bundle.toml` → fallback `doc`) et `activate_facet(wt, facet)` (copie
