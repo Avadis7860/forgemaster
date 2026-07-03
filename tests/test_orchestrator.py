@@ -147,3 +147,18 @@ def test_run_project_terminates_when_next_always_fails(ctx):
     assert summary["dispatched"] == 1 and summary["ok"] == 0 and summary["failed"] == 1
     assert r.calls == ["stuck"]                          # exactement UN run — pas de re-dispatch en boucle
     assert _statuses(conn, "stuck") == {"t1": "todo", "t2": "todo"}
+
+
+# -- CLI `cockpit run` : rapport (smoke, sans worker) -----------------------------------------------
+
+def test_cli_dispatch_reports_empty_roadmap(ctx, capsys):
+    # Projet sans feature dispatchable → run_project ne spawn RIEN (aucun `claude`), imprime un rapport
+    # « 0 dispatchée(s) … roadmap drainée » et retourne 0. Prouve le chemin CLI → rapport de bout en bout.
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="empty")
+    import argparse
+    code = orchestrator.cli_dispatch(settings, argparse.Namespace(
+        project="empty", home=None, projects_root=None))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "run empty : 0 dispatchée(s), 0 ok, 0 échouée(s)" in out and "roadmap drainée" in out

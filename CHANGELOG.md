@@ -16,6 +16,9 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 - +5 tests (`test_orchestrator.py`, DB fichier + git réel + runner injecté qui mesure la concurrence) :
   drainage DAG intra-feature, parallélisme borné (`peak==max_parallel`), mutex par feature (`feature_peak==1`),
   isolation d'échec, terminaison. **Pas** de merge auto : la boucle ne produit que des commits sur branches.
+- **CLI `cockpit run <project> [--max-parallel N]`** (Phase 5) : `orchestrator.cli_dispatch` draine et imprime
+  le rapport (dispatchées / ok / échouées / drainé) ; exit 0 si drainée sans échec, 1 sinon (relance
+  reprend là où ça a bloqué). `cockpit dispatch <feature>` (mono) inchangé. +2 tests (parse + smoke rapport).
 
 ### Facette de feature — activation + prompt (P1 cockpit-typed-bundles, Phase 3)
 - **`provision/facet.py`** (nouveau) : `resolve_facet(root, feature_facet)` (feature.facet → default_facet du

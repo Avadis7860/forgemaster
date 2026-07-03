@@ -4,7 +4,7 @@ de sorte que le parser se construit sans tirer fastapi/uvicorn ni aucune couche 
 
 Sous-commandes = la surface de la spine (phases du produit) :
   project (create|list|get) · roadmap (add-feature|show) · task (add|next) ·
-  dispatch · gate (review|verify|toolchain) · merge · onboard · serve · setup · install-service
+  dispatch · run · gate (review|verify|toolchain) · merge · onboard · serve · setup · install-service
 
 Chaque handler reçoit `(settings, args)` et retourne un code de sortie. Tant que les couches sont des
 stubs, l'appel lève `NotImplementedError("port: … — #N")` — c'est voulu (le câblage est prouvé, la
@@ -73,6 +73,13 @@ def build_parser() -> argparse.ArgumentParser:
     # -- dispatch -----------------------------------------------------------------------------------
     p_dispatch = sub.add_parser("dispatch", parents=[common], help="dispatcher un worker sur la NEXT task")
     p_dispatch.add_argument("feature")
+
+    # -- run ----------------------------------------------------------------------------------------
+    p_run = sub.add_parser("run", parents=[common],
+                           help="drainer la roadmap d'un projet en parallèle (features indépendantes)")
+    p_run.add_argument("project")
+    p_run.add_argument("--max-parallel", type=int, default=2,
+                       help="nombre max de workers concurrents (features en parallèle ; défaut 2)")
 
     # -- gate ---------------------------------------------------------------------------------------
     p_gate = sub.add_parser("gate", parents=[common], help="gate de review / vérification")
@@ -165,6 +172,11 @@ def _h_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     return worker.cli_dispatch(settings, args)
 
 
+def _h_run(settings: Settings, args: argparse.Namespace) -> int:
+    from cockpit.dispatch import orchestrator
+    return orchestrator.cli_dispatch(settings, args)
+
+
 def _h_gate(settings: Settings, args: argparse.Namespace) -> int:
     from cockpit.gate import review, toolchain, verify
     mod = {"review": review, "verify": verify, "toolchain": toolchain}[args.action]
@@ -221,6 +233,7 @@ _HANDLERS = {
     "roadmap": _h_roadmap,
     "task": _h_task,
     "dispatch": _h_dispatch,
+    "run": _h_run,
     "gate": _h_gate,
     "merge": _h_merge,
     "onboard": _h_onboard,

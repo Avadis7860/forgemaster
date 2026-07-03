@@ -104,9 +104,16 @@ def test_cli_parser_wires_all_subcommands():
     parser = build_parser()
     sub = next(a for a in parser._actions if a.dest == "command")  # noqa: SLF001 (introspection de test)
     assert set(sub.choices) == {
-        "project", "roadmap", "task", "dispatch", "gate", "merge", "onboard", "bootstrap", "serve",
-        "setup", "install-service",
+        "project", "roadmap", "task", "dispatch", "run", "gate", "merge", "onboard", "bootstrap",
+        "serve", "setup", "install-service",
     }
+
+
+def test_cli_run_parses_project_and_max_parallel():
+    args = build_parser().parse_args(["run", "demo", "--max-parallel", "3"])
+    assert args.command == "run" and args.project == "demo" and args.max_parallel == 3
+    default = build_parser().parse_args(["run", "demo"])
+    assert default.max_parallel == 2                         # borne prudente par défaut
 
 
 def test_cli_help_runs():

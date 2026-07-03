@@ -18,6 +18,7 @@ boucle ne produit que des commits sur branches feature ; `cockpit merge --go` re
 """
 from __future__ import annotations
 
+import argparse
 import sqlite3
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 
@@ -122,3 +123,23 @@ def _summarize(project: str, reports: list[dict], failed: set[str]) -> dict:
     return {"project": project, "dispatched": len(reports), "ok": n_ok,
             "failed": len(reports) - n_ok, "failed_features": sorted(failed),
             "drained": not failed, "runs": reports}
+
+
+def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
+    """Route `cockpit run <project> [--max-parallel N]` : draine la roadmap en parallèle, imprime le rapport
+    (dispatchées / ok / échouées). Exit 0 si drainée sans échec, 1 sinon (une feature en échec, task `todo`
+    re-dispatchable — le relancer reprend là où ça a bloqué)."""
+    conn = store.open_db(settings)
+    try:
+        summary = run_project(conn, settings, project=args.project,
+                              max_parallel=getattr(args, "max_parallel", DEFAULT_MAX_PARALLEL))
+    except (ValueError, KeyError) as exc:
+        print(f"erreur : {exc}")
+        return 1
+    finally:
+        conn.close()
+    tail = ("roadmap drainée" if summary["drained"]
+            else f"features en échec : {', '.join(summary['failed_features'])}")
+    print(f"run {args.project} : {summary['dispatched']} dispatchée(s), {summary['ok']} ok, "
+          f"{summary['failed']} échouée(s) — {tail}")
+    return 0 if summary["drained"] else 1
