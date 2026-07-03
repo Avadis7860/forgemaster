@@ -5,6 +5,21 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### credential_ref par entité + résolution au writeback (phase 4b — onboarding self-hosted)
+- **Schéma SQLite v4** (bump `SCHEMA_VERSION=4`) : `projects` gagne `credential_ref` (`TEXT`, nullable,
+  aucun défaut → `NULL` rétroactif). Migration en place idempotente (`ensure_columns`). La DB ne stocke que
+  la **référence** opaque, jamais le token (spec merge-writeback).
+- **`registry`** : `create_project(..., credential_ref=None)` + nouvelle `set_credential_ref(conn, slug, ref)`
+  (lie/délie la référence — l'affordance « token par repo » de l'onboarding écrit ici).
+- **`git/internal`** : nouvelle primitive pure `credential_env(token, base=…)` — injecte le token pour un
+  push GitHub HTTPS via `GIT_CONFIG_*` (`url.insteadOf`, `x-access-token`), **le temps du push seulement**,
+  jamais dans un `.gitconfig` ni dans l'argv, `GIT_TERMINAL_PROMPT=0`. `InternalGit(cred_resolver=…)` résout
+  la référence à l'usage ; `merge_writeback` l'injecte quand une `creds_ref` est présente (sinon push
+  ambiant — compat). Le paquet git n'importe **jamais** `cockpit.secrets` (la policy vit chez l'appelant).
+- **`gate/merge`** : `run_merge` lit `project['credential_ref']` et construit `InternalGit` doté du résolveur
+  adossé au store actif (`build_store`, **lazy** : le store n'est bâti que si une réf est présentée ;
+  **total** : secret absent/illisible → `''` → push best-effort, jamais bloquant). **0 token en DB**.
+
 ### Secret store pluggable (phase 4a — onboarding self-hosted)
 - Nouveau paquet **`src/cockpit/secrets/`** : Protocol `SecretStore` (`put→ref` / `get` / `delete` / `has` /
   `list_entries`) + deux backends. La DB stocke une **référence opaque** (`credential_ref`), jamais le token ;

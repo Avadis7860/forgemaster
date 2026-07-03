@@ -18,7 +18,8 @@ from cockpit.db import store
 from cockpit.git.internal import InternalGit
 from cockpit.provision import load_payload
 
-_COLS = ("id", "slug", "name", "sot_path", "mirror_remote", "backend", "kind", "owner", "created_at")
+_COLS = ("id", "slug", "name", "sot_path", "mirror_remote", "backend", "kind", "owner",
+         "credential_ref", "created_at")
 _KINDS = ("project", "tool")   # classification (v3) : entité travaillée vs outil générique du framework
 
 
@@ -33,29 +34,43 @@ def sot_path_for(settings: Settings, slug: str) -> Path:
 
 def create_project(conn: sqlite3.Connection, settings: Settings, *,
                    slug: str, name: str | None = None, mirror_remote: str | None = None,
-                   kind: str = "project", owner: str | None = None) -> dict:
+                   kind: str = "project", owner: str | None = None,
+                   credential_ref: str | None = None) -> dict:
     """Crée une entité (row DB) et **initialise son SoT bare local** (idempotent), semé du « toolkit
     auto-travaillable » (CLAUDE.md mince + configs d'index + stub `docs/` + skills + settings) → chaque
     entité naît auto-travaillable seule. `kind` classe l'entité (`project` travaillé vs `tool` générique du
-    framework) ; `owner` (nullable) = compat multi-utilisateur. Lève `ValueError` si slug ou `kind` invalide,
-    ou si le slug existe déjà (via IntegrityError)."""
+    framework) ; `owner` (nullable) = compat multi-utilisateur ; `credential_ref` (nullable) = **référence
+    opaque** vers le token du store (jamais le secret en clair — spec merge-writeback), en général posée
+    plus tard par l'onboarding via `set_credential_ref`. Lève `ValueError` si slug ou `kind` invalide, ou si
+    le slug existe déjà (via IntegrityError)."""
     ids.ensure_slug(slug, field="project")
     if kind not in _KINDS:
         raise ValueError(f"kind invalide : {kind!r} (attendu {' | '.join(_KINDS)})")
     sot = sot_path_for(settings, slug)
     row = {"id": ids.new_id(), "slug": slug, "name": name or slug, "sot_path": str(sot),
            "mirror_remote": mirror_remote, "backend": "internal", "kind": kind, "owner": owner,
-           "created_at": _now()}
+           "credential_ref": credential_ref, "created_at": _now()}
     try:
         conn.execute(
             "INSERT INTO projects (id, slug, name, sot_path, mirror_remote, backend, kind, owner, "
-            "created_at) VALUES (:id, :slug, :name, :sot_path, :mirror_remote, :backend, :kind, :owner, "
-            ":created_at)", row)
+            "credential_ref, created_at) VALUES (:id, :slug, :name, :sot_path, :mirror_remote, :backend, "
+            ":kind, :owner, :credential_ref, :created_at)", row)
         conn.commit()
     except sqlite3.IntegrityError as exc:
         raise ValueError(f"projet déjà existant : {slug!r}") from exc
     InternalGit().init_sot(sot, payload=load_payload())
     return row
+
+
+def set_credential_ref(conn: sqlite3.Connection, slug: str, credential_ref: str | None) -> dict:
+    """Lie (ou délie, si `None`) un `credential_ref` à un projet — l'affordance « token par repo » de
+    l'onboarding écrit ICI. La DB ne porte que la **référence** opaque ; la valeur du token vit dans le
+    store de secrets. Lève `KeyError` si le projet n'existe pas. Retourne le projet relu."""
+    cur = conn.execute("UPDATE projects SET credential_ref = ? WHERE slug = ?", (credential_ref, slug))
+    if cur.rowcount == 0:
+        raise KeyError(slug)
+    conn.commit()
+    return get_project(conn, slug)
 
 
 def list_projects(conn: sqlite3.Connection) -> list[dict]:

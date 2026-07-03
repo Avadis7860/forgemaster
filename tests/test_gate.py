@@ -223,6 +223,25 @@ def test_run_merge_holds_without_go_then_merges_and_cleans_up(ctx):
     assert feat["status"] == "merged" and task["status"] == "done" and done["closed_tasks"] == ["schema"]
 
 
+def test_run_merge_passes_project_credential_ref_to_writeback(ctx):
+    """run_merge lit le `credential_ref` du projet et le passe au writeback (résolu à l'usage). Prouve le
+    câblage bout-en-bout : réf opaque en DB → argument de `merge_writeback`, jamais un token en DB."""
+    settings, conn = ctx
+    seen: dict[str, str | None] = {}
+
+    class RecordingGit(InternalGit):
+        def merge_writeback(self, sot, *, creds_ref, identity):   # type: ignore[override]
+            seen["creds_ref"] = creds_ref
+            return super().merge_writeback(sot, creds_ref=creds_ref, identity=identity)
+
+    git = RecordingGit()
+    _seed_committed_feature(conn, settings, git)
+    registry.set_credential_ref(conn, "proj", "ref-live")
+    done = merge.run_merge(conn, settings, feature_ref="proj/feat", human_go=True, git=git)
+    assert done["merged"] is True
+    assert seen["creds_ref"] == "ref-live"           # la réf DB atteint le writeback (0 token en DB)
+
+
 def test_run_merge_blocked_by_red_review_mutates_nothing(ctx):
     settings, conn = ctx
     git = InternalGit()

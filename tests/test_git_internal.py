@@ -12,6 +12,7 @@ from cockpit.git.internal import (
     GitOpError,
     InternalGit,
     classify_push_error,
+    credential_env,
     is_protected_branch,
     parse_log,
     parse_status,
@@ -158,6 +159,69 @@ def test_writeback_env_injects_identity_without_mutating_os_environ():
     assert env["GIT_COMMITTER_NAME"] == "Vault Writeback"
     assert "GIT_AUTHOR_NAME" not in os.environ  # non persisté (spec merge-writeback)
     assert dict(os.environ) == before
+
+
+def test_credential_env_injects_token_transiently_without_mutating_base():
+    base = {"PATH": "/x", "GIT_AUTHOR_NAME": "wb"}
+    env = credential_env("gh-token-123", base=base)
+    # le token est injecté via GIT_CONFIG_* url.insteadOf github (jamais dans un .gitconfig, jamais l'argv)
+    assert env["GIT_CONFIG_KEY_0"] == "url.https://x-access-token:gh-token-123@github.com/.insteadOf"
+    assert env["GIT_CONFIG_VALUE_0"] == "https://github.com/"
+    assert env["GIT_CONFIG_COUNT"] == "1"
+    assert env["GIT_TERMINAL_PROMPT"] == "0"      # fail-loud, jamais de prompt interactif
+    assert env["GIT_AUTHOR_NAME"] == "wb"         # composé au-dessus de l'identité writeback
+    assert base == {"PATH": "/x", "GIT_AUTHOR_NAME": "wb"}   # base NON mutée (transitoire)
+
+
+def test_credential_env_composes_over_existing_git_config_count():
+    # un GIT_CONFIG_COUNT préexistant → on APPEND à l'index libre, sans écraser l'entrée 0
+    base = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "user.name", "GIT_CONFIG_VALUE_0": "x"}
+    env = credential_env("tok", base=base)
+    assert env["GIT_CONFIG_COUNT"] == "2"
+    assert env["GIT_CONFIG_KEY_0"] == "user.name"           # l'entrée existante intacte
+    assert env["GIT_CONFIG_KEY_1"] == "url.https://x-access-token:tok@github.com/.insteadOf"
+
+
+def test_merge_writeback_resolves_creds_ref_then_pushes_mirror(tmp_path: Path):
+    """Le writeback résout `creds_ref` → token À L'USAGE (via le résolveur injecté) et pousse le miroir.
+    Le remote local n'est pas github → l'`insteadOf` est inerte, mais on PROUVE que la réf est bien résolue
+    au moment du writeback (couture credential — invisible aux fakes de transport, cf. spec)."""
+    sot = _seed_bare(tmp_path)
+    mirror = tmp_path / "mirror.git"
+    assert run.run(["git", "init", "--bare", "-q", str(mirror)], env=_ENV).ok
+    run.run(["git", "-C", str(sot), "remote", "remove", "origin"], env=_ENV)   # clone bare → origin=seed
+    run.run(["git", "-C", str(sot), "remote", "add", "mirror", str(mirror)], env=_ENV)
+
+    seen: list[str] = []
+    def resolver(ref: str) -> str:
+        seen.append(ref)
+        return "gh-token-xyz"
+
+    git = InternalGit(cred_resolver=resolver)
+    git.merge_writeback(sot, creds_ref="ref-abc", identity=("Writeback", "wb@example.invalid"))
+    assert seen == ["ref-abc"]                                    # résolu au writeback, une fois
+    # le miroir a bien reçu les branches (push best-effort réussi)
+    assert run.run(["git", "-C", str(mirror), "rev-parse", "dev"], env=_ENV).ok
+
+
+def test_merge_writeback_without_resolver_ignores_creds_ref(tmp_path: Path):
+    """Sans résolveur injecté (défaut), une `creds_ref` est ignorée sans erreur : push ambiant best-effort
+    (compat historique). Aucun remote configuré → no-op propre, ne lève pas."""
+    sot = _seed_bare(tmp_path)
+    InternalGit().merge_writeback(sot, creds_ref="ref-abc", identity=("Wb", "wb@example.invalid"))
+
+
+def test_merge_writeback_missing_secret_degrades_to_ambient_push(tmp_path: Path):
+    """Un résolveur total qui renvoie '' (secret absent/illisible) → push ambiant best-effort, jamais une
+    exception (le miroir ne bloque jamais le merge — spec forge-sot-local)."""
+    sot = _seed_bare(tmp_path)
+    mirror = tmp_path / "mirror.git"
+    assert run.run(["git", "init", "--bare", "-q", str(mirror)], env=_ENV).ok
+    run.run(["git", "-C", str(sot), "remote", "remove", "origin"], env=_ENV)   # clone bare → origin=seed
+    run.run(["git", "-C", str(sot), "remote", "add", "mirror", str(mirror)], env=_ENV)
+    git = InternalGit(cred_resolver=lambda ref: "")           # secret introuvable → ''
+    git.merge_writeback(sot, creds_ref="ref-gone", identity=("Wb", "wb@example.invalid"))
+    assert run.run(["git", "-C", str(mirror), "rev-parse", "dev"], env=_ENV).ok
 
 
 def test_pure_parsers_and_classifiers():

@@ -13,13 +13,15 @@ Historique de version : v1 = projects/features/tasks/dispatch_jobs (4 tables). v
 gagne `session_id` (LA clé de suivi live — le chemin du transcript en dérive) + les métriques
 `num_turns`/`cost_usd`/`wall_s`/`engine` ; nouvelle table `port_reservations`. v3 = `projects` gagne
 `kind` (`project|tool` — classification, une seule table plutôt que deux) + `owner` (nullable, compat
-multi-utilisateur : à qui appartient l'entité).
+multi-utilisateur : à qui appartient l'entité). v4 = `projects` gagne `credential_ref` (nullable) : une
+**référence opaque** vers le token du store de secrets (jamais le secret en clair en DB — spec
+merge-writeback), résolue à l'usage au writeback git.
 """
 from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Ordre = ordre de création (les FK pointent vers des tables déjà créées). Chaque table porte les
 # invariants durs en contraintes SQL (NOT NULL, UNIQUE, FK, CHECK sur les enums de statut).
@@ -36,6 +38,7 @@ DDL: tuple[str, ...] = (
         kind          TEXT NOT NULL DEFAULT 'project'   -- classification (v3) : projet travaillé vs outil
                           CHECK (kind IN ('project', 'tool')),
         owner         TEXT,                            -- à qui appartient l'entité (v3, nullable : mono-user)
+        credential_ref TEXT,                           -- réf opaque vers le token du store (v4, nullable)
         created_at    TEXT NOT NULL
     )
     """,
@@ -109,7 +112,10 @@ _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
     # v3 : ALTER exige un défaut LITTÉRAL pour une colonne NOT NULL (d'où 'project'). La contrainte CHECK
     # n'est pas re-portable par ALTER en SQLite → l'invariant `kind∈{project,tool}` est tenu côté DDL (base
     # neuve) ET validé par `registry.create_project` (toute base) — jamais un kind hors-enum inséré.
-    "projects": (("kind", "TEXT NOT NULL DEFAULT 'project'"), ("owner", "TEXT")),
+    # v4 : `credential_ref` (nullable, aucun défaut → NULL pour l'existant : les projets pré-v4 n'ont pas de
+    # token lié tant que l'onboarding ne pose pas de référence).
+    "projects": (("kind", "TEXT NOT NULL DEFAULT 'project'"), ("owner", "TEXT"),
+                 ("credential_ref", "TEXT")),
 }
 
 # Index de service (accès par clé étrangère / statut — les chemins chauds du résolveur et du dispatch).

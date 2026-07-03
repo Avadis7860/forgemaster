@@ -4,14 +4,16 @@ Trois schémas sont un **contrat** : une couche produit, une autre consomme. On 
 librement ; changer un **schéma** exige une entrée CHANGELOG + un bump. Un schéma partiel qui se dit complet
 est un bug (jamais de cap silencieux).
 
-## 1. Schéma SQLite (`db/schema.py`, `SCHEMA_VERSION` = **3**)
+## 1. Schéma SQLite (`db/schema.py`, `SCHEMA_VERSION` = **4**)
 
 Base unique sous `settings.db_path` (`$COCKPIT_HOME/cockpit.db`). Modèle **feature-groupe-des-tasks**.
 
 - **`projects`** — `id` (uuid), `slug` (kebab, unique), `name`, `sot_path` (repo bare LOCAL co-localisé),
   `mirror_remote` (miroir GitHub best-effort, nullable), `backend` (`internal`|`github`), `kind`
   (`project`|`tool`, v3 — classification : entité travaillée vs outil générique du framework ; une seule
-  table plutôt que deux), `owner` (nullable, v3 — compat multi-utilisateur), `created_at`.
+  table plutôt que deux), `owner` (nullable, v3 — compat multi-utilisateur), `credential_ref` (nullable, v4
+  — **référence opaque** vers le token du store de secrets ; jamais le secret en clair en DB, résolu à
+  l'usage au writeback git — spec merge-writeback), `created_at`.
 - **`features`** — `id`, `project_id`→projects (cascade), `slug`, `title`, `branch` (`feature/<slug>`),
   `worktree_path` (nullable hors-vol), `status` (`planned`|`active`|`ready`|`merged`|`cancelled`),
   `created_at` ; unique `(project_id, slug)`.
@@ -38,6 +40,13 @@ nullable), via `ensure_columns` (`ALTER ADD COLUMN` idempotent — les lignes ex
 littéral `kind='project'`). La contrainte `CHECK (kind IN ('project','tool'))` vit dans le `DDL` (base neuve)
 et l'invariant est **re-validé** par `registry.create_project` (toute base) — un `ALTER` SQLite ne re-porte
 pas le CHECK, mais aucun `kind` hors-enum ne peut être inséré. Ajout **non-breaking** (colonnes à défaut).
+
+**Migration v3→v4** : `projects` gagne `credential_ref` (`TEXT`, nullable, **aucun défaut**) via
+`ensure_columns` — les lignes existantes prennent `NULL` (aucun token lié rétroactivement ; l'onboarding
+posera la référence via `registry.set_credential_ref`). La DB ne porte que la **référence** opaque ; la
+valeur du token vit dans le store de secrets (`COCKPIT_SECRET_STORE`), résolue à l'usage au writeback git
+(`gate/merge` → `git/internal.merge_writeback`, env `GIT_CONFIG_*` injecté le temps du push, jamais
+persisté — spec merge-writeback). Ajout **non-breaking**.
 
 ## 2. Schéma `.cockpit/roadmap.yaml` (in-repo, `roadmap/model.py`)
 

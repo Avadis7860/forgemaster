@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import fcntl
 import os
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -143,6 +143,23 @@ def writeback_env(identity: tuple[str, str], *, base: Mapping[str, str] | None =
     return env
 
 
+def credential_env(token: str, *, base: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Compose un env qui **injecte** un token d'accès pour un push GitHub HTTPS, le temps de l'op seulement
+    (spec merge-writeback : jamais persisté, jamais en clair en DB/config). Le mécanisme est `GIT_CONFIG_*`
+    (`url.<embed>.insteadOf`) : il réécrit `https://github.com/` → `https://x-access-token:<token>@github.com/`
+    **uniquement dans l'env du process git enfant** — rien n'est écrit dans un `.gitconfig`. Le token
+    n'apparaît PAS dans l'argv (`git push … --all`), seulement dans l'env. `GIT_TERMINAL_PROMPT=0` fait
+    échouer bruyamment plutôt que de pendre sur un prompt. Compose au-dessus d'un `GIT_CONFIG_COUNT` déjà
+    présent dans `base` (sans écraser ses entrées `GIT_CONFIG_*`). **Ne mute pas** `base`/`os.environ`."""
+    env = dict(base if base is not None else os.environ)
+    n = int(env.get("GIT_CONFIG_COUNT", "0") or "0")
+    env[f"GIT_CONFIG_KEY_{n}"] = f"url.https://x-access-token:{token}@github.com/.insteadOf"
+    env[f"GIT_CONFIG_VALUE_{n}"] = "https://github.com/"
+    env["GIT_CONFIG_COUNT"] = str(n + 1)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
+
+
 @contextmanager
 def _worktree_lock(sot: str | Path) -> Iterator[None]:
     """Sérialise les mutations de worktree par `flock` sur `<sot>/cockpit-worktree.lock` (le git-dir du
@@ -158,7 +175,16 @@ def _worktree_lock(sot: str | Path) -> Iterator[None]:
 
 
 class InternalGit:
-    """Adapter GitBackend sur repo bare local. Zéro réseau (le miroir est best-effort et opt-in)."""
+    """Adapter GitBackend sur repo bare local. Zéro réseau (le miroir est best-effort et opt-in).
+
+    `cred_resolver` (optionnel) résout un `credential_ref` opaque → token, injecté par l'orchestration
+    (`gate/merge`) le temps du writeback. **Total** (le contrat côté appelant : renvoie un token, `''` si
+    absent/illisible → jamais d'exception ici), pour que le push miroir reste best-effort. Absent (défaut) →
+    push authentifié par l'ambiant (compat historique). Ce paquet n'importe JAMAIS `cockpit.secrets` : la
+    couche git reste une primitive, la policy de résolution vit chez l'appelant."""
+
+    def __init__(self, *, cred_resolver: Callable[[str], str] | None = None) -> None:
+        self._cred_resolver = cred_resolver
 
     def init_sot(self, sot: Path, payload: Mapping[str, str] | None = None) -> None:
         """Initialise un repo bare local **amorcé** (idempotent). Un `init --bare` nu n'a AUCUNE branche →
@@ -267,9 +293,15 @@ class InternalGit:
     def merge_writeback(self, sot: Path, *, creds_ref: str | None, identity: tuple[str, str]) -> None:
         """Writeback post-merge avec identité injectée (non persistée). En sot:local le SoT bare EST la
         vérité (les refs sont déjà à jour après `merge_ff`) : le writeback se réduit à l'identité + un push
-        miroir **best-effort** si un remote est configuré (`creds_ref` résolu en amont, via l'env). Ne lève
-        jamais sur échec miroir (spec forge-sot-local)."""
+        miroir **best-effort** si un remote est configuré. Si `creds_ref` est fourni ET qu'un résolveur est
+        injecté, le token est résolu à l'usage et injecté dans l'env (`credential_env`) le temps du push,
+        jamais persisté ni loggé (spec merge-writeback). Ne lève jamais sur échec miroir (spec
+        forge-sot-local)."""
         env = writeback_env(identity)
+        if creds_ref and self._cred_resolver is not None:
+            token = self._cred_resolver(creds_ref)          # total : '' si absent/illisible → push ambiant
+            if token:
+                env = credential_env(token, base=env)
         for remote in ("origin", "mirror"):
             if _git(sot, "remote", "get-url", remote).ok:
                 _git(sot, "push", remote, "--all", env=env)  # best-effort, non bloquant

@@ -98,6 +98,49 @@ def test_ensure_columns_migrates_projects_v2_to_v3_in_place(tmp_path: Path):
     conn.close()
 
 
+def test_credential_ref_defaults_none_and_persists_at_create(ctx):
+    settings, conn = ctx
+    plain = registry.create_project(conn, settings, slug="plain")
+    linked = registry.create_project(conn, settings, slug="linked", credential_ref="ref-42")
+    assert plain["credential_ref"] is None                       # défaut : aucun token lié
+    assert linked["credential_ref"] == "ref-42"
+    assert registry.get_project(conn, "linked")["credential_ref"] == "ref-42"   # relecture DB fidèle
+
+
+def test_set_credential_ref_links_and_unlinks(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj")
+    p = registry.set_credential_ref(conn, "proj", "ref-99")      # l'onboarding LIE la réf ici
+    assert p["credential_ref"] == "ref-99"
+    assert registry.get_project(conn, "proj")["credential_ref"] == "ref-99"
+    unlinked = registry.set_credential_ref(conn, "proj", None)   # délier
+    assert unlinked["credential_ref"] is None
+    with pytest.raises(KeyError):
+        registry.set_credential_ref(conn, "absent", "x")         # projet inexistant
+
+
+def test_ensure_columns_migrates_projects_v3_to_v4_in_place(tmp_path: Path):
+    """Une base v3 (projects avec kind/owner mais sans credential_ref) migre en place : `ensure_columns`
+    ajoute `credential_ref`, NULL pour l'existant (aucun défaut → pas de token lié rétroactivement)."""
+    import sqlite3
+
+    from cockpit.db import schema
+    conn = sqlite3.connect(tmp_path / "v3.db")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE projects (id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, name TEXT NOT "
+                 "NULL, sot_path TEXT NOT NULL, mirror_remote TEXT, backend TEXT NOT NULL DEFAULT "
+                 "'internal', kind TEXT NOT NULL DEFAULT 'project', owner TEXT, created_at TEXT NOT NULL)")
+    conn.execute("INSERT INTO projects (id, slug, name, sot_path, backend, kind, created_at) "
+                 "VALUES ('i1', 'legacy', 'Legacy', '/x', 'internal', 'project', '2026-01-01')")
+    conn.commit()
+    assert "credential_ref" not in {r[1] for r in conn.execute("PRAGMA table_info(projects)")}
+    schema.ensure_columns(conn)
+    assert "credential_ref" in {r[1] for r in conn.execute("PRAGMA table_info(projects)")}
+    row = conn.execute("SELECT credential_ref FROM projects WHERE slug = 'legacy'").fetchone()
+    assert row["credential_ref"] is None                         # NULL rétroactif (pas de token)
+    conn.close()
+
+
 def test_add_feature_and_task_with_depends_on(ctx):
     settings, conn = ctx
     registry.create_project(conn, settings, slug="proj")
