@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import fcntl
 import os
+import subprocess
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
@@ -26,6 +27,13 @@ from cockpit.core import run
 
 PROTECTED_BRANCHES = ("main", "dev")
 _LOCK_NAME = "cockpit-worktree.lock"
+
+# Garde-fous de lecture d'un blob (explorateur read-only) : au-delà de _MAX_BLOB_READ on ne lit RIEN (juste
+# la taille via `cat-file -s`), au-delà de _MAX_BLOB_DISPLAY on tronque le contenu affiché. Bornent la
+# mémoire ET le rendu — un dépôt de code ne devrait jamais approcher ces seuils, un binaire lourd est signalé.
+_MAX_BLOB_READ = 10 * 1024 * 1024
+_MAX_BLOB_DISPLAY = 512 * 1024
+_BINARY_SNIFF = 8000  # octets sondés pour un NUL (heuristique git-like « fichier binaire »)
 
 
 class GitOpError(RuntimeError):
@@ -360,6 +368,62 @@ class InternalGit:
         out = _checked(sot, "rev-list", "--left-right", "--count", f"{base}...{head}").stdout
         left, _, right = out.strip().partition("\t")
         return {"base": base, "head": head, "behind": int(left or 0), "ahead": int(right or 0)}
+
+    # -- exploration read-only du dépôt (arbre + contenu, bare-safe) ---------------------------------
+
+    def ls_tree(self, sot: Path, ref: str, path: str = "") -> list[dict]:
+        """Entrées d'un dossier du dépôt à une réf, **sans working-tree** : `git ls-tree --long <ref>:<path>`
+        (le treeish `<ref>:<path>` EST l'objet arbre → liste son contenu non-récursif). Renvoie
+        `[{name, type:blob|tree|commit, size, sha}]`, **dossiers d'abord** puis alphabétique. `path` vide =
+        racine. `size` = `None` pour un arbre. Read-only, bare-safe. Lève (`GitOpError`) si la réf est
+        introuvable ou si `path` n'est pas un dossier (ex. un blob) → l'appelant mappe en 404."""
+        treeish = f"{ref}:{path.strip('/')}"
+        out = _checked(sot, "ls-tree", "--long", "--abbrev=10", treeish).stdout
+        rows: list[dict] = []
+        for line in out.splitlines():
+            meta, _, name = line.partition("\t")
+            parts = meta.split()  # [mode, type, sha, size] — `--long` colle la taille (ou '-' pour un arbre)
+            if len(parts) < 4 or not name:
+                continue
+            _mode, otype, osha, osize = parts[0], parts[1], parts[2], parts[3]
+            rows.append({"name": name, "type": otype, "sha": osha,
+                         "size": None if osize == "-" else int(osize)})
+        rows.sort(key=lambda e: (e["type"] != "tree", e["name"]))
+        return rows
+
+    def read_blob(self, sot: Path, ref: str, path: str) -> dict:
+        """Contenu d'un fichier du dépôt à une réf, **sans working-tree** : type + taille via `cat-file`,
+        contenu via `cat-file -p <ref>:<path>` (bytes bornés). Renvoie
+        `{path, ref, size, binary, truncated, too_large, content}`. Garde-fous (L4) : au-delà de
+        `_MAX_BLOB_READ` → `too_large` (aucune lecture) ; un NUL dans les premiers octets → `binary`
+        (contenu vide, on n'émet jamais d'octets bruts) ; au-delà de `_MAX_BLOB_DISPLAY` → `truncated`.
+        Read-only, bare-safe. Lève (`GitOpError`) si la réf/chemin est introuvable ou n'est pas un blob."""
+        treeish = f"{ref}:{path.strip('/')}"
+        kind = _checked(sot, "cat-file", "-t", treeish).stdout.strip()
+        if kind != "blob":
+            raise GitOpError(f"{path!r} @ {ref} n'est pas un fichier (type git : {kind or 'inconnu'})")
+        size = int(_checked(sot, "cat-file", "-s", treeish).stdout.strip() or 0)
+        base = {"path": path, "ref": ref, "size": size}
+        if size > _MAX_BLOB_READ:
+            return {**base, "binary": False, "truncated": True, "too_large": True, "content": ""}
+        raw = self._blob_bytes(sot, treeish)
+        if b"\x00" in raw[:_BINARY_SNIFF]:
+            return {**base, "binary": True, "truncated": False, "too_large": False, "content": ""}
+        truncated = len(raw) > _MAX_BLOB_DISPLAY
+        content = raw[:_MAX_BLOB_DISPLAY].decode("utf-8", errors="replace")
+        return {**base, "binary": False, "truncated": truncated, "too_large": False, "content": content}
+
+    @staticmethod
+    def _blob_bytes(sot: Path, treeish: str) -> bytes:
+        """Lit un blob en **octets bruts** (le seam texte `core.run` décoderait en UTF-8 strict et
+        planterait sur un binaire) — argv-liste, sans shell, même sûreté que `run`. Borné en amont par la
+        garde de taille de `read_blob` (`size <= _MAX_BLOB_READ`)."""
+        proc = subprocess.run(  # noqa: S603 — argv liste sans shell
+            ["git", "-C", str(sot), "cat-file", "-p", treeish], capture_output=True, check=False)
+        if proc.returncode != 0:
+            err = proc.stderr.decode("utf-8", errors="replace").strip()[:200]
+            raise GitOpError(f"git cat-file -p {treeish} @ {sot}: {err}")
+        return proc.stdout
 
     def commit_worktree(self, worktree: Path, *, message: str, identity: tuple[str, str]) -> str | None:
         """Committe le travail de l'ouvrier dans son worktree (`add -A` puis `commit`). Le worker `claude -p`

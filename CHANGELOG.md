@@ -5,6 +5,16 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Explorateur de dépôt read-only — arbre + contenu (P1 git-repo-explorer)
+- **Primitives bare-safe** dans `git/internal.py` : `ls_tree(sot, ref, path="")` (entrées d'un dossier à une
+  réf, dossiers d'abord, via `ls-tree --long <ref>:<path>`) et `read_blob(sot, ref, path)` (contenu d'un
+  fichier via `cat-file`, **octets bornés**). Gardes L4 : `too_large` au-delà de 10 Mo (aucune lecture),
+  `binary` si NUL détecté, `truncated` au-delà de 512 Ko — **jamais d'octets bruts émis**. Read-only,
+  bare-safe (ni index ni working-tree).
+- **Schéma HTTP** : `GET /api/projects/{p}/git/tree?ref=&path=` et `GET /api/projects/{p}/git/blob?ref=&path=`
+  (idempotent, goto-only safe ; **404** projet/réf/chemin introuvable). Aucune mutation. `docs/schema-contract.md`
+  §git mis à jour.
+
 ### Production serve — service systemd + `docs/install.md` (P3 turnkey-install)
 - **`cockpit install-service`** (nouvelle sous-commande) : génère une unité systemd pour `cockpit serve` —
   portée **user** (défaut, sans root, `~/.config/systemd/user/`) ou **`--system`**. Écrit aussi un

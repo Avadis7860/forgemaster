@@ -242,3 +242,88 @@ def test_pure_parsers_and_classifiers():
     assert classify_push_error("", "") == "other"
     assert is_protected_branch("main") and is_protected_branch("dev")
     assert not is_protected_branch("feature/x")
+
+
+# -- exploration read-only : arbre + contenu (ls_tree / read_blob) ---------------------------------
+
+def _seed_bare_rich(tmp: Path) -> Path:
+    """SoT bare seedé avec un sous-dossier, un fichier texte et un fichier binaire (NUL) sur `dev`."""
+    seed = tmp / "seed"
+    seed.mkdir()
+    _run("init", "-q", "-b", "dev", cwd=seed)
+    (seed / "README.md").write_text("# projet\nligne 2\n", encoding="utf-8")
+    (seed / "src").mkdir()
+    (seed / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
+    (seed / "data.bin").write_bytes(b"\x00\x01\x02binaire\x00")
+    _run("add", "-A", cwd=seed)
+    _run("commit", "-q", "-m", "rich seed", cwd=seed)
+    sot = tmp / "sot"
+    r = run.run(["git", "clone", "--bare", "-q", str(seed), str(sot)], env=_ENV)
+    assert r.ok, r.stderr
+    return sot
+
+
+def test_ls_tree_lists_root_and_subdir_dirs_first(tmp_path: Path):
+    git = InternalGit()
+    sot = _seed_bare_rich(tmp_path)
+    root = git.ls_tree(sot, "dev")
+    names = [e["name"] for e in root]
+    # src (tree) d'abord, puis les blobs alphabétiques
+    assert names == ["src", "README.md", "data.bin"]
+    src = next(e for e in root if e["name"] == "src")
+    assert src["type"] == "tree" and src["size"] is None and src["sha"]
+    readme = next(e for e in root if e["name"] == "README.md")
+    assert readme["type"] == "blob" and readme["size"] == len("# projet\nligne 2\n")
+    # descente dans un sous-dossier
+    sub = git.ls_tree(sot, "dev", "src")
+    assert [e["name"] for e in sub] == ["app.py"] and sub[0]["type"] == "blob"
+
+
+def test_ls_tree_bad_ref_or_blob_path_raises(tmp_path: Path):
+    git = InternalGit()
+    sot = _seed_bare_rich(tmp_path)
+    with pytest.raises(GitOpError):
+        git.ls_tree(sot, "nexiste-pas")
+    with pytest.raises(GitOpError):        # README.md est un blob, pas un dossier
+        git.ls_tree(sot, "dev", "README.md")
+
+
+def test_read_blob_text(tmp_path: Path):
+    git = InternalGit()
+    sot = _seed_bare_rich(tmp_path)
+    blob = git.read_blob(sot, "dev", "README.md")
+    assert blob == {"path": "README.md", "ref": "dev", "size": len("# projet\nligne 2\n"),
+                    "binary": False, "truncated": False, "too_large": False,
+                    "content": "# projet\nligne 2\n"}
+
+
+def test_read_blob_binary_emits_no_bytes(tmp_path: Path):
+    git = InternalGit()
+    sot = _seed_bare_rich(tmp_path)
+    blob = git.read_blob(sot, "dev", "data.bin")
+    assert blob["binary"] is True and blob["content"] == "" and blob["size"] == 11
+
+
+def test_read_blob_on_dir_raises(tmp_path: Path):
+    git = InternalGit()
+    sot = _seed_bare_rich(tmp_path)
+    with pytest.raises(GitOpError):        # src est un arbre, pas un fichier
+        git.read_blob(sot, "dev", "src")
+
+
+def test_read_blob_display_truncation(tmp_path: Path, monkeypatch):
+    from cockpit.git import internal
+    monkeypatch.setattr(internal, "_MAX_BLOB_DISPLAY", 5)
+    git = InternalGit()
+    sot = _seed_bare_rich(tmp_path)
+    blob = git.read_blob(sot, "dev", "README.md")
+    assert blob["truncated"] is True and blob["content"] == "# pro" and blob["too_large"] is False
+
+
+def test_read_blob_too_large_reads_nothing(tmp_path: Path, monkeypatch):
+    from cockpit.git import internal
+    monkeypatch.setattr(internal, "_MAX_BLOB_READ", 4)   # README fait 17 octets > 4
+    git = InternalGit()
+    sot = _seed_bare_rich(tmp_path)
+    blob = git.read_blob(sot, "dev", "README.md")
+    assert blob["too_large"] is True and blob["content"] == "" and blob["truncated"] is True

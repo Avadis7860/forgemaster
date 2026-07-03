@@ -91,6 +91,13 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   `ahead_behind` `{base, head, ahead, behind}` de `main` vs `dev` — `ahead` = ce que main doit rattraper,
   `null` si dev/main pas tous deux présents — et `logs` `{ref: [{sha, subject}]}` par réf protégée). Aucune
   mutation (le cycle git vit dans `gate/merge`) ; **404** projet absent, **422** SoT illisible.
+  · `GET /api/projects/{p}/git/tree?ref=&path=` (exploration read-only : entrées d'un dossier à une réf,
+  `ref` défaut `dev`, `path` vide = racine → `{project, ref, path, entries:[{name, type:blob|tree|commit,
+  size, sha}]}`, **dossiers d'abord** ; `size=null` pour un arbre). · `GET /api/projects/{p}/git/blob?ref=&
+  path=` (contenu d'un fichier à une réf, `ref`+`path` **requis** → `{project, path, ref, size, binary,
+  truncated, too_large, content}` ; gardes L4 : `too_large` si > 10 Mo (aucune lecture), `binary` si NUL
+  détecté, `truncated` si > 512 Ko — **jamais d'octets bruts émis**, `content=""` pour binaire/too_large).
+  Idempotent (goto-only safe) ; **404** projet absent OU réf/chemin introuvable OU `path` du mauvais type.
 - **onboarding** — `GET /api/onboarding` (état de config-requise : `secret_store` `{backend, ready, detail}`
   via `health()`, `requirements` `[{project, mirror_remote, needs_credential, linked, satisfied}]`,
   `complete`, `project_count`, `first_run` (aucun projet → instance neuve, le wizard guide au lieu d'annoncer

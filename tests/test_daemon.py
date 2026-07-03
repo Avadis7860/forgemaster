@@ -237,6 +237,34 @@ def test_git_view_read_only_over_http(client):
     assert c.get("/api/projects/ghost/git").status_code == 404
 
 
+def test_git_tree_and_blob_read_only_over_http(client):
+    c, _ = client
+    c.post("/api/projects", json={"slug": "proj"})   # SoT neuf : arbre racine = payload auto-travaillable
+    # arbre racine : dossiers d'abord (.claude, docs) puis les blobs du payload
+    t = c.get("/api/projects/proj/git/tree", params={"ref": "dev"})
+    assert t.status_code == 200
+    body = t.json()
+    assert body["ref"] == "dev" and body["path"] == ""
+    entries = {e["name"]: e for e in body["entries"]}
+    assert entries[".claude"]["type"] == "tree" and entries[".claude"]["size"] is None
+    assert entries["CLAUDE.md"]["type"] == "blob" and entries["CLAUDE.md"]["size"] > 0
+    types = [e["type"] for e in body["entries"]]
+    assert types == sorted(types, key=lambda t: t != "tree")  # tous les arbres avant les blobs
+    # descente dans un sous-dossier
+    sub = c.get("/api/projects/proj/git/tree", params={"ref": "dev", "path": ".claude"})
+    assert sub.status_code == 200 and "settings.json" in {e["name"] for e in sub.json()["entries"]}
+    # contenu d'un fichier texte
+    b = c.get("/api/projects/proj/git/blob", params={"ref": "dev", "path": "CLAUDE.md"})
+    assert b.status_code == 200
+    blob = b.json()
+    assert blob["binary"] is False and blob["too_large"] is False and blob["content"]
+    # réf/chemin introuvable → 404 ; blob sur un dossier → 404 ; projet absent → 404
+    assert c.get("/api/projects/proj/git/tree", params={"ref": "nope"}).status_code == 404
+    assert c.get("/api/projects/proj/git/blob",
+                 params={"ref": "dev", "path": "docs"}).status_code == 404
+    assert c.get("/api/projects/ghost/git/tree", params={"ref": "dev"}).status_code == 404
+
+
 # -- onboarding self-hosted (config-requise + credential par repo) ---------------------------------
 
 def test_patch_project_sets_and_clears_mirror_then_gates_credential(client):
