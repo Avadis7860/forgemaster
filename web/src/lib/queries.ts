@@ -2,7 +2,7 @@
 // V1 : projets (+ santé). Roadmap/next exposés (stables, consommés dès V2). Dispatch/gate/merge : leurs vagues.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
-import type { CreateProjectInput, MergeInput } from './schemas'
+import type { CredentialLinkInput, CreateProjectInput, MergeInput } from './schemas'
 
 export const qk = {
   health: ['health'] as const,
@@ -14,6 +14,7 @@ export const qk = {
   jobs: (project: string, feature: string) => ['jobs', project, feature] as const,
   job: (jobId: string) => ['job', jobId] as const,
   gate: (project: string, feature: string) => ['gate', project, feature] as const,
+  onboarding: ['onboarding'] as const,
 }
 
 export function useHealth() {
@@ -116,5 +117,37 @@ export function useMerge(project: string, feature: string) {
       qc.invalidateQueries({ queryKey: qk.roadmap(project) })
       qc.invalidateQueries({ queryKey: qk.jobs(project, feature) })
     },
+  })
+}
+
+// -- Onboarding self-hosted : état de config-requise + liaison/déliaison d'un credential -------------
+
+// État d'onboarding (backend du store + exigences par projet + complete). Rafraîchi périodiquement : le
+// bandeau non bloquant doit refléter un token lié en CLI ou depuis un autre onglet sans reload.
+export function useOnboarding() {
+  return useQuery({ queryKey: qk.onboarding, queryFn: api.getOnboarding, refetchInterval: 15_000 })
+}
+
+// Après une (dé)liaison, invalider onboarding (l'exigence bascule), les projets (rail) et le projet ciblé
+// (sa `credential_ref` change) — le front ne devine jamais l'état, il relit la source Python.
+function invalidateCredential(qc: ReturnType<typeof useQueryClient>, project: string) {
+  qc.invalidateQueries({ queryKey: qk.onboarding })
+  qc.invalidateQueries({ queryKey: qk.projects })
+  qc.invalidateQueries({ queryKey: qk.project(project) })
+}
+
+export function useLinkCredential(project: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: CredentialLinkInput) => api.linkCredential(project, body),
+    onSuccess: () => invalidateCredential(qc, project),
+  })
+}
+
+export function useUnlinkCredential(project: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.unlinkCredential(project),
+    onSuccess: () => invalidateCredential(qc, project),
   })
 }

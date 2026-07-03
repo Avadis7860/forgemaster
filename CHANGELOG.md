@@ -5,6 +5,20 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Onboarding — wizard web : bandeau + panneau Réglages + token/repo (phase 4c-2, front)
+- **Bandeau non bloquant** (`OnboardingBanner`) dans le shell : rappelle une config incomplète (coffre
+  injoignable ou N tokens de miroir requis) → renvoie vers Réglages. Le cockpit reste utilisable.
+- **Panneau Réglages** (`/settings`, `SettingsTab`) : carte racine du coffre (backend + `health` + état) +
+  liste des credentials par repo (lié / requis / aucun miroir) avec l'affordance de liaison.
+- **Affordance token/repo** (`CredentialForm`, partagée) : **backend-aware** — voie fichier (token masqué,
+  `type=password`) vs voie BWS (UUID). Un token lié n'affiche QUE sa référence tronquée, jamais la valeur.
+  Réutilisée sur la vue projet (`ProjectCredentialCard`, onglet Git — là où vit le push/mirror).
+- **Data layer** : `ProjectSchema` gagne `credential_ref` ; schémas `OnboardingStatus`/`SecretStoreHealth`/
+  `OnboardingRequirement` + `CredentialLinkInput` ; hooks `useOnboarding`/`useLinkCredential`/
+  `useUnlinkCredential` (invalident onboarding + projets + projet — source unique Python, jamais deviné).
+- Boucle visuelle : `ui_shot.py` seede un état credential mixte (1 lié / 1 requis) → routes vérifiées au
+  screenshot. Gate front vert (eslint + vitest 26 + tsc/build) + `front_conformance` OK.
+
 ### Onboarding — check config-requise + `cockpit onboard` + routes credential (phase 4c-1, backend)
 - Nouveau module **`src/cockpit/onboarding.py`** : `status()` (racine du store joignable via `health()` +
   exigences par projet — un projet à `mirror_remote` a **besoin** d'un token ; `complete` sans faux-vert) et

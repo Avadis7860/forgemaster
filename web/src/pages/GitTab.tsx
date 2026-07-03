@@ -1,5 +1,6 @@
 import { useParams } from '@tanstack/react-router'
 import { Alert, Badge, Card, EmptyState, LoadingState, RefreshButton } from '@/components/ui'
+import { ProjectCredentialCard } from '@/components/credential/ProjectCredentialCard'
 import { ApiError } from '@/lib/api'
 import { useGit } from '@/lib/queries'
 import { gitBranchTone } from '@/lib/statusTone'
@@ -34,6 +35,8 @@ export function GitTab() {
       </div>
 
       {data.ahead_behind && <SyncBanner ab={data.ahead_behind} />}
+
+      <ProjectCredentialCard project={project} />
 
       <Card className="space-y-3 p-5">
         <p className="text-sm font-medium text-fg">Branches</p>

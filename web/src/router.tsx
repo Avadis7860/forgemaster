@@ -7,11 +7,15 @@ import { DispatchTab } from './pages/DispatchTab'
 import { GateTab } from './pages/GateTab'
 import { GitTab } from './pages/GitTab'
 import { TerminalTab } from './pages/TerminalTab'
+import { SettingsTab } from './pages/SettingsTab'
 
 // Routing code-based (pas de codegen) — l'échelle du cockpit ne justifie pas le file-based.
 const rootRoute = createRootRoute({ component: AppShell })
 
 const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: Landing })
+
+// /settings = onboarding self-hosted (instance-level, hors projet) : coffre de secrets + token par repo.
+const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/settings', component: SettingsTab })
 
 // /$project = layout workspace à onglets (IA option A) ; sa route index = l'onglet Roadmap (home projet).
 // Dispatch (V3) + Gate (V4) + Terminal (V5) livrés — l'IA option A est complète.
@@ -24,6 +28,7 @@ const terminalRoute = createRoute({ getParentRoute: () => projectRoute, path: 't
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
+  settingsRoute,
   projectRoute.addChildren([roadmapRoute, dispatchRoute, gateRoute, gitRoute, terminalRoute]),
 ])
 

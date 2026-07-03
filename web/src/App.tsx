@@ -1,8 +1,10 @@
 import { Link, Outlet, useParams } from '@tanstack/react-router'
 import { HealthDot } from '@/components/HealthDot'
+import { OnboardingBanner } from '@/components/OnboardingBanner'
 import { ProjectRail } from '@/components/ProjectRail'
 
-/** Shell global (IA option A) : header + rail de projets + espace de travail (Outlet). */
+/** Shell global (IA option A) : header + bandeau onboarding non bloquant + rail de projets + espace de
+ *  travail (Outlet). */
 export function AppShell() {
   const project = useParams({ strict: false }).project
   return (
@@ -18,8 +20,15 @@ export function AppShell() {
             </span>
           )}
         </div>
-        <HealthDot />
+        <div className="flex items-center gap-3">
+          <Link to="/settings" className="text-sm text-muted hover:text-fg">
+            Réglages
+          </Link>
+          <HealthDot />
+        </div>
       </header>
+
+      <OnboardingBanner />
 
       <div className="flex min-h-0 flex-1">
         <ProjectRail />

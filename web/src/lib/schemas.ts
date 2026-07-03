@@ -15,6 +15,7 @@ export const ProjectSchema = z.object({
   backend: z.string(),
   kind: z.string(),                 // 'project' | 'tool' (v3) — classification, pilote le rail 2 sections
   owner: z.string().nullable(),     // compat multi-utilisateur (v3, nullable en mono-user)
+  credential_ref: z.string().nullable(),  // réf opaque vers le token du store (v4) — jamais le token
   created_at: z.string(),
 })
 export type Project = z.infer<typeof ProjectSchema>
@@ -246,3 +247,42 @@ export const GitViewSchema = z.object({
   logs: z.record(z.string(), z.array(GitLogEntrySchema)),
 })
 export type GitView = z.infer<typeof GitViewSchema>
+
+// -- Onboarding self-hosted (phase 4c) : check config-requise + credential par entité ---------------
+
+// Racine de confiance du store actif : joignable ? (file = zéro-config ; bws = BWS_ACCESS_TOKEN présent).
+// Aucun secret révélé — `detail` est un libellé humain (chemin de clé / api url), jamais une valeur.
+export const SecretStoreHealthSchema = z.object({
+  backend: z.string(),          // 'file' | 'bws' — pilote la forme du formulaire de liaison
+  ready: z.boolean(),
+  detail: z.string(),
+})
+export type SecretStoreHealth = z.infer<typeof SecretStoreHealthSchema>
+
+// Une exigence par projet : un repo à `mirror_remote` a BESOIN d'un token pour pousser le miroir →
+// `satisfied` ssi il porte un `credential_ref` (ou n'a pas de miroir). Le front ne recalcule pas (Python).
+export const OnboardingRequirementSchema = z.object({
+  project: z.string(),
+  mirror_remote: z.string().nullable(),
+  needs_credential: z.boolean(),
+  linked: z.boolean(),
+  satisfied: z.boolean(),
+})
+export type OnboardingRequirement = z.infer<typeof OnboardingRequirementSchema>
+
+// GET /api/onboarding : état de config-requise du 1er démarrage. `complete` = racine prête ET toutes les
+// exigences satisfaites (pas de faux-vert). Sert le bandeau non bloquant + le panneau Réglages.
+export const OnboardingStatusSchema = z.object({
+  secret_store: SecretStoreHealthSchema,
+  requirements: z.array(OnboardingRequirementSchema),
+  complete: z.boolean(),
+})
+export type OnboardingStatus = z.infer<typeof OnboardingStatusSchema>
+
+// POST /api/projects/{p}/credential : lier un credential. `token` = voie fichier (on stocke la valeur),
+// `ref` = voie BWS (UUID bring-your-own validé). Exactement l'un des deux ; `label` humain optionnel.
+export interface CredentialLinkInput {
+  token?: string
+  ref?: string
+  label?: string
+}

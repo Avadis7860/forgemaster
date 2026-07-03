@@ -151,6 +151,7 @@ def _seed(port: int, slugs: list[str], *, home: Path) -> None:
     _seed_dispatch_job(home, proj)
     _seed_gate_states(home, proj)
     _seed_git_state(home, proj)
+    _seed_credential_state(home, slugs)
 
 
 def _seed_dispatch_job(home: Path, proj: str) -> None:
@@ -248,6 +249,32 @@ def _seed_git_state(home: Path, proj: str) -> None:
         InternalGit().merge_ff(sot, into="dev", source="feature/gate-green-demo")  # dev avance, main reste
     except GitOpError:
         return  # feature absente (seed Gate sauté) → vue à 0/0, sans casser le screenshot
+
+
+def _seed_credential_state(home: Path, slugs: list[str]) -> None:
+    """Donne un miroir aux projets démo (→ besoin d'un token) et LIE un credential au premier (voie fichier,
+    via le store réel), en laissant le second non lié — pour rendre l'onboarding VOYANT : bandeau « 1 token
+    requis », panneau Réglages mixte (✅ lié / 🔴 requis) + carte credential sur la vue projet (onglet Git).
+    Plumbing direct sur la DB + le store jetables (aucune API ne fabrique cet état)."""
+    try:
+        from cockpit.config import Settings
+        from cockpit.db import store
+        from cockpit.onboarding import link_credential
+        from cockpit.projects import registry  # noqa: F401 (garantit le package cockpit importable)
+        from cockpit.secrets import build_store
+    except ImportError:
+        return  # build-only → onboarding « complet » (aucun miroir), sans casser le screenshot
+    settings = Settings.resolve(home=home / "home", projects_root=home / "projects")
+    conn = store.open_db(settings)
+    try:
+        for slug in slugs:
+            conn.execute("UPDATE projects SET mirror_remote = ? WHERE slug = ?",
+                         (f"https://github.com/demo/{slug}.git", slug))
+        conn.commit()
+        # 1er projet : token lié (voie fichier) → réf en DB, valeur chiffrée dans le store. Le 2ᵉ reste 🔴.
+        link_credential(conn, build_store(settings), slugs[0], token="ghp_demo_token", label="github")
+    finally:
+        conn.close()
 
 
 def shoot(routes: list[str], *, port: int, viewport: dict | None, full_page: bool, out_dir: Path,

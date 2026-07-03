@@ -11,9 +11,11 @@ import {
   JobsListSchema,
   MergeReportSchema,
   NextSchema,
+  OnboardingStatusSchema,
   ProjectSchema,
   ProjectsListSchema,
   RoadmapSchema,
+  type CredentialLinkInput,
   type CreateProjectInput,
   type MergeInput,
 } from './schemas'
@@ -101,4 +103,17 @@ export const api = {
       MergeReportSchema,
       { method: 'POST', body: JSON.stringify(body) },
     ),
+
+  // Onboarding self-hosted : état de config-requise (GET idempotent, aucun secret révélé) + liaison d'un
+  // credential (POST : la réponse porte la RÉFÉRENCE, jamais le token) + déliaison (DELETE).
+  getOnboarding: () => request('/api/onboarding', OnboardingStatusSchema),
+  linkCredential: (project: string, body: CredentialLinkInput) =>
+    request(`/api/projects/${encodeURIComponent(project)}/credential`, ProjectSchema, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  unlinkCredential: (project: string) =>
+    request(`/api/projects/${encodeURIComponent(project)}/credential`, ProjectSchema, {
+      method: 'DELETE',
+    }),
 }
