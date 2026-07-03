@@ -19,6 +19,15 @@ _EXPECTED = (
     ".claude/settings.json",
     ".claude/skills/work-loop/SKILL.md",
     ".claude/skills/quality-gate/SKILL.md",
+    ".claude/skills/roadmap-decompose/SKILL.md",
+    ".claude/skills/docs-authoring/SKILL.md",
+)
+
+# Skills de méthodo (Phase 6) : ce qui rend un projet semé auto-travaillable — planifier + mémoriser,
+# au-delà de la seule boucle git (work-loop/quality-gate). Présents dans la base → dans TOUT type.
+_METHOD_SKILLS = (
+    ".claude/skills/roadmap-decompose/SKILL.md",
+    ".claude/skills/docs-authoring/SKILL.md",
 )
 
 
@@ -93,6 +102,28 @@ def test_declared_facets_have_backing_dirs(project_type):
             key = f".claude/facets/{fac}/{leaf}"
             assert key in bundle, f"{project_type} : facette {fac} déclarée sans {key}"
             assert bundle[key].strip(), f"{project_type} : {key} vide"
+
+
+def test_methodology_skills_present_in_every_bundle():
+    """Phase 6 : les deux skills de méthodo sont dans la base → présents et non vides dans CHAQUE type
+    (base ⊕ overlay), et le CLAUDE.md socle les référence (une session doit pouvoir les découvrir)."""
+    for t in BUNDLE_TYPES:
+        bundle = load_bundle(t)
+        for skill in _METHOD_SKILLS:
+            assert skill in bundle, f"{t} : skill méthodo manquant {skill}"
+            assert bundle[skill].strip(), f"{t} : {skill} vide"
+    base = load_bundle("generic")
+    assert "roadmap-decompose" in base["CLAUDE.md"] and "docs-authoring" in base["CLAUDE.md"]
+
+
+@pytest.mark.parametrize("project_type", _OVERLAY_TYPES)
+def test_type_architecture_is_non_stub(project_type):
+    """Chaque type surcharge `docs/architecture.md` avec une vraie doc de type (pas le stub générique) :
+    section « Comment ce projet se travaille » présente et le stub « À renseigner » cantonné à l'Intention."""
+    arch = load_bundle(project_type)["docs/architecture.md"]
+    assert "Comment ce projet se travaille" in arch
+    assert arch != load_bundle("generic")["docs/architecture.md"]      # bien une surcharge de type
+    assert arch.count("À renseigner") <= 1                             # au plus l'Intention reste un gabarit
 
 
 def test_facet_settings_local_are_seeded_files_not_ignored():

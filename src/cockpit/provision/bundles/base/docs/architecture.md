@@ -14,10 +14,16 @@ lit **cette** section d'abord.
 - `docs/` — la prose du projet (intention, décisions, specs). Interrogeable via `docsmap`.
 - `src/` (ou l'arbre source du projet) — le code. Si un `code-map` est branché, interroge-le plutôt que de
   grep à l'aveugle.
-- `.claude/skills/` — les boucles outillées : `work-loop` (git-native sûr), `quality-gate` (porte qualité).
+- `.claude/skills/` — les boucles outillées : `roadmap-decompose` (planifier), `docs-authoring` (mémoriser),
+  `work-loop` (git-native sûr), `quality-gate` (porte qualité).
 
 ## Comment ce projet se travaille
 
-Toute évolution passe par le skill `work-loop` : worktree `feature/<sujet>` depuis `dev` → `quality-gate`
-vert → `dev` en ff-only → `main` promu depuis un `dev` vert. `main` ne se travaille jamais. Un acte
-irréversible exige un GO humain (fail-closed).
+1. **Planifie** avec `roadmap-decompose` : l'intention devient des features (chacune taguée d'une facette) et
+   des tasks (DAG `depends_on` + critères d'`acceptance`). C'est ce qui rend le travail dispatchable et
+   parallélisable.
+2. **Exécute** chaque feature via `work-loop` : worktree `feature/<sujet>` depuis `dev` → `quality-gate` vert
+   → `dev` en ff-only → `main` promu depuis un `dev` vert. `main` ne se travaille jamais. Un acte irréversible
+   exige un GO humain (fail-closed).
+3. **Mémorise** avec `docs-authoring` : ce qui a été décidé/construit et doit survivre va dans `docs/`,
+   interrogeable via `docsmap where`.

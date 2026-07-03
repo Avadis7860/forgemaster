@@ -47,8 +47,9 @@ frontmap where "<intention>"    # → UI : token / primitive / route (repos avec
 
 ## Outils à disposition
 
-- **Skills** (`.claude/skills/`, embarqués dans ce repo) : `work-loop` (boucle de travail sûre, lightweight,
-  sans cockpit) · `quality-gate` (porte qualité avant tout commit).
+- **Skills** (`.claude/skills/`, embarqués dans ce repo) : `roadmap-decompose` (intention → features[facette]
+  → tasks[depends_on + acceptance]) · `docs-authoring` (rédiger la mémoire `docs/`) · `work-loop` (boucle de
+  travail sûre, lightweight, sans cockpit) · `quality-gate` (porte qualité avant tout commit).
 - **Cartes** `codemap` · `docsmap` · `frontmap` : leurs **configs** sont dans ce repo ; les **binaires** sont
   fournis par l'**environnement** (le cockpit les installe sur l'hôte — ils ne sont **pas** dans le repo). Sur
   un clone nu **sans** cockpit, installe-les d'abord (paquets `code-map`/`docs-map`/`front-map`) ; sinon la

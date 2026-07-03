@@ -5,6 +5,16 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Contenu méthodologique semé (P1 cockpit-typed-bundles, Phase 6)
+- **Deux skills de méthodo dans `bundles/base/.claude/skills/`** (⇒ semés dans TOUT projet, tout type) :
+  `roadmap-decompose` (intention → features[facette] → tasks[`depends_on` DAG + `acceptance`] : ce qui rend le
+  travail dispatchable, séquencé, parallélisable) et `docs-authoring` (rédiger la mémoire `docs/` :
+  audience-first, intention avant mécanique, tenue interrogeable par `docsmap`). Ce sont **les sections que le
+  projet sait remplir seul** — au-delà de la boucle git (`work-loop`/`quality-gate`). Le CLAUDE.md socle et
+  `docs/architecture.md` les référencent (planifier → exécuter → mémoriser). Données pures, gate inchangé.
+- +4 tests (`test_provision.py`) : les deux skills présents et non vides dans chaque type + référencés dans le
+  CLAUDE.md ; chaque type porte une `architecture.md` non-stub (« Comment ce projet se travaille » présent).
+
 ### Orchestrateur parallèle — cœur `run_project` (P1 cockpit-typed-bundles, Phase 4)
 - **`dispatch/orchestrator.py`** (nouveau) : `run_project(conn, settings, *, project, max_parallel=2, git,
   runner)` draine la roadmap et **parallélise les features indépendantes prêtes** (feature = worktree =
