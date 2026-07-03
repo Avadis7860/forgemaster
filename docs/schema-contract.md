@@ -98,6 +98,14 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   truncated, too_large, content}` ; gardes L4 : `too_large` si > 10 Mo (aucune lecture), `binary` si NUL
   détecté, `truncated` si > 512 Ko — **jamais d'octets bruts émis**, `content=""` pour binaire/too_large).
   Idempotent (goto-only safe) ; **404** projet absent OU réf/chemin introuvable OU `path` du mauvais type.
+  · `GET /api/projects/{p}/git/commit/{sha}` (intelligence git : détail d'un commit → `{project, sha, short,
+  author, email, date, subject, body, files:[{path, binary, additions, deletions}]}` ; `additions`/`deletions`
+  `null` pour un binaire ; **404** sha/réf introuvable). · `GET /api/projects/{p}/git/diff?base=&head=` (diff
+  unifié `base...head` three-dot → `{project, base, head, files:[…], diff}` ; `diff=""` + `files=[]` si les
+  réfs sont alignées (200, pas une erreur) ; **404** une réf introuvable). · `GET /api/projects/{p}/git/
+  history?ref=&path=` (commits touchant un fichier, récents d'abord → `{project, ref, path, commits:[{sha,
+  short, author, date, subject}]}` ; fichier sans historique → `commits=[]` (200) ; **404** réf introuvable).
+  Tous read-only, idempotents (goto-only safe).
 - **onboarding** — `GET /api/onboarding` (état de config-requise : `secret_store` `{backend, ready, detail}`
   via `health()`, `requirements` `[{project, mirror_remote, needs_credential, linked, satisfied}]`,
   `complete`, `project_count`, `first_run` (aucun projet → instance neuve, le wizard guide au lieu d'annoncer

@@ -265,6 +265,36 @@ def test_git_tree_and_blob_read_only_over_http(client):
     assert c.get("/api/projects/ghost/git/tree", params={"ref": "dev"}).status_code == 404
 
 
+def test_git_intelligence_commit_diff_history_over_http(client):
+    c, _ = client
+    c.post("/api/projects", json={"slug": "proj"})   # SoT neuf : dev == main sur « root: cockpit seed »
+    head = c.get("/api/projects/proj/git").json()["logs"]["dev"][0]["sha"]
+
+    # détail du commit racine : métadonnées + fichiers touchés (le payload auto-travaillable)
+    d = c.get(f"/api/projects/proj/git/commit/{head}")
+    assert d.status_code == 200
+    detail = d.json()
+    assert detail["subject"] == "root: cockpit seed" and detail["author"] == "cockpit"
+    paths = {f["path"] for f in detail["files"]}
+    assert "CLAUDE.md" in paths and all("additions" in f and "binary" in f for f in detail["files"])
+    assert c.get("/api/projects/proj/git/commit/deadbeef").status_code == 404
+
+    # diff de feature : dev == main sur un SoT neuf → diff vide (200, pas une erreur)
+    df = c.get("/api/projects/proj/git/diff", params={"base": "main", "head": "dev"})
+    assert df.status_code == 200 and df.json()["diff"] == "" and df.json()["files"] == []
+    assert c.get("/api/projects/proj/git/diff",
+                 params={"base": "main", "head": "nope"}).status_code == 404
+
+    # historique d'un fichier du payload → au moins le commit racine ; fichier inconnu → liste vide (200)
+    h = c.get("/api/projects/proj/git/history", params={"ref": "dev", "path": "CLAUDE.md"})
+    assert h.status_code == 200 and h.json()["commits"][0]["subject"] == "root: cockpit seed"
+    ghost = c.get("/api/projects/proj/git/history", params={"ref": "dev", "path": "nope.txt"})
+    assert ghost.status_code == 200 and ghost.json()["commits"] == []
+    assert c.get("/api/projects/proj/git/history",
+                 params={"ref": "nope", "path": "CLAUDE.md"}).status_code == 404
+    assert c.get("/api/projects/ghost/git/commit/abc").status_code == 404
+
+
 # -- onboarding self-hosted (config-requise + credential par repo) ---------------------------------
 
 def test_patch_project_sets_and_clears_mirror_then_gates_credential(client):

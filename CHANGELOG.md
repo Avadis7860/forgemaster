@@ -5,6 +5,18 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Intelligence git read-only — détail de commit + diff de feature + historique fichier (P3 git-repo-explorer)
+- **Primitives bare-safe** dans `git/internal.py` : `commit_detail(sot, sha)` (métadonnées + fichiers touchés
+  avec `+/-` par fichier, `null` pour un binaire) et `file_history(sot, ref, path)` (commits touchant un
+  fichier, récents d'abord). Le diff `base...head` réutilise `diff_text`/`diff_names` déjà écrits.
+- **Schéma HTTP** : `GET /api/projects/{p}/git/commit/{sha}`, `GET /api/projects/{p}/git/diff?base=&head=`
+  (diff unifié three-dot ; `diff=""` si réfs alignées — 200), `GET /api/projects/{p}/git/history?ref=&path=`
+  (fichier sans historique → `[]` — 200). Tous read-only, idempotents (goto-only safe) ; **404** projet/réf/
+  sha introuvable. `docs/schema-contract.md` §git mis à jour.
+- **Front** : détail de commit (clic sur une entrée de log/branche), **Diff de feature** rendu unifié coloré
+  (base/head réutilisant les branches chargées ; tokens sémantiques, aucune teinte inline), historique par
+  fichier (basculeur dans la visionneuse). Aucune mutation.
+
 ### Explorateur de dépôt read-only — arbre + contenu (P1 git-repo-explorer)
 - **Primitives bare-safe** dans `git/internal.py` : `ls_tree(sot, ref, path="")` (entrées d'un dossier à une
   réf, dossiers d'abord, via `ls-tree --long <ref>:<path>`) et `read_blob(sot, ref, path)` (contenu d'un

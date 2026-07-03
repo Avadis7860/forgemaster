@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Alert, Badge, Button, Card, EmptyState, LoadingState } from '@/components/ui'
 import { ApiError } from '@/lib/api'
-import { useGitBlob, useGitTree } from '@/lib/queries'
+import { useGitBlob, useGitHistory, useGitTree } from '@/lib/queries'
 import type { GitBlob, GitBranch, GitTreeEntry } from '@/lib/schemas'
 
 /** Explorateur de dépôt read-only : sélecteur de réf + arbre navigable (dossiers d'abord, breadcrumb) +
@@ -137,8 +137,10 @@ function EntryRow({ entry, active, onClick }: { entry: GitTreeEntry; active: boo
   )
 }
 
-/** Visionneuse du fichier sélectionné : contenu texte avec n° de ligne, ou état binaire / trop-gros / vide. */
+/** Visionneuse du fichier sélectionné : contenu texte avec n° de ligne, ou état binaire / trop-gros / vide.
+ *  Un basculeur « Historique » ouvre les commits touchant ce fichier (intelligence git P3). */
 function FilePane({ project, gitRef, file }: { project: string; gitRef: string; file: string | null }) {
+  const [showHistory, setShowHistory] = useState(false)
   const { data, isLoading, isError, error } = useGitBlob(project, gitRef, file ?? '')
 
   if (!file) {
@@ -161,11 +163,47 @@ function FilePane({ project, gitRef, file }: { project: string; gitRef: string; 
   return (
     <Card className="flex min-h-40 flex-col overflow-hidden p-0">
       <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2">
-        <code className="truncate font-mono text-xs text-fg" title={file}>{file}</code>
+        <code className="min-w-0 flex-1 truncate font-mono text-xs text-fg" title={file}>{file}</code>
+        <Button variant="ghost" size="sm" onClick={() => setShowHistory((v) => !v)}
+          className={showHistory ? 'shrink-0 bg-surface-raised text-fg' : 'shrink-0'}>Historique</Button>
         <span className="shrink-0 text-xs text-faint">{fmtSize(data.size)}</span>
       </div>
-      <FileBody blob={data} />
+      {showHistory
+        ? <FileHistory project={project} gitRef={gitRef} file={file} />
+        : <FileBody blob={data} />}
     </Card>
+  )
+}
+
+/** Historique des commits touchant le fichier ouvert (récents d'abord). Un GET idempotent (`useGitHistory`)
+ *  activé seulement quand le panneau est déplié — n° court + auteur + date + sujet. */
+function FileHistory({ project, gitRef, file }: { project: string; gitRef: string; file: string }) {
+  const { data, isLoading, isError, error } = useGitHistory(project, gitRef, file)
+
+  if (isLoading) return <div className="p-5"><LoadingState label="Lecture de l'historique…" /></div>
+  if (isError || !data) {
+    return (
+      <div className="p-5">
+        <Alert tone="danger" title="Historique indisponible">
+          {error instanceof ApiError ? error.detail : String(error)}
+        </Alert>
+      </div>
+    )
+  }
+  if (data.commits.length === 0) {
+    return <div className="p-5"><EmptyState title="Aucun historique"
+      description="Ce fichier n'a aucun commit à cette réf." /></div>
+  }
+  return (
+    <ol className="divide-y divide-border">
+      {data.commits.map((c) => (
+        <li key={c.sha} className="flex items-baseline gap-3 px-4 py-2">
+          <code className="shrink-0 font-mono text-xs text-muted">{c.short}</code>
+          <span className="min-w-0 flex-1 truncate text-sm text-fg" title={c.subject}>{c.subject}</span>
+          <span className="shrink-0 text-xs text-faint">{c.author}</span>
+        </li>
+      ))}
+    </ol>
   )
 }
 

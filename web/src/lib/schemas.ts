@@ -281,6 +281,60 @@ export const GitBlobSchema = z.object({
 })
 export type GitBlob = z.infer<typeof GitBlobSchema>
 
+// -- Intelligence git (read-only) : détail d'un commit + diff de feature + historique fichier -------
+
+// Un fichier touché par un commit : `+/-` par fichier (null pour un binaire, drapeau `binary`).
+export const GitCommitFileSchema = z.object({
+  path: z.string(),
+  binary: z.boolean(),
+  additions: z.number().nullable(),
+  deletions: z.number().nullable(),
+})
+export type GitCommitFile = z.infer<typeof GitCommitFileSchema>
+
+// GET /api/projects/{p}/git/commit/{sha} : métadonnées d'un commit + fichiers touchés. Read-only.
+export const GitCommitDetailSchema = z.object({
+  project: z.string(),
+  sha: z.string(),
+  short: z.string(),
+  author: z.string(),
+  email: z.string(),
+  date: z.string(),
+  subject: z.string(),
+  body: z.string(),
+  files: z.array(GitCommitFileSchema),
+})
+export type GitCommitDetail = z.infer<typeof GitCommitDetailSchema>
+
+// GET /api/projects/{p}/git/diff?base=&head= : diff unifié `base...head` (three-dot) + fichiers changés.
+export const GitDiffSchema = z.object({
+  project: z.string(),
+  base: z.string(),
+  head: z.string(),
+  files: z.array(z.string()),
+  diff: z.string(),
+})
+export type GitDiff = z.infer<typeof GitDiffSchema>
+
+// Une entrée d'historique d'un fichier (log -- <path>) : sha + auteur + date ISO + sujet.
+export const GitHistoryEntrySchema = z.object({
+  sha: z.string(),
+  short: z.string(),
+  author: z.string(),
+  date: z.string(),
+  subject: z.string(),
+})
+export type GitHistoryEntry = z.infer<typeof GitHistoryEntrySchema>
+
+// GET /api/projects/{p}/git/history?ref=&path= : commits touchant un fichier (récents d'abord).
+export const GitHistorySchema = z.object({
+  project: z.string(),
+  ref: z.string(),
+  path: z.string(),
+  commits: z.array(GitHistoryEntrySchema),
+})
+export type GitHistory = z.infer<typeof GitHistorySchema>
+
 // -- Onboarding self-hosted (phase 4c) : check config-requise + credential par entité ---------------
 
 // Racine de confiance du store actif : joignable ? (file = zéro-config ; bws = BWS_ACCESS_TOKEN présent).

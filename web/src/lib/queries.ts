@@ -12,6 +12,10 @@ export const qk = {
   git: (project: string) => ['git', project] as const,
   gitTree: (project: string, ref: string, path: string) => ['git-tree', project, ref, path] as const,
   gitBlob: (project: string, ref: string, path: string) => ['git-blob', project, ref, path] as const,
+  gitCommit: (project: string, sha: string) => ['git-commit', project, sha] as const,
+  gitDiff: (project: string, base: string, head: string) => ['git-diff', project, base, head] as const,
+  gitHistory: (project: string, ref: string, path: string) =>
+    ['git-history', project, ref, path] as const,
   next: (project: string, feature: string) => ['next', project, feature] as const,
   jobs: (project: string, feature: string) => ['jobs', project, feature] as const,
   job: (jobId: string) => ['job', jobId] as const,
@@ -71,6 +75,33 @@ export function useGitBlob(project: string, ref: string, path: string) {
   return useQuery({
     queryKey: qk.gitBlob(project, ref, path),
     queryFn: () => api.getGitBlob(project, ref, path),
+    enabled: Boolean(project && ref && path),
+  })
+}
+
+// Détail d'un commit (métadonnées + fichiers touchés). Activé quand un commit est sélectionné.
+export function useGitCommit(project: string, sha: string) {
+  return useQuery({
+    queryKey: qk.gitCommit(project, sha),
+    queryFn: () => api.getGitCommit(project, sha),
+    enabled: Boolean(project && sha),
+  })
+}
+
+// Diff de feature `base...head` (three-dot). Activé quand base et head sont posés.
+export function useGitDiff(project: string, base: string, head: string) {
+  return useQuery({
+    queryKey: qk.gitDiff(project, base, head),
+    queryFn: () => api.getGitDiff(project, base, head),
+    enabled: Boolean(project && base && head),
+  })
+}
+
+// Historique des commits touchant un fichier à une réf. Activé quand un fichier est sélectionné.
+export function useGitHistory(project: string, ref: string, path: string) {
+  return useQuery({
+    queryKey: qk.gitHistory(project, ref, path),
+    queryFn: () => api.getGitHistory(project, ref, path),
     enabled: Boolean(project && ref && path),
   })
 }

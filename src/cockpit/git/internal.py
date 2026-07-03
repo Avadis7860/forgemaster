@@ -425,6 +425,54 @@ class InternalGit:
             raise GitOpError(f"git cat-file -p {treeish} @ {sot}: {err}")
         return proc.stdout
 
+    # -- intelligence git read-only (détail de commit + historique d'un fichier, bare-safe) ----------
+
+    def commit_detail(self, sot: Path, sha: str) -> dict:
+        """Détail d'un commit sur le SoT bare (read-only, bare-safe). Métadonnées via
+        `git log -1 --format` (champs séparés par NUL → robuste aux retours-ligne du corps) ; fichiers
+        touchés + `+/-` par fichier via `git show --numstat` (`add\\tdel\\tpath`, `-` pour un binaire).
+        Renvoie `{sha, short, author, email, date, subject, body, files:[{path, additions, deletions,
+        binary}]}`. Lève (`GitOpError`) si le sha/réf est introuvable → l'appelant mappe en 404."""
+        fmt = "%H%x00%h%x00%an%x00%ae%x00%aI%x00%s%x00%b"
+        meta = _checked(sot, "log", "-1", f"--format={fmt}", sha).stdout
+        parts = meta.split("\x00")
+        if len(parts) < 7:
+            raise GitOpError(f"commit {sha} : métadonnées illisibles")
+        full, short, author, email, date, subject, body = parts[:7]
+        numstat = _checked(sot, "show", "--numstat", "--format=", sha).stdout
+        files: list[dict] = []
+        for line in numstat.splitlines():
+            if not line.strip():
+                continue
+            cols = line.split("\t")
+            if len(cols) < 3:
+                continue
+            adds, dels, path = cols[0], cols[1], cols[2]
+            binary = adds == "-" or dels == "-"
+            files.append({"path": path, "binary": binary,
+                          "additions": None if binary else int(adds or 0),
+                          "deletions": None if binary else int(dels or 0)})
+        return {"sha": full, "short": short, "author": author, "email": email, "date": date,
+                "subject": subject, "body": body.rstrip("\n"), "files": files}
+
+    def file_history(self, sot: Path, ref: str, path: str, *, n: int = 50) -> list[dict]:
+        """Historique des commits touchant un fichier à une réf (`log --format -n <n> <ref> -- <path>`),
+        récents d'abord → `[{sha, short, author, date, subject}]`. Read-only, bare-safe. Lève si la réf est
+        introuvable ; un chemin sans historique (fichier inconnu à cette réf) → liste vide (pas une erreur —
+        c'est une réponse valide, l'appelant n'a pas à 404)."""
+        fmt = "%H%x00%h%x00%an%x00%aI%x00%s"
+        out = _checked(sot, "log", f"--max-count={n}", f"--format={fmt}", ref, "--", path).stdout
+        rows: list[dict] = []
+        for line in out.splitlines():
+            if not line.strip():
+                continue
+            cols = line.split("\x00")
+            if len(cols) < 5:
+                continue
+            rows.append({"sha": cols[0], "short": cols[1], "author": cols[2],
+                         "date": cols[3], "subject": cols[4]})
+        return rows
+
     def commit_worktree(self, worktree: Path, *, message: str, identity: tuple[str, str]) -> str | None:
         """Committe le travail de l'ouvrier dans son worktree (`add -A` puis `commit`). Le worker `claude -p`
         écrit le code mais **ne touche pas au cycle git** (mandat) : la forge committe après son run. Identité

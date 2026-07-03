@@ -71,4 +71,45 @@ def make_git_router() -> APIRouter:
                 status_code=404, detail=f"fichier introuvable ({ref}:{path}) : {exc}") from exc
         return {"project": project, **blob}
 
+    @router.get("/api/projects/{project}/git/commit/{sha}")
+    def git_commit(project: str, sha: str, deps: Deps = Depends(get_deps)) -> dict:
+        """Détail d'un commit (métadonnées + fichiers touchés avec `+/-` par fichier). Read-only,
+        idempotent (goto-only safe). Projet absent → 404 ; sha/réf introuvable → 404."""
+        sot = _sot(deps, project)
+        try:
+            detail = InternalGit().commit_detail(sot, sha)
+        except GitOpError as exc:
+            raise HTTPException(status_code=404, detail=f"commit introuvable ({sha}) : {exc}") from exc
+        return {"project": project, **detail}
+
+    @router.get("/api/projects/{project}/git/diff")
+    def git_diff(
+        project: str, base: str, head: str, deps: Deps = Depends(get_deps),
+    ) -> dict:
+        """Diff unifié d'une feature (`base...head`, three-dot = depuis la merge-base). Read-only,
+        idempotent. Projet absent → 404 ; une réf introuvable → 404."""
+        sot = _sot(deps, project)
+        git = InternalGit()
+        try:
+            text = git.diff_text(sot, base=base, head=head)
+            names = git.diff_names(sot, base=base, head=head)
+        except GitOpError as exc:
+            raise HTTPException(
+                status_code=404, detail=f"diff impossible ({base}...{head}) : {exc}") from exc
+        return {"project": project, "base": base, "head": head, "files": names, "diff": text}
+
+    @router.get("/api/projects/{project}/git/history")
+    def git_history(
+        project: str, ref: str, path: str, deps: Deps = Depends(get_deps),
+    ) -> dict:
+        """Historique des commits touchant un fichier à une réf (récents d'abord). Read-only, idempotent.
+        Projet absent → 404 ; réf introuvable → 404 ; fichier sans historique → liste vide (200)."""
+        sot = _sot(deps, project)
+        try:
+            commits = InternalGit().file_history(sot, ref, path)
+        except GitOpError as exc:
+            raise HTTPException(
+                status_code=404, detail=f"historique introuvable ({ref}:{path}) : {exc}") from exc
+        return {"project": project, "ref": ref, "path": path, "commits": commits}
+
     return router

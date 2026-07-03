@@ -327,3 +327,54 @@ def test_read_blob_too_large_reads_nothing(tmp_path: Path, monkeypatch):
     sot = _seed_bare_rich(tmp_path)
     blob = git.read_blob(sot, "dev", "README.md")
     assert blob["too_large"] is True and blob["content"] == "" and blob["truncated"] is True
+
+
+# -- intelligence git : détail de commit + historique fichier (commit_detail / file_history) --------
+
+def test_commit_detail_metadata_and_touched_files(tmp_path: Path):
+    git = InternalGit()
+    sot = _seed_bare_rich(tmp_path)   # 1 commit racine : README.md(2), src/app.py(1), data.bin(binaire)
+    head = git.feature_sha(sot, "dev")
+    detail = git.commit_detail(sot, head)
+    assert detail["sha"] == head and detail["subject"] == "rich seed"
+    assert detail["author"] == "Test" and detail["email"] == "test@example.invalid"
+    assert detail["date"] and detail["short"] and head.startswith(detail["short"])
+    by_path = {f["path"]: f for f in detail["files"]}
+    assert by_path["README.md"]["additions"] == 2 and by_path["README.md"]["binary"] is False
+    assert by_path["src/app.py"]["additions"] == 1
+    # un binaire → additions/deletions None + drapeau binary (numstat émet `-`)
+    assert by_path["data.bin"]["binary"] is True and by_path["data.bin"]["additions"] is None
+
+
+def test_commit_detail_bad_sha_raises(tmp_path: Path):
+    git = InternalGit()
+    sot = _seed_bare_rich(tmp_path)
+    with pytest.raises(GitOpError):
+        git.commit_detail(sot, "deadbeefdeadbeef")
+
+
+def test_file_history_tracks_a_path_across_commits(tmp_path: Path):
+    git = InternalGit()
+    sot = _seed_bare_rich(tmp_path)
+    # un 2e commit qui ne touche QUE README.md → l'historique de README a 2 entrées, celui de app.py 1
+    wt = tmp_path / "wt"
+    git.add_worktree(sot, wt, branch="feature/x", base="dev")
+    (wt / "README.md").write_text("# projet\nligne 2\nligne 3\n", encoding="utf-8")
+    _run("add", "-A", cwd=wt)
+    _run("commit", "-q", "-m", "doc: 3e ligne", cwd=wt)
+    git.merge_ff(sot, into="dev", source="feature/x")
+
+    hist_readme = git.file_history(sot, "dev", "README.md")
+    assert [c["subject"] for c in hist_readme] == ["doc: 3e ligne", "rich seed"]
+    assert all(c["sha"] and c["short"] and c["author"] == "Test" and c["date"] for c in hist_readme)
+    hist_app = git.file_history(sot, "dev", "src/app.py")
+    assert [c["subject"] for c in hist_app] == ["rich seed"]
+    # un fichier inconnu à cette réf → liste vide (pas une erreur : réponse valide)
+    assert git.file_history(sot, "dev", "n-existe-pas.txt") == []
+
+
+def test_file_history_bad_ref_raises(tmp_path: Path):
+    git = InternalGit()
+    sot = _seed_bare_rich(tmp_path)
+    with pytest.raises(GitOpError):
+        git.file_history(sot, "nexiste-pas", "README.md")

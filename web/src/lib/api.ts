@@ -6,6 +6,9 @@ import {
   DispatchReportSchema,
   GateStatusSchema,
   GitBlobSchema,
+  GitCommitDetailSchema,
+  GitDiffSchema,
+  GitHistorySchema,
   GitTreeSchema,
   GitViewSchema,
   HealthSchema,
@@ -86,6 +89,24 @@ export const api = {
       `/api/projects/${encodeURIComponent(project)}/git/blob` +
         `?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent(path)}`,
       GitBlobSchema,
+    ),
+  // Intelligence git read-only : détail d'un commit · diff de feature `base...head` · historique fichier.
+  getGitCommit: (project: string, sha: string) =>
+    request(
+      `/api/projects/${encodeURIComponent(project)}/git/commit/${encodeURIComponent(sha)}`,
+      GitCommitDetailSchema,
+    ),
+  getGitDiff: (project: string, base: string, head: string) =>
+    request(
+      `/api/projects/${encodeURIComponent(project)}/git/diff` +
+        `?base=${encodeURIComponent(base)}&head=${encodeURIComponent(head)}`,
+      GitDiffSchema,
+    ),
+  getGitHistory: (project: string, ref: string, path: string) =>
+    request(
+      `/api/projects/${encodeURIComponent(project)}/git/history` +
+        `?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent(path)}`,
+      GitHistorySchema,
     ),
   getNext: (project: string, feature: string) =>
     request(

@@ -1,7 +1,9 @@
+import { useState } from 'react'
 import { useParams } from '@tanstack/react-router'
-import { Alert, Badge, Card, EmptyState, LoadingState, RefreshButton } from '@/components/ui'
+import { Alert, Badge, Button, Card, EmptyState, LoadingState, RefreshButton } from '@/components/ui'
 import { ProjectCredentialCard } from '@/components/credential/ProjectCredentialCard'
 import { RepoExplorer } from '@/components/git/RepoExplorer'
+import { CommitDetailCard, DiffCard } from '@/components/git/GitIntelligence'
 import { ApiError } from '@/lib/api'
 import { useGit } from '@/lib/queries'
 import { gitBranchTone } from '@/lib/statusTone'
@@ -13,6 +15,7 @@ import type { GitAheadBehind, GitBranch, GitLogEntry } from '@/lib/schemas'
 export function GitTab() {
   const project = useParams({ strict: false }).project ?? ''
   const { data, isLoading, isError, error, refetch, isFetching } = useGit(project)
+  const [sha, setSha] = useState<string | null>(null)  // commit sélectionné (clic sur log/branche)
 
   if (isLoading) return <div className="p-8"><LoadingState label="Lecture du dépôt…" /></div>
   if (isError || !data) {
@@ -39,22 +42,28 @@ export function GitTab() {
 
       <ProjectCredentialCard project={project} />
 
+      {sha && <CommitDetailCard project={project} sha={sha} onClose={() => setSha(null)} />}
+
       <Card className="space-y-3 p-5">
         <p className="text-sm font-medium text-fg">Branches</p>
         {data.branches.length === 0 ? (
           <EmptyState title="Aucune branche" description="Le SoT ne porte encore aucune branche." />
         ) : (
           <ul className="space-y-2">
-            {data.branches.map((b) => <BranchRow key={b.name} branch={b} />)}
+            {data.branches.map((b) => <BranchRow key={b.name} branch={b} onSelect={setSha} />)}
           </ul>
         )}
       </Card>
 
       {refs.length > 0 && (
         <div className="grid gap-4 md:grid-cols-2">
-          {refs.map((ref) => <LogCard key={ref} refName={ref} entries={data.logs[ref]} />)}
+          {refs.map((ref) => (
+            <LogCard key={ref} refName={ref} entries={data.logs[ref]} onSelect={setSha} />
+          ))}
         </div>
       )}
+
+      {data.branches.length > 0 && <DiffCard project={project} branches={data.branches} />}
 
       {data.branches.length > 0 && <RepoExplorer project={project} branches={data.branches} />}
     </div>
@@ -84,30 +93,41 @@ function SyncBanner({ ab }: { ab: GitAheadBehind }) {
   )
 }
 
-/** Une branche : nom (ton par réf) + sha court mono + sujet du commit de tête. */
-function BranchRow({ branch }: { branch: GitBranch }) {
+/** Une branche : nom (ton par réf) + sha court mono + sujet, cliquable pour ouvrir le détail du commit de
+ *  tête (via la primitive Button, jamais un bouton HTML brut — R1). */
+function BranchRow({ branch, onSelect }: { branch: GitBranch; onSelect: (sha: string) => void }) {
   return (
-    <li className="flex items-center gap-3">
-      <Badge tone={gitBranchTone(branch.name)}>{branch.name}</Badge>
-      <code className="shrink-0 font-mono text-xs text-muted">{branch.sha}</code>
-      <span className="truncate text-sm text-muted" title={branch.subject}>{branch.subject}</span>
+    <li>
+      <Button variant="ghost" size="sm" onClick={() => onSelect(branch.sha)}
+        className="w-full justify-start gap-3">
+        <Badge tone={gitBranchTone(branch.name)}>{branch.name}</Badge>
+        <code className="shrink-0 font-mono text-xs text-muted">{branch.sha}</code>
+        <span className="truncate text-sm text-muted" title={branch.subject}>{branch.subject}</span>
+      </Button>
     </li>
   )
 }
 
-/** Log court d'une réf (récents d'abord) : sha court mono + sujet. */
-function LogCard({ refName, entries }: { refName: string; entries: GitLogEntry[] }) {
+/** Log court d'une réf (récents d'abord) : sha court mono + sujet, chaque entrée cliquable pour son détail. */
+function LogCard({ refName, entries, onSelect }: {
+  refName: string
+  entries: GitLogEntry[]
+  onSelect: (sha: string) => void
+}) {
   return (
     <Card className="space-y-3 p-5">
       <div className="flex items-center gap-2">
         <Badge tone={gitBranchTone(refName)}>{refName}</Badge>
         <span className="text-xs text-faint">{entries.length} commit(s)</span>
       </div>
-      <ol className="space-y-1.5">
+      <ol className="space-y-0.5">
         {entries.map((e) => (
-          <li key={e.sha} className="flex items-baseline gap-2">
-            <code className="shrink-0 font-mono text-xs text-muted">{e.sha}</code>
-            <span className="truncate text-sm text-fg" title={e.subject}>{e.subject}</span>
+          <li key={e.sha}>
+            <Button variant="ghost" size="sm" onClick={() => onSelect(e.sha)}
+              className="w-full items-baseline justify-start gap-2">
+              <code className="shrink-0 font-mono text-xs text-muted">{e.sha}</code>
+              <span className="truncate text-sm text-fg" title={e.subject}>{e.subject}</span>
+            </Button>
           </li>
         ))}
       </ol>
