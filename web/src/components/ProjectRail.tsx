@@ -25,15 +25,22 @@ function EntityCard({ p, active }: { p: Project; active: string | undefined }) {
   )
 }
 
-/** Une section titrée du rail (Projets / Outils), rendue seulement si elle a des entités. */
-function EntitySection({ label, items, active }: { label: string; items: Project[]; active: string | undefined }) {
-  if (items.length === 0) return null
+/** Une section titrée du rail (Projets / Outils), TOUJOURS rendue — la taxonomie reste lisible même vide
+ *  (indice discret `emptyHint`), pour que la structure soit visible d'un coup d'œil. */
+function EntitySection(
+  { label, items, active, emptyHint }:
+  { label: string; items: Project[]; active: string | undefined; emptyHint: string },
+) {
   return (
     <div className="space-y-1.5">
       <Eyebrow>{label}</Eyebrow>
-      <ul className="space-y-1.5">
-        {items.map((p) => <EntityCard key={p.id} p={p} active={active} />)}
-      </ul>
+      {items.length === 0 ? (
+        <p className="px-1 text-xs text-faint">{emptyHint}</p>
+      ) : (
+        <ul className="space-y-1.5">
+          {items.map((p) => <EntityCard key={p.id} p={p} active={active} />)}
+        </ul>
+      )}
     </div>
   )
 }
@@ -85,11 +92,13 @@ export function ProjectRail() {
               label="Projets"
               items={projects.data.filter((p) => p.kind !== 'tool')}
               active={active}
+              emptyHint="Aucun projet — crée le premier ci-dessous."
             />
             <EntitySection
               label="Outils"
               items={projects.data.filter((p) => p.kind === 'tool')}
               active={active}
+              emptyHint="Aucun outil pour l’instant."
             />
           </>
         )}

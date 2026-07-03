@@ -48,24 +48,22 @@ export function DispatchTab() {
   }
 
   return (
-    <div className="space-y-6 p-6">
-      <SectionTitle
-        eyebrow="worker"
-        title="Dispatch"
-        actions={<RefreshButton onClick={() => roadmap.refetch()} busy={roadmap.isFetching} />}
-      />
-      <div className="flex flex-wrap gap-1.5">
-        {features.map((f) => (
-          <Button
-            key={f.id}
-            size="sm"
-            variant={f.slug === active ? 'primary' : 'secondary'}
-            onClick={() => setSelected(f.slug)}
-          >
-            {f.title ?? f.slug}
-            {f.next && <span className="ml-1.5 opacity-70">· prêt</span>}
-          </Button>
-        ))}
+    <div className="space-y-4 p-6">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-wrap gap-1.5">
+          {features.map((f) => (
+            <Button
+              key={f.id}
+              size="sm"
+              variant={f.slug === active ? 'primary' : 'secondary'}
+              onClick={() => setSelected(f.slug)}
+            >
+              {f.title ?? f.slug}
+              {f.next && <span className="ml-1.5 opacity-70">· prêt</span>}
+            </Button>
+          ))}
+        </div>
+        <RefreshButton onClick={() => roadmap.refetch()} busy={roadmap.isFetching} />
       </div>
       {feature && <DispatchPanel key={feature.id} project={project} feature={feature} />}
     </div>

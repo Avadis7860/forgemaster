@@ -1,15 +1,6 @@
 import { useState } from 'react'
 import { useParams, useSearch } from '@tanstack/react-router'
-import {
-  Alert,
-  Button,
-  Card,
-  EmptyState,
-  Input,
-  LoadingState,
-  RefreshButton,
-  SectionTitle,
-} from '@/components/ui'
+import { Alert, Button, Card, EmptyState, Input, LoadingState, RefreshButton } from '@/components/ui'
 import { DecisionBanner, ReviewEvidence, VerifyEvidence } from '@/components/gate/GateReport'
 import { ApiError } from '@/lib/api'
 import { useGate, useMerge, useRoadmap } from '@/lib/queries'
@@ -54,24 +45,22 @@ export function GateTab() {
   }
 
   return (
-    <div className="space-y-6 p-6">
-      <SectionTitle
-        eyebrow="autorité"
-        title="Gate & merge"
-        actions={<RefreshButton onClick={() => roadmap.refetch()} busy={roadmap.isFetching} />}
-      />
-      <div className="flex flex-wrap gap-1.5">
-        {features.map((f) => (
-          <Button
-            key={f.id}
-            size="sm"
-            variant={f.slug === active ? 'primary' : 'secondary'}
-            onClick={() => setSelected(f.slug)}
-          >
-            {f.title ?? f.slug}
-            {f.status === 'merged' && <span className="ml-1.5 opacity-70">· mergée</span>}
-          </Button>
-        ))}
+    <div className="space-y-4 p-6">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-wrap gap-1.5">
+          {features.map((f) => (
+            <Button
+              key={f.id}
+              size="sm"
+              variant={f.slug === active ? 'primary' : 'secondary'}
+              onClick={() => setSelected(f.slug)}
+            >
+              {f.title ?? f.slug}
+              {f.status === 'merged' && <span className="ml-1.5 opacity-70">· mergée</span>}
+            </Button>
+          ))}
+        </div>
+        <RefreshButton onClick={() => roadmap.refetch()} busy={roadmap.isFetching} />
       </div>
       {feature && <GatePanel key={feature.id} project={project} feature={feature} />}
     </div>

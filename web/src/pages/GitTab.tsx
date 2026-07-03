@@ -1,5 +1,5 @@
 import { useParams } from '@tanstack/react-router'
-import { Alert, Badge, Card, EmptyState, LoadingState, RefreshButton, SectionTitle } from '@/components/ui'
+import { Alert, Badge, Card, EmptyState, LoadingState, RefreshButton } from '@/components/ui'
 import { ApiError } from '@/lib/api'
 import { useGit } from '@/lib/queries'
 import { gitBranchTone } from '@/lib/statusTone'
@@ -28,12 +28,10 @@ export function GitTab() {
   const refs = order.filter((r) => data.logs[r]?.length)
 
   return (
-    <div className="space-y-6 p-6">
-      <SectionTitle
-        eyebrow="dépôt"
-        title="Git"
-        actions={<RefreshButton onClick={() => refetch()} busy={isFetching} />}
-      />
+    <div className="space-y-4 p-6">
+      <div className="flex justify-end">
+        <RefreshButton onClick={() => refetch()} busy={isFetching} />
+      </div>
 
       {data.ahead_behind && <SyncBanner ab={data.ahead_behind} />}
 
