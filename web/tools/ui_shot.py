@@ -87,6 +87,21 @@ def _parse_viewport(s: str | None) -> dict | None:
     return {"width": int(m.group(1)), "height": int(m.group(2))}
 
 
+def _parse_clicks(specs: list[str] | None) -> list[dict]:
+    """Traduit des `--click` CLI en gestes READ-ONLY pour le runner. Syntaxe : `TEXTE` (clique le 1er
+    élément contenant ce texte) ou `TEXTE#N` (le Nᵉ, 0-indexé) pour lever une ambiguïté (texte répété).
+    Ces clics n'ouvrent que des surfaces read-only (détail de commit, visionneuse, historique) pilotées par
+    un state React sans route — jamais un geste mutant (cf. contrat du runner). Absent → aucun clic."""
+    clicks: list[dict] = []
+    for spec in specs or []:
+        text, sep, tail = spec.rpartition("#")
+        if sep and tail.isdigit():
+            clicks.append({"text": text, "nth": int(tail)})
+        else:
+            clicks.append({"text": spec})
+    return clicks
+
+
 def _wait_health(port: int, *, tries: int = 60, delay: float = 0.5) -> bool:
     url = f"http://127.0.0.1:{port}/health"
     for _ in range(tries):
@@ -278,7 +293,8 @@ def _seed_credential_state(home: Path, slugs: list[str]) -> None:
 
 
 def shoot(routes: list[str], *, port: int, viewport: dict | None, full_page: bool, out_dir: Path,
-          runner: Path, timeout_ms: int, seed: bool, wait_text: str | None = None) -> list[dict]:
+          runner: Path, timeout_ms: int, seed: bool, wait_text: str | None = None,
+          clicks: list[dict] | None = None) -> list[dict]:
     out_dir.mkdir(parents=True, exist_ok=True)
     home = Path(tempfile.mkdtemp(prefix="cockpit-uishot-"))
     env = {**os.environ, "COCKPIT_HOME": str(home / "home"),
@@ -304,13 +320,16 @@ def shoot(routes: list[str], *, port: int, viewport: dict | None, full_page: boo
                 payload["viewport"] = viewport
             if wait_text:                                   # surface WS (terminal) : attendre le repère
                 payload["wait_for_text"] = wait_text
+            if clicks:                                       # gestes read-only (ouvrir une UI sans route)
+                payload["clicks"] = clicks
             try:
                 p = subprocess.run(["node", str(runner), json.dumps(payload)],
                                    capture_output=True, text=True, timeout=timeout_ms / 1000 + 20)
                 data = json.loads(p.stdout or "{}")
                 results.append({"route": route, "url": url, "png": str(png),
                                 "ok": bool(data.get("screenshot")) and png.exists(),
-                                "title": data.get("title"), "error": data.get("error") or (p.stderr or None)})
+                                "title": data.get("title"), "clicks": data.get("clicks"),
+                                "error": data.get("error") or (p.stderr or None)})
             except (subprocess.TimeoutExpired, OSError, ValueError) as e:  # noqa: BLE001
                 results.append({"route": route, "url": url, "png": str(png), "ok": False,
                                 "error": f"{type(e).__name__}: {e}"})
@@ -334,6 +353,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-seed", action="store_true", help="ne pas créer de projets démo")
     ap.add_argument("--build", action="store_true", help="npm run build avant de servir")
     ap.add_argument("--wait-text", help="attendre ce texte dans le DOM avant capture (surface WS : terminal)")
+    ap.add_argument("--click", action="append", metavar="TEXTE[#N]",
+                    help="geste READ-ONLY avant capture : clique le texte (ou son Nᵉ) pour ouvrir une UI "
+                         "derrière un state React (répétable, séquentiel). Jamais un geste mutant.")
     ap.add_argument("--timeout-ms", type=int, default=15000)
     a = ap.parse_args(argv)
 
@@ -346,10 +368,14 @@ def main(argv: list[str] | None = None) -> int:
 
     results = shoot(a.routes, port=a.port, viewport=_parse_viewport(a.viewport),
                     full_page=a.full_page, out_dir=Path(a.out), runner=Path(a.runner),
-                    timeout_ms=a.timeout_ms, seed=not a.no_seed, wait_text=a.wait_text)
+                    timeout_ms=a.timeout_ms, seed=not a.no_seed, wait_text=a.wait_text,
+                    clicks=_parse_clicks(a.click))
     for r in results:
         flag = "✓" if r["ok"] else "✗"
         print(f"{flag} {r['route']:24} → {r['png']}" + (f"   [{r['error']}]" if r.get("error") else ""))
+        for c in r.get("clicks") or []:                     # trace des gestes read-only (clic manqué = ✗)
+            print(f"    {'·' if c.get('ok') else '✗'} click {c.get('step')!r}"
+                  + (f"   [{c.get('error')}]" if c.get("error") else ""))
     return 0 if all(r["ok"] for r in results) else 1
 
 

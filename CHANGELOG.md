@@ -5,6 +5,13 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Boucle visuelle : gestes read-only pour vérifier une UI derrière un clic (P4 git-repo-explorer)
+- **`ui_shot.py --click TEXTE[#N]`** (répétable, séquentiel) : joue des gestes **read-only** après le goto,
+  avant la capture, pour rendre LIVE une surface pilotée par un state React sans route (détail de commit,
+  visionneuse, historique). S'appuie sur le champ additif `clicks` du runner `render_check.js` (usage strict :
+  n'ouvrir que du read-only, jamais un geste mutant). A servi l'acceptance P4 (les 3 pièces click-gated
+  capturées LIVE + Read). Aucun changement de schéma/route.
+
 ### Intelligence git read-only — détail de commit + diff de feature + historique fichier (P3 git-repo-explorer)
 - **Primitives bare-safe** dans `git/internal.py` : `commit_detail(sot, sha)` (métadonnées + fichiers touchés
   avec `+/-` par fichier, `null` pour un binaire) et `file_history(sot, ref, path)` (commits touchant un
