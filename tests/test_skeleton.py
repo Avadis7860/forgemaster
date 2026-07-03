@@ -104,7 +104,7 @@ def test_cli_parser_wires_all_subcommands():
     parser = build_parser()
     sub = next(a for a in parser._actions if a.dest == "command")  # noqa: SLF001 (introspection de test)
     assert set(sub.choices) == {
-        "project", "roadmap", "task", "dispatch", "gate", "merge", "serve",
+        "project", "roadmap", "task", "dispatch", "gate", "merge", "onboard", "serve",
     }
 
 

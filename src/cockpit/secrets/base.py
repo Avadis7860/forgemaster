@@ -60,3 +60,9 @@ class SecretStore(Protocol):
     def list_entries(self) -> list[dict[str, str | None]]:
         """Métadonnées SANS valeurs : `[{"ref": …, "label": …}]` — pour l'écran d'onboarding."""
         ...
+
+    def health(self) -> tuple[bool, str]:
+        """Racine de confiance joignable ? `(ready, detail)` — SANS valeur ni secret. `file` est
+        zéro-config (toujours prêt) ; `bws` n'est prêt que si `BWS_ACCESS_TOKEN` se résout. Sert le check
+        de config-requise du 1er démarrage (onboarding), jamais un flux réseau."""
+        ...

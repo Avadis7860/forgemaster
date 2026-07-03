@@ -20,6 +20,7 @@ from starlette.requests import Request
 
 from cockpit.config import Settings
 from cockpit.db import store
+from cockpit.secrets import SecretStore, build_store
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,11 @@ class Deps:
     def open_db(self) -> sqlite3.Connection:
         """Connexion migrée à la base du cockpit (à refermer par l'appelant)."""
         return store.open_db(self.settings)
+
+    def secret_store(self) -> SecretStore:
+        """Store de secrets actif (résout les credential_ref à l'usage). Construit à la demande — le défaut
+        `file` ne matérialise sa clé qu'à la 1ʳᵉ écriture ; `bws` n'importe le SDK qu'à l'usage."""
+        return build_store(self.settings)
 
 
 def get_deps(request: Request) -> Deps:

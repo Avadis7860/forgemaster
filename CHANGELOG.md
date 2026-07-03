@@ -5,6 +5,21 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Onboarding — check config-requise + `cockpit onboard` + routes credential (phase 4c-1, backend)
+- Nouveau module **`src/cockpit/onboarding.py`** : `status()` (racine du store joignable via `health()` +
+  exigences par projet — un projet à `mirror_remote` a **besoin** d'un token ; `complete` sans faux-vert) et
+  `link_credential()` / `unlink_credential()`. Deux voies unifiées : **fichier** (`token` → `store.put` → réf
+  opaque) et **BWS** (`ref`/UUID bring-your-own, validé via `store.get` avant liaison). La DB ne reçoit que
+  la **référence** ; le store la valeur — jamais de token en log/argv/retour d'API.
+- **`SecretStore.health()`** (nouvelle méthode du Protocol) : racine de confiance joignable ? `file` =
+  zéro-config (toujours prêt) ; `bws` = prêt ssi `BWS_ACCESS_TOKEN` se résout (check **local**, aucun login
+  réseau, ne révèle pas le token).
+- **CLI `cockpit onboard`** : `status` (défaut — ce qui manque, exit 1 si incomplet), `link <project>
+  --token-file <f>` (jamais le token en argv) `| --ref <uuid>` `[--label]`, `unlink <project>`.
+- **API** : `GET /api/onboarding`, `POST /api/projects/{p}/credential` `{token?|ref?, label?}` (réponse =
+  `credential_ref`, jamais le token ; 400/404), `DELETE /api/projects/{p}/credential`. `Deps.secret_store()`
+  expose le store actif par injection.
+
 ### credential_ref par entité + résolution au writeback (phase 4b — onboarding self-hosted)
 - **Schéma SQLite v4** (bump `SCHEMA_VERSION=4`) : `projects` gagne `credential_ref` (`TEXT`, nullable,
   aucun défaut → `NULL` rétroactif). Migration en place idempotente (`ensure_columns`). La DB ne stocke que

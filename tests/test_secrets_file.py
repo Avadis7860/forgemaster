@@ -84,3 +84,12 @@ def test_tampered_blob_refuses(tmp_path):
     (root / "store.enc").write_bytes(b"not-a-valid-fernet-token")
     with pytest.raises(SecretStoreError):
         store.get("whatever")
+
+
+def test_health_is_ready_zero_config(tmp_path):
+    store = EncryptedFileStore(tmp_path / "secrets")
+    ready, detail = store.health()
+    assert ready is True and "1ʳᵉ écriture" in detail          # clé pas encore créée, mais prêt (zéro-config)
+    store.put(SECRET)
+    ready2, detail2 = store.health()
+    assert ready2 is True and "clé présente" in detail2 and SECRET not in detail2

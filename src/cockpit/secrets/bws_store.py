@@ -125,3 +125,12 @@ class BwsStore:
 
     def list_entries(self) -> list[dict[str, str | None]]:
         return []  # bring-your-own : on n'énumère pas l'org BWS de l'utilisateur en v1
+
+    def health(self) -> tuple[bool, str]:
+        """Prêt SEULEMENT si la racine `BWS_ACCESS_TOKEN` se résout (env / fichier-600). Ne fait PAS de
+        login réseau (le check reste local et déterministe) ; ne révèle jamais le token."""
+        try:
+            self._resolve_token()
+        except SecretStoreError as exc:
+            return False, str(exc)
+        return True, f"BWS_ACCESS_TOKEN présent (api {self._api_url})"

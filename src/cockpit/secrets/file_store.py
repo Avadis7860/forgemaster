@@ -110,3 +110,9 @@ class EncryptedFileStore:
 
     def list_entries(self) -> list[dict[str, str | None]]:
         return [{"ref": ref, "label": (e.get("label") or None)} for ref, e in self._read_all().items()]
+
+    def health(self) -> tuple[bool, str]:
+        """Zéro-config : toujours prêt (la clé est créée à la 1ʳᵉ écriture). Le détail pointe la racine de
+        confiance (clé-600) — jamais son contenu."""
+        state = "clé présente" if self._key_path.exists() else "clé créée à la 1ʳᵉ écriture"
+        return True, f"coffre fichier chiffré ({state}) sous {self._root}"

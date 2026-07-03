@@ -237,6 +237,34 @@ def test_git_view_read_only_over_http(client):
     assert c.get("/api/projects/ghost/git").status_code == 404
 
 
+# -- onboarding self-hosted (config-requise + credential par repo) ---------------------------------
+
+def test_onboarding_status_and_credential_link_over_http(client):
+    c, settings = client
+    c.post("/api/projects", json={"slug": "plain"})                            # sans miroir → 0 exigence
+    c.post("/api/projects", json={"slug": "mirr", "mirror_remote": "https://github.com/x/y.git"})
+    st = c.get("/api/onboarding").json()
+    assert st["secret_store"]["backend"] == "file" and st["secret_store"]["ready"] is True
+    reqs = {r["project"]: r for r in st["requirements"]}
+    assert reqs["mirr"]["needs_credential"] is True and reqs["mirr"]["satisfied"] is False
+    assert st["complete"] is False                                             # mirr manque un token
+
+    # lier un token (voie fichier) : la réponse porte la RÉFÉRENCE, jamais le token
+    r = c.post("/api/projects/mirr/credential", json={"token": "ghp_SECRET", "label": "gh"})
+    assert r.status_code == 200 and "ghp_SECRET" not in r.text
+    assert r.json()["credential_ref"]
+    assert c.get("/api/onboarding").json()["complete"] is True                 # exigence satisfaite
+    assert b"ghp_SECRET" not in settings.db_path.read_bytes()                  # 0 token en DB
+
+    # garde-fous : projet inconnu → 404 ; body vide (ni token ni ref) → 400 (ValueError → handler global)
+    assert c.post("/api/projects/ghost/credential", json={"token": "x"}).status_code == 404
+    assert c.post("/api/projects/mirr/credential", json={}).status_code == 400
+
+    # délier → réf remise à NULL
+    assert c.delete("/api/projects/mirr/credential").status_code == 200
+    assert c.get("/api/projects/mirr").json()["credential_ref"] is None
+
+
 # -- terminal PTY local ----------------------------------------------------------------------------
 
 def test_resolve_workdir_is_bounded_and_control_parsed(tmp_path):

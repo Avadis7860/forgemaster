@@ -98,3 +98,16 @@ def test_missing_token_raises(monkeypatch):
     make, _ = _factory({"u": "v"})
     with pytest.raises(SecretStoreError):
         BwsStore(client_factory=make).get("u")
+
+
+def test_health_ready_when_root_token_resolves(monkeypatch):
+    monkeypatch.setenv("BWS_ACCESS_TOKEN", "root-tok")
+    ready, detail = BwsStore().health()                       # local : ne fait AUCUN login réseau
+    assert ready is True and "root-tok" not in detail          # jamais le token dans le détail
+
+
+def test_health_not_ready_without_root_token(monkeypatch):
+    monkeypatch.delenv("BWS_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("BWS_ACCESS_TOKEN_FILE", raising=False)
+    ready, detail = BwsStore().health()
+    assert ready is False and "BWS_ACCESS_TOKEN" in detail

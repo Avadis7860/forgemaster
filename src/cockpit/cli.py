@@ -82,6 +82,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_merge.add_argument("feature")
     p_merge.add_argument("--go", action="store_true", help="GO humain — sans lui, un gate vert affiche hold")
 
+    # -- onboard ------------------------------------------------------------------------------------
+    p_onboard = sub.add_parser("onboard", parents=[common],
+                               help="check config-requise + liaison des tokens (self-hosted)")
+    p_onboard_sub = p_onboard.add_subparsers(dest="action", required=False, metavar="<action>")
+    p_onboard_sub.add_parser("status", parents=[common], help="ce qui manque au 1er démarrage (défaut)")
+    ol = p_onboard_sub.add_parser("link", parents=[common], help="lier un token à un projet")
+    ol.add_argument("project")
+    ol.add_argument("--token-file", help="fichier contenant le token (voie fichier — jamais en argv)")
+    ol.add_argument("--ref", help="référence BWS (UUID bring-your-own — voie BWS)")
+    ol.add_argument("--label", help="libellé humain optionnel (jamais le secret)")
+    ou = p_onboard_sub.add_parser("unlink", parents=[common], help="délier le token d'un projet")
+    ou.add_argument("project")
+
     # -- serve --------------------------------------------------------------------------------------
     p_serve = sub.add_parser("serve", parents=[common], help="démarrer le daemon FastAPI (web + API)")
     p_serve.add_argument("--host", default="127.0.0.1")
@@ -136,6 +149,11 @@ def _h_merge(settings: Settings, args: argparse.Namespace) -> int:
     return merge.cli_dispatch(settings, args)
 
 
+def _h_onboard(settings: Settings, args: argparse.Namespace) -> int:
+    from cockpit import onboarding
+    return onboarding.cli_dispatch(settings, args)
+
+
 def _h_serve(settings: Settings, args: argparse.Namespace) -> int:
     from cockpit.daemon import app
     return app.serve(settings, host=args.host, port=args.port)
@@ -148,5 +166,6 @@ _HANDLERS = {
     "dispatch": _h_dispatch,
     "gate": _h_gate,
     "merge": _h_merge,
+    "onboard": _h_onboard,
     "serve": _h_serve,
 }
