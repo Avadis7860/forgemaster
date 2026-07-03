@@ -4,7 +4,7 @@ de sorte que le parser se construit sans tirer fastapi/uvicorn ni aucune couche 
 
 Sous-commandes = la surface de la spine (phases du produit) :
   project (create|list|get) · roadmap (add-feature|show) · task (add|next) ·
-  dispatch · gate (review|verify|toolchain) · merge · serve
+  dispatch · gate (review|verify|toolchain) · merge · onboard · serve · setup
 
 Chaque handler reçoit `(settings, args)` et retourne un code de sortie. Tant que les couches sont des
 stubs, l'appel lève `NotImplementedError("port: … — #N")` — c'est voulu (le câblage est prouvé, la
@@ -100,6 +100,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--host", default="127.0.0.1")
     p_serve.add_argument("--port", type=int, default=8700)
 
+    # -- setup --------------------------------------------------------------------------------------
+    ps = sub.add_parser("setup", parents=[common],
+                        help="build l'UI depuis les sources (from-clone ; inutile pour un wheel packagé)")
+    ps.add_argument("--no-clean", action="store_true", help="npm install au lieu de npm ci")
+
     return parser
 
 
@@ -159,6 +164,21 @@ def _h_serve(settings: Settings, args: argparse.Namespace) -> int:
     return app.serve(settings, host=args.host, port=args.port)
 
 
+def _h_setup(settings: Settings, args: argparse.Namespace) -> int:
+    from cockpit import webbuild
+    web = webbuild.find_web_dir()
+    if web is None:                                      # install wheel pure : l'UI est déjà empaquetée
+        print("UI déjà empaquetée (install wheel) — rien à builder. Lance `cockpit serve`.")
+        return 0
+    try:
+        dist = webbuild.build_front(web, clean_install=not args.no_clean)
+    except webbuild.FrontBuildError as exc:
+        print(f"erreur : {exc}")
+        return 1
+    print(f"UI buildée → {dist}. Lance `cockpit serve`.")
+    return 0
+
+
 _HANDLERS = {
     "project": _h_project,
     "roadmap": _h_roadmap,
@@ -168,4 +188,5 @@ _HANDLERS = {
     "merge": _h_merge,
     "onboard": _h_onboard,
     "serve": _h_serve,
+    "setup": _h_setup,
 }

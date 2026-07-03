@@ -39,6 +39,12 @@ Repository = "https://github.com/Avadis7860/cockpit"
 [tool.hatch.build.targets.wheel]
 packages = ["src/cockpit"]
 
+# Distribution turnkey : embarque la SPA buildée (web/dist) sous cockpit/_web_dist dans le wheel — l'utilisateur
+# final n'installe que Python, l'UI voyage dans le wheel. Le front se build via `npm run build`/`cockpit setup`
+# AVANT de packager (le hook ne lance pas npm — cf. hatch_build.py). Sobre/non bloquant.
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
+
 [tool.ruff]
 line-length = 110
 target-version = "py311"

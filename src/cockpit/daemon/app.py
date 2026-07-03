@@ -22,13 +22,18 @@ if TYPE_CHECKING:  # imports lourds réservés au typage — jamais au runtime d
 
 
 def web_dist_dir() -> Path:
-    """Emplacement du build SPA (`web/dist`). Override par `COCKPIT_WEB_DIST`, sinon relatif au repo
-    (src/cockpit/daemon/app.py → parents[3] = racine). Le build n'existe pas en install pip pure — d'où
-    le montage **conditionnel** (`_mount_spa`) : le daemon reste une API valable sans front."""
+    """Emplacement du build SPA, dans l'ordre : override `COCKPIT_WEB_DIST` → dist **empaquetée** dans le
+    paquet (`cockpit/_web_dist`, livrée par le wheel — turnkey, aucun Node requis) → layout **source**
+    (`<repo>/web/dist`, dev/éditable, buildé par `cockpit setup`). Retourne le 1er chemin dont `index.html`
+    existe ; à défaut, le chemin source (référence citée par le placeholder fail-loud de `_mount_spa`)."""
     override = os.environ.get("COCKPIT_WEB_DIST")
     if override:
         return Path(override)
-    return Path(__file__).resolve().parents[3] / "web" / "dist"
+    here = Path(__file__).resolve()
+    packaged = here.parents[1] / "_web_dist"             # cockpit/_web_dist (livré par le wheel)
+    if (packaged / "index.html").is_file():
+        return packaged
+    return here.parents[3] / "web" / "dist"              # layout source (repo)
 
 
 def build_app(settings: Settings) -> FastAPI:
@@ -94,6 +99,7 @@ def _mount_spa(app: FastAPI) -> None:
     dist = web_dist_dir()
     index = dist / "index.html"
     if not index.exists():
+        _mount_missing_ui_placeholder(app, dist)         # fail-loud : jamais un 404 muet « API sans UI »
         return
 
     assets = dist / "assets"
@@ -108,6 +114,39 @@ def _mount_spa(app: FastAPI) -> None:
         if path and file.is_file():                     # fichiers racine (favicon, etc.)
             return FileResponse(file)
         return FileResponse(index)                       # sinon → SPA (deep-link rafraîchi)
+
+
+_MISSING_UI_HTML = (
+    "<!doctype html><meta charset=utf-8><title>cockpit — UI non buildée</title>"
+    "<style>body{font:16px/1.6 system-ui,sans-serif;margin:6rem auto;max-width:34rem;padding:0 1.5rem;"
+    "color:#111}code{background:#f4f4f5;padding:.15em .4em;border-radius:4px}h1{font-size:1.4rem}</style>"
+    "<h1>cockpit — l'UI n'est pas encore buildée</h1>"
+    "<p>Le daemon tourne (l'API répond sur <code>/api</code> et <code>/health</code>), mais l'interface web "
+    "n'a pas été construite.</p>"
+    "<p><b>Depuis les sources :</b> lance <code>cockpit setup</code> puis recharge cette page.</p>"
+    "<p><b>Sinon :</b> installe le wheel packagé — l'UI y est incluse, aucun Node requis.</p>"
+)
+
+
+def _mount_missing_ui_placeholder(app: FastAPI, dist: Path) -> None:
+    """Dist absente : au lieu d'un 404 muet (API sans UI ni explication), on LOG un warning clair et on sert
+    une page d'aide à `/` (et tout non-`api`/`ws`). L'API reste pleinement valable — c'est un fail-loud, pas
+    une dégradation silencieuse."""
+    import logging
+
+    from fastapi.responses import HTMLResponse
+    from starlette.exceptions import HTTPException
+
+    logging.getLogger("cockpit").warning(
+        "UI non buildée (dist absente : %s) — API-only. Build : `cockpit setup` (from-clone) "
+        "ou installe le wheel packagé (UI incluse, aucun Node).", dist,
+    )
+
+    @app.get("/{path:path}", include_in_schema=False)
+    async def _no_ui(path: str) -> HTMLResponse:
+        if path.startswith(("api/", "ws/")):
+            raise HTTPException(status_code=404, detail=f"introuvable : {path}")
+        return HTMLResponse(_MISSING_UI_HTML)
 
 
 def serve(settings: Settings, *, host: str, port: int) -> int:

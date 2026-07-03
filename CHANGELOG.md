@@ -5,6 +5,20 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Install turnkey — l'UI voyage dans le wheel + `cockpit setup` + fail-loud (P1 turnkey-install)
+- **Distribution turnkey** : l'utilisateur final n'installe **que Python**. Le hook de packaging
+  `hatch_build.py` **force-include `web/dist`** dans le wheel sous `cockpit/_web_dist` — `pip install <wheel>
+  && cockpit serve` sert la SPA **sans Node requis**. Le front se build via `npm run build`/`cockpit setup`
+  **avant** de packager (le hook ne lance pas npm : éviter le footgun `pip install -e`). Dist **jamais**
+  re-committée (respecte `docs/specs/web-cockpit-spa.md`).
+- **`web_dist_dir()`** cherche désormais dans l'ordre : `COCKPIT_WEB_DIST` → dist empaquetée
+  (`cockpit/_web_dist`, wheel) → layout source (`web/dist`, dev).
+- **`cockpit setup`** (nouvelle sous-commande) : build l'UI depuis les sources (from-clone) ; **fail-loud**
+  avec instructions si Node/npm absent ; no-op sur une install wheel (UI déjà incluse). Module réutilisable
+  `cockpit.webbuild`.
+- **`_mount_spa` fail-loud** : dist absente → **page d'aide à `/`** (« UI non buildée → `cockpit setup` ou
+  wheel packagé ») + warning au log, **au lieu d'un 404 muet**. L'API (`/api`, `/health`) reste valable.
+
 ### Projet GitHub-backed depuis l'UI : config du miroir + token (phase 4c-2, suite)
 - **`registry.set_mirror_remote`** + route **`PATCH /api/projects/{slug}` `{mirror_remote?}`** (édite le
   miroir GitHub d'un projet existant ; `null`/vide le retire). Créer un projet à l'UI puis le rendre

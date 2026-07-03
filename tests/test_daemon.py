@@ -318,3 +318,21 @@ def test_pty_bridge_runs_local_shell_and_relays_output(tmp_path):
     argv = ["/bin/bash", "-c", "printf COCKPIT-PTY-OK"]
     asyncio.run(pty.pty_bridge(ws, argv, cwd=str(tmp_path)))
     assert b"COCKPIT-PTY-OK" in bytes(ws.sent) and ws.closed is True
+
+
+# -- fail-loud UI : dist absente → page d'aide, jamais un 404 muet ----------------------------------
+
+def test_missing_ui_serves_loud_placeholder_not_silent_404(tmp_path, monkeypatch):
+    # COCKPIT_WEB_DIST pointe un dossier VIDE → aucune dist → placeholder fail-loud.
+    monkeypatch.setenv("COCKPIT_WEB_DIST", str(tmp_path / "empty-dist"))
+    settings = Settings.resolve(home=tmp_path / "home", projects_root=tmp_path / "projects")
+    c = TestClient(app_mod.build_app(settings))
+    # L'API reste pleinement valable.
+    assert c.get("/health").status_code == 200
+    assert c.post("/api/projects", json={"slug": "p"}).status_code == 201
+    # `/api/...` inconnu → 404 JSON (jamais le placeholder à la place d'une API).
+    assert c.get("/api/nope").status_code == 404
+    # `/` (et non-api) → 200 HTML d'aide qui pointe `cockpit setup` (fail-loud, pas silencieux).
+    r = c.get("/")
+    assert r.status_code == 200
+    assert "cockpit setup" in r.text and "non buildée" in r.text
