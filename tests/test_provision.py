@@ -80,12 +80,13 @@ def test_overlay_adds_facets_and_overrides_whole_file():
     assert ".claude/facets/backend/PERSONA.md" not in base
     # (b) la facette `doc` de base est CONSERVÉE (union, pas remplacement de dossier)
     assert ".claude/facets/doc/PERSONA.md" in svc
-    # (c) SURCHARGE whole-file : docs/architecture.md et .cockpit/bundle.toml diffèrent de base
+    # (c) SURCHARGE whole-file : docs/architecture.md, .cockpit/bundle.toml ET CLAUDE.md diffèrent de base
     assert svc["docs/architecture.md"] != base["docs/architecture.md"]
     assert "service / API" in svc["docs/architecture.md"]
     assert 'project_type = "service-api"' in svc[".cockpit/bundle.toml"]
-    # (d) le contrat commun (CLAUDE.md, skills) reste celui de base (non dupliqué par l'overlay)
-    assert svc["CLAUDE.md"] == base["CLAUDE.md"]
+    assert svc["CLAUDE.md"] != base["CLAUDE.md"]                # CLAUDE.md est spécialisé par type
+    assert "ingénieur backend senior Python" in svc["CLAUDE.md"]
+    # (d) les skills (contrat commun) restent ceux de base (non dupliqués par l'overlay)
     assert ".claude/skills/work-loop/SKILL.md" in svc
 
 
@@ -102,6 +103,29 @@ def test_declared_facets_have_backing_dirs(project_type):
             key = f".claude/facets/{fac}/{leaf}"
             assert key in bundle, f"{project_type} : facette {fac} déclarée sans {key}"
             assert bundle[key].strip(), f"{project_type} : {key} vide"
+
+
+# Grille canonique d'un CLAUDE.md (structure de référence, cf. brief bosse 2026-07-03) : 6 sections fixes.
+_CLAUDE_SECTIONS = (
+    "## 1. Contexte et objectifs",
+    "## 2. Rôle de l'IA (persona)",
+    "## 3. Stack technique et environnement",
+    "## 4. Règles de code et conventions",
+    "## 5. Format des réponses attendues",
+    "## 6. Workflows et processus",
+)
+
+
+@pytest.mark.parametrize("project_type", BUNDLE_TYPES)
+def test_claude_md_follows_canonical_six_sections(project_type):
+    """Tout CLAUDE.md semé (base ⊕ overlay) suit la grille en 6 sections : contexte, persona, stack,
+    conventions, format des réponses, workflows. Chaque section porte de la substance (persona + gate)."""
+    claude = load_bundle(project_type)["CLAUDE.md"]
+    for section in _CLAUDE_SECTIONS:
+        assert section in claude, f"{project_type} : CLAUDE.md sans section « {section} »"
+    assert "persona" in claude.lower()                          # §2 nomme une posture
+    assert "GO humain" in claude                                # §4/§6 : fail-closed explicite
+    assert "docsmap where" in claude                            # anti-archéologie ancrée
 
 
 def test_methodology_skills_present_in_every_bundle():

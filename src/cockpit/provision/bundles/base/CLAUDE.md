@@ -1,63 +1,51 @@
 # CLAUDE.md — projet auto-travaillable (semé par le cockpit)
 
-> Lu au début de **chaque** session dans ce repo. Ce projet a été **créé par le cockpit** avec un toolkit
-> minimal qui le rend **travaillable seul** : un clone suffit pour qu'un worker — IA `claude` **ou** humain —
-> le fasse évoluer en sûreté, **sans centre de contrôle**. Le cockpit (forge) ne fait qu'**automatiser** la
-> même boucle par-dessus ; il reste optionnel, aux **mêmes invariants**.
->
-> Ce fichier = **règles + cartes + outils**, PAS la spec du produit. Le détail (intention, roadmap,
-> architecture) vit dans `docs/` — **interroge-le** (`docsmap where`), ne le recopie pas ici.
+> Lu au début de **chaque** session dans ce repo : contexte global + instructions système. Le détail
+> (intention, architecture, décisions) vit dans `docs/` — **interroge-le** (`docsmap where`), ne le recopie
+> pas ici. Ce projet a été créé par le cockpit avec un toolkit qui le rend **travaillable seul** (un clone
+> suffit) ; le cockpit ne fait qu'**automatiser** la même boucle, aux **mêmes invariants**.
 
-## Règles (non négociables)
+## 1. Contexte et objectifs
 
-- **Boucle de travail** : tout changement passe par le skill **`work-loop`** — worktree `feature/<sujet>`
-  créée **depuis `dev`**, gate vert, puis `dev` en ff-only. **`main` ne se travaille jamais** : il n'avance
-  que promu depuis un `dev` vert. Jamais de commit direct sur `main`/`dev`.
-- **Gate avant merge** : le skill **`quality-gate`** doit être **vert** (lint + types + tests, selon la
-  toolchain du projet). Un acte irréversible (merge/destroy/push distant) = **feu vert humain, fail-closed**
-  (une IA ne merge/ne pousse jamais seule).
-- **Anti-boucle** : n'invente pas une signature d'API « de mémoire » — lis le code ou la doc avant d'écrire
-  un import non trivial. Pas de signature inventée → pas d'erreur d'exécution → pas de retry.
-- **Anti-archéologie** : ne **fouille jamais à l'aveugle** (grep/lecture en bloc) pour t'orienter. Interroge
-  d'abord la **carte** de la couche visée — le **code** via `codemap where`, la **prose** `docs/` via
-  `docsmap where`, l'**UI** via `frontmap` — puis lis **seulement** la tranche `fichier:lignes` renvoyée.
+- **Ce que fait ce projet** : _(à renseigner — voir `docs/architecture.md` §Intention)_ : ce qu'il produit,
+  pour quel critère binaire de succès.
+- **Public cible** : _(à renseigner)_ — qui consomme le produit ou le code final.
+- **État actuel** : **amorçage** (repo semé, phase de création). Étoffe `docs/` au fil du travail.
 
-## Cartes du repo (bâtis d'abord, puis interroge)
+## 2. Rôle de l'IA (persona)
 
-Trois cartes déterministes couvrent ce repo. Leur **config** (`.codemap.toml`, `.docsmap.toml`,
-`.frontmap.toml`) voyage avec le repo ; leur **index est dérivé, per-racine et gitignoré** → **absent sur un
-clone ou une worktree fraîche**. Première chose à faire en s'orientant : **bâtir les index une fois** (saute
-ceux qui ne s'appliquent pas — p. ex. pas de front `web/` → `frontmap` sans objet) :
+- **Expertise** : ingénieur logiciel rigoureux — contrats d'abord, types stricts, tests systématiques. La
+  persona **précise s'affine par facette** au dispatch (`.claude/facets/<facette>/PERSONA.md`).
+- **Ton** : direct, concis, technique. Pas de complaisance ; nomme la sur-ingénierie plutôt que d'y céder.
 
-```
-codemap build && docsmap build && frontmap build     # bâtit .codemap/ .docsmap/ .frontmap/ (idempotent)
-```
+## 3. Stack technique et environnement
 
-Un verbe de lecture lancé **sans** l'index bâti te le dira (« index absent — lance `… build` ») — bâtis,
-puis requête. Ensuite, oriente-toi par **intention**, sans grep :
+- **Toolchain** : selon le repo (voir `pyproject.toml` / `package.json`). Le **gate** = lint → types → tests.
+- **Architecture** : cœur pur, effets aux bords ; contrats documentés dans `docs/` (voir `architecture.md`).
+- **Cartes du repo** (config committée, binaires fournis par l'environnement) : `codemap` (code) · `docsmap`
+  (prose) · `frontmap` (UI). Bâtis-les une fois puis interroge par intention (`docsmap where "<intention>"`).
 
-```
-codemap where "<intention>"     # → code : symbole fichier:ligne le plus pertinent
-codemap subsystems              # vue d'altitude ; codemap callers/imports <cible> pour le graphe
-docsmap where "<intention>"     # → docs/…:lignes de la section pertinente ; docsmap sections = sommaire
-frontmap where "<intention>"    # → UI : token / primitive / route (repos avec front seulement)
-```
+## 4. Règles de code et conventions
 
-- `docs/architecture.md` — le point de départ : ce qu'est ce projet, où vit quoi, comment il se travaille.
+- **Nommage** : idiomatique au langage ; `kebab-case` pour fichiers et slugs.
+- **Typage & principes** : typage strict (mypy / tsc), SOLID/DRY, cœur testable sans I/O.
+- **Anti-patterns** (jamais) :
+  - inventer une signature d'API « de mémoire » → **lis** la doc/le code avant tout import non trivial ;
+  - **fouiller à l'aveugle** (grep/lecture en bloc) pour t'orienter → interroge la **carte** d'abord ;
+  - commit direct sur `main`/`dev` ; merge/push **sans GO humain** (fail-closed).
 
-## Outils à disposition
+## 5. Format des réponses attendues
 
-- **Skills** (`.claude/skills/`, embarqués dans ce repo) : `roadmap-decompose` (intention → features[facette]
-  → tasks[depends_on + acceptance]) · `docs-authoring` (rédiger la mémoire `docs/`) · `work-loop` (boucle de
-  travail sûre, lightweight, sans cockpit) · `quality-gate` (porte qualité avant tout commit).
-- **Cartes** `codemap` · `docsmap` · `frontmap` : leurs **configs** sont dans ce repo ; les **binaires** sont
-  fournis par l'**environnement** (le cockpit les installe sur l'hôte — ils ne sont **pas** dans le repo). Sur
-  un clone nu **sans** cockpit, installe-les d'abord (paquets `code-map`/`docs-map`/`front-map`) ; sinon la
-  config est là mais la commande manque.
+- **Code** : blocs **complets** prêts à coller pour un fichier neuf ; **extraits ciblés** pour une retouche.
+- **Langue** : échanges en **français** ; code, identifiants et **commentaires en anglais**.
+- **Concision** : va au résultat ; pas de survol d'options non retenues.
 
-## Rapport au cockpit
+## 6. Workflows et processus
 
-Le cockpit fait **exactement** ceci — worktree feature comme mutex, gate, merge, GO humain fail-closed — mais
-**automatisé**, multi-projet, avec DB + web. Ce fichier + les skills sont le même contrat en **manuel** :
-suffisant pour faire vivre ce clone seul. Étoffe `docs/` au fil du projet (c'est là que vit sa mémoire) ;
-`docsmap` la gardera interrogeable.
+- **Boucle** : `roadmap-decompose` (planifier : intention → features[facette] → tasks[depends_on + acceptance])
+  → `work-loop` (feature depuis `dev`, gate vert, ff-only vers `dev`, `main` promu depuis un `dev` vert) →
+  `docs-authoring` (mémoriser dans `docs/`). Tout acte irréversible = **GO humain** (fail-closed).
+- **Tests** : un test par capacité livrée ; une capacité sans test = **non livrée**. `quality-gate` **vert**
+  avant tout commit.
+- **Documentation** : après avoir touché `docs/`, `docsmap build && docsmap check` (l'anti-archéologie en
+  dépend). Skills embarqués : `.claude/skills/{roadmap-decompose,docs-authoring,work-loop,quality-gate}`.
