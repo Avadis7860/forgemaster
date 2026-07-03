@@ -100,10 +100,26 @@ la base écrite par le bootstrap doit lui appartenir) :
                   --token-file read-token.txt      # omets-le quand les dépôts sont publics
 ```
 
-Le script (idempotent, fail-loud, imprime chaque étape) : crée un venv → installe le wheel → écrit l'unité
-systemd → dépose le manifeste sous `COCKPIT_HOME` → **`cockpit bootstrap`** (adopte les 5 outils via leur
-**vrai clone git**) → active le service. Résultat : `http://<hôte>:8700`, rail « Outils » peuplé au 1ᵉʳ
+Le script (idempotent, fail-loud, imprime chaque étape) : crée un venv → installe le wheel → *(Claude, opt-in)*
+→ écrit l'unité systemd → dépose le manifeste sous `COCKPIT_HOME` → **`cockpit bootstrap`** (adopte les 5 outils
+via leur **vrai clone git**) → active le service. Résultat : `http://<hôte>:8700`, rail « Outils » peuplé au 1ᵉʳ
 chargement. Ré-exécuter la commande est sûr (venv réutilisé, outils déjà là *skippés*).
+
+### Claude Code dans le terminal web (`--with-claude`)
+
+L'onglet **Terminal** de chaque projet ouvre un login shell dans le dépôt — l'endroit naturel pour lancer
+`claude` et travailler. Ajoute `--with-claude` à la recette pour installer le CLI **au provisioning** :
+
+```bash
+./provision-ct.sh --wheel cockpit-<version>-py3-none-any.whl --manifest bootstrap.yaml --with-claude
+```
+
+L'étape pose l'**installeur natif officiel** (`claude.ai/install.sh`, binaire autonome — **aucun Node, aucune
+clé API**) dans le `~/.local/bin` de **l'utilisateur du service** (le propriétaire du PTY), avec le PATH câblé
+pour les login shells. Idempotente (skip si déjà présent), retry x2, vérif dure `claude --version`. La
+connexion se fait **au 1ᵉʳ lancement** : ouvre l'onglet Terminal et tape `claude` (login OAuth interactif) —
+aucun secret ne transite par la recette. Sans le flag, l'install reste inchangée (le terminal marche, mais
+`claude` n'y est pas).
 
 ### Le manifeste `deploy/bootstrap.yaml`
 

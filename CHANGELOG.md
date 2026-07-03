@@ -5,6 +5,14 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Claude Code dans le terminal web — `provision-ct.sh --with-claude` (P1 cockpit-workspace-ux)
+- **`deploy/provision-ct.sh`** gagne un flag opt-in `--with-claude` (défaut off) : une étape d'install (recette
+  renumérotée `[n/7]`) pose le CLI `claude` via l'**installeur natif officiel** (`claude.ai/install.sh`, binaire
+  autonome — **aucun Node, aucune clé API**) dans le `~/.local/bin` de l'utilisateur du service (propriétaire du
+  PTY du terminal). Durci : download-puis-exec (jamais `curl | bash`), retry x2, guard PATH `~/.profile`+`~/.bashrc`
+  (le PTY lance `bash -l`), idempotent (skip si présent), vérif dure `claude --version`. Login OAuth au 1ᵉʳ run.
+- **`docs/install.md`** : section « Claude Code dans le terminal web ». Aucun changement de schéma.
+
 ### Recette CT reproductible — dernière version + batteries incluses (P3 cockpit-batteries-included)
 - **`deploy/build-wheel.sh`** (mainteneur, Node build-time) : build la SPA puis `pip wheel --no-deps` **depuis
   HEAD** (jamais un snapshot en retard, D5) ; garde-fou qui vérifie que l'UI est bien embarquée dans le wheel
