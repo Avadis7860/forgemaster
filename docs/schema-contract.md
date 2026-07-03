@@ -77,7 +77,8 @@ Le daemon expose le cœur ; le web (P5) le consomme. **DI explicite** (`Deps` su
 globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Routes portées :
 
 - **projects** — `GET /api/projects` · `POST /api/projects` `{slug, name?, mirror_remote?}` (201, init SoT) ·
-  `GET /api/projects/{slug}`.
+  `GET /api/projects/{slug}` · `PATCH /api/projects/{slug}` `{mirror_remote?}` (édite le miroir GitHub —
+  `null`/vide le retire ; rend un projet GitHub-backed → un token de push devient requis ; **404** absent).
 - **roadmap** — `GET /api/projects/{p}/roadmap` (features + tasks) · `POST /api/projects/{p}/features`
   `{slug, title?}` · `POST /api/features/{p}/{f}/tasks` `{slug, title?, depends_on?, priority?}` ·
   `GET /api/features/{p}/{f}/next` (résolveur DAG → `{next, n_tasks}`).

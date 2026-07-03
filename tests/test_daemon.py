@@ -239,6 +239,21 @@ def test_git_view_read_only_over_http(client):
 
 # -- onboarding self-hosted (config-requise + credential par repo) ---------------------------------
 
+def test_patch_project_sets_and_clears_mirror_then_gates_credential(client):
+    c, _ = client
+    c.post("/api/projects", json={"slug": "proj"})                             # créé local-only (0 exigence)
+    assert c.get("/api/onboarding").json()["complete"] is True                 # aucun miroir → complet
+    # PATCH → rendre GitHub-backed : le miroir apparaît, un token devient requis (onboarding incomplet)
+    r = c.patch("/api/projects/proj", json={"mirror_remote": "https://github.com/moi/repo.git"})
+    assert r.status_code == 200 and r.json()["mirror_remote"] == "https://github.com/moi/repo.git"
+    reqs = {x["project"]: x for x in c.get("/api/onboarding").json()["requirements"]}
+    assert reqs["proj"]["needs_credential"] is True and reqs["proj"]["satisfied"] is False
+    # retrait du miroir (null) → plus d'exigence
+    assert c.patch("/api/projects/proj", json={"mirror_remote": None}).json()["mirror_remote"] is None
+    assert c.get("/api/onboarding").json()["complete"] is True
+    assert c.patch("/api/projects/ghost", json={"mirror_remote": "x"}).status_code == 404
+
+
 def test_onboarding_status_and_credential_link_over_http(client):
     c, settings = client
     c.post("/api/projects", json={"slug": "plain"})                            # sans miroir → 0 exigence

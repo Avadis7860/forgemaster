@@ -119,6 +119,18 @@ def test_set_credential_ref_links_and_unlinks(ctx):
         registry.set_credential_ref(conn, "absent", "x")         # projet inexistant
 
 
+def test_set_mirror_remote_configures_and_clears(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj")
+    assert registry.get_project(conn, "proj")["mirror_remote"] is None      # créé local-only
+    p = registry.set_mirror_remote(conn, "proj", "https://github.com/moi/repo.git")
+    assert p["mirror_remote"] == "https://github.com/moi/repo.git"          # rendu GitHub-backed
+    assert registry.set_mirror_remote(conn, "proj", "  ")["mirror_remote"] is None   # vide → retiré
+    assert registry.set_mirror_remote(conn, "proj", None)["mirror_remote"] is None   # null → retiré
+    with pytest.raises(KeyError):
+        registry.set_mirror_remote(conn, "absent", "x")                     # projet inexistant → 404
+
+
 def test_ensure_columns_migrates_projects_v3_to_v4_in_place(tmp_path: Path):
     """Une base v3 (projects avec kind/owner mais sans credential_ref) migre en place : `ensure_columns`
     ajoute `credential_ref`, NULL pour l'existant (aucun défaut → pas de token lié rétroactivement)."""

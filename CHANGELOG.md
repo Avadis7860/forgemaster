@@ -5,6 +5,16 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Projet GitHub-backed depuis l'UI : config du miroir + token (phase 4c-2, suite)
+- **`registry.set_mirror_remote`** + route **`PATCH /api/projects/{slug}` `{mirror_remote?}`** (édite le
+  miroir GitHub d'un projet existant ; `null`/vide le retire). Créer un projet à l'UI puis le rendre
+  GitHub-backed sans passer par la CLI. Un miroir posé rend un token de push *requis*.
+- **Front** : champ « miroir GitHub (optionnel) » au formulaire de création ; `MirrorForm` (configure/édite/
+  retire le miroir, partagée Réglages + vue projet) ; le panneau Réglages et la carte Git montrent désormais
+  **Miroir** (toujours éditable) puis **Token** (une fois le miroir posé) ; hooks `useSetMirror` +
+  `api.updateProject`. Corrige le trou remonté : un projet créé à l'UI (local-only) pouvait afficher « aucun
+  miroir » sans aucune voie pour ajouter un secret.
+
 ### Onboarding — wizard web : bandeau + panneau Réglages + token/repo (phase 4c-2, front)
 - **Bandeau non bloquant** (`OnboardingBanner`) dans le shell : rappelle une config incomplète (coffre
   injoignable ou N tokens de miroir requis) → renvoie vers Réglages. Le cockpit reste utilisable.

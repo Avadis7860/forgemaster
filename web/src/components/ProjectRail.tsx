@@ -80,17 +80,19 @@ export function ProjectRail() {
   const create = useCreateProject()
   const [slug, setSlug] = useState('')
   const [name, setName] = useState('')
+  const [mirror, setMirror] = useState('')
 
   function onCreate(e: FormEvent) {
     e.preventDefault()
     const trimmed = slug.trim()
     if (!trimmed) return
     create.mutate(
-      { slug: trimmed, name: name.trim() || null },
+      { slug: trimmed, name: name.trim() || null, mirror_remote: mirror.trim() || null },
       {
         onSuccess: (project) => {
           setSlug('')
           setName('')
+          setMirror('')
           navigate({ to: '/$project', params: { project: project.slug } })
         },
       },
@@ -145,6 +147,12 @@ export function ProjectRail() {
           onChange={(e) => setName(e.target.value)}
           placeholder="nom (optionnel)"
           aria-label="nom du projet"
+        />
+        <Input
+          value={mirror}
+          onChange={(e) => setMirror(e.target.value)}
+          placeholder="miroir GitHub (optionnel)"
+          aria-label="miroir GitHub du projet"
         />
         {create.isError && (
           <Alert tone="danger">

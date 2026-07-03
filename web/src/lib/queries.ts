@@ -151,3 +151,13 @@ export function useUnlinkCredential(project: string) {
     onSuccess: () => invalidateCredential(qc, project),
   })
 }
+
+// Configure/retire le miroir GitHub d'un projet (le rend GitHub-backed → un token devient requis). Invalide
+// onboarding + projets + projet (même empreinte qu'une (dé)liaison : l'exigence bascule).
+export function useSetMirror(project: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (mirror: string | null) => api.updateProject(project, { mirror_remote: mirror }),
+    onSuccess: () => invalidateCredential(qc, project),
+  })
+}

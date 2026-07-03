@@ -1,6 +1,7 @@
 import { Alert, Badge, Card, EmptyState, LoadingState, RefreshButton, SectionTitle } from '@/components/ui'
 import { ApiError } from '@/lib/api'
 import { CredentialForm } from '@/components/credential/CredentialForm'
+import { MirrorForm } from '@/components/credential/MirrorForm'
 import { useOnboarding } from '@/lib/queries'
 import type { OnboardingRequirement, SecretStoreHealth } from '@/lib/schemas'
 
@@ -78,25 +79,29 @@ function StoreCard({ store, complete }: { store: SecretStoreHealth; complete: bo
   )
 }
 
-/** Une ligne d'exigence : projet + état du token (lié / requis / aucun miroir) + affordance de liaison. */
+/** Bloc de gestion par projet : état (token lié / requis / local-only) + config du **miroir** (toujours
+ *  éditable → rend GitHub-backed) puis, si un miroir est posé, l'affordance **token**. Le token n'apparaît
+ *  qu'une fois le miroir configuré : c'est LUI qui rend un token nécessaire (sinon rien à pousser). */
 function RequirementRow({ req, backend }: { req: OnboardingRequirement; backend: string }) {
   const tone = req.satisfied ? 'ok' : 'warn'
-  const state = req.linked ? 'token lié' : req.needs_credential ? 'token requis (miroir)' : 'aucun miroir'
+  const state = req.linked ? 'token lié' : req.needs_credential ? 'token requis' : 'local-only'
   return (
-    <li className="flex flex-wrap items-center justify-between gap-3 py-3">
-      <div className="min-w-0 space-y-1">
-        <div className="flex items-center gap-2">
-          <span className="truncate text-sm font-medium text-fg">{req.project}</span>
-          <Badge tone={tone} dot>
-            {state}
-          </Badge>
-        </div>
-        {req.mirror_remote && (
-          <code className="block truncate font-mono text-xs text-faint">{req.mirror_remote}</code>
-        )}
+    <li className="space-y-3 py-4">
+      <div className="flex items-center gap-2">
+        <span className="truncate text-sm font-medium text-fg">{req.project}</span>
+        <Badge tone={tone} dot>
+          {state}
+        </Badge>
       </div>
-      {(req.needs_credential || req.linked) && (
-        <CredentialForm project={req.project} backend={backend} linked={req.linked} compact />
+      <div className="flex flex-wrap items-center justify-between gap-3 pl-1">
+        <span className="shrink-0 text-xs uppercase tracking-wide text-faint">Miroir</span>
+        <MirrorForm project={req.project} mirror={req.mirror_remote} />
+      </div>
+      {req.needs_credential && (
+        <div className="flex flex-wrap items-center justify-between gap-3 pl-1">
+          <span className="shrink-0 text-xs uppercase tracking-wide text-faint">Token</span>
+          <CredentialForm project={req.project} backend={backend} linked={req.linked} compact />
+        </div>
       )}
     </li>
   )

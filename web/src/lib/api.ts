@@ -58,6 +58,12 @@ export const api = {
   getProject: (slug: string) => request(`/api/projects/${encodeURIComponent(slug)}`, ProjectSchema),
   createProject: (input: CreateProjectInput) =>
     request('/api/projects', ProjectSchema, { method: 'POST', body: JSON.stringify(input) }),
+  // PATCH partiel : édite le miroir GitHub (rendre GitHub-backed). `null` retire le miroir.
+  updateProject: (slug: string, body: { mirror_remote?: string | null }) =>
+    request(`/api/projects/${encodeURIComponent(slug)}`, ProjectSchema, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
 
   getRoadmap: (project: string) =>
     request(`/api/projects/${encodeURIComponent(project)}/roadmap`, RoadmapSchema),

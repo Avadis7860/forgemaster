@@ -17,6 +17,12 @@ class ProjectCreate(BaseModel):
     kind: str = "project"            # 'project' | 'tool' (validé par registry.create_project → 400 si autre)
 
 
+class ProjectPatch(BaseModel):
+    # PATCH partiel : seul le miroir GitHub est éditable pour l'instant (rendre un projet GitHub-backed).
+    # `None` explicite = retirer le miroir ; champ absent = ne pas toucher.
+    mirror_remote: str | None = None
+
+
 def make_projects_router() -> APIRouter:
     router = APIRouter(prefix="/api/projects", tags=["projects"])
 
@@ -42,6 +48,16 @@ def make_projects_router() -> APIRouter:
         conn = deps.open_db()
         try:
             return registry.get_project(conn, slug)     # KeyError → 404 (handler global)
+        finally:
+            conn.close()
+
+    @router.patch("/{slug}")
+    def patch_project(slug: str, body: ProjectPatch, deps: Deps = Depends(get_deps)) -> dict:
+        """Édite un projet (partiel). Aujourd'hui : le **miroir GitHub** (rendre GitHub-backed) — `null`/vide
+        le retire. Retourne le projet relu. Projet absent → 404 (handler global)."""
+        conn = deps.open_db()
+        try:
+            return registry.set_mirror_remote(conn, slug, body.mirror_remote)
         finally:
             conn.close()
 

@@ -73,6 +73,19 @@ def set_credential_ref(conn: sqlite3.Connection, slug: str, credential_ref: str 
     return get_project(conn, slug)
 
 
+def set_mirror_remote(conn: sqlite3.Connection, slug: str, mirror_remote: str | None) -> dict:
+    """Configure (ou retire, si `None`/vide) le **miroir GitHub** d'un projet — l'affordance « rendre
+    GitHub-backed » de l'onboarding écrit ICI. Un miroir configuré fait qu'un token de push devient
+    *requis* (best-effort : le SoT local reste la vérité). Lève `KeyError` si le projet n'existe pas.
+    Retourne le projet relu."""
+    normalized = (mirror_remote or "").strip() or None
+    cur = conn.execute("UPDATE projects SET mirror_remote = ? WHERE slug = ?", (normalized, slug))
+    if cur.rowcount == 0:
+        raise KeyError(slug)
+    conn.commit()
+    return get_project(conn, slug)
+
+
 def list_projects(conn: sqlite3.Connection) -> list[dict]:
     """Tous les projets, triés par slug."""
     return [dict(r) for r in conn.execute("SELECT * FROM projects ORDER BY slug")]
