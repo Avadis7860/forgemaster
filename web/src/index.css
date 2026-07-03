@@ -34,6 +34,18 @@
   --color-info-500: #3b82c4;
   --color-purple-500: #8b6fd6;
 
+  /* Rampe « bright » du terminal (xterm ANSI 8-15). Les 8 couleurs normales réutilisent les tokens de
+     statut ; ces variantes lumineuses (contraste AA sur --color-bg) complètent la palette 16 couleurs —
+     source unique lue par TerminalPane (aucun hex dupliqué en TS). Cf. components/terminal/theme.ts. */
+  --color-term-bright-black: #4a5878;
+  --color-term-bright-red: #f2857f;
+  --color-term-bright-green: #3fca8b;
+  --color-term-bright-yellow: #f0b64a;
+  --color-term-bright-blue: #5ba0e0;
+  --color-term-bright-magenta: #ab90ec;
+  --color-term-bright-cyan: #5fd6c4;
+  --color-term-bright-white: #f5f9ff;
+
   --radius-card: 0.625rem;
   --radius-pill: 9999px;
 

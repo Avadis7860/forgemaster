@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { Badge } from '@/components/ui'
 import { wsUrl } from '@/lib/ws'
+import { buildTheme } from './theme'
 
 export type TermStatus = 'connecting' | 'connected' | 'closed' | 'error'
 
@@ -14,28 +15,12 @@ const STATUS: Record<TermStatus, { tone: 'info' | 'ok' | 'neutral' | 'danger'; l
   error: { tone: 'danger', label: 'erreur' },
 }
 
-// Thème xterm lu depuis les tokens CSS (@theme) — SOURCE UNIQUE, pas de hex dupliqué en TS. Le renderer
-// DOM d'xterm v5 écrit le texte dans le DOM (→ visible pour la boucle visuelle), pas dans un canvas opaque.
+// Thème xterm lu depuis les tokens CSS (@theme) — SOURCE UNIQUE, pas de hex dupliqué en TS (mapping dans
+// ./theme). Palette 16 couleurs COMPLÈTE (8 normales + 8 brights). Le renderer DOM d'xterm v5 écrit le
+// texte dans le DOM (→ visible pour la boucle visuelle), pas dans un canvas opaque.
 function readTheme(el: HTMLElement): Record<string, string> {
   const cs = getComputedStyle(el)
-  const v = (name: string) => cs.getPropertyValue(name).trim()
-  return {
-    background: v('--color-bg'),
-    foreground: v('--color-fg'),
-    cursor: v('--color-accent-400'),
-    cursorAccent: v('--color-bg'),
-    selectionBackground: v('--color-accent-700'),
-    black: v('--color-surface'),
-    brightBlack: v('--color-faint'),
-    red: v('--color-danger-500'),
-    green: v('--color-ok-500'),
-    yellow: v('--color-warn-500'),
-    blue: v('--color-info-500'),
-    magenta: v('--color-purple-500'),
-    cyan: v('--color-accent-400'),
-    white: v('--color-muted'),
-    brightWhite: v('--color-fg'),
-  }
+  return buildTheme((name) => cs.getPropertyValue(name))
 }
 
 /** Terminal PTY d'un projet : xterm.js + addon-fit ↔ `WS /ws/terminal/{project}`. Frames BINAIRES = frappes
