@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from cockpit.provision import facet as facet_mod
+
 # Docs de contexte in-repo (pattern `PROJECT_*_HOME`). Absents ⇒ simplement non pointés (fail-soft).
 CONTEXT_DOCS: tuple[tuple[str, str], ...] = (
     ("intention produit", "docs/design.md"),
@@ -53,16 +55,45 @@ def _context_block(root: Path) -> str:
     return "\n\n".join(lines)
 
 
+def _facet_block(root: Path, facet: str, leaf: str) -> str:
+    """Contenu d'un `.md` de facette (`PERSONA.md`/`METHOD.md`) — porte déjà son propre titre markdown.
+    Absent/illisible ⇒ `""` (fail-soft : facette sans persona/méthode = simplement non injectée)."""
+    doc = facet_mod.facet_dir(root, facet) / leaf
+    if not doc.is_file():
+        return ""
+    try:
+        return doc.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _acceptance_block(task: dict) -> str:
+    """Les critères de DoD de la task, rendus verbatim. Absents ⇒ `""` (le mandat générique couvre alors
+    « incrément complet et testé »)."""
+    acc = (task.get("acceptance") or "").strip()
+    return f"## Critères d'acceptation (DoD)\n{acc}" if acc else ""
+
+
 def build_worker_prompt(project: dict, feature: dict, task: dict, *, root: Path) -> str:
-    """Compose le prompt worker à partir de la task NEXT, sa feature, son projet, et le contexte in-repo
-    (`root` = le worktree). PUR (hors lecture des docs présents). Le prompt part sur le **stdin** de
-    `claude -p` (jamais l'argv — parade E2BIG)."""
+    """Compose le prompt worker à partir de la task NEXT, sa feature (dont la **facette**), son projet, et le
+    contexte in-repo (`root` = le worktree). La facette injecte **persona + méthode** (lues des `.md`
+    committés `.claude/facets/<f>/`) ; la task injecte ses **critères d'acceptation**. PUR (hors lecture des
+    fichiers présents). Le prompt part sur le **stdin** de `claude -p` (jamais l'argv — parade E2BIG)."""
     root = Path(root)
+    facet = facet_mod.resolve_facet(root, feature.get("facet"))
     header = (
         f"# Task : {task['slug']} — {task.get('title') or task['slug']} "
         f"(priorité {task.get('priority', 'P1')})\n"
         f"Projet : {project['slug']} ({project.get('name') or project['slug']}) · "
         f"Feature : {feature['slug']} ({feature.get('title') or feature['slug']}) · "
-        f"Branche : {feature.get('branch', '')}"
+        f"Facette : {facet} · Branche : {feature.get('branch', '')}"
     )
-    return f"{header}\n\n{_mandate()}\n\n## Contexte du projet\n{_context_block(root)}\n"
+    blocks = [
+        header,
+        _facet_block(root, facet, "PERSONA.md"),        # l'esprit à incarner pour ce type de travail
+        _mandate(),
+        _facet_block(root, facet, "METHOD.md"),         # la méthode de la facette
+        _acceptance_block(task),                        # les critères requis (DoD)
+        f"## Contexte du projet\n{_context_block(root)}",
+    ]
+    return "\n\n".join(b for b in blocks if b) + "\n"

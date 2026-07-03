@@ -128,7 +128,8 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     try:
         if args.action == "add":
             t = model.add_task(conn, feature_ref=args.feature, slug=args.slug, title=args.title,
-                               depends_on=args.depends_on, priority="P1")
+                               depends_on=args.depends_on, priority="P1",
+                               acceptance=getattr(args, "acceptance", None))
             print(f"task créée : {args.feature}/{t['slug']} (priorité {t['priority']})")
             return 0
         # action == "next"

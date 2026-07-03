@@ -53,6 +53,8 @@ def build_parser() -> argparse.ArgumentParser:
     rf.add_argument("project")
     rf.add_argument("slug")
     rf.add_argument("--title")
+    rf.add_argument("--facet", choices=["backend", "frontend", "tool", "doc"],
+                    help="facette de dispatch (aligne le worker) ; défaut = default_facet du bundle")
     rs = p_roadmap_sub.add_parser("show", parents=[common], help="afficher la roadmap d'un projet")
     rs.add_argument("project")
 
@@ -64,6 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     ta.add_argument("slug")
     ta.add_argument("--title")
     ta.add_argument("--depends-on", nargs="*", default=[], help="ids de tasks prérequises")
+    ta.add_argument("--acceptance", help="critères de DoD injectés dans le prompt du worker au dispatch")
     tn = p_task_sub.add_parser("next", parents=[common], help="prochaine task dispatchable (résolveur DAG)")
     tn.add_argument("feature")
 

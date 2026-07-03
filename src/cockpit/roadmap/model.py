@@ -133,8 +133,10 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     conn = store.open_db(settings)
     try:
         if args.action == "add-feature":
-            f = add_feature(conn, project_slug=args.project, slug=args.slug, title=args.title)
-            print(f"feature créée : {args.project}/{f['slug']} — branche {f['branch']}")
+            f = add_feature(conn, project_slug=args.project, slug=args.slug, title=args.title,
+                            facet=getattr(args, "facet", None))
+            fac = f" [{f['facet']}]" if f.get("facet") else ""
+            print(f"feature créée : {args.project}/{f['slug']}{fac} — branche {f['branch']}")
         elif args.action == "show":
             features = list_features(conn, args.project)
             for f in features:

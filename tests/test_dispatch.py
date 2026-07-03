@@ -255,3 +255,65 @@ def test_build_worker_prompt_uses_project_docs(tmp_path: Path):
     # projet sans docs → fallback explicite, jamais un crash
     bare = prompt.build_worker_prompt(project, feature, task, root=tmp_path / "empty")
     assert "aucun `docs/`" in bare
+
+
+# -- facette : activation dans la worktree + injection dans le prompt (Phase 3) ---------------------
+
+def _facet_root(tmp_path: Path, facet: str, *, persona: str, method: str, settings: str) -> Path:
+    """Un faux worktree portant une facette committée (`.claude/facets/<facet>/…`) + son bundle.toml."""
+    root = tmp_path / "wt"
+    fdir = root / ".claude" / "facets" / facet
+    fdir.mkdir(parents=True)
+    (fdir / "PERSONA.md").write_text(persona, encoding="utf-8")
+    (fdir / "METHOD.md").write_text(method, encoding="utf-8")
+    (fdir / "settings.local.json").write_text(settings, encoding="utf-8")
+    cockpit = root / ".cockpit"
+    cockpit.mkdir()
+    (cockpit / "bundle.toml").write_text(
+        f'[bundle]\nproject_type = "x"\nfacets = ["{facet}"]\ndefault_facet = "{facet}"\n', encoding="utf-8")
+    return root
+
+
+def test_reserve_activates_facet_settings_local_gitignored(ctx):
+    settings, conn = ctx
+    git = InternalGit()
+    # projet TYPÉ service-api (le SoT seedé porte la facette backend) + feature facet=backend
+    registry.create_project(conn, settings, slug="svc", project_type="service-api")
+    model.add_feature(conn, project_slug="svc", slug="api", facet="backend")
+    model.add_task(conn, feature_ref="svc/api", slug="t")
+    res = worktree.reserve(conn, settings, git, project="svc", feature="api", probe=None)
+    activated = res["path"] / ".claude" / "settings.local.json"
+    assert activated.is_file()                                   # facette activée dans la worktree
+    assert "pytest" in activated.read_text(encoding="utf-8")     # settings de la facette backend
+    # la copie activée est GITIGNORÉE (jamais committée par le commit post-run)
+    chk = run.run(["git", "-C", str(res["path"]), "check-ignore", ".claude/settings.local.json"])
+    assert chk.returncode == 0 and ".claude/settings.local.json" in chk.stdout
+
+
+def test_build_worker_prompt_injects_facet_persona_method_and_acceptance(tmp_path: Path):
+    root = _facet_root(tmp_path, "backend",
+                       persona="# Persona — Backend\nTu incarnes un ingénieur backend rigoureux.",
+                       method="# Méthode — Backend\n1. Doc-first (anti-boucle).",
+                       settings='{"permissions": {"allow": ["Bash(pytest:*)"]}}')
+    project = {"slug": "svc", "name": "Svc"}
+    feature = {"slug": "api", "title": "API", "branch": "feature/api", "facet": "backend"}
+    task = {"slug": "ep", "title": "Endpoint", "priority": "P1",
+            "acceptance": "Le endpoint /health répond 200 et un test le couvre."}
+    text = prompt.build_worker_prompt(project, feature, task, root=root)
+    assert "Facette : backend" in text                          # facette résolue et affichée
+    assert "ingénieur backend rigoureux" in text                # persona injectée
+    assert "Doc-first (anti-boucle)" in text                    # méthode injectée
+    assert "Critères d'acceptation (DoD)" in text and "/health répond 200" in text   # critères requis
+    assert prompt.build_worker_prompt(project, feature, task, root=root) == text      # déterministe
+
+
+def test_build_worker_prompt_failsoft_without_facet_files_or_acceptance(tmp_path: Path):
+    # feature.facet=None + pas de bundle.toml → fallback `doc` ; aucune facette committée → pas de persona,
+    # pas de crash. Pas d'acceptance → pas de section DoD.
+    project = {"slug": "p", "name": "P"}
+    feature = {"slug": "f", "title": "F", "branch": "feature/f"}
+    task = {"slug": "t", "title": "T", "priority": "P2"}
+    text = prompt.build_worker_prompt(project, feature, task, root=tmp_path / "empty")
+    assert "Facette : doc" in text                              # fallback
+    assert "Critères d'acceptation" not in text                 # pas de DoD si acceptance absente
+    assert "worker autonome" in text                            # le mandat reste présent

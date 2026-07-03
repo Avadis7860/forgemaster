@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import tomllib
+from pathlib import Path
 
 import pytest
 
-from cockpit.provision import BUNDLE_TYPES, load_bundle, load_payload
+from cockpit.provision import BUNDLE_TYPES, facet, load_bundle, load_payload
 
 # Fichiers-clés attendus dans le payload (dont dotfiles / dossiers cachés).
 _EXPECTED = (
@@ -87,10 +88,10 @@ def test_declared_facets_have_backing_dirs(project_type):
     manifest = tomllib.loads(bundle[".cockpit/bundle.toml"])["bundle"]
     assert manifest["project_type"] == project_type
     assert manifest["default_facet"] in manifest["facets"]
-    for facet in manifest["facets"]:
+    for fac in manifest["facets"]:
         for leaf in ("PERSONA.md", "METHOD.md", "settings.local.json"):
-            key = f".claude/facets/{facet}/{leaf}"
-            assert key in bundle, f"{project_type} : facette {facet} déclarée sans {key}"
+            key = f".claude/facets/{fac}/{leaf}"
+            assert key in bundle, f"{project_type} : facette {fac} déclarée sans {key}"
             assert bundle[key].strip(), f"{project_type} : {key} vide"
 
 
@@ -103,3 +104,34 @@ def test_facet_settings_local_are_seeded_files_not_ignored():
     gitignore = svc[".gitignore"]
     assert ".claude/settings.local.json" in gitignore        # la copie activée (Phase 3) est ignorée
     assert ".claude/facets/" not in gitignore                # les sources de facette ne sont PAS ignorées
+
+
+# -- facet : résolution + activation (Phase 3) ------------------------------------------------------
+
+def _write(p: Path, content: str) -> None:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(content, encoding="utf-8")
+
+
+def test_resolve_facet_explicit_then_default_then_fallback(tmp_path: Path):
+    _write(tmp_path / ".cockpit" / "bundle.toml",
+           '[bundle]\nproject_type = "service-api"\nfacets = ["backend", "doc"]\ndefault_facet = "backend"\n')
+    assert facet.resolve_facet(tmp_path, "frontend") == "frontend"   # feature.facet explicite l'emporte
+    assert facet.resolve_facet(tmp_path, None) == "backend"          # sinon default_facet du bundle.toml
+    assert facet.resolve_facet(tmp_path / "vide", None) == "doc"     # ni l'un ni l'autre → fallback doc
+
+
+def test_activate_facet_copies_settings_local_and_is_idempotent(tmp_path: Path):
+    _write(tmp_path / ".claude" / "facets" / "backend" / "settings.local.json", '{"marker": "backend"}')
+    written = facet.activate_facet(tmp_path, "backend")
+    activated = tmp_path / ".claude" / "settings.local.json"
+    assert written == str(activated) and activated.is_file()
+    assert "backend" in activated.read_text(encoding="utf-8")
+    assert facet.activate_facet(tmp_path, "backend") == str(activated)   # idempotent (overwrite)
+
+
+def test_activate_facet_failsoft_when_no_settings_local(tmp_path: Path):
+    # facette sans settings.local.json (ex. `doc` minimal) → None, aucune écriture (pas de crash)
+    (tmp_path / ".claude" / "facets" / "doc").mkdir(parents=True)
+    assert facet.activate_facet(tmp_path, "doc") is None
+    assert not (tmp_path / ".claude" / "settings.local.json").exists()

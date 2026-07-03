@@ -5,6 +5,18 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Facette de feature — activation + prompt (P1 cockpit-typed-bundles, Phase 3)
+- **`provision/facet.py`** (nouveau) : `resolve_facet(root, feature_facet)` (feature.facet → default_facet du
+  `.cockpit/bundle.toml` → fallback `doc`) et `activate_facet(wt, facet)` (copie
+  `.claude/facets/<f>/settings.local.json` → `.claude/settings.local.json` gitignoré). Déterministe, fail-soft.
+- **`dispatch/worktree.reserve`** : active la facette de la feature DANS la worktree après checkout (hooks/
+  permissions du type de travail ; idempotent).
+- **`roadmap/prompt.build_worker_prompt`** : injecte **persona + méthode** de la facette (lues des `.md`
+  committés) + les **critères d'acceptation** de la task (`## Critères d'acceptation (DoD)`). Un même worker
+  passe du backend au frontend en étant **ré-aligné par la facette de sa feature**.
+- **CLI/API** : `roadmap add-feature --facet`, `task add --acceptance` ; `FeatureCreate.facet`,
+  `TaskCreate.acceptance`. +9 tests (activation gitignorée, injection persona/méthode/critères, fail-soft).
+
 ### Bundles par type — `create --type` (P1 cockpit-typed-bundles, Phase 2)
 - **`provision/`** : `payload/` → `bundles/base/` (git mv) + `bundles/types/{service-api,cli-tool,front-ts}/`
   (overlays). `load_bundle(project_type)` compose **base ⊕ overlay** (whole-file : `base | overlay`,

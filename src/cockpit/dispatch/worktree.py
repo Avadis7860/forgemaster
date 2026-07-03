@@ -18,6 +18,7 @@ from cockpit.config import Settings
 from cockpit.dispatch import ports
 from cockpit.git.backend import GitBackend
 from cockpit.projects.registry import sot_path_for
+from cockpit.provision import facet as facet_mod
 from cockpit.roadmap import model
 
 WORKTREE_BASE = "dev"   # les features partent de dev (main suit dev) — cf. spec forge-sot-local
@@ -42,6 +43,10 @@ def reserve(conn: sqlite3.Connection, settings: Settings, git: GitBackend, *,
     wt = worktree_path_for(settings, project, feature)
     if not wt.exists():
         git.add_worktree(sot, wt, branch=feat["branch"], base=WORKTREE_BASE)
+    # Activer la facette de la feature DANS la worktree : pose `.claude/settings.local.json` (gitignoré) —
+    # hooks/permissions du type de travail. Idempotent (overwrite). La persona/méthode passent, elles, par
+    # le prompt (`build_worker_prompt`). Fail-soft si la facette n'a pas de settings.local.json.
+    facet_mod.activate_facet(wt, facet_mod.resolve_facet(wt, feat.get("facet")))
     res = ports.reserve(conn, project=project, purpose=_purpose(feature), probe=probe)
     conn.execute("UPDATE features SET worktree_path = ?, status = 'active' WHERE id = ?",
                  (str(wt), feat["id"]))

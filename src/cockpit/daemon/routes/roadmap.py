@@ -12,6 +12,7 @@ from cockpit.roadmap import model, resolver
 class FeatureCreate(BaseModel):
     slug: str
     title: str | None = None
+    facet: str | None = None         # facette de dispatch (v6) : backend|frontend|tool|doc (validé → 400)
 
 
 class TaskCreate(BaseModel):
@@ -19,6 +20,7 @@ class TaskCreate(BaseModel):
     title: str | None = None
     depends_on: list[str] = []
     priority: str = "P1"
+    acceptance: str | None = None    # critères de DoD (v6) injectés au prompt worker
 
 
 def make_roadmap_router() -> APIRouter:
@@ -47,7 +49,8 @@ def make_roadmap_router() -> APIRouter:
     def add_feature(project: str, body: FeatureCreate, deps: Deps = Depends(get_deps)) -> dict:
         conn = deps.open_db()
         try:
-            return model.add_feature(conn, project_slug=project, slug=body.slug, title=body.title)
+            return model.add_feature(conn, project_slug=project, slug=body.slug, title=body.title,
+                                     facet=body.facet)
         finally:
             conn.close()
 
@@ -56,7 +59,8 @@ def make_roadmap_router() -> APIRouter:
         conn = deps.open_db()
         try:
             return model.add_task(conn, feature_ref=f"{project}/{feature}", slug=body.slug,
-                                  title=body.title, depends_on=body.depends_on, priority=body.priority)
+                                  title=body.title, depends_on=body.depends_on, priority=body.priority,
+                                  acceptance=body.acceptance)
         finally:
             conn.close()
 
