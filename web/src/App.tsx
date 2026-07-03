@@ -21,7 +21,8 @@ export function AppShell() {
           )}
         </div>
         <div className="flex items-center gap-3">
-          <Link to="/settings" className="text-sm text-muted hover:text-fg">
+          <Link to="/settings" className="flex items-center gap-1.5 text-sm text-muted hover:text-fg">
+            <span aria-hidden>⚙</span>
             Réglages
           </Link>
           <HealthDot />
