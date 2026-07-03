@@ -5,7 +5,16 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
-### Install turnkey — l'UI voyage dans le wheel + `cockpit setup` + fail-loud (P1 turnkey-install)
+### Wizard 1er-démarrage guidé (`/setup`) + first-run (P2 turnkey-install)
+- **`GET /api/onboarding`** gagne `project_count` + **`first_run`** (aucun projet → instance neuve). Corrige
+  le faux « complet » sur une instance vide : le wizard **guide** (« crée ton 1er projet ») au lieu d'annoncer
+  qu'il n'y a rien à faire. `onboard status` (CLI) affiche aussi l'invite 1er-démarrage.
+- **Wizard `/setup`** (`SetupWizard`) : page guidée à étapes vivantes — bienvenue → coffre de secrets (backend
+  + `health` + hint BWS) → **créer ton 1er projet** → miroir GitHub + token (optionnel) → prêt. **Non
+  bloquant**, quittable, ré-ouvrable. Il **séquence** les affordances existantes (il ne les réécrit pas) :
+  `NewProjectForm` (extrait du rail, **source unique** de création), `MirrorForm`, `CredentialForm`.
+- **Surfaçage first-run** : le bandeau du shell invite à `/setup` sur instance neuve ; la Landing affiche une
+  carte de bienvenue → wizard ; le bandeau « incomplet » et le rail « à régler » pointent aussi `/setup`.
 - **Distribution turnkey** : l'utilisateur final n'installe **que Python**. Le hook de packaging
   `hatch_build.py` **force-include `web/dist`** dans le wheel sous `cockpit/_web_dist` — `pip install <wheel>
   && cockpit serve` sert la SPA **sans Node requis**. Le front se build via `npm run build`/`cockpit setup`

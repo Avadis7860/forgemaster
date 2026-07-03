@@ -1,9 +1,8 @@
-import { useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
-import { useCreateProject, useOnboarding, useProjects } from '@/lib/queries'
-import { ApiError } from '@/lib/api'
+import { useOnboarding, useProjects } from '@/lib/queries'
 import { cn } from '@/lib/cn'
-import { Alert, Badge, Button, Card, Eyebrow, EmptyState, Input, LoadingState } from '@/components/ui'
+import { Alert, Badge, Card, Eyebrow, EmptyState, LoadingState } from '@/components/ui'
+import { NewProjectForm } from '@/components/NewProjectForm'
 import type { Project } from '@/lib/schemas'
 
 /** Entrée de navigation globale PERSISTANTE vers Réglages/onboarding (instance-level, hors projet). Vit
@@ -77,27 +76,6 @@ export function ProjectRail() {
   const projects = useProjects()
   const active = useParams({ strict: false }).project
   const navigate = useNavigate()
-  const create = useCreateProject()
-  const [slug, setSlug] = useState('')
-  const [name, setName] = useState('')
-  const [mirror, setMirror] = useState('')
-
-  function onCreate(e: FormEvent) {
-    e.preventDefault()
-    const trimmed = slug.trim()
-    if (!trimmed) return
-    create.mutate(
-      { slug: trimmed, name: name.trim() || null, mirror_remote: mirror.trim() || null },
-      {
-        onSuccess: (project) => {
-          setSlug('')
-          setName('')
-          setMirror('')
-          navigate({ to: '/$project', params: { project: project.slug } })
-        },
-      },
-    )
-  }
 
   return (
     <aside className="z-(--z-rail) flex w-72 shrink-0 flex-col border-r border-border bg-surface/40">
@@ -134,35 +112,9 @@ export function ProjectRail() {
 
       <SettingsNavLink />
 
-      <form onSubmit={onCreate} className="space-y-2 border-t border-border p-3">
-        <Eyebrow>Nouveau projet</Eyebrow>
-        <Input
-          value={slug}
-          onChange={(e) => setSlug(e.target.value)}
-          placeholder="slug (kebab-case)"
-          aria-label="slug du projet"
-        />
-        <Input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="nom (optionnel)"
-          aria-label="nom du projet"
-        />
-        <Input
-          value={mirror}
-          onChange={(e) => setMirror(e.target.value)}
-          placeholder="miroir GitHub (optionnel)"
-          aria-label="miroir GitHub du projet"
-        />
-        {create.isError && (
-          <Alert tone="danger">
-            {create.error instanceof ApiError ? create.error.detail : 'Échec de la création.'}
-          </Alert>
-        )}
-        <Button type="submit" variant="primary" busy={create.isPending} disabled={!slug.trim()} className="w-full">
-          Créer le projet
-        </Button>
-      </form>
+      <div className="border-t border-border p-3">
+        <NewProjectForm onCreated={(project) => navigate({ to: '/$project', params: { project: project.slug } })} />
+      </div>
     </aside>
   )
 }

@@ -93,7 +93,8 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   mutation (le cycle git vit dans `gate/merge`) ; **404** projet absent, **422** SoT illisible.
 - **onboarding** — `GET /api/onboarding` (état de config-requise : `secret_store` `{backend, ready, detail}`
   via `health()`, `requirements` `[{project, mirror_remote, needs_credential, linked, satisfied}]`,
-  `complete` — aucun secret révélé) · `POST /api/projects/{p}/credential` `{token?|ref?, label?}` (lie un
+  `complete`, `project_count`, `first_run` (aucun projet → instance neuve, le wizard guide au lieu d'annoncer
+  « complet ») — aucun secret révélé) · `POST /api/projects/{p}/credential` `{token?|ref?, label?}` (lie un
   credential : `token` = voie fichier stockée → réf opaque, `ref` = voie BWS bring-your-own UUID validée ;
   réponse = projet avec `credential_ref`, **jamais le token** ; **400** mauvais usage/backend, **404** projet
   absent) · `DELETE /api/projects/{p}/credential` (délie : `credential_ref` → NULL).

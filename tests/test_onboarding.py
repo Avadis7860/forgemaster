@@ -69,6 +69,16 @@ def test_status_reports_store_health_and_per_project_requirements(ctx):
     assert st["complete"] is False                                              # mirrored manque un token
 
 
+def test_status_first_run_on_empty_instance_then_flips(ctx):
+    settings, conn = ctx
+    fs = EncryptedFileStore(settings.secrets_dir)
+    st = onboarding.status(conn, fs)
+    assert st["first_run"] is True and st["project_count"] == 0     # instance neuve → wizard guide
+    registry.create_project(conn, settings, slug="first")
+    st = onboarding.status(conn, fs)
+    assert st["first_run"] is False and st["project_count"] == 1                 # un projet → plus « neuve »
+
+
 def test_link_file_store_keeps_value_in_store_and_only_ref_in_db(ctx):
     settings, conn = ctx
     fs = EncryptedFileStore(settings.secrets_dir)

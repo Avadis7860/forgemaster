@@ -2,13 +2,27 @@ import { useNavigate } from '@tanstack/react-router'
 import { Button } from '@/components/ui'
 import { useOnboarding } from '@/lib/queries'
 
-/** Bandeau **non bloquant** : rappelle une config d'onboarding incomplète (racine du coffre injoignable ou
- *  tokens de miroir manquants) et renvoie vers Réglages. Silencieux si tout est complet — ou en erreur/
- *  chargement (le shell reste utilisable, on ne bloque jamais sur l'onboarding). */
+/** Bandeau **non bloquant** : sur une **instance neuve** (first_run) il invite à la configuration guidée ;
+ *  sinon il rappelle une config incomplète (coffre injoignable / tokens de miroir manquants). Dans les deux
+ *  cas il renvoie vers le wizard `/setup`. Silencieux quand tout est réglé — ou en erreur/chargement (le
+ *  shell reste utilisable, on ne bloque jamais sur l'onboarding). */
 export function OnboardingBanner() {
   const { data } = useOnboarding()
   const navigate = useNavigate()
-  if (!data || data.complete) return null
+  if (!data) return null
+  if (data.first_run) {
+    return (
+      <div className="flex items-center justify-between gap-3 border-b border-border bg-surface-raised px-4 py-2">
+        <p className="text-sm text-fg">
+          <span className="font-medium">Bienvenue</span> — configure ton cockpit en quelques étapes.
+        </p>
+        <Button size="sm" variant="primary" onClick={() => navigate({ to: '/setup' })}>
+          Démarrer
+        </Button>
+      </div>
+    )
+  }
+  if (data.complete) return null
 
   const missing = data.requirements.filter((r) => !r.satisfied).length
   const message = !data.secret_store.ready
@@ -20,7 +34,7 @@ export function OnboardingBanner() {
       <p className="text-sm text-warn-500">
         <span className="font-medium">Onboarding incomplet</span> — {message}.
       </p>
-      <Button size="sm" variant="secondary" onClick={() => navigate({ to: '/settings' })}>
+      <Button size="sm" variant="secondary" onClick={() => navigate({ to: '/setup' })}>
         Régler
       </Button>
     </div>

@@ -8,11 +8,15 @@ import { GateTab } from './pages/GateTab'
 import { GitTab } from './pages/GitTab'
 import { TerminalTab } from './pages/TerminalTab'
 import { SettingsTab } from './pages/SettingsTab'
+import { SetupWizard } from './pages/SetupWizard'
 
 // Routing code-based (pas de codegen) — l'échelle du cockpit ne justifie pas le file-based.
 const rootRoute = createRootRoute({ component: AppShell })
 
 const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: Landing })
+
+// /setup = wizard 1er-démarrage guidé (bienvenue → coffre → 1er projet → miroir+token → prêt).
+const setupRoute = createRoute({ getParentRoute: () => rootRoute, path: '/setup', component: SetupWizard })
 
 // /settings = onboarding self-hosted (instance-level, hors projet) : coffre de secrets + token par repo.
 const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/settings', component: SettingsTab })
@@ -28,6 +32,7 @@ const terminalRoute = createRoute({ getParentRoute: () => projectRoute, path: 't
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
+  setupRoute,
   settingsRoute,
   projectRoute.addChildren([roadmapRoute, dispatchRoute, gateRoute, gitRoute, terminalRoute]),
 ])

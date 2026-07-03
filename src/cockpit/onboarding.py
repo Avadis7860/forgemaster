@@ -30,10 +30,14 @@ def status(conn: sqlite3.Connection, secret_store: SecretStore) -> dict:
     - `secret_store` : backend actif + racine de confiance joignable (`health()`), pour le 1er démarrage ;
     - `requirements` : un item par projet ; un projet avec `mirror_remote` a **besoin** d'un token pour
       pousser le miroir → `satisfied` ssi il porte un `credential_ref` (ou n'a pas de miroir) ;
-    - `complete` : racine du store prête ET toutes les exigences satisfaites (pas de faux-vert)."""
+    - `complete` : racine du store prête ET toutes les exigences satisfaites (pas de faux-vert) ;
+    - `first_run` : aucun projet encore créé — l'instance est **neuve**, le wizard doit guider (« crée ton
+      1er projet ») plutôt que d'annoncer « complet ». Distingue *rien-à-faire-car-réglé* (complete sans
+      first_run) de *rien-encore-réglé* (first_run)."""
     ready, detail = secret_store.health()
     requirements = []
-    for p in registry.list_projects(conn):
+    projects = registry.list_projects(conn)
+    for p in projects:
         needs = bool(p.get("mirror_remote"))
         linked = bool(p.get("credential_ref"))
         requirements.append({
@@ -48,6 +52,8 @@ def status(conn: sqlite3.Connection, secret_store: SecretStore) -> dict:
         "secret_store": {"backend": secret_store.backend, "ready": ready, "detail": detail},
         "requirements": requirements,
         "complete": complete,
+        "project_count": len(projects),
+        "first_run": len(projects) == 0,
     }
 
 
@@ -98,6 +104,9 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
             sstore = st["secret_store"]
             mark = "✅" if sstore["ready"] else "🔴"
             print(f"{mark} store `{sstore['backend']}` — {sstore['detail']}")
+            if st["first_run"]:
+                print("  ▸ instance neuve : aucun projet encore. Crée ton 1er projet "
+                      "(`cockpit project create <slug>` ou le wizard web `/setup`).")
             for r in st["requirements"]:
                 icon = "✅" if r["satisfied"] else "🔴"
                 need = "token lié" if r["linked"] else ("token REQUIS (miroir)" if r["needs_credential"]

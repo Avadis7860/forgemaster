@@ -276,6 +276,8 @@ export const OnboardingStatusSchema = z.object({
   secret_store: SecretStoreHealthSchema,
   requirements: z.array(OnboardingRequirementSchema),
   complete: z.boolean(),
+  project_count: z.number(),
+  first_run: z.boolean(),       // aucun projet encore : instance neuve → le wizard guide (ne dit pas « complet »)
 })
 export type OnboardingStatus = z.infer<typeof OnboardingStatusSchema>
 
