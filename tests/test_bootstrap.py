@@ -186,3 +186,25 @@ def test_cli_dispatch_token_file_stores_ref_not_plaintext(ctx, tmp_path):
     assert bootstrap.cli_dispatch(settings, _args(token_file=str(tok))) == 0
     row = registry.get_project(conn, "priv-tool")
     assert row["credential_ref"] and "ghp_via_token_file" not in str(row["credential_ref"])
+
+
+# -- l'édition maintainer livrée (deploy/bootstrap.yaml) reste chargeable par le vrai loader --------
+# Gate-protège la DONNÉE d'édition : la recette P3 dépose CE fichier tel quel sous COCKPIT_HOME ; s'il
+# dérivait vers un manifeste invalide, une install fraîche casserait. Le test le fait relire par le loader.
+
+def test_shipped_deploy_manifest_is_valid_five_tools(ctx):
+    settings, _ = ctx
+    shipped = Path(__file__).resolve().parents[1] / "deploy" / "bootstrap.yaml"
+    settings.home.mkdir(parents=True, exist_ok=True)
+    bootstrap.manifest_path(settings).write_text(shipped.read_text(encoding="utf-8"), encoding="utf-8")
+    entries = bootstrap.load_manifest(settings)
+    assert entries is not None
+    slugs = {e["slug"] for e in entries}
+    assert slugs == {"cockpit", "code-map", "front-map", "docs-map", "mcp-catalogs"}   # les 5 frères (D1)
+    for e in entries:
+        assert e["kind"] == "tool"                                   # → rail « Outils »
+        assert e["source_url"].startswith("https://github.com/") and e["source_url"].endswith(".git")
+        assert e["credential_ref"] is None                           # forward-compat public (D7)
+    # invariant « donnée, pas secret » : le fichier livré ne porte aucun token
+    raw = shipped.read_text(encoding="utf-8")
+    assert "ghp_" not in raw and "github_pat_" not in raw

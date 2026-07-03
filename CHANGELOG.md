@@ -5,6 +5,20 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Recette CT reproductible — dernière version + batteries incluses (P3 cockpit-batteries-included)
+- **`deploy/build-wheel.sh`** (mainteneur, Node build-time) : build la SPA puis `pip wheel --no-deps` **depuis
+  HEAD** (jamais un snapshot en retard, D5) ; garde-fou qui vérifie que l'UI est bien embarquée dans le wheel
+  (`cockpit/_web_dist/index.html`).
+- **`deploy/provision-ct.sh`** (hôte cible, Python seul, aucun Node) : venv → install du wheel → `install-service`
+  → dépôt du manifeste → **`cockpit bootstrap`** → activation systemd, **en une commande**. Idempotent
+  (ré-exécution sûre), fail-loud, imprime chaque étape, aucun secret en argv (token via `--token-file`).
+- **`deploy/bootstrap.yaml`** : l'**édition maintainer** livrée — les 5 outils du framework (`cockpit`,
+  `code-map`, `front-map`, `docs-map`, `mcp-catalogs`) en `kind=tool`. Donnée versionnée, aucun secret ;
+  gate-protégée par un test qui la fait relire par le vrai `load_manifest`.
+- **`docs/install.md`** : section « Édition maintainer — recette CT reproductible » (build → provision →
+  publier plus tard sans changement de code, D7).
+- Aucun changement de schéma (scripts + docs + donnée d'édition).
+
 ### Amorçage des outils du framework — manifeste + `cockpit bootstrap` + étape wizard (P2 cockpit-batteries-included)
 - **Module `bootstrap.py`** : lit un manifeste `<COCKPIT_HOME>/bootstrap.yaml` (édition maintainer, SEC,
   aucun secret) et **adopte** chaque outil via P1 (`create_project(source_url=…)`), classé `kind=tool` (rail

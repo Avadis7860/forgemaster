@@ -1,0 +1,22 @@
+# bootstrap.yaml — ÉDITION MAINTAINER du cockpit : les 5 outils du framework, adoptés au 1er démarrage.
+#
+# AUCUN secret ici (c'est de la DONNÉE, versionnée). Les dépôts sont PRIVÉS aujourd'hui → un token de
+# LECTURE partagé se pose à l'install via `cockpit bootstrap --token-file <fichier>` (ou au wizard /setup) ;
+# il vit dans le coffre, jamais dans ce fichier ni dans un repo. Un seul PAT fine-grained (Contents:Read sur
+# les 5 dépôts) suffit. À la PUBLICATION de ces dépôts (repos publics), le clone devient anonyme et le token
+# devient inutile — AUCUN changement de ce fichier ni du code (forward-compatible, D7).
+#
+# Chaque entrée : slug (kebab-case), source_url (URL git clonée comme SoT réel), kind=tool (→ rail « Outils »).
+# `credential_ref` par entrée = OPTIONNEL (référence opaque au coffre pour un token dédié à ce repo) ; absent
+# → repli sur le token partagé de --token-file, sinon clone anonyme (repo public).
+tools:
+  - slug: cockpit
+    source_url: https://github.com/Avadis7860/cockpit.git
+  - slug: code-map
+    source_url: https://github.com/Avadis7860/code-map.git
+  - slug: front-map
+    source_url: https://github.com/Avadis7860/front-map.git
+  - slug: docs-map
+    source_url: https://github.com/Avadis7860/docs-map.git
+  - slug: mcp-catalogs
+    source_url: https://github.com/Avadis7860/mcp-catalogs.git

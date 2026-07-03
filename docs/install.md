@@ -73,6 +73,51 @@ La commande écrit aussi un `cockpit.env` (EnvironmentFile) sous `COCKPIT_HOME` 
 **Réseau / TLS.** Le cockpit n'a **pas d'authentification** (outil mono-utilisateur, frontière de confiance =
 LAN/localhost). Ne l'expose pas nu sur Internet : mets-le derrière un reverse-proxy (TLS + auth) ou un VPN.
 
+## Édition maintainer — recette CT reproductible (batteries incluses)
+
+Pour monter un hôte vierge (CT/VM) servant **la dernière version** du cockpit avec la **boîte à outils du
+framework déjà rangée** dans le rail « Outils » — en une commande, reproductiblement. Deux temps, séparés
+nettement : **build** (chez le mainteneur, Node présent) puis **provision** (sur l'hôte cible, Python seul).
+
+### 1. Build du wheel depuis HEAD (mainteneur — Node requis)
+
+```bash
+deploy/build-wheel.sh        # → dist/cockpit-<version>-py3-none-any.whl (UI embarquée, vérifiée)
+```
+
+Le wheel est buildé **depuis le code courant** (jamais un snapshot en retard) ; la SPA y est empaquetée sous
+`cockpit/_web_dist`. C'est le seul point où Node intervient.
+
+### 2. Provision de l'hôte cible (Python seul, aucun Node)
+
+Copie sur l'hôte cible le wheel + `deploy/{provision-ct.sh,bootstrap.yaml}` (+ un token-file si les dépôts
+des outils sont privés), puis, **en tant que l'utilisateur du service** (jamais root pour un service `--user` :
+la base écrite par le bootstrap doit lui appartenir) :
+
+```bash
+./provision-ct.sh --wheel cockpit-<version>-py3-none-any.whl \
+                  --manifest bootstrap.yaml \
+                  --token-file read-token.txt      # omets-le quand les dépôts sont publics
+```
+
+Le script (idempotent, fail-loud, imprime chaque étape) : crée un venv → installe le wheel → écrit l'unité
+systemd → dépose le manifeste sous `COCKPIT_HOME` → **`cockpit bootstrap`** (adopte les 5 outils via leur
+**vrai clone git**) → active le service. Résultat : `http://<hôte>:8700`, rail « Outils » peuplé au 1ᵉʳ
+chargement. Ré-exécuter la commande est sûr (venv réutilisé, outils déjà là *skippés*).
+
+### Le manifeste `deploy/bootstrap.yaml`
+
+De la **donnée versionnée**, jamais un secret : `slug` + `source_url` + `kind: tool` par outil. Les 5 dépôts
+du framework (`cockpit`, `code-map`, `front-map`, `docs-map`, `mcp-catalogs`) y sont déclarés. Un `credential_ref`
+optionnel par entrée épingle un token dédié ; sinon le token partagé de `--token-file` (un PAT fine-grained
+`Contents:Read` sur les 5 dépôts) sert à tous. Le token vit dans le coffre — **jamais** dans ce fichier ni un repo.
+
+### Publier les outils plus tard (zéro changement)
+
+Les dépôts sont privés aujourd'hui. Le jour où tu les publies (repos publics), le clone devient **anonyme** :
+retire simplement `--token-file` de la commande. Aucun changement du manifeste ni du code — l'auth au clone est
+optionnelle par conception.
+
 ## Coffre de secrets
 
 | Backend | Quand | Config |
