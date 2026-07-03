@@ -2,16 +2,14 @@ import { Link } from '@tanstack/react-router'
 import { Alert, Badge, Button, Card, LoadingState, RefreshButton, SectionTitle } from '@/components/ui'
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/cn'
-import { CredentialForm } from '@/components/credential/CredentialForm'
-import { MirrorForm } from '@/components/credential/MirrorForm'
 import { NewProjectForm } from '@/components/NewProjectForm'
 import { useOnboarding } from '@/lib/queries'
-import type { OnboardingStatus } from '@/lib/schemas'
 
 /** Wizard 1er-démarrage (`/setup`) — la porte d'entrée guidée d'une instance self-hostée. **Non bloquant**
- *  (route normale, quittable) et ré-ouvrable ; il SÉQUENCE les affordances existantes (coffre, création de
- *  projet, miroir+token) en étapes à état vivant, plutôt que de laisser un nouvel arrivant devant un rail
- *  vide. Distingue *instance neuve* (first_run) de *déjà réglé*. */
+ *  (route normale, quittable) et ré-ouvrable ; il séquence le **démarrage** (coffre → 1er projet) sans se
+ *  substituer à Réglages. La gestion **miroir + token par repo** vit dans Réglages (surface complète,
+ *  éditable à tout moment) ; le wizard s'y contente d'un renvoi quand un token de push est en attente — sinon
+ *  il duplique une version partielle et cul-de-sac de Réglages (retour terrain 2026-07-03). */
 export function SetupWizard() {
   const { data, isLoading, isError, error, refetch, isFetching } = useOnboarding()
 
@@ -34,8 +32,8 @@ export function SetupWizard() {
 
   const storeReady = data.secret_store.ready
   const hasProject = data.project_count > 0
-  const unsatisfied = data.requirements.filter((r) => !r.satisfied)
-  const allGood = storeReady && hasProject && unsatisfied.length === 0
+  const ready = storeReady && hasProject            // démarrage abouti (le token de push relève de Réglages)
+  const tokensPending = data.requirements.some((r) => !r.satisfied)
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-6">
@@ -49,7 +47,7 @@ export function SetupWizard() {
         <RefreshButton onClick={() => refetch()} busy={isFetching} />
       </div>
 
-      {allGood && (
+      {ready && !tokensPending && (
         <Alert tone="ok" title="Ton cockpit est prêt">
           Tout est configuré. Cette page reste accessible depuis Réglages si tu ajoutes des projets plus tard.
         </Alert>
@@ -89,29 +87,32 @@ export function SetupWizard() {
         ) : (
           <div className="space-y-3">
             <p className="text-sm text-muted">
-              Crée ton premier projet. Le miroir GitHub est optionnel — tu pourras l'ajouter plus tard.
+              Crée ton premier projet. Le miroir GitHub est optionnel — tu pourras l'ajouter plus tard dans
+              Réglages, où tu lieras aussi son token de push (repo privé).
             </p>
             <NewProjectForm title={null} submitLabel="Créer ce projet" />
           </div>
         )}
       </Step>
 
-      <Step n={4} title="Miroir GitHub & token (optionnel)" done={hasProject && unsatisfied.length === 0}>
-        <TokenStep data={data} unsatisfied={unsatisfied} hasProject={hasProject} />
-      </Step>
-
-      <Step n={5} title="Prêt à travailler" done={allGood}>
+      <Step n={4} title="Prêt à travailler" done={ready}>
         <div className="space-y-3 text-sm text-muted">
           <p>
             Le daemon sert l'API et l'UI (<code>cockpit serve --host 0.0.0.0</code> pour l'exposer au réseau
             local). Ouvre un projet dans le rail pour lancer roadmap, dispatch et gate.
           </p>
+          {tokensPending && (
+            <p className="text-warn-500">
+              Un ou des projets à miroir GitHub attendent un <strong>token de push</strong> (repo privé) — lie-le
+              dans Réglages. Le bandeau te le rappelle tant que ce n'est pas fait.
+            </p>
+          )}
           <div className="flex flex-wrap gap-2">
             <Link to="/">
               <Button variant="primary">Aller au cockpit</Button>
             </Link>
             <Link to="/settings">
-              <Button variant="secondary">Réglages détaillés</Button>
+              <Button variant="secondary">Réglages (miroirs & tokens)</Button>
             </Link>
           </div>
         </div>
@@ -141,41 +142,5 @@ function Step({ n, title, done, children }: { n: number; title: string; done: bo
       </div>
       <div className="pl-10">{children}</div>
     </Card>
-  )
-}
-
-/** Corps de l'étape token : sans projet → invite à l'étape 3 ; sinon, pour chaque projet non satisfait,
- *  réutilise MirrorForm (config du miroir) puis CredentialForm (liaison du token). Tout satisfait → ✅. */
-function TokenStep(
-  { data, unsatisfied, hasProject }:
-  { data: OnboardingStatus; unsatisfied: OnboardingStatus['requirements']; hasProject: boolean },
-) {
-  if (!hasProject)
-    return <p className="text-sm text-muted">Crée d'abord un projet (étape 3) pour configurer son miroir.</p>
-  if (unsatisfied.length === 0)
-    return (
-      <p className="text-sm text-muted">
-        Rien à lier : tes projets sont locaux, ou leurs miroirs ont déjà un token. Un projet à miroir GitHub
-        demande un token de push — configure-le ici ou dans Réglages.
-      </p>
-    )
-  return (
-    <ul className="space-y-4">
-      {unsatisfied.map((r) => (
-        <li key={r.project} className="space-y-3">
-          <span className="text-sm font-medium text-fg">{r.project}</span>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <span className="shrink-0 text-xs uppercase tracking-wide text-faint">Miroir</span>
-            <MirrorForm project={r.project} mirror={r.mirror_remote} />
-          </div>
-          {r.needs_credential && (
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <span className="shrink-0 text-xs uppercase tracking-wide text-faint">Token</span>
-              <CredentialForm project={r.project} backend={data.secret_store.backend} linked={r.linked} compact />
-            </div>
-          )}
-        </li>
-      ))}
-    </ul>
   )
 }

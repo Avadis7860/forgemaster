@@ -46,4 +46,20 @@ describe('SetupWizard', () => {
     expect(screen.getByText('Ton cockpit est prêt')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Créer ce projet' })).toBeNull() // projet déjà là
   })
+
+  it('token de push en attente : le wizard renvoie vers Réglages, ne propose PAS de lier le token lui-même', () => {
+    h.data = {
+      secret_store: STORE,
+      requirements: [{ project: 'p', mirror_remote: 'https://github.com/a/p.git', needs_credential: true, linked: false, satisfied: false }],
+      complete: false,
+      project_count: 1,
+      first_run: false,
+    }
+    render(<SetupWizard />)
+    // le wizard ne duplique plus l'affordance de liaison (retirée — elle vit dans Réglages)
+    expect(screen.queryByRole('button', { name: 'Lier un token' })).toBeNull()
+    expect(screen.queryByText('Ton cockpit est prêt')).toBeNull()      // pas « prêt » tant qu'un token manque
+    expect(screen.getByText(/token de push/i)).toBeInTheDocument()      // renvoi explicite
+    expect(screen.getByRole('button', { name: 'Réglages (miroirs & tokens)' })).toBeInTheDocument()
+  })
 })

@@ -16,6 +16,13 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
   démarrage, service systemd + note reverse-proxy/TLS (pas d'auth intégrée), coffre file/BWS, mise à jour.
   README + index docs mis à jour.
 
+### Wizard : le token de push vit dans Réglages, pas dans le wizard (retour terrain P2)
+- Retrait de l'étape « Miroir GitHub & token » du wizard `/setup` : elle ne gérait que les projets déjà
+  à-miroir-sans-token et ne permettait pas d'ajouter un miroir à un projet fraîchement créé → cul-de-sac.
+  La gestion **miroir + token par repo** reste dans **Réglages** (surface complète, éditable à tout moment).
+  Le wizard s'y contente d'un **renvoi** quand un token de push est en attente ; le **bandeau** « token requis »
+  pointe désormais vers **Réglages** (et non plus le wizard).
+
 ### Wizard 1er-démarrage guidé (`/setup`) + first-run (P2 turnkey-install)
 - **`GET /api/onboarding`** gagne `project_count` + **`first_run`** (aucun projet → instance neuve). Corrige
   le faux « complet » sur une instance vide : le wizard **guide** (« crée ton 1er projet ») au lieu d'annoncer
