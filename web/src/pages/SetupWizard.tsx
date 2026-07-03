@@ -3,6 +3,7 @@ import { Alert, Badge, Button, Card, LoadingState, RefreshButton, SectionTitle }
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { NewProjectForm } from '@/components/NewProjectForm'
+import { ClaudeAuthBlock } from '@/components/ClaudeAuthStatus'
 import { useBootstrap, useOnboarding, useRunBootstrap } from '@/lib/queries'
 import type { BootstrapPreview } from '@/lib/schemas'
 
@@ -100,11 +101,15 @@ export function SetupWizard() {
         )}
       </Step>
 
-      <Step n={4} title="Outils du framework" done={toolsDone}>
+      <Step n={4} title="Compte Claude" done={data.claude_auth.authenticated}>
+        <ClaudeAuthBlock auth={data.claude_auth} />
+      </Step>
+
+      <Step n={5} title="Outils du framework" done={toolsDone}>
         <FrameworkTools boot={bootData} loading={boot.isLoading} />
       </Step>
 
-      <Step n={5} title="Prêt à travailler" done={ready}>
+      <Step n={6} title="Prêt à travailler" done={ready}>
         <div className="space-y-3 text-sm text-muted">
           <p>
             Le daemon sert l'API et l'UI (<code>cockpit serve --host 0.0.0.0</code> pour l'exposer au réseau

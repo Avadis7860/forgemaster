@@ -357,6 +357,16 @@ export const OnboardingRequirementSchema = z.object({
 })
 export type OnboardingRequirement = z.infer<typeof OnboardingRequirementSchema>
 
+// Auth Claude de l'HÔTE : la machine peut-elle spawner des workers `claude` ? `source` ∈
+// {credentials-file, env-api-key, env-oauth, null} — la PRÉSENCE, jamais la valeur du token. Axe
+// **orthogonal** à `complete` (config du store) : un cockpit « complet » côté secrets refuse quand même de
+// dispatcher tant que cette machine n'a pas fait `claude login`. Surfacé pour que l'usage ne soit jamais silencieux.
+export const ClaudeAuthSchema = z.object({
+  authenticated: z.boolean(),
+  source: z.string().nullable(),
+})
+export type ClaudeAuth = z.infer<typeof ClaudeAuthSchema>
+
 // GET /api/onboarding : état de config-requise du 1er démarrage. `complete` = racine prête ET toutes les
 // exigences satisfaites (pas de faux-vert). Sert le bandeau non bloquant + le panneau Réglages.
 export const OnboardingStatusSchema = z.object({
@@ -365,6 +375,7 @@ export const OnboardingStatusSchema = z.object({
   complete: z.boolean(),
   project_count: z.number(),
   first_run: z.boolean(),       // aucun projet encore : instance neuve → le wizard guide (ne dit pas « complet »)
+  claude_auth: ClaudeAuthSchema,
 })
 export type OnboardingStatus = z.infer<typeof OnboardingStatusSchema>
 

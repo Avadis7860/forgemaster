@@ -5,6 +5,16 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Indicateur d'auth Claude dans l'UI — l'état d'auth devient visible
+- **`ClaudeAuthStatus.tsx`** (nouveau) : composant réutilisable qui rend l'état `claude_auth` du GET
+  onboarding — `ClaudeAuthBadge` (pastille inline) + `ClaudeAuthBlock` (encart avec l'instruction
+  `claude login` quand l'auth manque, miroir exact du `AUTH_HINT` backend). Présence, jamais la valeur.
+- **Wizard 1er-démarrage** : nouvelle étape « Compte Claude » (connecté via *source* / non connecté →
+  `claude login`). Répond à la surprise « il ne m'a rien demandé » : l'usage n'est plus silencieux.
+- **Onglet Dispatch** : pré-flight — sans auth Claude, le bouton « Dispatcher » est **désarmé** et le bandeau
+  s'affiche **avant** le clic (au lieu d'un 403 après coup). Le backend reste l'autorité (fail-closed serveur).
+- **Schéma** : `OnboardingStatusSchema` gagne `claude_auth` (front zod, miroir du champ backend). +2 vitest.
+
 ### Gate d'auth Claude explicite — jamais d'usage silencieux d'un compte hérité
 - **`cockpit/auth.py`** (nouveau) : `claude_auth_status(home, env)` détecte de façon **déterministe** si
   l'hôte est authentifié pour spawner des workers `claude` — présence de `$HOME/.claude/.credentials.json`

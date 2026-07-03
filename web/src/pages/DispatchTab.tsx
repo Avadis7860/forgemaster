@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useSearch } from '@tanstack/react-router'
 import { Alert, Badge, Button, Card, EmptyState, LoadingState, RefreshButton, SectionTitle } from '@/components/ui'
 import { Transcript } from '@/components/dispatch/Transcript'
+import { ClaudeAuthBlock } from '@/components/ClaudeAuthStatus'
 import { ApiError } from '@/lib/api'
-import { useDispatch, useFeatureJobs, useJob, useRoadmap } from '@/lib/queries'
+import { useDispatch, useFeatureJobs, useJob, useOnboarding, useRoadmap } from '@/lib/queries'
 import { useDispatchStream } from '@/lib/useDispatchStream'
 import { JOB_STATUS_TONE, TASK_STATE_TONE, toneFor } from '@/lib/statusTone'
 import { jobStatusLabel, stateLabel } from '@/lib/taskLabels'
@@ -73,6 +74,12 @@ export function DispatchTab() {
 /** Panneau d'une feature : NEXT task, bouton de dispatch, transcript du job sélectionné, historique.
  *  Un run EN COURS est streamé en live (WS) ; un run TERMINÉ est lu at-rest par HTTP (pas de socket ouvert). */
 function DispatchPanel({ project, feature }: { project: string; feature: FeatureWithTasks }) {
+  const onboarding = useOnboarding()
+  const claudeAuth = onboarding.data?.claude_auth
+  // Gate visible AVANT le clic : sans auth Claude, le POST /dispatch renverrait 403 (worker jamais spawné) →
+  // on l'annonce et on désarme le bouton plutôt que d'attendre l'erreur. `undefined` (onboarding pas chargé)
+  // ne bloque pas — le backend reste l'autorité (fail-closed côté serveur).
+  const authBlocked = claudeAuth ? !claudeAuth.authenticated : false
   const dispatch = useDispatch(project, feature.slug)
   const jobs = useFeatureJobs(project, feature.slug, dispatch.isPending ? 1000 : false)
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
@@ -123,10 +130,17 @@ function DispatchPanel({ project, feature }: { project: string; feature: Feature
             <p className="text-sm text-faint">Aucune task READY — rien à dispatcher.</p>
           )}
         </div>
-        <Button variant="primary" onClick={onDispatch} busy={dispatch.isPending} disabled={!feature.next}>
+        <Button
+          variant="primary"
+          onClick={onDispatch}
+          busy={dispatch.isPending}
+          disabled={!feature.next || authBlocked}
+        >
           {dispatch.isPending ? 'Dispatch en cours…' : 'Dispatcher la NEXT task'}
         </Button>
       </div>
+
+      {authBlocked && claudeAuth && <ClaudeAuthBlock auth={claudeAuth} />}
 
       {dispatch.isError && (
         <Alert tone="danger" title="Échec du dispatch">

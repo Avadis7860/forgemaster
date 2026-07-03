@@ -29,10 +29,12 @@ vi.mock('@tanstack/react-router', () => ({
 }))
 
 const STORE = { backend: 'file', ready: true, detail: 'coffre fichier chiffré' }
+const AUTHED = { authenticated: true, source: 'credentials-file' }
+const UNAUTHED = { authenticated: false, source: null }
 
 describe('SetupWizard', () => {
   it('instance neuve (first_run) : guide bienvenue → coffre → 1er projet, avec le formulaire de création', () => {
-    h.data = { secret_store: STORE, requirements: [], complete: true, project_count: 0, first_run: true }
+    h.data = { secret_store: STORE, requirements: [], complete: true, project_count: 0, first_run: true, claude_auth: AUTHED }
     render(<SetupWizard />)
     expect(screen.getByText('Bienvenue')).toBeInTheDocument()
     expect(screen.getByText('Coffre de secrets')).toBeInTheDocument()
@@ -50,6 +52,7 @@ describe('SetupWizard', () => {
       complete: true,
       project_count: 1,
       first_run: false,
+      claude_auth: AUTHED,
     }
     render(<SetupWizard />)
     expect(screen.getByText('Ton cockpit est prêt')).toBeInTheDocument()
@@ -57,7 +60,7 @@ describe('SetupWizard', () => {
   })
 
   it('outils du framework : un manifeste disponible propose de ranger la boîte à outils d’un clic', () => {
-    h.data = { secret_store: STORE, requirements: [], complete: true, project_count: 0, first_run: true }
+    h.data = { secret_store: STORE, requirements: [], complete: true, project_count: 0, first_run: true, claude_auth: AUTHED }
     h.boot = {
       available: true,
       total: 2,
@@ -84,6 +87,7 @@ describe('SetupWizard', () => {
       complete: false,
       project_count: 1,
       first_run: false,
+      claude_auth: AUTHED,
     }
     render(<SetupWizard />)
     // le wizard ne duplique plus l'affordance de liaison (retirée — elle vit dans Réglages)
@@ -91,5 +95,20 @@ describe('SetupWizard', () => {
     expect(screen.queryByText('Ton cockpit est prêt')).toBeNull()      // pas « prêt » tant qu'un token manque
     expect(screen.getByText(/token de push/i)).toBeInTheDocument()      // renvoi explicite
     expect(screen.getByRole('button', { name: 'Réglages (miroirs & tokens)' })).toBeInTheDocument()
+  })
+
+  it('compte Claude non connecté : l’étape affiche l’instruction `claude login` (jamais silencieux)', () => {
+    h.data = { secret_store: STORE, requirements: [], complete: true, project_count: 0, first_run: true, claude_auth: UNAUTHED }
+    render(<SetupWizard />)
+    expect(screen.getByText('Compte Claude')).toBeInTheDocument()
+    expect(screen.getByText('Aucun compte Claude sur cette machine')).toBeInTheDocument()
+    expect(screen.getByText(/claude login/)).toBeInTheDocument()
+  })
+
+  it('compte Claude connecté : l’étape le confirme, sans instruction de login', () => {
+    h.data = { secret_store: STORE, requirements: [], complete: true, project_count: 0, first_run: true, claude_auth: AUTHED }
+    render(<SetupWizard />)
+    expect(screen.getByText('Compte Claude · connecté')).toBeInTheDocument()
+    expect(screen.queryByText('Aucun compte Claude sur cette machine')).toBeNull()
   })
 })
