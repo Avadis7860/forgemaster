@@ -10,6 +10,7 @@ const TABS: Tab[] = [
   { key: 'dispatch', label: 'Dispatch', to: '/$project/dispatch', exact: false },
   { key: 'gate', label: 'Gate', to: '/$project/gate', exact: false },
   { key: 'git', label: 'Git', to: '/$project/git', exact: false },
+  { key: 'flow', label: 'Flow', to: '/$project/flow', exact: false },
   { key: 'terminal', label: 'Terminal', to: '/$project/terminal', exact: false },
 ]
 

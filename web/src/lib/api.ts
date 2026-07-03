@@ -13,6 +13,8 @@ import {
   GitHistorySchema,
   GitTreeSchema,
   GitViewSchema,
+  FlowSchema,
+  FlowOperationsSchema,
   HealthSchema,
   JobDetailSchema,
   JobsListSchema,
@@ -111,6 +113,20 @@ export const api = {
         `?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent(path)}`,
       GitHistorySchema,
     ),
+  // Flow (flot d'exécution) : opérations découvertes (routes + verbes CLI) + sous-graphe d'appels d'une
+  // opération. GET idempotents (index bâti au 1ᵉʳ accès, caché par SHA — aucun effet observable, goto-safe).
+  getFlowOperations: (project: string, ref = 'dev') =>
+    request(
+      `/api/projects/${encodeURIComponent(project)}/flow/operations?ref=${encodeURIComponent(ref)}`,
+      FlowOperationsSchema,
+    ),
+  getFlow: (project: string, operation: string, ref = 'dev', depth = 6) =>
+    request(
+      `/api/projects/${encodeURIComponent(project)}/flow` +
+        `?operation=${encodeURIComponent(operation)}&ref=${encodeURIComponent(ref)}&depth=${depth}`,
+      FlowSchema,
+    ),
+
   getNext: (project: string, feature: string) =>
     request(
       `/api/features/${encodeURIComponent(project)}/${encodeURIComponent(feature)}/next`,

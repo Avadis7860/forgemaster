@@ -335,6 +335,64 @@ export const GitHistorySchema = z.object({
 })
 export type GitHistory = z.infer<typeof GitHistorySchema>
 
+// -- Flow (flot d'exécution) : opérations découvertes + sous-graphe d'appels d'une opération ---------
+
+// Une opération = un entry point découvert (route API ou verbe CLI). Alimente le sélecteur de l'onglet Flow.
+export const FlowOperationSchema = z.object({
+  operation: z.string(),      // "GET /api/…" (route) ou "cli:<verbe>"
+  entry: z.string(),          // "file::qualname" du caller racine
+  kind: z.string(),           // 'route' | 'cli'
+})
+export type FlowOperation = z.infer<typeof FlowOperationSchema>
+
+// GET /api/projects/{p}/flow/operations : les opérations + le moteur d'extraction (calls-py-v1).
+export const FlowOperationsSchema = z.object({
+  operations: z.array(FlowOperationSchema),
+  engine: z.string().nullable(),
+})
+export type FlowOperations = z.infer<typeof FlowOperationsSchema>
+
+// Un nœud du flot : une fonction/méthode traversée (`id` = file::qualname). `label`/`file` en dérivent.
+export const FlowNodeSchema = z.object({ id: z.string(), label: z.string(), file: z.string() })
+export type FlowNode = z.infer<typeof FlowNodeSchema>
+
+// Une arête = un site d'appel. `to`=null ⇒ INDIRECT (callee non résolu statiquement) : `via` nomme le
+// mécanisme suspecté (canal d'honnêteté). `order` = position de l'appel dans le corps ; `branch` = gardes.
+export const FlowEdgeSchema = z.object({
+  from: z.string(),
+  to: z.string().nullable(),
+  callee_name: z.string(),
+  resolution: z.string(),     // direct | import | self | heuristic | indirect
+  kind: z.string(),           // call | ctor | indirect
+  via: z.string().nullable(),
+  order: z.number(),
+  branch: z.array(z.string()),
+})
+export type FlowEdge = z.infer<typeof FlowEdgeSchema>
+
+// Stats du sous-graphe — `indirect_ratio` = fraction d'appels non résolus (bandeau d'honnêteté visuelle).
+export const FlowStatsSchema = z.object({
+  nodes: z.number(),
+  edges: z.number(),
+  edges_indirect: z.number(),
+  indirect_ratio: z.number(),
+  max_depth: z.number(),
+})
+export type FlowStats = z.infer<typeof FlowStatsSchema>
+
+// GET /api/projects/{p}/flow?operation= : le sous-graphe d'une opération. `ok:false` (introuvable/ambiguë)
+// → `reason` porte l'explication, nodes/edges vides. Le front ne recalcule jamais le graphe (source Python).
+export const FlowSchema = z.object({
+  ok: z.boolean(),
+  operation: z.string().nullish(),
+  entry: z.string().nullish(),
+  reason: z.string().nullish(),
+  nodes: z.array(FlowNodeSchema).optional(),   // absents sur ok:false → coalescés côté rendu
+  edges: z.array(FlowEdgeSchema).optional(),
+  stats: FlowStatsSchema.nullish(),
+})
+export type Flow = z.infer<typeof FlowSchema>
+
 // -- Onboarding self-hosted (phase 4c) : check config-requise + credential par entité ---------------
 
 // Racine de confiance du store actif : joignable ? (file = zéro-config ; bws = BWS_ACCESS_TOKEN présent).

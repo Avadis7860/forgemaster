@@ -19,6 +19,8 @@ from __future__ import annotations
 import fcntl
 import os
 import subprocess
+import tarfile
+import tempfile
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
@@ -445,6 +447,30 @@ class InternalGit:
         truncated = len(raw) > _MAX_BLOB_DISPLAY
         content = raw[:_MAX_BLOB_DISPLAY].decode("utf-8", errors="replace")
         return {**base, "binary": False, "truncated": truncated, "too_large": False, "content": content}
+
+    def archive(self, sot: Path, ref: str, dest_dir: Path) -> None:
+        """Matérialise l'**arbre complet** d'une réf dans `dest_dir`, **sans working-tree** : `git archive`
+        écrit un tar de l'arbre `<ref>`, détendu dans `dest_dir`. Sert à fournir un répertoire source réel à
+        un outil externe (ex. `codemap build --root`) qui a besoin de fichiers sur disque — là où
+        `ls_tree`/`read_blob` ne lisent que fichier-par-fichier. Extraction sûre (`filter="data"` :
+        rejette chemins absolus/traversants) ; la source est de toute façon un SoT local de confiance.
+        Read-only côté SoT. Lève (`GitOpError`) si la réf est introuvable ou l'extraction échoue."""
+        dest_dir = Path(dest_dir)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(suffix=".tar")
+        os.close(fd)
+        tar_path = Path(tmp_name)
+        try:
+            r = _git(sot, "archive", "--format=tar", f"--output={tar_path}", ref)
+            if not r.ok:
+                raise GitOpError(f"git archive {ref} @ {sot}: {r.stderr.strip()[:200]}")
+            try:
+                with tarfile.open(tar_path) as tf:
+                    tf.extractall(dest_dir, filter="data")
+            except (tarfile.TarError, OSError) as exc:
+                raise GitOpError(f"extraction archive {ref} @ {sot}: {exc}") from exc
+        finally:
+            tar_path.unlink(missing_ok=True)
 
     @staticmethod
     def _blob_bytes(sot: Path, treeish: str) -> bytes:

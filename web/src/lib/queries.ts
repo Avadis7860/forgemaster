@@ -16,6 +16,9 @@ export const qk = {
   gitDiff: (project: string, base: string, head: string) => ['git-diff', project, base, head] as const,
   gitHistory: (project: string, ref: string, path: string) =>
     ['git-history', project, ref, path] as const,
+  flowOps: (project: string, ref: string) => ['flow-ops', project, ref] as const,
+  flow: (project: string, operation: string, ref: string, depth: number) =>
+    ['flow', project, operation, ref, depth] as const,
   next: (project: string, feature: string) => ['next', project, feature] as const,
   jobs: (project: string, feature: string) => ['jobs', project, feature] as const,
   job: (jobId: string) => ['job', jobId] as const,
@@ -104,6 +107,27 @@ export function useGitHistory(project: string, ref: string, path: string) {
     queryKey: qk.gitHistory(project, ref, path),
     queryFn: () => api.getGitHistory(project, ref, path),
     enabled: Boolean(project && ref && path),
+  })
+}
+
+// Flow : opérations découvertes d'un projet (sélecteur). GET idempotent, pas de poll. `staleTime` élevé —
+// l'index est SHA-bound, il ne change qu'à un nouveau commit sur `ref`.
+export function useFlowOperations(project: string, ref = 'dev') {
+  return useQuery({
+    queryKey: qk.flowOps(project, ref),
+    queryFn: () => api.getFlowOperations(project, ref),
+    enabled: Boolean(project),
+    staleTime: 60_000,
+  })
+}
+
+// Sous-graphe de flot d'une opération. Activé seulement quand une opération est sélectionnée. GET idempotent.
+export function useFlow(project: string, operation: string, ref = 'dev', depth = 6) {
+  return useQuery({
+    queryKey: qk.flow(project, operation, ref, depth),
+    queryFn: () => api.getFlow(project, operation, ref, depth),
+    enabled: Boolean(project && operation),
+    staleTime: 60_000,
   })
 }
 

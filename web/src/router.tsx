@@ -6,6 +6,7 @@ import { RoadmapTab } from './pages/RoadmapTab'
 import { DispatchTab } from './pages/DispatchTab'
 import { GateTab } from './pages/GateTab'
 import { GitTab } from './pages/GitTab'
+import { FlowTab } from './pages/FlowTab'
 import { TerminalTab } from './pages/TerminalTab'
 import { SettingsTab } from './pages/SettingsTab'
 import { SetupWizard } from './pages/SetupWizard'
@@ -28,13 +29,14 @@ const roadmapRoute = createRoute({ getParentRoute: () => projectRoute, path: '/'
 const dispatchRoute = createRoute({ getParentRoute: () => projectRoute, path: 'dispatch', component: DispatchTab })
 const gateRoute = createRoute({ getParentRoute: () => projectRoute, path: 'gate', component: GateTab })
 const gitRoute = createRoute({ getParentRoute: () => projectRoute, path: 'git', component: GitTab })
+const flowRoute = createRoute({ getParentRoute: () => projectRoute, path: 'flow', component: FlowTab })
 const terminalRoute = createRoute({ getParentRoute: () => projectRoute, path: 'terminal', component: TerminalTab })
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
   setupRoute,
   settingsRoute,
-  projectRoute.addChildren([roadmapRoute, dispatchRoute, gateRoute, gitRoute, terminalRoute]),
+  projectRoute.addChildren([roadmapRoute, dispatchRoute, gateRoute, gitRoute, flowRoute, terminalRoute]),
 ])
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' })
