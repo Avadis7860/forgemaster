@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { useParams } from '@tanstack/react-router'
-import { Alert, Badge, Button, Card, EmptyState, LoadingState, RefreshButton } from '@/components/ui'
+import { Alert, Badge, Button, Card, Collapsible, EmptyState, LoadingState, RefreshButton } from '@/components/ui'
 import { ProjectCredentialCard } from '@/components/credential/ProjectCredentialCard'
 import { RepoExplorer } from '@/components/git/RepoExplorer'
 import { CommitDetailCard, DiffCard } from '@/components/git/GitIntelligence'
 import { ApiError } from '@/lib/api'
 import { useGit } from '@/lib/queries'
+import { isLogUnified } from '@/lib/git'
 import { gitBranchTone } from '@/lib/statusTone'
 import type { GitAheadBehind, GitBranch, GitLogEntry } from '@/lib/schemas'
 
@@ -31,6 +32,9 @@ export function GitTab() {
 
   const order = ['dev', 'main']
   const refs = order.filter((r) => data.logs[r]?.length)
+  // « dev == main » : les deux réfs protégées pointent le même commit → leurs logs sont IDENTIQUES.
+  // On n'en affiche alors qu'UN (pleine largeur) au lieu de deux colonnes redondantes.
+  const unified = isLogUnified(data.ahead_behind, refs.length)
 
   return (
     <div className="space-y-4 p-6">
@@ -40,7 +44,10 @@ export function GitTab() {
 
       {data.ahead_behind && <SyncBanner ab={data.ahead_behind} />}
 
-      <ProjectCredentialCard project={project} />
+      {/* Config miroir/token = réglage, pas lecture → repliée par défaut pour rendre la hauteur au dépôt. */}
+      <Collapsible title="Miroir GitHub & token de push">
+        <ProjectCredentialCard project={project} bare />
+      </Collapsible>
 
       {sha && <CommitDetailCard project={project} sha={sha} onClose={() => setSha(null)} />}
 
@@ -55,13 +62,15 @@ export function GitTab() {
         )}
       </Card>
 
-      {refs.length > 0 && (
+      {unified ? (
+        <LogCard refName="dev" entries={data.logs.dev} onSelect={setSha} alsoRef="main" />
+      ) : refs.length > 0 ? (
         <div className="grid gap-4 md:grid-cols-2">
           {refs.map((ref) => (
             <LogCard key={ref} refName={ref} entries={data.logs[ref]} onSelect={setSha} />
           ))}
         </div>
-      )}
+      ) : null}
 
       {data.branches.length > 0 && <DiffCard project={project} branches={data.branches} />}
 
@@ -108,17 +117,22 @@ function BranchRow({ branch, onSelect }: { branch: GitBranch; onSelect: (sha: st
   )
 }
 
-/** Log court d'une réf (récents d'abord) : sha court mono + sujet, chaque entrée cliquable pour son détail. */
-function LogCard({ refName, entries, onSelect }: {
+/** Log court d'une réf (récents d'abord) : sha court mono + sujet, chaque entrée cliquable pour son détail.
+ *  `alsoRef` (mode unifié dev==main) : affiche une 2ᵉ réf + « identiques » — un seul log pour les deux. */
+function LogCard({ refName, entries, onSelect, alsoRef }: {
   refName: string
   entries: GitLogEntry[]
   onSelect: (sha: string) => void
+  alsoRef?: string
 }) {
   return (
     <Card className="space-y-3 p-5">
       <div className="flex items-center gap-2">
         <Badge tone={gitBranchTone(refName)}>{refName}</Badge>
-        <span className="text-xs text-faint">{entries.length} commit(s)</span>
+        {alsoRef && <Badge tone={gitBranchTone(alsoRef)}>{alsoRef}</Badge>}
+        <span className="text-xs text-faint">
+          {entries.length} commit(s){alsoRef ? ' · branches identiques' : ''}
+        </span>
       </div>
       <ol className="space-y-0.5">
         {entries.map((e) => (
