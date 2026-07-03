@@ -37,6 +37,8 @@ def build_parser() -> argparse.ArgumentParser:
     pc.add_argument("--name")
     pc.add_argument("--kind", choices=["project", "tool"], default="project",
                     help="classification : projet travaillé (défaut) ou outil générique du framework")
+    pc.add_argument("--from", dest="source_url", metavar="URL",
+                    help="adopter un repo existant : cloner son historique réel comme SoT (au lieu de semer)")
     p_project_sub.add_parser("list", parents=[common], help="lister les projets")
     pg = p_project_sub.add_parser("get", parents=[common], help="détail d'un projet")
     pg.add_argument("slug")

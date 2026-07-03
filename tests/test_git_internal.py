@@ -378,3 +378,59 @@ def test_file_history_bad_ref_raises(tmp_path: Path):
     sot = _seed_bare_rich(tmp_path)
     with pytest.raises(GitOpError):
         git.file_history(sot, "nexiste-pas", "README.md")
+
+
+# -- adoption : clone_sot (bare clone d'un upstream + normalisation dev/main) -----------------------
+
+def _seed_master_only(tmp: Path) -> Path:
+    """Un repo git normal avec pour seule branche `master` (upstream d'adoption mal formé pour la forge)."""
+    seed = tmp / "seed-master"
+    seed.mkdir()
+    _run("init", "-q", "-b", "master", cwd=seed)
+    (seed / "f.txt").write_text("x\n", encoding="utf-8")
+    _run("add", "-A", cwd=seed)
+    _run("commit", "-q", "-m", "c", cwd=seed)
+    return seed
+
+
+def test_clone_sot_adopts_bare_with_real_content(tmp_path: Path):
+    git = InternalGit()
+    upstream = _seed_bare(tmp_path)          # bare avec main+dev, contenu readme.txt
+    dest = tmp_path / "adopted.git"
+    git.clone_sot(dest, str(upstream))
+    assert run.run(["git", "-C", str(dest), "rev-parse", "--is-bare-repository"]).stdout.strip() == "true"
+    assert {"dev", "main"} <= {b["name"] for b in git.branches(dest)}
+    assert run.run(["git", "-C", str(dest), "show", "dev:readme.txt"]).stdout == "seed\n"
+
+
+def test_clone_sot_normalizes_master_only_to_dev_main(tmp_path: Path):
+    git = InternalGit()
+    upstream = _seed_master_only(tmp_path)   # ni dev ni main en amont
+    dest = tmp_path / "norm.git"
+    git.clone_sot(dest, str(upstream))
+    names = {b["name"] for b in git.branches(dest)}
+    assert {"dev", "main"} <= names          # synthétisées depuis master
+    assert run.run(["git", "-C", str(dest), "show", "dev:f.txt"]).stdout == "x\n"
+
+
+def test_clone_sot_with_creds_env_does_not_break_clone(tmp_path: Path):
+    """Un `creds_env` composé par `credential_env` (inject `GIT_CONFIG_* url.insteadOf`) ne casse pas un clone
+    local sans auth → prouve que l'auth optionnelle est un pass-through inoffensif quand elle est inutile."""
+    git = InternalGit()
+    upstream = _seed_bare(tmp_path)
+    env = credential_env("x-token", base={"PATH": os.environ.get("PATH", "")})
+    dest = tmp_path / "authed.git"
+    git.clone_sot(dest, str(upstream), creds_env=env)
+    assert run.run(["git", "-C", str(dest), "show", "dev:readme.txt"]).stdout == "seed\n"
+
+
+def test_clone_sot_rejects_nonempty_dest_and_bad_url(tmp_path: Path):
+    git = InternalGit()
+    upstream = _seed_bare(tmp_path)
+    full = tmp_path / "full"
+    full.mkdir()
+    (full / "x").write_text("occupied\n", encoding="utf-8")
+    with pytest.raises(GitOpError):                       # destination non-vide
+        git.clone_sot(full, str(upstream))
+    with pytest.raises(GitOpError):                       # URL inexistante
+        git.clone_sot(tmp_path / "nope.git", str(tmp_path / "does-not-exist"))

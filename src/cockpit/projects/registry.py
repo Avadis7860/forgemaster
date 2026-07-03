@@ -8,18 +8,21 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sqlite3
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
 from cockpit.config import Settings
 from cockpit.core import ids
 from cockpit.db import store
-from cockpit.git.internal import InternalGit
+from cockpit.git.internal import GitOpError, InternalGit, classify_push_error, credential_env
 from cockpit.provision import load_payload
+from cockpit.secrets import cred_resolver
 
 _COLS = ("id", "slug", "name", "sot_path", "mirror_remote", "backend", "kind", "owner",
-         "credential_ref", "created_at")
+         "credential_ref", "source_url", "created_at")
 _KINDS = ("project", "tool")   # classification (v3) : entité travaillée vs outil générique du framework
 
 
@@ -32,33 +35,62 @@ def sot_path_for(settings: Settings, slug: str) -> Path:
     return settings.projects_root / slug / "sot.git"
 
 
+def _slug_exists(conn: sqlite3.Connection, slug: str) -> bool:
+    return conn.execute("SELECT 1 FROM projects WHERE slug = ?", (slug,)).fetchone() is not None
+
+
 def create_project(conn: sqlite3.Connection, settings: Settings, *,
                    slug: str, name: str | None = None, mirror_remote: str | None = None,
                    kind: str = "project", owner: str | None = None,
-                   credential_ref: str | None = None) -> dict:
-    """Crée une entité (row DB) et **initialise son SoT bare local** (idempotent), semé du « toolkit
-    auto-travaillable » (CLAUDE.md mince + configs d'index + stub `docs/` + skills + settings) → chaque
-    entité naît auto-travaillable seule. `kind` classe l'entité (`project` travaillé vs `tool` générique du
-    framework) ; `owner` (nullable) = compat multi-utilisateur ; `credential_ref` (nullable) = **référence
-    opaque** vers le token du store (jamais le secret en clair — spec merge-writeback), en général posée
-    plus tard par l'onboarding via `set_credential_ref`. Lève `ValueError` si slug ou `kind` invalide, ou si
-    le slug existe déjà (via IntegrityError)."""
+                   credential_ref: str | None = None, source_url: str | None = None,
+                   cred_resolver: Callable[[str], str] | None = None) -> dict:
+    """Crée une entité (row DB) et **initialise son SoT bare local**. Deux chemins :
+
+    - **SEED** (défaut, `source_url=None`) : SoT semé du « toolkit auto-travaillable » (idempotent). L'INSERT
+      précède le seed (compat historique).
+    - **ADOPTION** (`source_url` fourni) : le SoT est un **clone bare** du repo distant (son VRAI historique).
+      Le clone est fait **AVANT l'INSERT** → un clone échoué ne laisse **pas** de row orpheline (reprise de
+      bootstrap propre). Auth optionnelle : si `credential_ref` + `cred_resolver`, le token est résolu à
+      l'usage et injecté transitoirement (`credential_env`) ; sinon clone anonyme (repo public). Un échec de
+      clone remonte en `ValueError` (routé en 400/erreur CLI) avec un hint (`classify_push_error`).
+
+    `kind` classe l'entité ; `owner`/`credential_ref` nullable ; `source_url` (nullable) = provenance
+    persistée (métadonnée, pas un secret). Lève `ValueError` si slug/`kind` invalide, si le slug existe déjà,
+    ou si le clone échoue."""
     ids.ensure_slug(slug, field="project")
     if kind not in _KINDS:
         raise ValueError(f"kind invalide : {kind!r} (attendu {' | '.join(_KINDS)})")
     sot = sot_path_for(settings, slug)
+    git = InternalGit()
+    if source_url:
+        if _slug_exists(conn, slug):        # pré-check → éviter un clone gâché avant le heurt d'unicité
+            raise ValueError(f"projet déjà existant : {slug!r}")
+        creds_env = None
+        if credential_ref and cred_resolver is not None:
+            token = cred_resolver(credential_ref)     # total : '' si absent/illisible → clone anonyme
+            if token:
+                creds_env = credential_env(token)
+        try:
+            git.clone_sot(sot, source_url, creds_env=creds_env)
+        except GitOpError as exc:
+            hint = classify_push_error("", str(exc))
+            raise ValueError(
+                f"clone échoué ({hint}) : {source_url} — introuvable ou token sans accès ({exc})") from exc
     row = {"id": ids.new_id(), "slug": slug, "name": name or slug, "sot_path": str(sot),
            "mirror_remote": mirror_remote, "backend": "internal", "kind": kind, "owner": owner,
-           "credential_ref": credential_ref, "created_at": _now()}
+           "credential_ref": credential_ref, "source_url": source_url, "created_at": _now()}
     try:
         conn.execute(
             "INSERT INTO projects (id, slug, name, sot_path, mirror_remote, backend, kind, owner, "
-            "credential_ref, created_at) VALUES (:id, :slug, :name, :sot_path, :mirror_remote, :backend, "
-            ":kind, :owner, :credential_ref, :created_at)", row)
+            "credential_ref, source_url, created_at) VALUES (:id, :slug, :name, :sot_path, :mirror_remote, "
+            ":backend, :kind, :owner, :credential_ref, :source_url, :created_at)", row)
         conn.commit()
     except sqlite3.IntegrityError as exc:
+        if source_url:
+            shutil.rmtree(sot, ignore_errors=True)    # course perdue → rollback du clone qu'on vient de faire
         raise ValueError(f"projet déjà existant : {slug!r}") from exc
-    InternalGit().init_sot(sot, payload=load_payload())
+    if not source_url:
+        git.init_sot(sot, payload=load_payload())
     return row
 
 
@@ -105,8 +137,11 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     try:
         if args.action == "create":
             p = create_project(conn, settings, slug=args.slug, name=args.name,
-                               kind=getattr(args, "kind", "project"))
-            print(f"{p['kind']} créé : {p['slug']} — SoT {p['sot_path']}")
+                               kind=getattr(args, "kind", "project"),
+                               source_url=getattr(args, "source_url", None),
+                               cred_resolver=cred_resolver(settings))
+            how = f"adopté ← {p['source_url']}" if p.get("source_url") else f"SoT {p['sot_path']}"
+            print(f"{p['kind']} créé : {p['slug']} — {how}")
         elif args.action == "list":
             for p in list_projects(conn):
                 print(f"{p['slug']}\t{p['kind']}\t{p['backend']}\t{p['name']}")

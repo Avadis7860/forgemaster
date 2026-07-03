@@ -7,6 +7,8 @@ injecte la valeur le temps de l'op, ne la persiste jamais. Backend choisi global
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from cockpit.config import Settings
 
 from .base import SecretNotFound, SecretStore, SecretStoreError, SecretUnsupported
@@ -17,6 +19,7 @@ __all__ = [
     "SecretNotFound",
     "SecretUnsupported",
     "build_store",
+    "cred_resolver",
 ]
 
 
@@ -33,3 +36,17 @@ def build_store(settings: Settings) -> SecretStore:
 
         return BwsStore()
     raise SecretStoreError(f"backend de secret store inconnu : {backend!r} (attendu : file | bws).")
+
+
+def cred_resolver(settings: Settings) -> Callable[[str], str]:
+    """Résolveur `credential_ref → token` adossé au store actif, **partagé** par les couches qui injectent un
+    token dans une op git (writeback merge, adoption/clone, bootstrap). **Lazy** : le store n'est construit
+    que si une référence est réellement présentée. **Total** : un secret absent/illisible dégrade en `''`
+    (jamais d'exception ici — l'auth git reste best-effort côté appelant). La *policy* de résolution vit ICI
+    (couche secrets), jamais dans `git/internal` (qui n'importe pas ce paquet)."""
+    def resolve(ref: str) -> str:
+        try:
+            return build_store(settings).get(ref)
+        except SecretStoreError:
+            return ""
+    return resolve

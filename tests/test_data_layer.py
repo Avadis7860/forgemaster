@@ -1,6 +1,7 @@
 """Tests du data layer : projects/registry + roadmap/model sur une DB + projects_root jetables."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,25 @@ from cockpit.core import run
 from cockpit.db import store
 from cockpit.projects import registry
 from cockpit.roadmap import model
+
+_GIT_ENV = {"PATH": os.environ.get("PATH", ""),
+            "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e.invalid",
+            "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e.invalid"}
+
+
+def _make_upstream(path: Path, *, default: str = "main", extra: tuple[str, ...] = ()) -> Path:
+    """Crée un vrai repo git local (upstream d'adoption) avec du contenu réel + des branches, utilisable
+    comme `source_url` d'un `git clone --bare`. `default` = branche initiale ; `extra` = branches en plus."""
+    path.mkdir(parents=True)
+    run.run(["git", "init", "-q", "-b", default, str(path)], env=_GIT_ENV)
+    (path / "README.md").write_text("# vrai contenu\n", encoding="utf-8")
+    (path / "src").mkdir()
+    (path / "src" / "app.py").write_text("print('real')\n", encoding="utf-8")
+    run.run(["git", "-C", str(path), "add", "-A"], env=_GIT_ENV)
+    run.run(["git", "-C", str(path), "commit", "-q", "-m", "real work"], env=_GIT_ENV)
+    for b in extra:
+        run.run(["git", "-C", str(path), "branch", b], env=_GIT_ENV)
+    return path
 
 
 @pytest.fixture
@@ -71,6 +91,53 @@ def test_create_entity_kind_and_owner_persist(ctx):
     # kind hors-enum rejeté AVANT tout effet (pas de SoT créé)
     with pytest.raises(ValueError):
         registry.create_project(conn, settings, slug="bad-kind", kind="widget")
+
+
+# -- adoption : create_project(source_url=…) clone le VRAI contenu au lieu de semer -----------------
+
+def test_create_project_adopts_real_repo_content(ctx, tmp_path):
+    settings, conn = ctx
+    up = _make_upstream(tmp_path / "upstream", default="main", extra=("dev",))
+    p = registry.create_project(conn, settings, slug="adopted", kind="tool", source_url=str(up))
+    # provenance persistée (métadonnée, pas un secret)
+    assert p["source_url"] == str(up) and p["kind"] == "tool"
+    assert registry.get_project(conn, "adopted")["source_url"] == str(up)
+    sot = registry.sot_path_for(settings, "adopted")
+    # le SoT porte le VRAI historique cloné (≠ seed « root: cockpit seed »), dev+main présents
+    names = run.run(["git", "-C", str(sot), "ls-tree", "-r", "--name-only", "dev"]).stdout.split()
+    assert "src/app.py" in names and "README.md" in names
+    assert "CLAUDE.md" not in names            # pas de toolkit semé — c'est un clone, pas un seed
+    assert run.run(["git", "-C", str(sot), "show", "dev:README.md"]).stdout == "# vrai contenu\n"
+    branches = run.run(["git", "-C", str(sot), "branch", "--format=%(refname:short)"]).stdout.split()
+    assert {"dev", "main"} <= set(branches)
+
+
+def test_adopt_normalizes_forge_branches_from_master_only(ctx, tmp_path):
+    settings, conn = ctx
+    up = _make_upstream(tmp_path / "up-master", default="master")   # ni dev ni main en amont
+    registry.create_project(conn, settings, slug="adopt-master", source_url=str(up))
+    sot = registry.sot_path_for(settings, "adopt-master")
+    branches = set(run.run(["git", "-C", str(sot), "branch", "--format=%(refname:short)"]).stdout.split())
+    assert {"dev", "main"} <= branches            # synthétisées depuis master (invariant forge tenu)
+    # dev/main pointent le même contenu réel que master
+    assert run.run(["git", "-C", str(sot), "show", "dev:README.md"]).stdout == "# vrai contenu\n"
+
+
+def test_adopt_bad_url_raises_and_leaves_no_row(ctx, tmp_path):
+    settings, conn = ctx
+    with pytest.raises(ValueError, match="clone échoué"):
+        registry.create_project(conn, settings, slug="ghost", source_url=str(tmp_path / "n-existe-pas"))
+    # clone échoué AVANT l'INSERT → aucune row orpheline (reprise de bootstrap propre)
+    assert [x["slug"] for x in registry.list_projects(conn)] == []
+    assert not registry.sot_path_for(settings, "ghost").exists()
+
+
+def test_adopt_duplicate_slug_rejected(ctx, tmp_path):
+    settings, conn = ctx
+    up = _make_upstream(tmp_path / "u", default="main", extra=("dev",))
+    registry.create_project(conn, settings, slug="dup", source_url=str(up))
+    with pytest.raises(ValueError, match="déjà existant"):
+        registry.create_project(conn, settings, slug="dup", source_url=str(up))
 
 
 def test_ensure_columns_migrates_projects_v2_to_v3_in_place(tmp_path: Path):

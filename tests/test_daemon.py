@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from cockpit.config import Settings
+from cockpit.core import run
 from cockpit.daemon import app as app_mod
 from cockpit.db import store
 from cockpit.dispatch import jobs, worktree
@@ -293,6 +295,33 @@ def test_git_intelligence_commit_diff_history_over_http(client):
     assert c.get("/api/projects/proj/git/history",
                  params={"ref": "nope", "path": "CLAUDE.md"}).status_code == 404
     assert c.get("/api/projects/ghost/git/commit/abc").status_code == 404
+
+
+def test_adopt_repo_over_http_shows_real_code(client, tmp_path):
+    """Adoption par l'API (`POST source_url`, chemin public sans credential) → le SoT porte le VRAI code du
+    repo, pas le seed. Feature-verified via l'explorateur git (le résultat s'affiche)."""
+    c, _ = client
+    genv = {"PATH": os.environ.get("PATH", ""), "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e.invalid",
+            "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e.invalid"}
+    up = tmp_path / "upstream"
+    up.mkdir()
+    run.run(["git", "init", "-q", "-b", "dev", str(up)], env=genv)
+    (up / "hello.py").write_text("print('adopted')\n", encoding="utf-8")
+    run.run(["git", "-C", str(up), "add", "-A"], env=genv)
+    run.run(["git", "-C", str(up), "commit", "-q", "-m", "real"], env=genv)
+
+    r = c.post("/api/projects", json={"slug": "adopted-tool", "kind": "tool", "source_url": str(up)})
+    assert r.status_code == 201 and r.json()["source_url"] == str(up) and r.json()["kind"] == "tool"
+    # l'explorateur git montre le VRAI fichier (dev+main normalisés) — pas le toolkit semé
+    t = c.get("/api/projects/adopted-tool/git/tree", params={"ref": "dev"})
+    assert t.status_code == 200
+    names = {e["name"] for e in t.json()["entries"]}
+    assert "hello.py" in names and "CLAUDE.md" not in names
+    b = c.get("/api/projects/adopted-tool/git/blob", params={"ref": "dev", "path": "hello.py"})
+    assert b.status_code == 200 and "adopted" in b.json()["content"]
+    # une URL invalide → 400 (clone échoué remonté en ValueError), pas un 500
+    bad = c.post("/api/projects", json={"slug": "bad", "source_url": str(tmp_path / "nope")})
+    assert bad.status_code == 400
 
 
 # -- onboarding self-hosted (config-requise + credential par repo) ---------------------------------

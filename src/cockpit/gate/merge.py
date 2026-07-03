@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import argparse
 import sqlite3
-from collections.abc import Callable
 from pathlib import Path
 
 from cockpit.config import Settings
@@ -33,24 +32,10 @@ from cockpit.git.identity import resolve_identity
 from cockpit.git.internal import GitOpError, InternalGit
 from cockpit.projects.registry import get_project
 from cockpit.roadmap.model import resolve_feature
-from cockpit.secrets import SecretStoreError, build_store
+from cockpit.secrets import cred_resolver
 
 BASE_BRANCH = "dev"     # base du cycle de merge (discipline de branche)
 MAIN_BRANCH = "main"    # branche promue (ff depuis dev — main-suit-dev)
-
-
-def _cred_resolver(settings: Settings) -> Callable[[str], str]:
-    """Résolveur `credential_ref → token` pour le writeback, adossé au store de secrets actif. **Lazy** : le
-    store n'est construit que si une référence est réellement présentée (un projet sans credential ne
-    matérialise donc jamais de clé/coffre). **Total** : un secret absent/illisible dégrade en `''` (le push
-    miroir est best-effort et ne doit jamais bloquer le merge — spec forge-sot-local). C'est ICI (couche
-    orchestration, qui connaît `cockpit.secrets`) que vit la policy de résolution, pas dans `git/internal`."""
-    def resolve(ref: str) -> str:
-        try:
-            return build_store(settings).get(ref)
-        except SecretStoreError:
-            return ""
-    return resolve
 
 
 # -- cœur PUR : la chaîne d'autorité (portée verbatim de worker_merge_gate.compose_merge_decision) --
@@ -220,7 +205,7 @@ def run_merge(conn: sqlite3.Connection, settings: Settings, *, feature_ref: str,
     identité injectée (miroir best-effort), **`worktree.release` AVANT `delete_branch`**, puis clôture DB."""
     # git non injecté → InternalGit doté du résolveur de credentials (writeback authentifié par la réf du
     # projet, résolue à l'usage). Injecté (tests) → laissé tel quel (I/O contrôlée).
-    git = git or InternalGit(cred_resolver=_cred_resolver(settings))
+    git = git or InternalGit(cred_resolver=cred_resolver(settings))
     ev = evaluate_gate(conn, settings, feature_ref=feature_ref, human_go=human_go, git=git,
                        tier0=tier0, native=native, t1_override=t1_override, t15_override=t15_override)
     feature, feature_slug = ev["feature"], ev["feature_slug"]

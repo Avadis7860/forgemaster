@@ -5,7 +5,17 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
-### Boucle visuelle : gestes read-only pour vérifier une UI derrière un clic (P4 git-repo-explorer)
+### Adopter un dépôt existant — clone au lieu de semer (P1 cockpit-batteries-included)
+- **Primitif bare-safe** `InternalGit.clone_sot(sot, url, *, creds_env=None)` : `git clone --bare` du repo
+  distant (son vrai historique) ; auth **optionnelle** via `credential_env` (privé → token transitoire ;
+  public → anonyme, forward-compatible) ; `_normalize_forge_branches` garantit `dev`+`main` (synthèse depuis
+  `master`/`main`-only). Le résolveur de credential `cred_resolver(settings)` est **remonté** dans
+  `secrets/` (partagé merge + registry).
+- **`create_project(..., source_url=…)`** : branche le SoT sur un **clone** au lieu du seed, en **clone/insert
+  atomique** (un clone échoué ne laisse aucune row → reprise propre ; échec → `ValueError`/400 avec hint).
+- **Schéma (v4→v5)** : `projects.source_url` (nullable, provenance d'un projet adopté ; métadonnée, jamais un
+  secret). `POST /api/projects` accepte `source_url?` (repos publics via l'API) ; CLI `cockpit project create
+  --from <url>`. `docs/schema-contract.md` §1 + §3 à jour.
 - **`ui_shot.py --click TEXTE[#N]`** (répétable, séquentiel) : joue des gestes **read-only** après le goto,
   avant la capture, pour rendre LIVE une surface pilotée par un state React sans route (détail de commit,
   visionneuse, historique). S'appuie sur le champ additif `clicks` du runner `render_check.js` (usage strict :

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from cockpit.daemon.deps import Deps, get_deps
 from cockpit.projects import registry
+from cockpit.secrets import cred_resolver
 
 
 class ProjectCreate(BaseModel):
@@ -15,6 +16,8 @@ class ProjectCreate(BaseModel):
     name: str | None = None
     mirror_remote: str | None = None
     kind: str = "project"            # 'project' | 'tool' (validé par registry.create_project → 400 si autre)
+    source_url: str | None = None    # adopter un repo existant (clone). Via l'API = repos PUBLICS ;
+    #                                  l'adoption privée (avec credential) passe par `cockpit bootstrap` (P2).
 
 
 class ProjectPatch(BaseModel):
@@ -39,7 +42,9 @@ def make_projects_router() -> APIRouter:
         conn = deps.open_db()
         try:
             return registry.create_project(conn, deps.settings, slug=body.slug, name=body.name,
-                                           mirror_remote=body.mirror_remote, kind=body.kind)
+                                           mirror_remote=body.mirror_remote, kind=body.kind,
+                                           source_url=body.source_url,
+                                           cred_resolver=cred_resolver(deps.settings))
         finally:
             conn.close()
 

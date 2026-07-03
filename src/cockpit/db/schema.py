@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # Ordre = ordre de création (les FK pointent vers des tables déjà créées). Chaque table porte les
 # invariants durs en contraintes SQL (NOT NULL, UNIQUE, FK, CHECK sur les enums de statut).
@@ -39,6 +39,7 @@ DDL: tuple[str, ...] = (
                           CHECK (kind IN ('project', 'tool')),
         owner         TEXT,                            -- à qui appartient l'entité (v3, nullable : mono-user)
         credential_ref TEXT,                           -- réf opaque vers le token du store (v4, nullable)
+        source_url    TEXT,                            -- URL adoptée (v5) : provenance (jamais un secret)
         created_at    TEXT NOT NULL
     )
     """,
@@ -114,8 +115,10 @@ _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
     # neuve) ET validé par `registry.create_project` (toute base) — jamais un kind hors-enum inséré.
     # v4 : `credential_ref` (nullable, aucun défaut → NULL pour l'existant : les projets pré-v4 n'ont pas de
     # token lié tant que l'onboarding ne pose pas de référence).
+    # v5 : `source_url` (nullable) = provenance d'un projet ADOPTÉ (clone d'un repo distant) ; NULL pour un
+    # projet semé. Métadonnée pure (jamais un secret), habilite la reprise idempotente + le refresh.
     "projects": (("kind", "TEXT NOT NULL DEFAULT 'project'"), ("owner", "TEXT"),
-                 ("credential_ref", "TEXT")),
+                 ("credential_ref", "TEXT"), ("source_url", "TEXT")),
 }
 
 # Index de service (accès par clé étrangère / statut — les chemins chauds du résolveur et du dispatch).

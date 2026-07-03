@@ -4,7 +4,7 @@ Trois schémas sont un **contrat** : une couche produit, une autre consomme. On 
 librement ; changer un **schéma** exige une entrée CHANGELOG + un bump. Un schéma partiel qui se dit complet
 est un bug (jamais de cap silencieux).
 
-## 1. Schéma SQLite (`db/schema.py`, `SCHEMA_VERSION` = **4**)
+## 1. Schéma SQLite (`db/schema.py`, `SCHEMA_VERSION` = **5**)
 
 Base unique sous `settings.db_path` (`$COCKPIT_HOME/cockpit.db`). Modèle **feature-groupe-des-tasks**.
 
@@ -13,7 +13,9 @@ Base unique sous `settings.db_path` (`$COCKPIT_HOME/cockpit.db`). Modèle **feat
   (`project`|`tool`, v3 — classification : entité travaillée vs outil générique du framework ; une seule
   table plutôt que deux), `owner` (nullable, v3 — compat multi-utilisateur), `credential_ref` (nullable, v4
   — **référence opaque** vers le token du store de secrets ; jamais le secret en clair en DB, résolu à
-  l'usage au writeback git — spec merge-writeback), `created_at`.
+  l'usage au writeback git — spec merge-writeback), `source_url` (nullable, **v5** — provenance d'un projet
+  **adopté** : l'URL clonée comme SoT ; `NULL` pour un projet semé ; **métadonnée, jamais un secret**),
+  `created_at`.
 - **`features`** — `id`, `project_id`→projects (cascade), `slug`, `title`, `branch` (`feature/<slug>`),
   `worktree_path` (nullable hors-vol), `status` (`planned`|`active`|`ready`|`merged`|`cancelled`),
   `created_at` ; unique `(project_id, slug)`.
@@ -48,6 +50,12 @@ valeur du token vit dans le store de secrets (`COCKPIT_SECRET_STORE`), résolue 
 (`gate/merge` → `git/internal.merge_writeback`, env `GIT_CONFIG_*` injecté le temps du push, jamais
 persisté — spec merge-writeback). Ajout **non-breaking**.
 
+**Migration v4→v5** : `projects` gagne `source_url` (`TEXT`, nullable, **aucun défaut**) via `ensure_columns`
+— les lignes existantes (projets semés) prennent `NULL`. Habilite l'**adoption** : un projet créé avec
+`source_url` a son SoT **cloné** du repo distant (son vrai historique) au lieu d'être semé du toolkit, et la
+provenance est conservée (reprise idempotente / refresh). C'est une **métadonnée** (jamais un secret : l'auth
+du clone privé reste dans le store via `credential_ref`). Ajout **non-breaking**.
+
 ## 2. Schéma `.cockpit/roadmap.yaml` (in-repo, `roadmap/model.py`)
 
 Versionné **avec le projet** (source de vérité côté repo), synchronisé vers la DB (index). Manifeste SEC
@@ -76,7 +84,10 @@ Le daemon expose le cœur ; le web (P5) le consomme. **DI explicite** (`Deps` su
 `get_deps` — aucun god-module) ; routers **fins** par domaine (correctif #3) ; erreurs domaine mappées
 globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Routes portées :
 
-- **projects** — `GET /api/projects` · `POST /api/projects` `{slug, name?, mirror_remote?}` (201, init SoT) ·
+- **projects** — `GET /api/projects` · `POST /api/projects` `{slug, name?, mirror_remote?, kind?, source_url?}`
+  (201 ; `source_url` → **adopte** le repo (clone son vrai historique comme SoT, `dev`/`main` normalisés) au
+  lieu de semer le toolkit — via l'API = repos **publics** ; l'adoption privée avec token passe par
+  `cockpit bootstrap` ; **400** si le clone échoue) ·
   `GET /api/projects/{slug}` · `PATCH /api/projects/{slug}` `{mirror_remote?}` (édite le miroir GitHub —
   `null`/vide le retire ; rend un projet GitHub-backed → un token de push devient requis ; **404** absent).
 - **roadmap** — `GET /api/projects/{p}/roadmap` (features + tasks) · `POST /api/projects/{p}/features`

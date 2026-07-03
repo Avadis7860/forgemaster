@@ -209,6 +209,39 @@ class InternalGit:
             _checked(sot, "init", "--bare")
         self._seed_base(sot, payload)
 
+    def clone_sot(self, sot: Path, url: str, *, creds_env: Mapping[str, str] | None = None) -> None:
+        """Adopte un SoT bare depuis une **URL distante** (`git clone --bare`) — au lieu de semer un arbre
+        vide. Auth **transitoire** via `creds_env` (composé par `credential_env` : le token vit dans l'env de
+        l'enfant git, jamais en argv ni persisté) ; `creds_env=None` → clone **anonyme** (repo public — auth
+        optionnelle, forward-compatible). Puis `_normalize_forge_branches` garantit `dev`+`main`. Read-only
+        côté distant (aucune écriture). Lève `GitOpError` si la destination est non-vide ou si le clone échoue
+        (l'appelant classe l'échec via `classify_push_error` : auth / pat-scope / 404)."""
+        sot = Path(sot)
+        if sot.exists() and any(sot.iterdir()):
+            raise GitOpError(f"clone: destination non vide {sot}")
+        sot.parent.mkdir(parents=True, exist_ok=True)
+        env = dict(creds_env) if creds_env is not None else dict(os.environ)
+        env.setdefault("GIT_TERMINAL_PROMPT", "0")   # fail-loud, jamais de prompt interactif (privé/no token)
+        r = run.run(["git", "clone", "--bare", url, str(sot)], env=env)
+        if not r.ok:
+            raise GitOpError(f"git clone --bare {url}: {r.stderr.strip()[:200]}")
+        self._normalize_forge_branches(sot)
+
+    def _normalize_forge_branches(self, sot: Path) -> None:
+        """Garantit l'invariant forge **`dev`+`main`** sur un SoT fraîchement cloné, en **dérivant** des
+        branches présentes (jamais un root divergent façon `_seed_base`). Un repo bien formé (dev+main déjà
+        là — les 5 outils framework) → **no-op**. Un repo `master`-only / `main`-only → synthèse des branches
+        manquantes depuis le SHA de base. Un upstream vide (aucune branche) → seed racine. Idempotent."""
+        have = {b["name"] for b in self.branches(sot)}
+        base = next((b for b in ("dev", "main", "master") if b in have), None)
+        if base is None:
+            self._seed_base(sot)
+            return
+        base_sha = self.feature_sha(sot, base)
+        for target in ("dev", "main"):
+            if target not in have:
+                _checked(sot, "update-ref", f"refs/heads/{target}", base_sha)
+
     def _seed_base(self, sot: Path, payload: Mapping[str, str] | None = None) -> None:
         """Pose un commit racine sur `dev` et `main` si `dev` n'existe pas encore (early-return =
         idempotence). Plumbing pur (`mktree`/`commit-tree`/`update-ref`) → fonctionne sur un bare sans index
