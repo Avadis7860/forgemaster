@@ -260,3 +260,96 @@ def test_roadmap_to_yaml_contract(ctx):
     assert doc["features"][0]["slug"] == "feat"
     b = next(t for t in doc["features"][0]["tasks"] if t["slug"] == "b")
     assert b["depends_on"] == ["a"]
+
+
+# -- v6 (typed-bundles) : project_type / features.facet / tasks.acceptance -------------------------
+
+def test_create_project_defaults_generic_type_and_persists(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj")
+    # défaut DDL appliqué : un projet non typé est `generic` (relecture DB fidèle)
+    assert registry.get_project(conn, "proj")["project_type"] == "generic"
+
+
+def test_add_feature_facet_and_task_acceptance_round_trip(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj")
+    f = model.add_feature(conn, project_slug="proj", slug="api", title="API", facet="backend")
+    assert f["facet"] == "backend"
+    model.add_task(conn, feature_ref="proj/api", slug="schema",
+                   acceptance="Le endpoint /health répond 200 et un test le couvre.")
+    feat = model.resolve_feature(conn, "proj/api")
+    assert feat["facet"] == "backend"                                    # relecture DB
+    task = next(t for t in model.list_tasks(conn, feat["id"]) if t["slug"] == "schema")
+    assert "endpoint /health" in task["acceptance"]                      # critères persistés
+
+
+def test_add_feature_rejects_bad_facet(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj")
+    with pytest.raises(ValueError):
+        model.add_feature(conn, project_slug="proj", slug="x", facet="widget")   # hors vocab FACETS
+
+
+def test_add_feature_facet_none_is_default(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj")
+    f = model.add_feature(conn, project_slug="proj", slug="misc")        # facet omis → NULL (défaut bundle)
+    assert f["facet"] is None
+    assert model.resolve_feature(conn, "proj/misc")["facet"] is None
+
+
+def test_roadmap_to_yaml_carries_facet_and_acceptance(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj")
+    model.add_feature(conn, project_slug="proj", slug="ui", title="UI", facet="frontend")
+    model.add_feature(conn, project_slug="proj", slug="plain")           # ni facette ni acceptance
+    model.add_task(conn, feature_ref="proj/ui", slug="screen", acceptance="Le login s'affiche.")
+    model.add_task(conn, feature_ref="proj/plain", slug="misc")
+    features = model.list_features(conn, "proj")
+    for f in features:
+        f["tasks"] = model.list_tasks(conn, f["id"])
+    doc = yaml.safe_load(model.to_yaml("proj", features))
+    ui = next(f for f in doc["features"] if f["slug"] == "ui")
+    plain = next(f for f in doc["features"] if f["slug"] == "plain")
+    assert ui["facet"] == "frontend"                                     # facette émise si présente
+    assert ui["tasks"][0]["acceptance"] == "Le login s'affiche."         # critères émis si présents
+    assert "facet" not in plain                                          # rétro-compat : absents si non posés
+    assert "acceptance" not in plain["tasks"][0]
+
+
+def test_ensure_columns_migrates_v5_to_v6_in_place(tmp_path: Path):
+    """Une base v5 (projects sans project_type ; features sans facet ; tasks sans acceptance) migre en
+    place : `ensure_columns` ajoute les 3 colonnes ; l'existant prend `project_type='generic'` (défaut
+    littéral ALTER), facet/acceptance NULL (nullables, aucun défaut)."""
+    import sqlite3
+
+    from cockpit.db import schema
+    conn = sqlite3.connect(tmp_path / "v5.db")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE projects (id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, name TEXT NOT "
+                 "NULL, sot_path TEXT NOT NULL, mirror_remote TEXT, backend TEXT NOT NULL DEFAULT "
+                 "'internal', kind TEXT NOT NULL DEFAULT 'project', owner TEXT, credential_ref TEXT, "
+                 "source_url TEXT, created_at TEXT NOT NULL)")
+    conn.execute("CREATE TABLE features (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, slug TEXT NOT "
+                 "NULL, title TEXT NOT NULL, branch TEXT NOT NULL, worktree_path TEXT, status TEXT NOT "
+                 "NULL DEFAULT 'planned', created_at TEXT NOT NULL)")
+    conn.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, feature_id TEXT NOT NULL, slug TEXT NOT NULL, "
+                 "title TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'todo', depends_on TEXT NOT NULL "
+                 "DEFAULT '[]', priority TEXT NOT NULL DEFAULT 'P1', created_at TEXT NOT NULL)")
+    conn.execute("INSERT INTO projects (id, slug, name, sot_path, backend, kind, created_at) "
+                 "VALUES ('i1', 'legacy', 'Legacy', '/x', 'internal', 'project', '2026-01-01')")
+    conn.execute("INSERT INTO features (id, project_id, slug, title, branch, status, created_at) "
+                 "VALUES ('f1', 'i1', 'feat', 'Feat', 'feature/feat', 'planned', '2026-01-01')")
+    conn.execute("INSERT INTO tasks (id, feature_id, slug, title, created_at) "
+                 "VALUES ('t1', 'f1', 'task', 'Task', '2026-01-01')")
+    conn.commit()
+    assert "project_type" not in {r[1] for r in conn.execute("PRAGMA table_info(projects)")}
+    schema.ensure_columns(conn)
+    assert "project_type" in {r[1] for r in conn.execute("PRAGMA table_info(projects)")}
+    assert "facet" in {r[1] for r in conn.execute("PRAGMA table_info(features)")}
+    assert "acceptance" in {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
+    assert conn.execute("SELECT project_type FROM projects WHERE slug='legacy'").fetchone()[0] == "generic"
+    assert conn.execute("SELECT facet FROM features WHERE slug='feat'").fetchone()[0] is None
+    assert conn.execute("SELECT acceptance FROM tasks WHERE slug='task'").fetchone()[0] is None
+    conn.close()

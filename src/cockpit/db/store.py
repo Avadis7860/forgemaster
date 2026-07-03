@@ -1,5 +1,6 @@
 """store — ouverture et migration de la base SQLite du cockpit. Connexion configurée une fois
-(row_factory dict-like, FK ON, WAL pour la concurrence CLI↔daemon), migration idempotente.
+(row_factory dict-like, FK ON, WAL pour la concurrence CLI↔daemon, busy_timeout pour l'orchestrateur
+parallèle), migration idempotente.
 
 Le CRUD haut-niveau (create_project/list_features/…) sera porté à la phase logique via `projects.registry`
 et consorts, qui reçoivent une connexion — jamais un module-global (correctif anti god-module)."""
@@ -20,6 +21,11 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
+    # busy_timeout : sous `cockpit run` (orchestrateur parallèle), N connexions-par-thread écrivent la même
+    # base ; WAL autorise N lecteurs + 1 écrivain → deux écrivains concurrents donnent SQLITE_BUSY. 5 s de
+    # retry absorbent les rares chevauchements (fenêtres d'écriture minuscules, le run est du subprocess sans
+    # I/O DB) sans sérialiser le parallélisme. Bénin pour tous les appelants mono.
+    conn.execute("PRAGMA busy_timeout = 5000")
     return conn
 
 

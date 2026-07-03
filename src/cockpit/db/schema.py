@@ -15,13 +15,17 @@ gagne `session_id` (LA clé de suivi live — le chemin du transcript en dérive
 `kind` (`project|tool` — classification, une seule table plutôt que deux) + `owner` (nullable, compat
 multi-utilisateur : à qui appartient l'entité). v4 = `projects` gagne `credential_ref` (nullable) : une
 **référence opaque** vers le token du store de secrets (jamais le secret en clair en DB — spec
-merge-writeback), résolue à l'usage au writeback git.
+merge-writeback), résolue à l'usage au writeback git. v5 = `projects` gagne `source_url` (nullable,
+provenance d'un projet adopté). v6 (typed-bundles) = `projects` gagne `project_type` (enum du bundle semé
+à la création : `generic|service-api|cli-tool|front-ts`, défaut `generic`) ; `features` gagne `facet`
+(nullable : la facette de dispatch — `backend|frontend|tool|doc` — qui aligne le worker) ; `tasks` gagne
+`acceptance` (nullable, TEXT libre : critères de DoD injectés dans le prompt worker).
 """
 from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # Ordre = ordre de création (les FK pointent vers des tables déjà créées). Chaque table porte les
 # invariants durs en contraintes SQL (NOT NULL, UNIQUE, FK, CHECK sur les enums de statut).
@@ -40,6 +44,8 @@ DDL: tuple[str, ...] = (
         owner         TEXT,                            -- à qui appartient l'entité (v3, nullable : mono-user)
         credential_ref TEXT,                           -- réf opaque vers le token du store (v4, nullable)
         source_url    TEXT,                            -- URL adoptée (v5) : provenance (jamais un secret)
+        project_type  TEXT NOT NULL DEFAULT 'generic'  -- bundle semé à la création (v6, typed-bundles)
+                          CHECK (project_type IN ('generic', 'service-api', 'cli-tool', 'front-ts')),
         created_at    TEXT NOT NULL
     )
     """,
@@ -53,6 +59,7 @@ DDL: tuple[str, ...] = (
         worktree_path TEXT,                          -- worktree attaché au SoT (mutex), nullable hors-vol
         status        TEXT NOT NULL DEFAULT 'planned'
                           CHECK (status IN ('planned', 'active', 'ready', 'merged', 'cancelled')),
+        facet         TEXT,                          -- facette de dispatch (v6, nullable ; défaut bundle)
         created_at    TEXT NOT NULL,
         UNIQUE (project_id, slug)
     )
@@ -68,6 +75,7 @@ DDL: tuple[str, ...] = (
         depends_on  TEXT NOT NULL DEFAULT '[]',      -- JSON: liste d'ids de tasks (DAG intra-feature)
         priority    TEXT NOT NULL DEFAULT 'P1'
                         CHECK (priority IN ('P0', 'P1', 'P2', 'P3')),
+        acceptance  TEXT,                            -- critères de DoD (v6, nullable) → prompt worker
         created_at  TEXT NOT NULL,
         UNIQUE (feature_id, slug)
     )
@@ -117,8 +125,14 @@ _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
     # token lié tant que l'onboarding ne pose pas de référence).
     # v5 : `source_url` (nullable) = provenance d'un projet ADOPTÉ (clone d'un repo distant) ; NULL pour un
     # projet semé. Métadonnée pure (jamais un secret), habilite la reprise idempotente + le refresh.
+    # v6 : `project_type` (NOT NULL, défaut littéral 'generic' — ALTER exige un défaut littéral). Le CHECK
+    # n'est pas re-portable par ALTER en SQLite → l'enum est tenu par le DDL (base neuve) ET validé par
+    # `registry.create_project` (toute base). `features.facet` / `tasks.acceptance` : nullables, aucun défaut.
     "projects": (("kind", "TEXT NOT NULL DEFAULT 'project'"), ("owner", "TEXT"),
-                 ("credential_ref", "TEXT"), ("source_url", "TEXT")),
+                 ("credential_ref", "TEXT"), ("source_url", "TEXT"),
+                 ("project_type", "TEXT NOT NULL DEFAULT 'generic'")),
+    "features": (("facet", "TEXT"),),
+    "tasks": (("acceptance", "TEXT"),),
 }
 
 # Index de service (accès par clé étrangère / statut — les chemins chauds du résolveur et du dispatch).

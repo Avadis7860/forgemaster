@@ -4,7 +4,7 @@ Trois schémas sont un **contrat** : une couche produit, une autre consomme. On 
 librement ; changer un **schéma** exige une entrée CHANGELOG + un bump. Un schéma partiel qui se dit complet
 est un bug (jamais de cap silencieux).
 
-## 1. Schéma SQLite (`db/schema.py`, `SCHEMA_VERSION` = **5**)
+## 1. Schéma SQLite (`db/schema.py`, `SCHEMA_VERSION` = **6**)
 
 Base unique sous `settings.db_path` (`$COCKPIT_HOME/cockpit.db`). Modèle **feature-groupe-des-tasks**.
 
@@ -15,13 +15,16 @@ Base unique sous `settings.db_path` (`$COCKPIT_HOME/cockpit.db`). Modèle **feat
   — **référence opaque** vers le token du store de secrets ; jamais le secret en clair en DB, résolu à
   l'usage au writeback git — spec merge-writeback), `source_url` (nullable, **v5** — provenance d'un projet
   **adopté** : l'URL clonée comme SoT ; `NULL` pour un projet semé ; **métadonnée, jamais un secret**),
-  `created_at`.
+  `project_type` (`generic`|`service-api`|`cli-tool`|`front-ts`, défaut `generic`, **v6** — le bundle semé à
+  la création : quel overlay `base ⊕ types/<type>` a câblé le repo ; spec typed-bundles), `created_at`.
 - **`features`** — `id`, `project_id`→projects (cascade), `slug`, `title`, `branch` (`feature/<slug>`),
   `worktree_path` (nullable hors-vol), `status` (`planned`|`active`|`ready`|`merged`|`cancelled`),
-  `created_at` ; unique `(project_id, slug)`.
+  `facet` (nullable, **v6** — la facette de dispatch `backend`|`frontend`|`tool`|`doc` qui aligne le worker ;
+  `NULL` → défaut résolu du `.cockpit/bundle.toml` au dispatch), `created_at` ; unique `(project_id, slug)`.
 - **`tasks`** — `id`, `feature_id`→features (cascade), `slug`, `title`, `status`
   (`todo`|`in_progress`|`done`|`blocked`|`cancelled`), `depends_on` (**JSON** : liste d'ids de tasks, DAG
-  intra-feature), `priority` (`P0`..`P3`), `created_at` ; unique `(feature_id, slug)`.
+  intra-feature), `priority` (`P0`..`P3`), `acceptance` (nullable TEXT, **v6** — critères de DoD injectés
+  dans le prompt du worker au dispatch), `created_at` ; unique `(feature_id, slug)`.
 - **`dispatch_jobs`** — `id`, `task_id`→tasks (cascade), `worktree_path`, `port` (couplé au worktree,
   nullable), `pid`, `status` (`pending`|`running`|`done`|`failed`|`killed`), `log_path` (transcript JSONL
   local dérivé de `session_id`), `session_id` (session `claude -p` = **handle de suivi live**, v2),
@@ -56,6 +59,13 @@ persisté — spec merge-writeback). Ajout **non-breaking**.
 provenance est conservée (reprise idempotente / refresh). C'est une **métadonnée** (jamais un secret : l'auth
 du clone privé reste dans le store via `credential_ref`). Ajout **non-breaking**.
 
+**Migration v5→v6** (typed-bundles) : `projects` gagne `project_type` (`TEXT NOT NULL DEFAULT 'generic'` —
+défaut littéral requis par `ALTER`), `features` gagne `facet` (`TEXT`, nullable), `tasks` gagne `acceptance`
+(`TEXT`, nullable), via `ensure_columns`. Les lignes existantes prennent `project_type='generic'`, facet/
+acceptance `NULL`. Le `CHECK` de `project_type` vit dans le `DDL` (base neuve) et l'invariant est **re-validé**
+par `registry.create_project` ; l'enum `facet` est tenu en code par `roadmap/model.FACETS` (comme `priority`).
+Ajout **non-breaking**.
+
 ## 2. Schéma `.cockpit/roadmap.yaml` (in-repo, `roadmap/model.py`)
 
 Versionné **avec le projet** (source de vérité côté repo), synchronisé vers la DB (index). Manifeste SEC
@@ -66,13 +76,19 @@ version: 1
 features:
   - slug: <kebab>
     title: <str>
+    facet: backend|frontend|tool|doc               # v6, OPTIONNEL — facette de dispatch (omis si non posée)
     phases: [[<task-slug>, …], [<task-slug>, …]]   # étapes ORDONNÉES ; chaque étape = ids parallèles
     tasks:
       - slug: <kebab>
         title: <str>
         priority: P0|P1|P2|P3
         depends_on: [<task-slug>, …]                # intra-feature explicite (union avec phases:)
+        acceptance: <str>                           # v6, OPTIONNEL — critères de DoD injectés au prompt worker
 ```
+
+`facet:`/`acceptance:` (v6) sont **émis seulement si présents** — une roadmap sans facette reste identique
+au contrat v1 (rétro-compatible). `facet` tague la feature du type de travail (aligne le worker au dispatch) ;
+`acceptance` porte les critères de succès de la task, rendus verbatim dans le prompt.
 
 `phases:` (inter/intra ordonnancement) augmente `depends_on` **en union, jamais écrasement** ; sans
 `phases:`, comportement identique au `depends_on` seul (opt-in rétro-compatible). Cf. spec

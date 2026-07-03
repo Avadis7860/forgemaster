@@ -5,6 +5,18 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Schéma **v6** — fondations typed-bundles (P1 cockpit-typed-bundles, Phase 1)
+- **`db/schema.py`** `SCHEMA_VERSION` **5 → 6** : `projects` gagne `project_type`
+  (`generic|service-api|cli-tool|front-ts`, défaut `generic`, `CHECK` en DDL + validé par
+  `registry.create_project`) — le bundle semé à la création ; `features` gagne `facet` (nullable :
+  `backend|frontend|tool|doc`, la facette de dispatch qui aligne le worker) ; `tasks` gagne `acceptance`
+  (nullable TEXT : critères de DoD injectés dans le prompt worker). Migration `ensure_columns` (ALTER
+  idempotent), non-breaking. Cf. `docs/schema-contract.md` (SQLite + roadmap.yaml).
+- **`db/store.py`** : `PRAGMA busy_timeout=5000` (prérequis de l'orchestrateur parallèle à venir — évite
+  `SQLITE_BUSY` entre connexions-par-thread ; bénin pour le mono).
+- **`roadmap/model.py`** : `add_feature(facet=…)` (validé contre `FACETS`), `add_task(acceptance=…)`,
+  `to_yaml` émet `facet`/`acceptance` **seulement si présents** (contrat roadmap.yaml rétro-compatible).
+
 ### Claude Code dans le terminal web — `provision-ct.sh --with-claude` (P1 cockpit-workspace-ux)
 - **`deploy/provision-ct.sh`** gagne un flag opt-in `--with-claude` (défaut off) : une étape d'install (recette
   renumérotée `[n/7]`) pose le CLI `claude` via l'**installeur natif officiel** (`claude.ai/install.sh`, binaire
