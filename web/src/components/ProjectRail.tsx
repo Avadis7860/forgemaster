@@ -1,35 +1,12 @@
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
-import { useOnboarding, useProjects } from '@/lib/queries'
+import { useProjects } from '@/lib/queries'
 import { cn } from '@/lib/cn'
 import { Alert, Badge, Card, Eyebrow, EmptyState, LoadingState } from '@/components/ui'
 import { NewProjectForm } from '@/components/NewProjectForm'
 import type { Project } from '@/lib/schemas'
 
-/** Entrée de navigation globale PERSISTANTE vers Réglages/onboarding (instance-level, hors projet). Vit
- *  dans le rail (là où l'œil cherche la nav) et non seulement dans le header : découvrable même quand le
- *  bandeau d'onboarding est masqué (config complète). Un point `à régler` attire l'œil si incomplet. */
-function SettingsNavLink() {
-  const { data } = useOnboarding()
-  const incomplete = data ? !data.complete : false
-  return (
-    <div className="border-t border-border p-3">
-      <Link
-        to="/settings"
-        className="flex items-center justify-between rounded-card border border-border bg-surface px-3 py-2 text-sm text-fg hover:border-border-strong"
-      >
-        <span className="flex items-center gap-2 font-medium">
-          <span aria-hidden className="text-muted">⚙</span>
-          Réglages
-        </span>
-        {incomplete && (
-          <Badge tone="warn" dot className="whitespace-nowrap">
-            à régler
-          </Badge>
-        )}
-      </Link>
-    </div>
-  )
-}
+// Le lien « Réglages » du rail a été retiré (2026-07-03) : doublon du header (haut-droite), il occupait de
+// la place inutile. Le signal « à régler » (onboarding incomplet) a migré sur le Réglages du header (App.tsx).
 
 /** Une entité du rail (projet ou outil) : carte sélectionnable → workspace. */
 function EntityCard({ p, active }: { p: Project; active: string | undefined }) {
@@ -109,8 +86,6 @@ export function ProjectRail() {
           </>
         )}
       </div>
-
-      <SettingsNavLink />
 
       <div className="border-t border-border p-3">
         <NewProjectForm onCreated={(project) => navigate({ to: '/$project', params: { project: project.slug } })} />

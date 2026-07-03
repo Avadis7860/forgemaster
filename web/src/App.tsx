@@ -2,11 +2,15 @@ import { Link, Outlet, useParams } from '@tanstack/react-router'
 import { HealthDot } from '@/components/HealthDot'
 import { OnboardingBanner } from '@/components/OnboardingBanner'
 import { ProjectRail } from '@/components/ProjectRail'
+import { Badge } from '@/components/ui'
+import { useOnboarding } from '@/lib/queries'
 
 /** Shell global (IA option A) : header + bandeau onboarding non bloquant + rail de projets + espace de
  *  travail (Outlet). */
 export function AppShell() {
   const project = useParams({ strict: false }).project
+  const { data: onb } = useOnboarding()
+  const settingsIncomplete = onb ? !onb.complete : false
   return (
     <div className="flex h-full flex-col">
       <header className="z-(--z-header) flex h-14 shrink-0 items-center justify-between border-b border-border bg-surface px-4">
@@ -24,6 +28,7 @@ export function AppShell() {
           <Link to="/settings" className="flex items-center gap-1.5 text-sm text-muted hover:text-fg">
             <span aria-hidden>⚙</span>
             Réglages
+            {settingsIncomplete && <Badge tone="warn" dot>à régler</Badge>}
           </Link>
           <HealthDot />
         </div>
