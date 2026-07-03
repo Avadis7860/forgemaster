@@ -5,6 +5,18 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Gate d'auth Claude explicite — jamais d'usage silencieux d'un compte hérité
+- **`cockpit/auth.py`** (nouveau) : `claude_auth_status(home, env)` détecte de façon **déterministe** si
+  l'hôte est authentifié pour spawner des workers `claude` — présence de `$HOME/.claude/.credentials.json`
+  ou d'une clé d'env (`ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`), **sans jamais lire la valeur**.
+- **Gate dur aux 3 points d'entrée** (`cockpit dispatch`, `cockpit run`, `POST /api/dispatch`) : refus
+  **AVANT tout spawn** si non authentifié — CLI exit 2 + message actionnable (`claude login` dans le
+  terminal), API `403`. Fini l'héritage silencieux de l'auth du host (perçu comme un contournement d'auth) ;
+  un install neuf ne travaille qu'après un `claude login` **explicite** de l'utilisateur, sur **son** compte.
+- **Onboarding** : `status()` porte un champ `claude_auth` (axe **orthogonal** à `complete`) pour surfacer
+  l'état d'auth au wizard. Le cockpit n'embarque, ne partage ni n'injecte aucun credential : auth **par
+  machine** via le CLI officiel. +8 tests (détection, surface, refus CLI/API, gate laisse passer si authed).
+
 ### Contenu méthodologique semé (P1 cockpit-typed-bundles, Phase 6)
 - **Deux skills de méthodo dans `bundles/base/.claude/skills/`** (⇒ semés dans TOUT projet, tout type) :
   `roadmap-decompose` (intention → features[facette] → tasks[`depends_on` DAG + `acceptance`] : ce qui rend le

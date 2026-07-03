@@ -22,6 +22,7 @@ import argparse
 import sqlite3
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 
+from cockpit import auth
 from cockpit.config import Settings
 from cockpit.db import store
 from cockpit.dispatch import worker
@@ -128,7 +129,11 @@ def _summarize(project: str, reports: list[dict], failed: set[str]) -> dict:
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     """Route `cockpit run <project> [--max-parallel N]` : draine la roadmap en parallèle, imprime le rapport
     (dispatchées / ok / échouées). Exit 0 si drainée sans échec, 1 sinon (une feature en échec, task `todo`
-    re-dispatchable — le relancer reprend là où ça a bloqué)."""
+    re-dispatchable — le relancer reprend là où ça a bloqué). **Gate d'auth** : refuse AVANT tout spawn si
+    la machine n'a pas d'auth Claude explicite (sinon N features échoueraient en série)."""
+    if not auth.claude_auth_status()["authenticated"]:
+        print(f"erreur : {auth.AUTH_HINT}")
+        return 2
     conn = store.open_db(settings)
     try:
         summary = run_project(conn, settings, project=args.project,

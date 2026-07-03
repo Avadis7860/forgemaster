@@ -19,6 +19,7 @@ import sqlite3
 import time
 from collections.abc import Callable
 
+from cockpit import auth
 from cockpit.config import Settings
 from cockpit.core import ids, run
 from cockpit.db import store
@@ -168,7 +169,11 @@ def _counts(classified: dict[str, dict]) -> str:
 
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     """Route `cockpit dispatch <feature>` : résout la NEXT task, refuse si aucune (gate anti-dispatch),
-    réserve le worktree, spawn `claude -p` local."""
+    réserve le worktree, spawn `claude -p` local. **Gate d'auth** : refuse AVANT tout spawn si la machine
+    n'a pas d'auth Claude explicite (jamais d'usage silencieux d'un compte hérité)."""
+    if not auth.claude_auth_status()["authenticated"]:
+        print(f"erreur : {auth.AUTH_HINT}")
+        return 2
     conn = store.open_db(settings)
     try:
         report = dispatch_next(conn, settings, feature_ref=args.feature)

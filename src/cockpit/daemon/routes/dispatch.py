@@ -8,9 +8,10 @@ fin**. Le suivi **live** passe donc par la découverte du job en cours (`GET …
 `WS /ws/dispatch/{job}` — qui boucle la primitive `jobs.read_events` (P5 Vague 3)."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, WebSocket
+from fastapi import APIRouter, Depends, HTTPException, WebSocket
 from starlette.concurrency import run_in_threadpool
 
+from cockpit import auth
 from cockpit.daemon.deps import Deps, get_deps
 from cockpit.dispatch import jobs, stream, worker
 from cockpit.roadmap import model
@@ -21,6 +22,8 @@ def make_dispatch_router() -> APIRouter:
 
     @router.post("/api/dispatch/{project}/{feature}")
     async def dispatch(project: str, feature: str, deps: Deps = Depends(get_deps)) -> dict:
+        if not auth.claude_auth_status()["authenticated"]:
+            raise HTTPException(status_code=403, detail=auth.AUTH_HINT)   # jamais de spawn silencieux
         def _run() -> dict:
             conn = deps.open_db()
             try:

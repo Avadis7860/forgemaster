@@ -100,13 +100,26 @@ def test_roadmap_features_tasks_and_next(client):
 
 # -- dispatch (gate no-task-no-dispatch, sans spawn) -----------------------------------------------
 
-def test_dispatch_refused_without_task_no_spawn(client):
+def test_dispatch_refused_without_task_no_spawn(client, monkeypatch):
     c, _ = client
+    # auth Claude présente (déterministe, indépendant du host CI) → on teste le gate no-task, pas l'auth
+    monkeypatch.setattr("cockpit.auth.claude_auth_status",
+                        lambda *a, **k: {"authenticated": True, "source": "test"})
     c.post("/api/projects", json={"slug": "proj"})
     c.post("/api/projects/proj/features", json={"slug": "empty"})
     r = c.post("/api/dispatch/proj/empty").json()        # feature sans task → refus AVANT tout spawn
     assert r["dispatched"] is False and "aucune task" in r["reason"]
     assert c.get("/api/jobs/inexistant").status_code == 404
+
+
+def test_dispatch_refused_without_claude_auth(client, monkeypatch):
+    c, _ = client
+    monkeypatch.setattr("cockpit.auth.claude_auth_status",
+                        lambda *a, **k: {"authenticated": False, "source": None})
+    c.post("/api/projects", json={"slug": "proj"})
+    c.post("/api/projects/proj/features", json={"slug": "feat"})
+    r = c.post("/api/dispatch/proj/feat")                # pas d'auth → 403 AVANT tout spawn
+    assert r.status_code == 403 and "claude login" in r.json()["detail"]
 
 
 def _seed_job(settings, log_path: str, *, status: str = "running") -> str:

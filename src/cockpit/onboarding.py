@@ -19,15 +19,22 @@ import argparse
 import sqlite3
 from pathlib import Path
 
+from cockpit import auth
 from cockpit.config import Settings
 from cockpit.db import store as db_store
 from cockpit.projects import registry
 from cockpit.secrets import SecretNotFound, SecretStore, SecretUnsupported, build_store
 
 
-def status(conn: sqlite3.Connection, secret_store: SecretStore) -> dict:
+def status(conn: sqlite3.Connection, secret_store: SecretStore,
+           *, claude_auth_state: dict | None = None) -> dict:
     """État d'onboarding de l'instance, SANS révéler aucun secret :
     - `secret_store` : backend actif + racine de confiance joignable (`health()`), pour le 1er démarrage ;
+    - `claude_auth` : la machine est-elle authentifiée pour spawner des workers `claude` ? (`{authenticated,
+      source}`, présence seule, jamais la valeur). Axe **orthogonal** à `complete` (config store/miroir) :
+      c'est le gate « peut dispatcher » — l'install ne travaille qu'après un `claude login` explicite, jamais
+      en héritant en silence l'auth d'un autre. `claude_auth_state` injectable (tests) ; défaut = détection
+      live de l'hôte ;
     - `requirements` : un item par projet ; un projet avec `mirror_remote` a **besoin** d'un token pour
       pousser le miroir → `satisfied` ssi il porte un `credential_ref` (ou n'a pas de miroir) ;
     - `complete` : racine du store prête ET toutes les exigences satisfaites (pas de faux-vert) ;
@@ -35,6 +42,7 @@ def status(conn: sqlite3.Connection, secret_store: SecretStore) -> dict:
       1er projet ») plutôt que d'annoncer « complet ». Distingue *rien-à-faire-car-réglé* (complete sans
       first_run) de *rien-encore-réglé* (first_run)."""
     ready, detail = secret_store.health()
+    claude = claude_auth_state if claude_auth_state is not None else auth.claude_auth_status()
     requirements = []
     projects = registry.list_projects(conn)
     for p in projects:
@@ -50,6 +58,7 @@ def status(conn: sqlite3.Connection, secret_store: SecretStore) -> dict:
     complete = ready and all(r["satisfied"] for r in requirements)
     return {
         "secret_store": {"backend": secret_store.backend, "ready": ready, "detail": detail},
+        "claude_auth": claude,
         "requirements": requirements,
         "complete": complete,
         "project_count": len(projects),
