@@ -271,6 +271,31 @@ def test_create_project_defaults_generic_type_and_persists(ctx):
     assert registry.get_project(conn, "proj")["project_type"] == "generic"
 
 
+def test_create_typed_project_seeds_overlay_and_persists_type(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="svc", project_type="service-api")
+    assert registry.get_project(conn, "svc")["project_type"] == "service-api"   # type persisté
+    sot = registry.sot_path_for(settings, "svc")
+    names = run.run(["git", "-C", str(sot), "ls-tree", "-r", "--name-only", "dev"]).stdout.split()
+    # le SoT porte la couche base ET l'overlay du type (facette backend + bundle.toml typé)
+    assert ".claude/facets/backend/PERSONA.md" in names
+    assert ".cockpit/bundle.toml" in names
+    assert "CLAUDE.md" in names                                                  # base conservée
+    # subtilité .gitignore RÉELLE : `.claude/*.local.json` ne traverse pas `/` → la SOURCE nichée de facette
+    # est committée (seule la copie activée `.claude/settings.local.json` sera ignorée au dispatch).
+    assert ".claude/facets/backend/settings.local.json" in names
+    arch = run.run(["git", "-C", str(sot), "show", "dev:docs/architecture.md"]).stdout
+    assert "service / API" in arch                                              # doc pré-optimisée du type
+
+
+def test_create_project_rejects_unknown_type_before_any_effect(ctx):
+    settings, conn = ctx
+    with pytest.raises(ValueError, match="type invalide"):
+        registry.create_project(conn, settings, slug="bad", project_type="rust")
+    assert [x["slug"] for x in registry.list_projects(conn)] == []              # aucun effet
+    assert not registry.sot_path_for(settings, "bad").exists()
+
+
 def test_add_feature_facet_and_task_acceptance_round_trip(ctx):
     settings, conn = ctx
     registry.create_project(conn, settings, slug="proj")

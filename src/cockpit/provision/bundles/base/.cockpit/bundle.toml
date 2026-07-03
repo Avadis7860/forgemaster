@@ -1,0 +1,7 @@
+# bundle.toml — manifeste du bundle semé (base ⊕ overlay). Committé, voyage avec le repo.
+# Lu au dispatch pour résoudre la facette d'une feature quand `features.facet` est NULL (→ default_facet).
+# Un overlay de type SURCHARGE ce fichier (whole-file) pour déclarer ses propres facettes.
+[bundle]
+project_type = "generic"
+facets = ["doc"]
+default_facet = "doc"

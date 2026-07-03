@@ -1,0 +1,4 @@
+[bundle]
+project_type = "front-ts"
+facets = ["frontend", "backend", "doc"]
+default_facet = "frontend"

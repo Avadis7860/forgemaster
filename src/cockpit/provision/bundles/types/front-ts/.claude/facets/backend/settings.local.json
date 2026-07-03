@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": ["Read", "Glob", "Grep", "Write", "Edit",
+              "Bash(npm:*)", "Bash(node:*)", "Bash(eslint:*)", "Bash(tsc:*)", "Bash(vitest:*)",
+              "Bash(codemap:*)"]
+  }
+}

@@ -5,6 +5,18 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Bundles par type — `create --type` (P1 cockpit-typed-bundles, Phase 2)
+- **`provision/`** : `payload/` → `bundles/base/` (git mv) + `bundles/types/{service-api,cli-tool,front-ts}/`
+  (overlays). `load_bundle(project_type)` compose **base ⊕ overlay** (whole-file : `base | overlay`,
+  déterministe) ; `load_payload()` = shim `load_bundle("generic")`. Chaque bundle porte `.cockpit/bundle.toml`
+  (facettes + default_facet) et des facettes `.claude/facets/<f>/` (PERSONA/METHOD/settings.local.json).
+- **`projects/registry.create_project(project_type=…)`** : valide l'enum (re-check du CHECK DDL) + persiste
+  + sème `load_bundle(project_type)`. CLI `project create --type {generic|service-api|cli-tool|front-ts}` +
+  route `POST /api/projects` (`ProjectCreate.project_type`).
+- Design DRY : les overlays surchargent `docs/architecture.md` (identité du type) + ajoutent leurs facettes,
+  **sans dupliquer** le `CLAUDE.md` commun (base reste la source unique du contrat). +10 tests (compose,
+  override whole-file, déterminisme, cohérence facettes↔dossiers, seed typé).
+
 ### Schéma **v6** — fondations typed-bundles (P1 cockpit-typed-bundles, Phase 1)
 - **`db/schema.py`** `SCHEMA_VERSION` **5 → 6** : `projects` gagne `project_type`
   (`generic|service-api|cli-tool|front-ts`, défaut `generic`, `CHECK` en DDL + validé par

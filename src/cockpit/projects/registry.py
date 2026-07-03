@@ -18,11 +18,11 @@ from cockpit.config import Settings
 from cockpit.core import ids
 from cockpit.db import store
 from cockpit.git.internal import GitOpError, InternalGit, classify_push_error, credential_env
-from cockpit.provision import load_payload
+from cockpit.provision import BUNDLE_TYPES, load_bundle
 from cockpit.secrets import cred_resolver
 
 _COLS = ("id", "slug", "name", "sot_path", "mirror_remote", "backend", "kind", "owner",
-         "credential_ref", "source_url", "created_at")
+         "credential_ref", "source_url", "project_type", "created_at")
 _KINDS = ("project", "tool")   # classification (v3) : entité travaillée vs outil générique du framework
 
 
@@ -43,11 +43,12 @@ def create_project(conn: sqlite3.Connection, settings: Settings, *,
                    slug: str, name: str | None = None, mirror_remote: str | None = None,
                    kind: str = "project", owner: str | None = None,
                    credential_ref: str | None = None, source_url: str | None = None,
+                   project_type: str = "generic",
                    cred_resolver: Callable[[str], str] | None = None) -> dict:
     """Crée une entité (row DB) et **initialise son SoT bare local**. Deux chemins :
 
-    - **SEED** (défaut, `source_url=None`) : SoT semé du « toolkit auto-travaillable » (idempotent). L'INSERT
-      précède le seed (compat historique).
+    - **SEED** (défaut, `source_url=None`) : SoT semé du bundle `base ⊕ overlay(project_type)` (idempotent).
+      L'INSERT précède le seed (compat historique). `project_type` (défaut `generic`) choisit l'overlay.
     - **ADOPTION** (`source_url` fourni) : le SoT est un **clone bare** du repo distant (son VRAI historique).
       Le clone est fait **AVANT l'INSERT** → un clone échoué ne laisse **pas** de row orpheline (reprise de
       bootstrap propre). Auth optionnelle : si `credential_ref` + `cred_resolver`, le token est résolu à
@@ -60,6 +61,8 @@ def create_project(conn: sqlite3.Connection, settings: Settings, *,
     ids.ensure_slug(slug, field="project")
     if kind not in _KINDS:
         raise ValueError(f"kind invalide : {kind!r} (attendu {' | '.join(_KINDS)})")
+    if project_type not in BUNDLE_TYPES:   # re-valide l'enum (le CHECK DDL le tient côté DB base neuve)
+        raise ValueError(f"type invalide : {project_type!r} (attendu {' | '.join(BUNDLE_TYPES)})")
     sot = sot_path_for(settings, slug)
     git = InternalGit()
     if source_url:
@@ -78,19 +81,21 @@ def create_project(conn: sqlite3.Connection, settings: Settings, *,
                 f"clone échoué ({hint}) : {source_url} — introuvable ou token sans accès ({exc})") from exc
     row = {"id": ids.new_id(), "slug": slug, "name": name or slug, "sot_path": str(sot),
            "mirror_remote": mirror_remote, "backend": "internal", "kind": kind, "owner": owner,
-           "credential_ref": credential_ref, "source_url": source_url, "created_at": _now()}
+           "credential_ref": credential_ref, "source_url": source_url, "project_type": project_type,
+           "created_at": _now()}
     try:
         conn.execute(
             "INSERT INTO projects (id, slug, name, sot_path, mirror_remote, backend, kind, owner, "
-            "credential_ref, source_url, created_at) VALUES (:id, :slug, :name, :sot_path, :mirror_remote, "
-            ":backend, :kind, :owner, :credential_ref, :source_url, :created_at)", row)
+            "credential_ref, source_url, project_type, created_at) VALUES (:id, :slug, :name, :sot_path, "
+            ":mirror_remote, :backend, :kind, :owner, :credential_ref, :source_url, :project_type, "
+            ":created_at)", row)
         conn.commit()
     except sqlite3.IntegrityError as exc:
         if source_url:
             shutil.rmtree(sot, ignore_errors=True)    # course perdue → rollback du clone qu'on vient de faire
         raise ValueError(f"projet déjà existant : {slug!r}") from exc
     if not source_url:
-        git.init_sot(sot, payload=load_payload())
+        git.init_sot(sot, payload=load_bundle(project_type))   # SEED : bundle du type (base ⊕ overlay)
     return row
 
 
@@ -139,9 +144,11 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
             p = create_project(conn, settings, slug=args.slug, name=args.name,
                                kind=getattr(args, "kind", "project"),
                                source_url=getattr(args, "source_url", None),
+                               project_type=getattr(args, "project_type", "generic"),
                                cred_resolver=cred_resolver(settings))
             how = f"adopté ← {p['source_url']}" if p.get("source_url") else f"SoT {p['sot_path']}"
-            print(f"{p['kind']} créé : {p['slug']} — {how}")
+            typ = "" if p["project_type"] == "generic" else f" [{p['project_type']}]"
+            print(f"{p['kind']}{typ} créé : {p['slug']} — {how}")
         elif args.action == "list":
             for p in list_projects(conn):
                 print(f"{p['slug']}\t{p['kind']}\t{p['backend']}\t{p['name']}")

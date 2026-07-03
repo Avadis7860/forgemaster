@@ -1,0 +1,4 @@
+[bundle]
+project_type = "service-api"
+facets = ["backend", "doc"]
+default_facet = "backend"

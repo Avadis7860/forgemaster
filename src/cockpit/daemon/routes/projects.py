@@ -16,6 +16,7 @@ class ProjectCreate(BaseModel):
     name: str | None = None
     mirror_remote: str | None = None
     kind: str = "project"            # 'project' | 'tool' (validé par registry.create_project → 400 si autre)
+    project_type: str = "generic"    # bundle semé (v6) : generic|service-api|cli-tool|front-ts (validé → 400)
     source_url: str | None = None    # adopter un repo existant (clone). Via l'API = repos PUBLICS ;
     #                                  l'adoption privée (avec credential) passe par `cockpit bootstrap` (P2).
 
@@ -43,7 +44,7 @@ def make_projects_router() -> APIRouter:
         try:
             return registry.create_project(conn, deps.settings, slug=body.slug, name=body.name,
                                            mirror_remote=body.mirror_remote, kind=body.kind,
-                                           source_url=body.source_url,
+                                           source_url=body.source_url, project_type=body.project_type,
                                            cred_resolver=cred_resolver(deps.settings))
         finally:
             conn.close()

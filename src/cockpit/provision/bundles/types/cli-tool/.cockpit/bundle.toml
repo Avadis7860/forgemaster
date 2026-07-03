@@ -1,0 +1,4 @@
+[bundle]
+project_type = "cli-tool"
+facets = ["tool", "doc"]
+default_facet = "tool"
