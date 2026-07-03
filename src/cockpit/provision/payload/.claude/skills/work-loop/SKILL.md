@@ -35,7 +35,10 @@ git -C "$REPO" fetch --prune
 git -C "$REPO" worktree add "../$(basename "$REPO")-$FEAT" -b "feature/$FEAT" origin/dev
 cd "../$(basename "$REPO")-$FEAT"
 
-# 2. Travailler ici (IA ou humain). Anti-archéologie : interroger l'index du repo avant de grep.
+# 2. S'orienter puis travailler (IA ou humain). Anti-archéologie : bâtir les cartes du repo une fois
+#    (les index sont gitignorés → absents sur une worktree fraîche) PUIS interroger par intention, jamais grep :
+#      codemap build && docsmap build && frontmap build     # saute ceux sans objet (p. ex. pas de front)
+#      codemap where "<intention>"   # code   · docsmap where "<intention>"  # prose · frontmap where … # UI
 
 # 3. Gate — skill `quality-gate` (ruff + mypy + pytest + déterminisme [+ front gate si web]).
 #    Rouge → corriger la CAUSE, jamais contourner ni déplacer un seuil.

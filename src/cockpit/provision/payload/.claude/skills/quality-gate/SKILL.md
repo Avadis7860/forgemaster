@@ -27,12 +27,14 @@ $VENV/pytest -q                 # 3. tests
    déplacer un seuil.
 2. **Types** — le code doit typer proprement.
 3. **Tests** — tout vert. Un test qui n'existe pas pour une capacité livrée = capacité non livrée.
-4. **Fraîcheur de la doc** (si `.docsmap.toml` présent) — après avoir touché `docs/`, re-bâtir l'index et
-   vérifier qu'il n'est pas périmé :
+4. **Fraîcheur des cartes** — après avoir touché une couche, re-bâtir sa carte (les index sont dérivés et
+   gitignorés ; l'anti-archéologie en dépend). Idempotent : skip si les sources n'ont pas changé.
    ```bash
-   docsmap build --root .   # re-bâtit .docsmap/ (skip idempotent si sources inchangées)
-   docsmap check --root .   # signale toute section stale / supprimée
+   codemap build  --root .                    # code touché → re-bâtit .codemap/
+   docsmap build  --root . && docsmap check  --root .   # docs/ touché → re-bâtit + signale stale/supprimé
+   frontmap build --root . && frontmap check --root .   # front touché (si web/) → re-bâtit + vérifie
    ```
+   Ne lance que les cartes pertinentes pour ce repo (pas de front `web/` → saute `frontmap`).
 
 ## Adapter à un autre langage
 

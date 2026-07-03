@@ -5,7 +5,7 @@
 > le fasse évoluer en sûreté, **sans centre de contrôle**. Le cockpit (forge) ne fait qu'**automatiser** la
 > même boucle par-dessus ; il reste optionnel, aux **mêmes invariants**.
 >
-> Ce fichier = **règles + index + outils**, PAS la spec du produit. Le détail (intention, roadmap,
+> Ce fichier = **règles + cartes + outils**, PAS la spec du produit. Le détail (intention, roadmap,
 > architecture) vit dans `docs/` — **interroge-le** (`docsmap where`), ne le recopie pas ici.
 
 ## Règles (non négociables)
@@ -18,26 +18,41 @@
   (une IA ne merge/ne pousse jamais seule).
 - **Anti-boucle** : n'invente pas une signature d'API « de mémoire » — lis le code ou la doc avant d'écrire
   un import non trivial. Pas de signature inventée → pas d'erreur d'exécution → pas de retry.
-- **Anti-archéologie** : la prose de `docs/` se **requête** (`docsmap where "<intention>"` → la tranche
-  pertinente), jamais ne se lit en bloc pour s'orienter.
+- **Anti-archéologie** : ne **fouille jamais à l'aveugle** (grep/lecture en bloc) pour t'orienter. Interroge
+  d'abord la **carte** de la couche visée — le **code** via `codemap where`, la **prose** `docs/` via
+  `docsmap where`, l'**UI** via `frontmap` — puis lis **seulement** la tranche `fichier:lignes` renvoyée.
 
-## Index (interroge, ne lis pas en bloc)
+## Cartes du repo (bâtis d'abord, puis interroge)
 
-La doc du projet vit dans `docs/`. **Ne la lis pas en bloc pour t'orienter** — `docs-map` (injecté) répond à
-l'intention ; lis ensuite **seulement** la tranche `fichier:lignes` renvoyée :
+Trois cartes déterministes couvrent ce repo. Leur **config** (`.codemap.toml`, `.docsmap.toml`,
+`.frontmap.toml`) voyage avec le repo ; leur **index est dérivé, per-racine et gitignoré** → **absent sur un
+clone ou une worktree fraîche**. Première chose à faire en s'orientant : **bâtir les index une fois** (saute
+ceux qui ne s'appliquent pas — p. ex. pas de front `web/` → `frontmap` sans objet) :
 
 ```
-docsmap where "<intention>"     # → docs/…:lignes de la section pertinente
-docsmap sections                # table des matières
+codemap build && docsmap build && frontmap build     # bâtit .codemap/ .docsmap/ .frontmap/ (idempotent)
+```
+
+Un verbe de lecture lancé **sans** l'index bâti te le dira (« index absent — lance `… build` ») — bâtis,
+puis requête. Ensuite, oriente-toi par **intention**, sans grep :
+
+```
+codemap where "<intention>"     # → code : symbole fichier:ligne le plus pertinent
+codemap subsystems              # vue d'altitude ; codemap callers/imports <cible> pour le graphe
+docsmap where "<intention>"     # → docs/…:lignes de la section pertinente ; docsmap sections = sommaire
+frontmap where "<intention>"    # → UI : token / primitive / route (repos avec front seulement)
 ```
 
 - `docs/architecture.md` — le point de départ : ce qu'est ce projet, où vit quoi, comment il se travaille.
 
-## Outils à disposition (embarqués dans ce repo)
+## Outils à disposition
 
-- **Skills** (`.claude/skills/`) : `work-loop` (boucle de travail sûre, lightweight, sans cockpit) ·
-  `quality-gate` (porte qualité avant tout commit).
-- **Carte de doc** : `docsmap where/sections/read/check` sur la prose `docs/` de ce repo (injecté, zéro-dép).
+- **Skills** (`.claude/skills/`, embarqués dans ce repo) : `work-loop` (boucle de travail sûre, lightweight,
+  sans cockpit) · `quality-gate` (porte qualité avant tout commit).
+- **Cartes** `codemap` · `docsmap` · `frontmap` : leurs **configs** sont dans ce repo ; les **binaires** sont
+  fournis par l'**environnement** (le cockpit les installe sur l'hôte — ils ne sont **pas** dans le repo). Sur
+  un clone nu **sans** cockpit, installe-les d'abord (paquets `code-map`/`docs-map`/`front-map`) ; sinon la
+  config est là mais la commande manque.
 
 ## Rapport au cockpit
 
