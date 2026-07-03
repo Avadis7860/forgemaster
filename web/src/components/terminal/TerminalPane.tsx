@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { SearchAddon } from '@xterm/addon-search'
+import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
-import { Badge } from '@/components/ui'
+import { Badge, Button, Input } from '@/components/ui'
 import { wsUrl } from '@/lib/ws'
 import { buildTheme } from './theme'
 
@@ -15,6 +17,28 @@ const STATUS: Record<TermStatus, { tone: 'info' | 'ok' | 'neutral' | 'danger'; l
   error: { tone: 'danger', label: 'erreur' },
 }
 
+const FONT_MIN = 10
+const FONT_MAX = 22
+const FONT_KEY = 'cockpit.terminal.fontSize'
+
+function readFontSize(): number {
+  try {
+    const n = Number(localStorage.getItem(FONT_KEY))
+    if (n >= FONT_MIN && n <= FONT_MAX) return n
+  } catch {
+    /* localStorage indisponible (SSR/test) → défaut */
+  }
+  return 13
+}
+
+function saveFontSize(n: number): void {
+  try {
+    localStorage.setItem(FONT_KEY, String(n))
+  } catch {
+    /* best-effort */
+  }
+}
+
 // Thème xterm lu depuis les tokens CSS (@theme) — SOURCE UNIQUE, pas de hex dupliqué en TS (mapping dans
 // ./theme). Palette 16 couleurs COMPLÈTE (8 normales + 8 brights). Le renderer DOM d'xterm v5 écrit le
 // texte dans le DOM (→ visible pour la boucle visuelle), pas dans un canvas opaque.
@@ -23,27 +47,44 @@ function readTheme(el: HTMLElement): Record<string, string> {
   return buildTheme((name) => cs.getPropertyValue(name))
 }
 
-/** Terminal PTY d'un projet : xterm.js + addon-fit ↔ `WS /ws/terminal/{project}`. Frames BINAIRES = frappes
- *  (envoyées telles quelles au PTY) ; frames TEXTE = contrôle `{"type":"resize",cols,rows}`. Le login shell
- *  (`bash -l`) tourne dans la racine du projet côté daemon ; à sa sortie, le socket se ferme. */
+/** Terminal PTY d'un projet : xterm.js (addons fit + search + web-links) ↔ `WS /ws/terminal/{project}`.
+ *  Frames BINAIRES = frappes (envoyées telles quelles au PTY) ; frames TEXTE = contrôle
+ *  `{"type":"resize",cols,rows}`. Le login shell (`bash -l`) tourne dans la racine du projet côté daemon ;
+ *  à sa sortie le socket se ferme → « Relancer » recrée la session. Barre d'outils : recherche dans le
+ *  scrollback, taille de police (persistée), effacer, lancer Claude. */
 export function TerminalPane({ project }: { project: string }) {
   const hostRef = useRef<HTMLDivElement>(null)
+  const termRef = useRef<Terminal | null>(null)
+  const fitRef = useRef<FitAddon | null>(null)
+  const searchRef = useRef<SearchAddon | null>(null)
+  const wsRef = useRef<WebSocket | null>(null)
   const [status, setStatus] = useState<TermStatus>('connecting')
+  const [fontSize, setFontSize] = useState<number>(readFontSize)
+  const [reconnectKey, setReconnectKey] = useState(0)
+  const [query, setQuery] = useState('')
 
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
+    setStatus('connecting')
 
     const term = new Terminal({
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-      fontSize: 13,
+      fontSize,
       cursorBlink: true,
       convertEol: true,
+      scrollback: 5000,
       theme: readTheme(document.documentElement),
     })
     const fit = new FitAddon()
+    const search = new SearchAddon()
     term.loadAddon(fit)
+    term.loadAddon(search)
+    term.loadAddon(new WebLinksAddon())
     term.open(host)
+    termRef.current = term
+    fitRef.current = fit
+    searchRef.current = search
     const safeFit = () => {
       try {
         fit.fit()
@@ -55,6 +96,7 @@ export function TerminalPane({ project }: { project: string }) {
 
     const ws = new WebSocket(wsUrl(`/ws/terminal/${encodeURIComponent(project)}`))
     ws.binaryType = 'arraybuffer'
+    wsRef.current = ws
     const enc = new TextEncoder()
     const sendResize = () => {
       if (ws.readyState === WebSocket.OPEN) {
@@ -93,17 +135,88 @@ export function TerminalPane({ project }: { project: string }) {
       ws.onclose = null // pas de setState après démontage
       ws.close()
       term.dispose()
+      termRef.current = null
+      fitRef.current = null
+      searchRef.current = null
+      wsRef.current = null
     }
-  }, [project])
+    // fontSize hors deps : appliqué à chaud par l'effet dédié (pas de recréation du terminal à chaque cran).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project, reconnectKey])
+
+  // Taille de police appliquée À CHAUD (sans recréer le terminal) + persistée.
+  useEffect(() => {
+    const term = termRef.current
+    if (term) {
+      term.options.fontSize = fontSize
+      try {
+        fitRef.current?.fit()
+      } catch {
+        /* pas encore dimensionné */
+      }
+    }
+    saveFontSize(fontSize)
+  }, [fontSize])
+
+  const connected = status === 'connected'
+  const bumpFont = (delta: number) =>
+    setFontSize((n) => Math.min(FONT_MAX, Math.max(FONT_MIN, n + delta)))
+  const runSearch = (q: string) => {
+    setQuery(q)
+    if (q) searchRef.current?.findNext(q)
+  }
+  const sendToPty = (text: string) => {
+    const ws = wsRef.current
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(new TextEncoder().encode(text))
+      termRef.current?.focus()
+    }
+  }
 
   const st = STATUS[status]
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-xs text-faint">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="mr-auto text-xs text-faint">
           Login shell (<span className="font-mono">bash -l</span>) — tape{' '}
           <span className="font-mono">claude</span> pour lier ton compte (1ʳᵉ fois : login).
         </p>
+        <div className="w-full sm:w-52">
+          <Input
+            value={query}
+            onChange={(e) => runSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') searchRef.current?.[e.shiftKey ? 'findPrevious' : 'findNext'](query)
+            }}
+            placeholder="rechercher…"
+            aria-label="Rechercher dans le terminal"
+            className="h-8"
+          />
+        </div>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="sm" onClick={() => bumpFont(-1)}
+            disabled={fontSize <= FONT_MIN} title="Réduire la police" aria-label="Réduire la police">
+            A−
+          </Button>
+          <span className="w-6 text-center font-mono text-xs text-faint tabular-nums">{fontSize}</span>
+          <Button variant="ghost" size="sm" onClick={() => bumpFont(1)}
+            disabled={fontSize >= FONT_MAX} title="Agrandir la police" aria-label="Agrandir la police">
+            A+
+          </Button>
+        </div>
+        <Button variant="ghost" size="sm" onClick={() => termRef.current?.clear()}
+          disabled={!connected} title="Effacer l'écran">
+          Effacer
+        </Button>
+        <Button variant="secondary" size="sm" onClick={() => sendToPty('claude\n')} disabled={!connected}
+          title="Lancer Claude Code dans le shell">
+          Lancer Claude
+        </Button>
+        {(status === 'closed' || status === 'error') && (
+          <Button variant="primary" size="sm" onClick={() => setReconnectKey((k) => k + 1)}>
+            Relancer
+          </Button>
+        )}
         <Badge tone={st.tone} dot>
           {st.label}
         </Badge>
