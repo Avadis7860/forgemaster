@@ -19,6 +19,7 @@ from __future__ import annotations
 import fcntl
 import os
 import subprocess
+import sys
 import tarfile
 import tempfile
 from collections.abc import Callable, Iterator, Mapping
@@ -466,7 +467,13 @@ class InternalGit:
                 raise GitOpError(f"git archive {ref} @ {sot}: {r.stderr.strip()[:200]}")
             try:
                 with tarfile.open(tar_path) as tf:
-                    tf.extractall(dest_dir, filter="data")
+                    # `filter="data"` (extraction durcie) n'existe qu'à partir de 3.11.4 ; l'hôte de prod
+                    # tourne en 3.11.2 → repli sur l'extraction simple (la source est un `git archive` d'un
+                    # SoT local de confiance, jamais de chemin absolu/traversant).
+                    if sys.version_info >= (3, 11, 4):
+                        tf.extractall(dest_dir, filter="data")
+                    else:
+                        tf.extractall(dest_dir)
             except (tarfile.TarError, OSError) as exc:
                 raise GitOpError(f"extraction archive {ref} @ {sot}: {exc}") from exc
         finally:
