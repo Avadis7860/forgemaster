@@ -2,7 +2,7 @@
 // V1 : projets (+ santé). Roadmap/next exposés (stables, consommés dès V2). Dispatch/gate/merge : leurs vagues.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
-import type { CredentialLinkInput, CreateProjectInput, MergeInput } from './schemas'
+import type { BootstrapRunInput, CredentialLinkInput, CreateProjectInput, MergeInput } from './schemas'
 
 export const qk = {
   health: ['health'] as const,
@@ -21,6 +21,7 @@ export const qk = {
   job: (jobId: string) => ['job', jobId] as const,
   gate: (project: string, feature: string) => ['gate', project, feature] as const,
   onboarding: ['onboarding'] as const,
+  bootstrap: ['bootstrap'] as const,
 }
 
 export function useHealth() {
@@ -210,5 +211,27 @@ export function useSetMirror(project: string) {
   return useMutation({
     mutationFn: (mirror: string | null) => api.updateProject(project, { mirror_remote: mirror }),
     onSuccess: () => invalidateCredential(qc, project),
+  })
+}
+
+// -- Amorçage « outils du framework » : aperçu idempotent (GET) + exécution (POST) -------------------
+
+// Aperçu du manifeste d'outils (disponible ? combien déjà rangés ?). GET idempotent — sert l'étape wizard
+// et reste atteignable par le runner goto-only (aucun effet, aucun secret).
+export function useBootstrap() {
+  return useQuery({ queryKey: qk.bootstrap, queryFn: api.getBootstrap })
+}
+
+// Déclenche l'adoption des outils du manifeste (idempotent). À la résolution, invalide bootstrap (l'aperçu
+// bascule adopted), les projets (le rail gagne la section Outils) et onboarding (nouvelles entités).
+export function useRunBootstrap() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: BootstrapRunInput = {}) => api.runBootstrap(body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.bootstrap })
+      qc.invalidateQueries({ queryKey: qk.projects })
+      qc.invalidateQueries({ queryKey: qk.onboarding })
+    },
   })
 }

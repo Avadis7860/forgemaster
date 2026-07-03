@@ -78,6 +78,24 @@ features:
 `phases:`, comportement identique au `depends_on` seul (opt-in rétro-compatible). Cf. spec
 `task-next-resolver-dag`.
 
+## 2b. Manifeste `bootstrap.yaml` (sous `COCKPIT_HOME`, `bootstrap.py`)
+
+Édition **maintainer** : les outils du framework adoptés au 1er démarrage (`cockpit bootstrap` / wizard).
+Manifeste SEC (noms/listes/URLs, **aucun secret**). Absent → no-op propre (install générique). Forme :
+
+```yaml
+tools:
+  - slug: <kebab>                 # requis
+    source_url: <url-git>         # requis : cloné comme SoT (P1) → VRAI contenu
+    kind: tool                    # défaut 'tool' (rail section « Outils »)
+    credential_ref: <réf-store>   # optionnel : réf OPAQUE (repo privé) ; absente = clone anonyme (public)
+```
+
+`credential_ref` (repo privé) = **un token de lecture par repo** ; sinon le `shared_ref` du wizard/
+`--token-file` sert de repli ; sinon anonyme (repos publics, forward-compatible). Le token brut ne vit
+JAMAIS ici — seulement dans le coffre. Amorçage **idempotent** (slug présent → `skipped`) ; échec d'une
+entrée isolé (`failed`), un manifeste invalide avorte (fail-loud).
+
 ## 3. Contrat API HTTP (`daemon/`, porté)
 
 Le daemon expose le cœur ; le web (P5) le consomme. **DI explicite** (`Deps` sur `app.state`, lu par
@@ -124,6 +142,12 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   credential : `token` = voie fichier stockée → réf opaque, `ref` = voie BWS bring-your-own UUID validée ;
   réponse = projet avec `credential_ref`, **jamais le token** ; **400** mauvais usage/backend, **404** projet
   absent) · `DELETE /api/projects/{p}/credential` (délie : `credential_ref` → NULL).
+- **bootstrap** — `GET /api/bootstrap` (aperçu **idempotent** de l'amorçage des outils du framework :
+  `{available, tools:[{slug, source_url, kind, adopted}], adopted, total}` ; manifeste absent →
+  `available:false` ; **400** manifeste invalide ; aucun secret, goto-only safe) · `POST /api/bootstrap`
+  `{shared_ref?}` (adopte les outils du manifeste `<COCKPIT_HOME>/bootstrap.yaml` via P1 — **idempotent**,
+  skip existants ; `shared_ref` = réf credential DÉJÀ stockée pour repos privés, absente = anonyme/public ;
+  réponse `{created, skipped, failed:[{slug, error}], available}` ; manifeste absent → no-op propre).
 - **terminal** — `WS /ws/terminal/{project}` (PTY **local** `bash -l`, workdir borné).
 
 Un endpoint qui borne/tronque le **signale** dans sa réponse. `WS /ws/dispatch/{job}` (streaming live du

@@ -3,7 +3,8 @@ import { Alert, Badge, Button, Card, LoadingState, RefreshButton, SectionTitle }
 import { ApiError } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { NewProjectForm } from '@/components/NewProjectForm'
-import { useOnboarding } from '@/lib/queries'
+import { useBootstrap, useOnboarding, useRunBootstrap } from '@/lib/queries'
+import type { BootstrapPreview } from '@/lib/schemas'
 
 /** Wizard 1er-démarrage (`/setup`) — la porte d'entrée guidée d'une instance self-hostée. **Non bloquant**
  *  (route normale, quittable) et ré-ouvrable ; il séquence le **démarrage** (coffre → 1er projet) sans se
@@ -12,6 +13,7 @@ import { useOnboarding } from '@/lib/queries'
  *  il duplique une version partielle et cul-de-sac de Réglages (retour terrain 2026-07-03). */
 export function SetupWizard() {
   const { data, isLoading, isError, error, refetch, isFetching } = useOnboarding()
+  const boot = useBootstrap()
 
   if (isLoading)
     return (
@@ -34,6 +36,9 @@ export function SetupWizard() {
   const hasProject = data.project_count > 0
   const ready = storeReady && hasProject            // démarrage abouti (le token de push relève de Réglages)
   const tokensPending = data.requirements.some((r) => !r.satisfied)
+  // Outils du framework : « fait » si aucun manifeste (install générique) ou si tous déjà rangés.
+  const bootData = boot.data
+  const toolsDone = !bootData?.available || (bootData.total > 0 && bootData.adopted === bootData.total)
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-6">
@@ -95,7 +100,11 @@ export function SetupWizard() {
         )}
       </Step>
 
-      <Step n={4} title="Prêt à travailler" done={ready}>
+      <Step n={4} title="Outils du framework" done={toolsDone}>
+        <FrameworkTools boot={bootData} loading={boot.isLoading} />
+      </Step>
+
+      <Step n={5} title="Prêt à travailler" done={ready}>
         <div className="space-y-3 text-sm text-muted">
           <p>
             Le daemon sert l'API et l'UI (<code>cockpit serve --host 0.0.0.0</code> pour l'exposer au réseau
@@ -117,6 +126,78 @@ export function SetupWizard() {
           </div>
         </div>
       </Step>
+    </div>
+  )
+}
+
+/** Étape « Outils du framework » — l'exigence batteries-included : adopter la boîte à outils (code-map,
+ *  docs-map, front-map, mcp-catalogs, cockpit) déclarée dans le manifeste maintainer, d'un clic, avec leur
+ *  VRAI contenu git. **Choix shallow (D4)** : nos outils (le manifeste) ou aucun (ignorer l'étape) ; pour
+ *  ses propres outils, on édite `bootstrap.yaml` / on crée des projets `tool`. Pas de manifeste = install
+ *  générique : on n'affiche qu'une note (le wizard reste intact). L'aperçu est un GET idempotent. */
+function FrameworkTools({ boot, loading }: { boot: BootstrapPreview | undefined; loading: boolean }) {
+  const run = useRunBootstrap()
+
+  if (loading || !boot) return <LoadingState label="Lecture du manifeste d'outils…" />
+
+  if (!boot.available)
+    return (
+      <div className="space-y-2 text-sm text-muted">
+        <p>
+          Aucun manifeste d'outils n'est configuré — ton install est <strong>générique</strong>. Crée tes
+          projets depuis le rail de gauche, ou fournis un <code>bootstrap.yaml</code> pour amorcer ta propre
+          boîte à outils.
+        </p>
+      </div>
+    )
+
+  const remaining = boot.total - boot.adopted
+  const allAdopted = remaining === 0
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-muted">
+        La boîte à outils du framework — indexeurs de doc/code/front + catalogue MCP — se range dans la
+        section <strong>Outils</strong> du rail, avec le vrai contenu de chaque dépôt. Tu peux l'ignorer si tu
+        utilises tes propres outils.
+      </p>
+
+      <ul className="space-y-1">
+        {boot.tools.map((t) => (
+          <li key={t.slug} className="flex items-center gap-2 text-sm">
+            <Badge tone={t.adopted ? 'ok' : 'neutral'} dot>
+              {t.adopted ? 'rangé' : 'à installer'}
+            </Badge>
+            <span className="font-medium text-fg">{t.slug}</span>
+            <span className="truncate text-xs text-faint">{t.source_url}</span>
+          </li>
+        ))}
+      </ul>
+
+      {run.isError && (
+        <Alert tone="danger">
+          {run.error instanceof ApiError ? run.error.detail : 'Échec de l’amorçage.'}
+        </Alert>
+      )}
+      {run.isSuccess && run.data.failed.length > 0 && (
+        <Alert tone="warn" title="Certains outils n’ont pas pu être adoptés">
+          {run.data.failed.map((f) => `${f.slug} : ${f.error}`).join(' · ')}
+        </Alert>
+      )}
+
+      {allAdopted ? (
+        <Alert tone="ok" title="Boîte à outils rangée">
+          Les {boot.total} outils sont dans la section Outils du rail. Ouvre-en un pour voir son code.
+        </Alert>
+      ) : (
+        <Button
+          variant="primary"
+          busy={run.isPending}
+          onClick={() => run.mutate({})}
+        >
+          Installer la boîte à outils ({remaining})
+        </Button>
+      )}
     </div>
   )
 }

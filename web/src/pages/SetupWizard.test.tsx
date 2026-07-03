@@ -4,7 +4,11 @@ import { SetupWizard } from './SetupWizard'
 
 // État d'onboarding injectable (hoisté pour la factory vi.mock). On isole des vraies requêtes : seul le
 // SÉQUENÇAGE des étapes selon l'état (first_run vs tout-réglé) est testé ici.
-const h = vi.hoisted(() => ({ data: undefined as unknown }))
+const h = vi.hoisted(() => ({
+  data: undefined as unknown,
+  boot: undefined as unknown,   // aperçu bootstrap injectable ; undefined → défaut « aucun manifeste »
+  runMutate: vi.fn(),
+}))
 
 vi.mock('@/lib/queries', () => ({
   useOnboarding: () => ({ data: h.data, isLoading: false, isError: false, error: null, refetch: vi.fn(), isFetching: false }),
@@ -12,6 +16,11 @@ vi.mock('@/lib/queries', () => ({
   useSetMirror: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
   useLinkCredential: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
   useUnlinkCredential: () => ({ mutate: vi.fn(), isPending: false }),
+  useBootstrap: () => ({
+    data: h.boot ?? { available: false, tools: [], adopted: 0, total: 0 },
+    isLoading: false,
+  }),
+  useRunBootstrap: () => ({ mutate: h.runMutate, isPending: false, isError: false, isSuccess: false, error: null, data: undefined }),
 }))
 
 vi.mock('@tanstack/react-router', () => ({
@@ -45,6 +54,27 @@ describe('SetupWizard', () => {
     render(<SetupWizard />)
     expect(screen.getByText('Ton cockpit est prêt')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Créer ce projet' })).toBeNull() // projet déjà là
+  })
+
+  it('outils du framework : un manifeste disponible propose de ranger la boîte à outils d’un clic', () => {
+    h.data = { secret_store: STORE, requirements: [], complete: true, project_count: 0, first_run: true }
+    h.boot = {
+      available: true,
+      total: 2,
+      adopted: 0,
+      tools: [
+        { slug: 'code-map', source_url: 'https://github.com/x/code-map.git', kind: 'tool', adopted: false },
+        { slug: 'docs-map', source_url: 'https://github.com/x/docs-map.git', kind: 'tool', adopted: false },
+      ],
+    }
+    render(<SetupWizard />)
+    expect(screen.getByText('Outils du framework')).toBeInTheDocument()
+    expect(screen.getByText('code-map')).toBeInTheDocument()
+    // le bouton d'amorçage adopte les outils du manifeste (2 restants)
+    const install = screen.getByRole('button', { name: /Installer la boîte à outils/ })
+    install.click()
+    expect(h.runMutate).toHaveBeenCalled()
+    h.boot = undefined   // restaure le défaut pour les tests suivants
   })
 
   it('token de push en attente : le wizard renvoie vers Réglages, ne propose PAS de lier le token lui-même', () => {

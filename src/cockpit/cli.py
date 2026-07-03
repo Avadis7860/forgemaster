@@ -97,6 +97,13 @@ def build_parser() -> argparse.ArgumentParser:
     ou = p_onboard_sub.add_parser("unlink", parents=[common], help="délier le token d'un projet")
     ou.add_argument("project")
 
+    # -- bootstrap ----------------------------------------------------------------------------------
+    pb = sub.add_parser("bootstrap", parents=[common],
+                        help="adopter les outils du framework déclarés dans le manifeste (idempotent)")
+    pb.add_argument("--init", action="store_true", help="écrire un manifeste gabarit puis quitter")
+    pb.add_argument("--token-file",
+                    help="fichier d'un token de lecture partagé (voie fichier — jamais en argv)")
+
     # -- serve --------------------------------------------------------------------------------------
     p_serve = sub.add_parser("serve", parents=[common], help="démarrer le daemon FastAPI (web + API)")
     p_serve.add_argument("--host", default="127.0.0.1")
@@ -168,6 +175,11 @@ def _h_onboard(settings: Settings, args: argparse.Namespace) -> int:
     return onboarding.cli_dispatch(settings, args)
 
 
+def _h_bootstrap(settings: Settings, args: argparse.Namespace) -> int:
+    from cockpit import bootstrap
+    return bootstrap.cli_dispatch(settings, args)
+
+
 def _h_serve(settings: Settings, args: argparse.Namespace) -> int:
     from cockpit.daemon import app
     return app.serve(settings, host=args.host, port=args.port)
@@ -206,6 +218,7 @@ _HANDLERS = {
     "gate": _h_gate,
     "merge": _h_merge,
     "onboard": _h_onboard,
+    "bootstrap": _h_bootstrap,
     "serve": _h_serve,
     "setup": _h_setup,
     "install-service": _h_install_service,

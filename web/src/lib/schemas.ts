@@ -375,3 +375,39 @@ export interface CredentialLinkInput {
   ref?: string
   label?: string
 }
+
+// -- Amorçage « outils du framework » (bootstrap) : manifeste sous COCKPIT_HOME → adoption idempotente ----
+
+// Un outil du manifeste + son état d'adoption (`adopted` = slug déjà présent). Aucun secret exposé.
+export const BootstrapToolSchema = z.object({
+  slug: z.string(),
+  source_url: z.string(),
+  kind: z.string(),
+  adopted: z.boolean(),
+})
+export type BootstrapTool = z.infer<typeof BootstrapToolSchema>
+
+// GET /api/bootstrap : aperçu idempotent. `available` = manifeste présent & valide ; `adopted`/`total`
+// = combien des outils sont déjà rangés. Manifeste absent → available:false (install générique).
+export const BootstrapPreviewSchema = z.object({
+  available: z.boolean(),
+  tools: z.array(BootstrapToolSchema),
+  adopted: z.number(),
+  total: z.number(),
+})
+export type BootstrapPreview = z.infer<typeof BootstrapPreviewSchema>
+
+// POST /api/bootstrap : rapport d'amorçage (idempotent). `created`/`skipped` = slugs ; `failed` = erreurs
+// isolées par entrée (la boucle continue). `available:false` = manifeste absent (no-op propre).
+export const BootstrapReportSchema = z.object({
+  created: z.array(z.string()),
+  skipped: z.array(z.string()),
+  failed: z.array(z.object({ slug: z.string(), error: z.string() })),
+  available: z.boolean(),
+})
+export type BootstrapReport = z.infer<typeof BootstrapReportSchema>
+
+// Corps du POST : réf credential DÉJÀ stockée (repos privés) ; absente = adoption anonyme (publics).
+export interface BootstrapRunInput {
+  shared_ref?: string | null
+}

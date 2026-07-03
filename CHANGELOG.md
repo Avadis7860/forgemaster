@@ -5,6 +5,23 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Amorçage des outils du framework — manifeste + `cockpit bootstrap` + étape wizard (P2 cockpit-batteries-included)
+- **Module `bootstrap.py`** : lit un manifeste `<COCKPIT_HOME>/bootstrap.yaml` (édition maintainer, SEC,
+  aucun secret) et **adopte** chaque outil via P1 (`create_project(source_url=…)`), classé `kind=tool` (rail
+  section « Outils »), miroir câblé sur la source. **Idempotent** (slug présent → `skipped`) ; échec d'une
+  entrée isolé (`failed`, la boucle continue) ; manifeste **absent → no-op** propre ; manifeste **invalide →
+  abort** (fail-loud). Credential **par entrée** (`credential_ref`, un token de lecture par repo) avec repli
+  sur un `shared_ref` partagé, sinon clone anonyme (repos publics, forward-compatible).
+- **CLI `cockpit bootstrap`** : `--init` écrit un gabarit (garde no-overwrite) ; `--token-file <f>` lie un
+  token de lecture partagé (voie fichier → store, jamais en argv/DB/manifeste). Sortie 1 s'il reste des échecs.
+- **Schéma HTTP** : `GET /api/bootstrap` (aperçu **idempotent** goto-only : `{available, tools:[{slug,
+  source_url, kind, adopted}], adopted, total}`) · `POST /api/bootstrap` `{shared_ref?}` (exécute ;
+  `{created, skipped, failed, available}`). `docs/schema-contract.md` §2b + §3 à jour.
+- **Wizard `/setup`** : étape « Outils du framework » (shallow : installer la boîte à outils / ignorer) —
+  liste les outils du manifeste + « Installer la boîte à outils (N) » d'un clic ; manifeste absent = note
+  générique (wizard intact). `useBootstrap`/`useRunBootstrap` + schémas Zod. Boucle visuelle : rendu vérifié.
+- Aucun bump `SCHEMA_VERSION` (route + fichier-manifeste additifs, aucune colonne).
+
 ### Adopter un dépôt existant — clone au lieu de semer (P1 cockpit-batteries-included)
 - **Primitif bare-safe** `InternalGit.clone_sot(sot, url, *, creds_env=None)` : `git clone --bare` du repo
   distant (son vrai historique) ; auth **optionnelle** via `credential_env` (privé → token transitoire ;

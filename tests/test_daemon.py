@@ -324,6 +324,37 @@ def test_adopt_repo_over_http_shows_real_code(client, tmp_path):
     assert bad.status_code == 400
 
 
+def test_bootstrap_route_preview_then_populates_tools_rail(client, tmp_path):
+    """GET /api/bootstrap = aperçu idempotent (goto-only) ; POST = adopte les outils du manifeste → ils
+    apparaissent classés `kind=tool` (rail « Outils »). Manifeste absent → available:false (no-op)."""
+    c, settings = client
+    genv = {"PATH": os.environ.get("PATH", ""), "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e.invalid",
+            "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e.invalid"}
+    up = tmp_path / "u-codemap"
+    up.mkdir()
+    run.run(["git", "init", "-q", "-b", "dev", str(up)], env=genv)
+    (up / "index.py").write_text("print('code-map')\n", encoding="utf-8")
+    run.run(["git", "-C", str(up), "add", "-A"], env=genv)
+    run.run(["git", "-C", str(up), "commit", "-q", "-m", "real"], env=genv)
+
+    assert c.get("/api/bootstrap").json()["available"] is False       # pas de manifeste → wizard générique
+    settings.home.mkdir(parents=True, exist_ok=True)
+    (settings.home / "bootstrap.yaml").write_text(
+        json.dumps({"tools": [{"slug": "code-map", "source_url": str(up)}]}), encoding="utf-8")
+
+    pre = c.get("/api/bootstrap").json()
+    assert pre["available"] and pre["total"] == 1 and pre["adopted"] == 0   # aperçu : rien encore adopté
+    rep = c.post("/api/bootstrap", json={})
+    assert rep.status_code == 200 and rep.json()["created"] == ["code-map"]
+    # classé kind=tool (rail « Outils ») + VRAI code via l'explorateur
+    assert c.get("/api/projects/code-map").json()["kind"] == "tool"
+    t = c.get("/api/projects/code-map/git/tree", params={"ref": "dev"})
+    assert "index.py" in {e["name"] for e in t.json()["entries"]}
+    # idempotence via l'API : 2ᵉ POST → skipped, aperçu adopted:1
+    assert c.post("/api/bootstrap", json={}).json()["skipped"] == ["code-map"]
+    assert c.get("/api/bootstrap").json()["adopted"] == 1
+
+
 # -- onboarding self-hosted (config-requise + credential par repo) ---------------------------------
 
 def test_patch_project_sets_and_clears_mirror_then_gates_credential(client):

@@ -3,6 +3,8 @@
 // Rappels de contrat : chemins ASYMÉTRIQUES (/api/projects/{p}/… vs /api/features/{p}/{f}/…).
 import type { z } from 'zod'
 import {
+  BootstrapPreviewSchema,
+  BootstrapReportSchema,
   DispatchReportSchema,
   GateStatusSchema,
   GitBlobSchema,
@@ -20,6 +22,7 @@ import {
   ProjectSchema,
   ProjectsListSchema,
   RoadmapSchema,
+  type BootstrapRunInput,
   type CredentialLinkInput,
   type CreateProjectInput,
   type MergeInput,
@@ -158,4 +161,10 @@ export const api = {
     request(`/api/projects/${encodeURIComponent(project)}/credential`, ProjectSchema, {
       method: 'DELETE',
     }),
+
+  // Amorçage des outils du framework : GET = aperçu idempotent (goto-only, aucun effet/secret) ; POST =
+  // adopte les outils du manifeste (idempotent, skip existants). Le token brut ne transite jamais ici.
+  getBootstrap: () => request('/api/bootstrap', BootstrapPreviewSchema),
+  runBootstrap: (body: BootstrapRunInput = {}) =>
+    request('/api/bootstrap', BootstrapReportSchema, { method: 'POST', body: JSON.stringify(body) }),
 }
