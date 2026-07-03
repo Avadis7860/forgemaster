@@ -17,9 +17,11 @@ from pathlib import Path
 
 ENV_HOME = "COCKPIT_HOME"
 ENV_PROJECTS_ROOT = "COCKPIT_PROJECTS_ROOT"
+ENV_SECRET_STORE = "COCKPIT_SECRET_STORE"
 
 DEFAULT_HOME = "~/.cockpit"
 DEFAULT_PROJECTS_ROOT = "~/projects"
+DEFAULT_SECRET_STORE = "file"  # coffre par défaut : EncryptedFileStore (portable, zéro-config). Cf. secrets/.
 
 
 @dataclass(frozen=True)
@@ -28,6 +30,7 @@ class Settings:
 
     home: Path
     projects_root: Path
+    secret_store: str = "file"  # sélecteur du coffre de credentials : "file" | "bws" (cf. secrets/).
 
     @property
     def db_path(self) -> Path:
@@ -39,17 +42,25 @@ class Settings:
         """Dossier des logs de workers dispatchés (un fichier par job)."""
         return self.home / "logs"
 
+    @property
+    def secrets_dir(self) -> Path:
+        """Dossier du coffre fichier chiffré (clé-600 + blob) : `home/secrets/`. Cf. EncryptedFileStore."""
+        return self.home / "secrets"
+
     @staticmethod
     def resolve(
         *,
         home: str | os.PathLike[str] | None = None,
         projects_root: str | os.PathLike[str] | None = None,
+        secret_store: str | None = None,
     ) -> Settings:
         """Résout les racines. Priorité par racine : argument explicite > variable d'env > défaut.
-        `~` est toujours développé ; les chemins sont rendus absolus (jamais relatifs au cwd courant)."""
+        `~` est toujours développé ; les chemins sont rendus absolus (jamais relatifs au cwd courant).
+        `secret_store` est un sélecteur (chaîne, non normalisé), pas un chemin."""
         h = _pick(home, os.environ.get(ENV_HOME), DEFAULT_HOME)
         p = _pick(projects_root, os.environ.get(ENV_PROJECTS_ROOT), DEFAULT_PROJECTS_ROOT)
-        return Settings(home=_norm(h), projects_root=_norm(p))
+        s = _pick(secret_store, os.environ.get(ENV_SECRET_STORE), DEFAULT_SECRET_STORE)
+        return Settings(home=_norm(h), projects_root=_norm(p), secret_store=s)
 
 
 def _pick(explicit: object, env: str | None, default: str) -> str:

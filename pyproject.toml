@@ -18,10 +18,16 @@ dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
   "pyyaml>=6.0",
+  # secret store par défaut (EncryptedFileStore) : chiffrement authentifié au repos (Fernet). Import PARESSEUX
+  # dans secrets/file_store.py — le socle reste stdlib-pur, la dép n'est tirée qu'à l'usage du store fichier.
+  "cryptography>=42",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.5", "mypy>=1.10", "httpx>=0.27", "types-PyYAML"]
+# adaptateur BWS (secret store OPTIONNEL) : SDK officiel Bitwarden (cœur Rust, crypto E2E). Non tiré par le
+# défaut file store ; installer `cockpit[bws]` pour l'activer. Import PARESSEUX dans secrets/bws_store.py.
+bws = ["bitwarden-sdk>=1.0"]
 
 [project.scripts]
 # Une porte unifiée : project / roadmap / task / dispatch / gate / merge / serve.

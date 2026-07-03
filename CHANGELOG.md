@@ -5,6 +5,20 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Secret store pluggable (phase 4a — onboarding self-hosted)
+- Nouveau paquet **`src/cockpit/secrets/`** : Protocol `SecretStore` (`put→ref` / `get` / `delete` / `has` /
+  `list_entries`) + deux backends. La DB stocke une **référence opaque** (`credential_ref`), jamais le token ;
+  le store résout à l'usage. Socle stdlib-pur (crypto/SDK importés paresseusement).
+- **`EncryptedFileStore`** (défaut) : chiffrement authentifié au repos via **Fernet** (dép cœur `cryptography`),
+  clé-600 + blob sous `home/secrets/`. Écritures atomiques (`O_EXCL`/`os.replace`). Invariant testé : **0
+  plaintext au repos** (la valeur n'apparaît nulle part en clair), refus si blob altéré/clé absente.
+- **`BwsStore`** (extra optionnel `cockpit[bws]`) : Bitwarden Secrets Manager via le **SDK officiel**
+  (`bitwarden-sdk`, région configurable `BWS_API_URL`/`BWS_IDENTITY_URL`), secrets par **UUID**, cache
+  process-lifetime (auth réutilisée), `client_factory` injectable. Racine = `BWS_ACCESS_TOKEN` (env ou
+  fichier-600). `put`/`delete` non supportés (bring-your-own UUID) → `SecretUnsupported`.
+- **`config`** : sélecteur `secret_store` (`COCKPIT_SECRET_STORE`, défaut `file`) + propriété `secrets_dir` ;
+  `secrets.build_store(settings)` choisit le backend. `Settings` reste rétro-compatible (nouveau champ à défaut).
+
 ### Structure (phase repo-structure)
 - Squelette du package `src/cockpit/` (src-layout, hatchling), CLI `cockpit` câblée (project/roadmap/task/
   dispatch/gate/merge/serve), imports serveur paresseux.
