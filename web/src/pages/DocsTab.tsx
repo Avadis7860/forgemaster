@@ -1,6 +1,6 @@
 import { Suspense, lazy } from 'react'
 import { useParams } from '@tanstack/react-router'
-import { Alert, EmptyState, LoadingState } from '@/components/ui'
+import { Alert, EmptyState, Eyebrow, LoadingState } from '@/components/ui'
 import { useDocs } from '@/lib/queries'
 
 // react-markdown est lourd → code-split : le renderer (et ses deps) ne se charge QUE quand on ouvre Docs.
@@ -35,10 +35,14 @@ export function DocsTab() {
     )
   }
   return (
-    <div className="space-y-3 p-6">
+    // Colonne de lecture CENTRÉE, mesure confortable (≈ prose) — une vraie page de doc, pas un flux collé au rail.
+    <div className="mx-auto max-w-2xl px-6 py-10">
       {docs.data.truncated && (
-        <Alert tone="info" title="Doc tronquée">Le fichier dépasse la taille d'affichage — contenu coupé.</Alert>
+        <Alert tone="info" title="Doc tronquée" className="mb-6">
+          Le fichier dépasse la taille d'affichage — contenu coupé.
+        </Alert>
       )}
+      <Eyebrow className="mb-4">Documentation · {project}</Eyebrow>
       <Suspense fallback={<LoadingState label="Rendu de la doc…" />}>
         <DocView content={docs.data.content} />
       </Suspense>
