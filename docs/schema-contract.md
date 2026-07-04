@@ -164,6 +164,11 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   `{shared_ref?}` (adopte les outils du manifeste `<COCKPIT_HOME>/bootstrap.yaml` via P1 — **idempotent**,
   skip existants ; `shared_ref` = réf credential DÉJÀ stockée pour repos privés, absente = anonyme/public ;
   réponse `{created, skipped, failed:[{slug, error}], available}` ; manifeste absent → no-op propre).
+- **docs** — `GET /api/projects/{p}/docs?ref=` (la **carte** d'un projet/outil, LUE depuis son repo/SoT bare :
+  fichier canonique `docs/tool-card.md`, repli `README.md` → `{project, found, ref, path, content, truncated}`.
+  `ref` optionnel (défaut : `main`→`dev`→1ʳᵉ branche). `found:false` (ni carte ni README) rendu tel quel —
+  l'UI affiche un EmptyState, pas une erreur. Read-only, bare-safe (réutilise `read_blob`), idempotent. **404**
+  projet absent ; **422** SoT illisible). SoT-and-derive : éditer la carte dans le repo met à jour l'affichage.
 - **terminal** — `WS /ws/terminal/{project}` (PTY **local** `bash -l`, workdir borné).
 
 Un endpoint qui borne/tronque le **signale** dans sa réponse. `WS /ws/dispatch/{job}` (streaming live du

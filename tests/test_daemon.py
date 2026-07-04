@@ -355,6 +355,48 @@ def test_adopt_repo_over_http_shows_real_code(client, tmp_path):
     assert bad.status_code == 400
 
 
+def test_docs_endpoint_reads_tool_card_then_readme_then_none(client, tmp_path):
+    """L'onglet Docs lit la carte `docs/tool-card.md` depuis le repo (SoT bare) ; repli `README.md` ;
+    `found:false` si aucune des deux. Read-only, bare-safe (aucun working-tree)."""
+    c, _ = client
+    genv = {"PATH": os.environ.get("PATH", ""), "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e.invalid",
+            "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e.invalid"}
+
+    def _seed(name: str, files: dict[str, str]) -> str:
+        up = tmp_path / name
+        up.mkdir()
+        run.run(["git", "init", "-q", "-b", "dev", str(up)], env=genv)
+        for rel, content in files.items():
+            p = up / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content, encoding="utf-8")
+        run.run(["git", "-C", str(up), "add", "-A"], env=genv)
+        run.run(["git", "-C", str(up), "commit", "-q", "-m", "seed"], env=genv)
+        return str(up)
+
+    # (1) repo AVEC la carte → la carte gagne (même si un README existe aussi)
+    src = _seed("carded", {"docs/tool-card.md": "# Mon outil\n\nPourquoi avec Claude.\n",
+                           "README.md": "# readme dev\n"})
+    c.post("/api/projects", json={"slug": "carded", "kind": "tool", "source_url": src})
+    d = c.get("/api/projects/carded/docs").json()
+    assert d["found"] is True and d["path"] == "docs/tool-card.md" and "Mon outil" in d["content"]
+
+    # (2) repo SANS carte mais AVEC README → repli README
+    src2 = _seed("readmeonly", {"README.md": "# juste un readme\n"})
+    c.post("/api/projects", json={"slug": "readmeonly", "kind": "tool", "source_url": src2})
+    d2 = c.get("/api/projects/readmeonly/docs").json()
+    assert d2["found"] is True and d2["path"] == "README.md" and "juste un readme" in d2["content"]
+
+    # (3) repo SANS carte NI README → found:false (l'UI affiche un EmptyState, pas une erreur)
+    src3 = _seed("nodocs", {"code.py": "x = 1\n"})
+    c.post("/api/projects", json={"slug": "nodocs", "kind": "tool", "source_url": src3})
+    d3 = c.get("/api/projects/nodocs/docs").json()
+    assert d3["found"] is False and d3["path"] is None
+
+    # projet inconnu → 404 (handler global), jamais un demi-état
+    assert c.get("/api/projects/ghost/docs").status_code == 404
+
+
 def test_bootstrap_route_preview_then_populates_tools_rail(client, tmp_path):
     """GET /api/bootstrap = aperçu idempotent (goto-only) ; POST = adopte les outils du manifeste → ils
     apparaissent classés `kind=tool` (rail « Outils »). Manifeste absent → available:false (no-op)."""

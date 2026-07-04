@@ -6,6 +6,7 @@ import {
   BootstrapPreviewSchema,
   BootstrapReportSchema,
   DispatchReportSchema,
+  DocsSchema,
   GateStatusSchema,
   GitBlobSchema,
   GitCommitDetailSchema,
@@ -129,6 +130,10 @@ export const api = {
         `?operation=${encodeURIComponent(selector)}&ref=${encodeURIComponent(ref)}&depth=${depth}`,
       FlowSchema,
     ),
+
+  // Docs : la carte du projet/outil, lue depuis son repo (SoT). GET idempotent (lecture bare, goto-safe).
+  getDocs: (project: string) =>
+    request(`/api/projects/${encodeURIComponent(project)}/docs`, DocsSchema),
 
   getNext: (project: string, feature: string) =>
     request(

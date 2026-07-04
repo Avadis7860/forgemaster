@@ -480,3 +480,15 @@ export type BootstrapReport = z.infer<typeof BootstrapReportSchema>
 export interface BootstrapRunInput {
   shared_ref?: string | null
 }
+
+// GET /api/projects/{p}/docs : la carte docs d'un projet, LUE depuis son repo (SoT). `found:false` = ni carte
+// `docs/tool-card.md` ni `README.md` → l'UI affiche un EmptyState. `content` = Markdown brut (rendu client).
+export const DocsSchema = z.object({
+  project: z.string(),
+  found: z.boolean(),
+  ref: z.string().nullable(),
+  path: z.string().nullable(),
+  content: z.string(),
+  truncated: z.boolean(),
+})
+export type Docs = z.infer<typeof DocsSchema>

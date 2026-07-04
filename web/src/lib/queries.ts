@@ -16,6 +16,7 @@ export const qk = {
   gitDiff: (project: string, base: string, head: string) => ['git-diff', project, base, head] as const,
   gitHistory: (project: string, ref: string, path: string) =>
     ['git-history', project, ref, path] as const,
+  docs: (project: string) => ['docs', project] as const,
   flowOps: (project: string, ref: string) => ['flow-ops', project, ref] as const,
   flow: (project: string, selector: string, ref: string, depth: number) =>
     ['flow', project, selector, ref, depth] as const,
@@ -62,6 +63,16 @@ export function useGit(project: string) {
     queryKey: qk.git(project),
     queryFn: () => api.getGit(project),
     enabled: Boolean(project),
+  })
+}
+
+// Carte docs d'un projet (lue depuis son repo). GET idempotent ; stable (la doc change peu).
+export function useDocs(project: string) {
+  return useQuery({
+    queryKey: qk.docs(project),
+    queryFn: () => api.getDocs(project),
+    enabled: Boolean(project),
+    staleTime: 60_000,
   })
 }
 

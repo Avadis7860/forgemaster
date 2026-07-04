@@ -48,6 +48,7 @@ def build_app(settings: Settings) -> FastAPI:
         bootstrap,
         codemap,
         dispatch,
+        docs,
         gate,
         git,
         onboarding,
@@ -75,7 +76,7 @@ def build_app(settings: Settings) -> FastAPI:
     for make_router in (projects.make_projects_router, roadmap.make_roadmap_router,
                         dispatch.make_dispatch_router, gate.make_gate_router,
                         git.make_git_router, codemap.make_codemap_router,
-                        onboarding.make_onboarding_router,
+                        docs.make_docs_router, onboarding.make_onboarding_router,
                         bootstrap.make_bootstrap_router, terminal.make_terminal_router):
         app.include_router(make_router())
 
