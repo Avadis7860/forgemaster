@@ -5,6 +5,17 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Consommateur code-map : cache (SHA, schema_version) + découplage du layout interne (code-map P6)
+- **Clé de cache d'index enrichie de `schema_version`** (`codemap/index.py`) : le dossier dérivé passe de
+  `home/codemap/<projet>/<sha>` à `home/codemap/<projet>/<sha>/<schema>`. Un upgrade de code-map (nouveau
+  contrat : `schema_version` différent, lu via `codemap --schema-version` **sans index**) ouvre un dossier
+  neuf → **rebuild automatique**. Ferme le trou « il fallait vider le cache à la main après un déploiement
+  de code-map » (l'ancien index n'est jamais servi périmé). Verrou : `test_index_cache_key_includes_schema_version`.
+- **Découplage du nom de fichier interne de code-map** : le cache-hit n'inspecte plus `.codemap/calls.manifest.json`
+  (organe interne de code-map) mais un **marqueur propre au cockpit** (`.cockpit-index-built`) écrit après un
+  build réussi. On dépend du **contrat** de code-map (rc, `--schema-version`, stdout JSON), plus de son
+  arborescence — code-map peut réorganiser ses fichiers internes sans casser le cockpit.
+
 ### Indicateur d'auth Claude dans l'UI — l'état d'auth devient visible
 - **`ClaudeAuthStatus.tsx`** (nouveau) : composant réutilisable qui rend l'état `claude_auth` du GET
   onboarding — `ClaudeAuthBadge` (pastille inline) + `ClaudeAuthBlock` (encart avec l'instruction

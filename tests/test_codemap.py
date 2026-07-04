@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from cockpit.codemap import flow as flow_svc
 from cockpit.codemap.index import (
+    _BUILT_MARKER,
     CodemapError,
     IndexHandle,
     codemap_argv,
@@ -73,18 +74,24 @@ def _settings(tmp: Path) -> Settings:
 
 
 class _FakeRunner:
-    """Runner injecté : simule `codemap build` (écrit le marqueur d'index dans `--root`) et relaie une sortie
-    JSON canned pour les requêtes `flow`. Enregistre les argv vus (assertions de cache)."""
+    """Runner injecté : répond `--schema-version`, simule `codemap build` (rc), et relaie une sortie JSON
+    canned pour les requêtes `flow`. Enregistre les argv vus (assertions de cache). `schema` permet de
+    simuler un upgrade de contrat de code-map (deux runners = deux versions)."""
 
-    def __init__(self, *, build_ok: bool = True, flow_stdout: str = "{}") -> None:
+    def __init__(self, *, build_ok: bool = True, flow_stdout: str = "{}", schema: str = "1.3.0") -> None:
         self.calls: list[list[str]] = []
         self.build_ok = build_ok
         self.flow_stdout = flow_stdout
+        self.schema = schema
 
     def __call__(self, argv, *, cwd=None, timeout=None, **_kw) -> RunResult:  # noqa: ANN001
         self.calls.append(list(argv))
+        if "--schema-version" in argv:
+            return RunResult(argv=list(argv), returncode=0, stdout=self.schema + "\n", stderr="")
         if "build" in argv:
             if self.build_ok and cwd is not None:
+                # simule l'écriture de l'index par code-map (nom interne) — le cockpit ne le lit PLUS pour
+                # décider du cache-hit (il écrit son propre marqueur), mais un vrai build le produirait.
                 marker = Path(cwd) / ".codemap" / "calls.manifest.json"
                 marker.parent.mkdir(parents=True, exist_ok=True)
                 marker.write_text("{}", encoding="utf-8")
@@ -129,12 +136,24 @@ def test_ensure_index_materializes_builds_then_caches(tmp_path: Path):
     h = ensure_index(settings, "p", sot, runner=fake)
     assert isinstance(h, IndexHandle) and h.ref == "dev" and h.sha
     assert (h.root / "app.py").is_file()                       # arbre matérialisé
-    assert (h.root / ".codemap" / "calls.manifest.json").is_file()
-    assert index_dir_for(settings, "p", h.sha) == h.root       # dossier clé par SHA sous home
+    assert (h.root / _BUILT_MARKER).is_file()                  # marqueur PROPRE au cockpit (découplé)
+    assert index_dir_for(settings, "p", h.sha, "1.3.0") == h.root   # clé = (SHA, schema)
     assert fake.builds == 1
-    # 2e appel, même SHA → cache hit : ni re-build ni re-matérialisation
+    # 2e appel, même SHA + même schema → cache hit : ni re-build ni re-matérialisation
     h2 = ensure_index(settings, "p", sot, runner=fake)
     assert h2.root == h.root and fake.builds == 1
+
+
+def test_index_cache_key_includes_schema_version(tmp_path: Path):
+    """Trou porté fermé : un upgrade de code-map (schema_version différent) ouvre un dossier de cache neuf →
+    rebuild automatique, l'ancien index n'est jamais servi périmé (plus de vidage manuel post-déploiement)."""
+    settings, sot = _settings(tmp_path), _seed_py_bare(tmp_path)
+    old, new = _FakeRunner(schema="1.2.0"), _FakeRunner(schema="1.3.0")  # gardés vivants → ids distincts
+    h_old = ensure_index(settings, "p", sot, runner=old)
+    h_new = ensure_index(settings, "p", sot, runner=new)
+    assert h_old.root != h_new.root                            # schema dans la clé → dossiers distincts
+    assert h_old.root.name == "1.2.0" and h_new.root.name == "1.3.0"
+    assert old.builds == 1 and new.builds == 1                 # rebuild pour le nouveau schéma
 
 
 def test_ensure_index_build_failure_raises(tmp_path: Path):

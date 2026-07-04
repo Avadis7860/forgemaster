@@ -54,3 +54,6 @@ dist/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# index code-map local (cache dérivé, reconstructible — jamais suivi)
+.codemap/
