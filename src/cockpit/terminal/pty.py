@@ -36,6 +36,15 @@ def local_shell_argv(shell: str = "/bin/bash") -> list[str]:
     return [shell, "-l"]
 
 
+def shell_env() -> dict[str, str]:
+    """Environnement du shell PTY : hérite du process **et force un terminal COULEUR**. Un service systemd
+    n'a pas de `TERM` dans son env → sans ça, le PTY lance `bash` avec `TERM` vide et bash/ls/git/less
+    **désactivent la couleur** (prompt et sorties monochromes). xterm.js EST un terminal `xterm-256color` :
+    on l'annonce. `COLORTERM=truecolor` débloque la 24-bit des outils modernes. (Le login shell charge
+    ensuite le profil de l'utilisateur pour les alias/`PS1`.)"""
+    return {**os.environ, "TERM": "xterm-256color", "COLORTERM": "truecolor"}
+
+
 def resolve_workdir(settings: Settings, project: str, subpath: str | None = None) -> str:
     """Workdir d'un terminal de projet, **borné** au dossier du projet (`<projects_root>/<project>`) via
     `fs.safe_path` (#4, anti-traversal). `subpath` relatif → résolu sous la racine ; tout `..` qui sort →

@@ -64,11 +64,29 @@ def test_spa_served_with_client_side_fallback_when_build_present(client):
         pytest.skip("build web/dist absent (mode API pure)")
     root = c.get("/")
     assert root.status_code == 200 and "text/html" in root.headers["content-type"]
+    # index.html JAMAIS mis en cache heuristiquement (sinon un redeploy montre l'ancienne app) → no-cache
+    assert "no-cache" in root.headers.get("cache-control", "")
     # deep-link rafraîchi (route client-side inconnue du serveur) → index.html, pas 404
     deep = c.get("/void-runner")
     assert deep.status_code == 200 and "text/html" in deep.headers["content-type"]
+    assert "no-cache" in deep.headers.get("cache-control", "")
     # une API inexistante reste un 404 JSON (jamais l'index servi à sa place)
     assert c.get("/api/bogus").status_code == 404
+
+
+def test_hashed_assets_served_immutable(client):
+    """Les assets hashés (content-addressed) sont servis `immutable` : un rebuild change l'URL, jamais de
+    stale. Contrepartie du `no-cache` de l'index — le couple qui tue le « redeploy mais vieille app »."""
+    c, _ = client
+    assets = app_mod.web_dist_dir() / "assets"
+    if not assets.is_dir():
+        pytest.skip("build web/dist absent (mode API pure)")
+    name = next((p.name for p in assets.iterdir() if p.is_file()), None)
+    if name is None:
+        pytest.skip("aucun asset hashé dans le build")
+    r = c.get(f"/assets/{name}")
+    assert r.status_code == 200
+    assert "immutable" in r.headers.get("cache-control", "")
 
 
 def test_cors_allows_vite_dev_origin(client):

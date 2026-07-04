@@ -95,9 +95,12 @@ def _mount_spa(app: FastAPI) -> None:
     """Sert le build SPA en statique + **fallback index.html** (routing client-side) — SEULEMENT si le build
     existe. Monté en dernier : `/api`, `/ws`, `/health` (routes déjà déclarées) gagnent ; le catch-all GET ne
     capte que le reste et refuse `api/`/`ws/` (→ 404 JSON, jamais index.html à la place d'une API)."""
+    from typing import Any
+
     from fastapi.responses import FileResponse
     from fastapi.staticfiles import StaticFiles
     from starlette.exceptions import HTTPException
+    from starlette.responses import Response
 
     dist = web_dist_dir()
     index = dist / "index.html"
@@ -105,9 +108,19 @@ def _mount_spa(app: FastAPI) -> None:
         _mount_missing_ui_placeholder(app, dist)         # fail-loud : jamais un 404 muet « API sans UI »
         return
 
+    # Politique de cache SPA (évite le « j'ai redéployé mais le navigateur montre l'ancien ») : les assets
+    # sont HASHÉS (content-addressed) → cache long `immutable` (un rebuild change l'URL, jamais de stale) ;
+    # `index.html`, lui, N'est pas hashé et pointe les assets courants → `no-cache` (toujours revalidé), sinon
+    # le navigateur le garde en cache heuristique et sert une vieille app après un déploiement.
+    class _ImmutableAssets(StaticFiles):
+        async def get_response(self, path: str, scope: Any) -> Response:
+            resp = await super().get_response(path, scope)
+            resp.headers.setdefault("Cache-Control", "public, max-age=31536000, immutable")
+            return resp
+
     assets = dist / "assets"
     if assets.is_dir():
-        app.mount("/assets", StaticFiles(directory=str(assets)), name="assets")
+        app.mount("/assets", _ImmutableAssets(directory=str(assets)), name="assets")
 
     @app.get("/{path:path}", include_in_schema=False)
     async def spa(path: str) -> FileResponse:
@@ -116,7 +129,7 @@ def _mount_spa(app: FastAPI) -> None:
         file = dist / path
         if path and file.is_file():                     # fichiers racine (favicon, etc.)
             return FileResponse(file)
-        return FileResponse(index)                       # sinon → SPA (deep-link rafraîchi)
+        return FileResponse(index, headers={"Cache-Control": "no-cache"})  # SPA (deep-link rafraîchi)
 
 
 _MISSING_UI_HTML = (
