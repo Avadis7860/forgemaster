@@ -214,7 +214,9 @@ def _h_setup(settings: Settings, args: argparse.Namespace) -> int:
     except webbuild.FrontBuildError as exc:
         print(f"erreur : {exc}")
         return 1
-    print(f"UI buildée → {dist}. Lance `cockpit serve`.")
+    print(f"UI buildée → {dist}.")
+    print(webbuild.ensure_codemap())     # from-clone : rend `python -m codemap` dispo (onglet Flow)
+    print("Lance `cockpit serve`.")
     return 0
 
 

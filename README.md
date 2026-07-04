@@ -31,12 +31,13 @@ Multi-worktree = plusieurs features en parallèle. Backend git **internal-first*
 Héberge ta propre instance — guide complet : [`docs/install.md`](docs/install.md).
 
 ```bash
-# le plus simple : wheel packagé, l'UI est incluse (aucun Node requis)
+# le plus simple : wheel packagé, l'UI ET code-map (onglet Flow) inclus (aucun Node requis)
 pip install cockpit-0.1.0-py3-none-any.whl
 cockpit serve                 # http://127.0.0.1:8700 → wizard /setup au 1er démarrage
 ```
 
-Depuis les sources : `pip install -e .` puis `cockpit setup` (build l'UI, Node requis). Service systemd :
+Depuis les sources : `pip install -e .` puis `cockpit setup` (build l'UI + câble code-map depuis un clone
+sibling `../code-map` ; Node requis). Service systemd :
 `cockpit install-service`.
 
 ## Développement

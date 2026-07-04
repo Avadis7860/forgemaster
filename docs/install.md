@@ -14,7 +14,8 @@ Node requis) ou **depuis les sources** (clone + build du front).
 
 ### A. Depuis un wheel packagé — recommandé (aucun Node)
 
-L'interface web voyage **dans le wheel** : `pip install` suffit, rien à builder.
+L'interface web **et l'outil code-map** voyagent **dans le wheel** : `pip install` suffit, rien à builder ni
+à installer en plus — l'onglet **Flow** (cartes d'exécution) fonctionne dès le 1ᵉʳ démarrage.
 
 ```bash
 python3 -m venv ~/.venvs/cockpit && . ~/.venvs/cockpit/bin/activate
@@ -33,8 +34,13 @@ pip install -e .            # (ajoute [dev] pour l'outillage qualité)
 cockpit setup               # build l'UI (npm) — nécessite Node ; fail-loud sinon
 ```
 
-`cockpit setup` construit `web/dist`. Sans lui (ou sans Node), le daemon tourne en **API-only** et sert une
-page d'aide à `/` expliquant quoi faire — jamais un écran blanc silencieux.
+`cockpit setup` construit `web/dist` **et** rend `python -m codemap` disponible (il installe code-map depuis
+un clone **sibling** `../code-map` s'il existe — sinon il te le dit ; l'onglet Flow en a besoin). Sans build
+front (ou sans Node), le daemon tourne en **API-only** et sert une page d'aide à `/` expliquant quoi faire —
+jamais un écran blanc silencieux.
+
+> Pour le chemin sources, clone **code-map à côté du cockpit** (`git clone …/code-map` en sibling) avant
+> `cockpit setup`. Le wheel packagé (chemin A) n'en a pas besoin : code-map y est déjà inclus.
 
 ## Premier démarrage
 
@@ -151,7 +157,9 @@ du backend se fait à l'installation (env / `cockpit.env`), pas à chaud.
 
 ## Mettre à jour
 
-- Wheel : `pip install --upgrade <nouveau wheel>` puis redémarre le service.
+- Wheel : `pip install --upgrade <nouveau wheel>` puis redémarre le service. *(Si tu ré-installes la **même
+  version** — ex. un rebuild local sans bump — `--upgrade` est un no-op ; ajoute `--force-reinstall
+  --no-deps` pour forcer le remplacement des fichiers.)*
 - Sources : `git pull && pip install -e . && cockpit setup` puis redémarre.
 
 Le schéma SQLite **migre en place** au démarrage (idempotent) — aucune action manuelle.

@@ -119,4 +119,8 @@ fi
 
 echo "✓ cockpit provisionné → http://$host:$port"
 echo "  ouvre-le : le rail « Outils » présente les outils du manifeste, avec leur VRAI contenu git."
-[ "$with_claude" = "yes" ] && echo "  onglet Terminal : tape \`claude\` pour lancer Claude Code (login au 1er run)."
+# `if` (pas `[ … ] && echo`) : en fin de script, un test faux hériterait son rc au script → sortie ≠ 0 en
+# succès, ce qui casserait un appelant `set -e` / la CI-on-tag. On garde un rc 0 explicite.
+if [ "$with_claude" = "yes" ]; then
+  echo "  onglet Terminal : tape \`claude\` pour lancer Claude Code (login au 1er run)."
+fi

@@ -9,8 +9,10 @@ re-committe JAMAIS la dist dans git (respecte `docs/specs/web-cockpit-spa.md`).
 """
 from __future__ import annotations
 
+import importlib.util
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -52,3 +54,35 @@ def build_front(web_dir: Path, *, clean_install: bool = True) -> Path:
     if not (dist / "index.html").is_file():
         raise FrontBuildError(f"build terminé mais {dist / 'index.html'} absent — build front cassé ?")
     return dist
+
+
+def find_codemap_src(start: Path | None = None) -> Path | None:
+    """Localise un checkout **code-map** sibling (`…/code-map` portant `src/codemap/__main__.py`) en remontant
+    depuis le checkout cockpit. `None` si absent. Sert au chemin from-clone : en install wheel code-map est
+    déjà empaqueté, mais un clone des sources ne l'a pas."""
+    here = (start or Path(__file__)).resolve()
+    for base in here.parents:
+        cand = base / "code-map" / "src" / "codemap" / "__main__.py"
+        if cand.is_file():
+            return base / "code-map"
+    return None
+
+
+def ensure_codemap() -> str:
+    """Garantit que `python -m codemap` marche dans le venv courant — requis par l'onglet **Flow**
+    (`src/cockpit/codemap/index.py` invoque `sys.executable -m codemap`). En install **wheel**, code-map est
+    déjà empaqueté (rien à faire). En **from-clone**, code-map n'est PAS dans les sources cockpit : on
+    l'installe depuis un checkout sibling `../code-map` s'il existe. **Jamais fatal** — Flow est une surface,
+    pas le cœur CLI ; on rend un message d'état actionnable."""
+    if importlib.util.find_spec("codemap") is not None:
+        return "code-map déjà disponible (`python -m codemap`)."
+    src = find_codemap_src()
+    if src is None:
+        return ("code-map introuvable → l'onglet Flow restera indisponible. Clone-le en sibling du cockpit "
+                "(`git clone …/code-map` à côté) puis relance `cockpit setup`, ou installe le wheel packagé "
+                "(code-map y est inclus).")
+    try:
+        subprocess.run([sys.executable, "-m", "pip", "install", str(src)], check=True)
+    except subprocess.CalledProcessError as exc:
+        return f"install code-map échouée ({' '.join(exc.cmd)} → code {exc.returncode}) — Flow indisponible."
+    return f"code-map installé depuis {src} (`python -m codemap`)."
