@@ -120,10 +120,13 @@ export const api = {
       `/api/projects/${encodeURIComponent(project)}/flow/operations?ref=${encodeURIComponent(ref)}`,
       FlowOperationsSchema,
     ),
-  getFlow: (project: string, operation: string, ref = 'dev', depth = 6) =>
+  // `selector` = l'`entry` unique (`file::qualname`) de l'opération. Le backend le résout via `_resolve_entry`
+  // (matche `operation` OU `entry`) → on passe l'entry pour lever toute ambiguïté de label. Param d'URL
+  // inchangé (`operation`) : le backend accepte l'un ou l'autre.
+  getFlow: (project: string, selector: string, ref = 'dev', depth = 6) =>
     request(
       `/api/projects/${encodeURIComponent(project)}/flow` +
-        `?operation=${encodeURIComponent(operation)}&ref=${encodeURIComponent(ref)}&depth=${depth}`,
+        `?operation=${encodeURIComponent(selector)}&ref=${encodeURIComponent(ref)}&depth=${depth}`,
       FlowSchema,
     ),
 

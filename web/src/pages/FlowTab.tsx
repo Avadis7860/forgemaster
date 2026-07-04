@@ -5,7 +5,9 @@ import { useFlow, useFlowOperations } from '@/lib/queries'
 
 /** Onglet Flow : le FLOT D'EXÉCUTION d'une opération (route API ou verbe CLI) du projet, rendu par
  *  `<FlowGraph/>` depuis l'index code-map (boîte-noire). Le sélecteur liste les opérations découvertes ;
- *  `?op=<operation>` rend la vue deep-linkable (goto-safe pour la boucle visuelle). */
+ *  `?op=<entry>` rend la vue deep-linkable (goto-safe pour la boucle visuelle). L'`entry` (`file::qualname`,
+ *  UNIQUE) sert d'identité — PAS le label : deux opérations peuvent partager un label (ex. `cli:main` dans
+ *  deux fichiers), et l'adresser par label en masquerait une (le backend résout le 1ᵉʳ match). */
 export function FlowTab() {
   const project = useParams({ strict: false }).project ?? ''
   const { op } = useSearch({ strict: false }) as { op?: string }
@@ -13,12 +15,18 @@ export function FlowTab() {
 
   const ops = useFlowOperations(project)
   const operations = ops.data?.operations ?? []
-  // Sélection : ?op= si présent, sinon la 1ʳᵉ route (frontière d'entrée la plus parlante), sinon la 1ʳᵉ op.
-  const selected = op ?? operations.find((o) => o.kind === 'route')?.operation ?? operations[0]?.operation ?? ''
+  // Sélection par `entry` (unique) : ?op= si présent, sinon la 1ʳᵉ route (frontière la plus parlante), sinon
+  // la 1ʳᵉ op. On tolère un ?op= désormais introuvable (index nettoyé/rebuild) en retombant sur le défaut.
+  const known = operations.some((o) => o.entry === op)
+  const selected =
+    (known ? op : undefined) ?? operations.find((o) => o.kind === 'route')?.entry ?? operations[0]?.entry ?? ''
   const flow = useFlow(project, selected)
 
   const setOp = (value: string) =>
     navigate({ to: '/$project/flow', params: { project }, search: { op: value }, replace: true })
+
+  // Deux opérations peuvent porter le même label → on montre le fichier pour désambiguïser à l'œil.
+  const fileOf = (entry: string) => entry.split('::')[0]
 
   if (ops.isLoading) return <div className="p-8"><LoadingState label="Découverte des opérations…" /></div>
   if (ops.isError) {
@@ -55,12 +63,20 @@ export function FlowTab() {
         >
           {routes.length > 0 && (
             <optgroup label="Routes API">
-              {routes.map((o) => <option key={o.operation} value={o.operation}>{o.operation}</option>)}
+              {routes.map((o) => (
+                <option key={`${o.kind}:${o.operation}:${o.entry}`} value={o.entry}>
+                  {o.operation} — {fileOf(o.entry)}
+                </option>
+              ))}
             </optgroup>
           )}
           {clis.length > 0 && (
             <optgroup label="Verbes CLI">
-              {clis.map((o) => <option key={o.operation} value={o.operation}>{o.operation}</option>)}
+              {clis.map((o) => (
+                <option key={`${o.kind}:${o.operation}:${o.entry}`} value={o.entry}>
+                  {o.operation} — {fileOf(o.entry)}
+                </option>
+              ))}
             </optgroup>
           )}
         </select>
