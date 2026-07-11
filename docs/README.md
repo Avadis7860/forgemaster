@@ -2,6 +2,7 @@
 
 | Fichier | Rôle |
 |---|---|
+| [`roadmap.md`](roadmap.md) | **Roadmap produit** : vision (cœur léger + extensions), chantiers V1 livrés, décisions de conception verrouillées, horizons ouverts. |
 | [`install.md`](install.md) | **Installer le cockpit** (self-hosted) : wheel packagé (aucun Node) ou sources, wizard 1er démarrage, service systemd, coffre de secrets. |
 | [`architecture.md`](architecture.md) | Les couches (config → core/db → git/projects/roadmap/dispatch/gate → daemon) + « ce que cockpit n'est PAS ». |
 | [`schema-contract.md`](schema-contract.md) | Les 3 schémas **figés** : SQLite, `roadmap.yaml` in-repo, API HTTP + politique de versionnage. |
