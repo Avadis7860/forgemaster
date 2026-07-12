@@ -89,6 +89,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--max-parallel", type=int, default=2,
                        help="nombre max de workers concurrents (features en parallèle ; défaut 2)")
 
+    # -- deploy -------------------------------------------------------------------------------------
+    p_deploy = sub.add_parser("deploy", parents=[common],
+                              help="cycle de vie du service d'un projet (backend compose, P2 runtime)")
+    p_deploy_sub = p_deploy.add_subparsers(dest="action", required=True, metavar="<action>")
+    for _act, _help in (("up", "build + démarrer le service (up -d --build)"),
+                        ("down", "arrêter + retirer conteneurs/réseau (down)"),
+                        ("restart", "redémarrer les conteneurs (restart)"),
+                        ("status", "réconcilier l'état live (ps) — read-only")):
+        _pd = p_deploy_sub.add_parser(_act, parents=[common], help=_help)
+        _pd.add_argument("slug")
+        _pd.add_argument("branch", choices=["main", "dev"], help="déploiement : main (prod) ou dev (preview)")
+
     # -- gate ---------------------------------------------------------------------------------------
     p_gate = sub.add_parser("gate", parents=[common], help="gate de review / vérification")
     p_gate_sub = p_gate.add_subparsers(dest="action", required=True, metavar="<action>")
@@ -190,6 +202,11 @@ def _h_run(settings: Settings, args: argparse.Namespace) -> int:
     return orchestrator.cli_dispatch(settings, args)
 
 
+def _h_deploy(settings: Settings, args: argparse.Namespace) -> int:
+    from cockpit.runtime import engine
+    return engine.cli_dispatch(settings, args)
+
+
 def _h_gate(settings: Settings, args: argparse.Namespace) -> int:
     from cockpit.gate import review, toolchain, verify
     mod = {"review": review, "verify": verify, "toolchain": toolchain}[args.action]
@@ -250,6 +267,7 @@ _HANDLERS = {
     "task": _h_task,
     "dispatch": _h_dispatch,
     "run": _h_run,
+    "deploy": _h_deploy,
     "gate": _h_gate,
     "merge": _h_merge,
     "onboard": _h_onboard,

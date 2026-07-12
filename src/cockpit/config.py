@@ -18,10 +18,12 @@ from pathlib import Path
 ENV_HOME = "COCKPIT_HOME"
 ENV_PROJECTS_ROOT = "COCKPIT_PROJECTS_ROOT"
 ENV_SECRET_STORE = "COCKPIT_SECRET_STORE"
+ENV_COMPOSE_CMD = "COCKPIT_COMPOSE_CMD"
 
 DEFAULT_HOME = "~/.cockpit"
 DEFAULT_PROJECTS_ROOT = "~/projects"
 DEFAULT_SECRET_STORE = "file"  # coffre par défaut : EncryptedFileStore (portable, zéro-config). Cf. secrets/.
+DEFAULT_COMPOSE_CMD = "podman compose"  # moteur de run (P2) : podman-rootless par défaut (édition publique).
 
 
 @dataclass(frozen=True)
@@ -31,6 +33,9 @@ class Settings:
     home: Path
     projects_root: Path
     secret_store: str = "file"  # sélecteur du coffre de credentials : "file" | "bws" (cf. secrets/).
+    # Préfixe de commande du moteur compose (P2 runtime). Défaut podman-rootless ; `("docker","compose")`
+    # via `COCKPIT_COMPOSE_CMD` est un simple réglage (le backend est abstrait, cf. runtime/backend.py).
+    compose_cmd: tuple[str, ...] = ("podman", "compose")
 
     @property
     def db_path(self) -> Path:
@@ -53,14 +58,18 @@ class Settings:
         home: str | os.PathLike[str] | None = None,
         projects_root: str | os.PathLike[str] | None = None,
         secret_store: str | None = None,
+        compose_cmd: str | None = None,
     ) -> Settings:
         """Résout les racines. Priorité par racine : argument explicite > variable d'env > défaut.
         `~` est toujours développé ; les chemins sont rendus absolus (jamais relatifs au cwd courant).
-        `secret_store` est un sélecteur (chaîne, non normalisé), pas un chemin."""
+        `secret_store` est un sélecteur (chaîne, non normalisé), pas un chemin. `compose_cmd` est une
+        chaîne (préfixe splité sur les espaces, ex. `"docker compose"`), normalisée en tuple."""
         h = _pick(home, os.environ.get(ENV_HOME), DEFAULT_HOME)
         p = _pick(projects_root, os.environ.get(ENV_PROJECTS_ROOT), DEFAULT_PROJECTS_ROOT)
         s = _pick(secret_store, os.environ.get(ENV_SECRET_STORE), DEFAULT_SECRET_STORE)
-        return Settings(home=_norm(h), projects_root=_norm(p), secret_store=s)
+        c = _pick(compose_cmd, os.environ.get(ENV_COMPOSE_CMD), DEFAULT_COMPOSE_CMD)
+        return Settings(home=_norm(h), projects_root=_norm(p), secret_store=s,
+                        compose_cmd=tuple(c.split()))
 
 
 def _pick(explicit: object, env: str | None, default: str) -> str:

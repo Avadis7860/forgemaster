@@ -8,9 +8,9 @@
 | [`schema-contract.md`](schema-contract.md) | Les 3 schémas **figés** : SQLite, `roadmap.yaml` in-repo, API HTTP + politique de versionnage. |
 | [`weak-points.md`](weak-points.md) | Le **registre de refactor** : dettes du legacy refusées → refactor décidé (la spec du portage, `#N`). |
 | [`multi-os.md`](multi-os.md) | Portabilité WSL-first / Debian / macOS + checklist. |
-| [`specs/`](specs/) | Les **6 décisions distillées** du vault en contraintes de design (règles verrouillées + invariants de test). |
+| [`specs/`](specs/) | Les **décisions distillées** en contraintes de design (règles verrouillées + invariants de test). |
 
-## Les 6 specs (`specs/`)
+## Les specs (`specs/`)
 
 - `worktree-cleanup-at-merge` — cleanup worktree AVANT `branch -D` ; port↔worktree couplé.
 - `merge-writeback-injected-creds-identity` — creds+identité injectés le temps du writeback (réf, pas secret).
@@ -18,3 +18,6 @@
 - `sot-local-worker-vs-clone-split` — worktree attaché au SoT partagé ; flock sur le `.git`.
 - `feature-verified-gate` — gate déterministe fail-closed, ancré SHA, jamais blanchi, N/A-safe.
 - `forge-code-merge-sot-local` — cockpit EST la forge ; SoT local ; reset=respawn ; miroir best-effort.
+- `tier0-native-toolchain-gate` — Tier-0 natif (front `npm run gate` + back ruff/mypy/pytest), non-overridable.
+- `web-cockpit-spa` — SPA embarquée (Vite/TanStack), servie Node-less depuis le wheel.
+- `runtime-compose-backend` — moteur de run compose ; namespace `cockpit-<slug>-<branch>` = isolation ; pool deploy 5250-5329.
