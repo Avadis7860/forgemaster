@@ -13,6 +13,7 @@ les stubs à porter. Décisions verrouillées reflétées dans les signatures (c
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -59,6 +60,17 @@ class GitBackend(Protocol):
     def push_mirror(self, sot: Path, remote: str) -> bool:
         """Pousse vers le miroir (GitHub). **Best-effort** : retourne False sur échec, ne lève JAMAIS
         (la vérité est le SoT local ; le miroir ne bloque rien — spec forge-sot-local)."""
+        ...
+
+    def remote_divergence(
+        self, sot: Path, *, remote: str, branches: Sequence[str], creds_ref: str | None = None
+    ) -> dict:
+        """Écart SoT↔remote par branche + rollup projet, avec **dégradation honnête**. Fetch best-effort
+        (auth transitoire via `creds_ref`, jamais persisté) puis compare chaque branche à sa ref de suivi.
+        Renvoie `{remote, fetched, branches:{<b>:{ahead,behind,state}}, state}` (rollup
+        `synced|local_ahead|remote_ahead|diverged`). **Jamais 0/0 faux-vert** : remote non configuré →
+        `no_mirror`, fetch échoué → `unreachable` (branches vides, `fetched=False`). Read-mostly : lit
+        l'état, ne mute pas le SoT (la réconciliation ff est une op séparée — spec forge-sot-local)."""
         ...
 
     def feature_sha(self, sot: Path, ref: str) -> str:

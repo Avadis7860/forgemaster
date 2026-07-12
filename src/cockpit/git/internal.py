@@ -22,7 +22,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -137,6 +137,35 @@ def classify_push_error(stdout: str, stderr: str) -> str:
 def is_protected_branch(branch: str | None) -> bool:
     """True si `branch` est protégée (push direct interdit : main/dev). PUR."""
     return (branch or "").strip() in PROTECTED_BRANCHES
+
+
+def _branch_sync_state(ahead: int, behind: int) -> str:
+    """État de sync d'UNE branche vs son miroir depuis (ahead, behind). PUR. `ahead` = commits locaux
+    absents du remote (SoT en avance → à pousser) ; `behind` = commits remote absents en local (remote en
+    avance → à ff). Les deux non nuls = vraie divergence non-ff (spec forge-sot-local : pas d'auto-merge)."""
+    if ahead and behind:
+        return "diverged"
+    if ahead:
+        return "local_ahead"
+    if behind:
+        return "remote_ahead"
+    return "synced"
+
+
+def _rollup_sync_state(branches: Mapping[str, dict]) -> str:
+    """Rollup projet depuis les états par-branche. PUR. Une seule branche divergée, OU des branches qui
+    tirent en sens opposés (l'une local-avance, l'autre remote-avance) = `diverged` au niveau projet (pas de
+    réconciliation ff unique). Sinon on remonte l'état non-`synced` dominant. Jamais 0/0 faux-vert : un input
+    vide (aucune branche comparable) reste `synced` seulement si l'appelant a bien fetché (sinon dégradé en
+    amont via `no_mirror`/`unreachable`)."""
+    states = {b["state"] for b in branches.values()}
+    if "diverged" in states or ("local_ahead" in states and "remote_ahead" in states):
+        return "diverged"
+    if "remote_ahead" in states:
+        return "remote_ahead"
+    if "local_ahead" in states:
+        return "local_ahead"
+    return "synced"
 
 
 # -- injection d'identité writeback (spec merge-writeback : env ponctuel, non persisté) --------------
@@ -435,6 +464,54 @@ class InternalGit:
         out = _checked(sot, "rev-list", "--left-right", "--count", f"{base}...{head}").stdout
         left, _, right = out.strip().partition("\t")
         return {"base": base, "head": head, "behind": int(left or 0), "ahead": int(right or 0)}
+
+    def remote_divergence(
+        self,
+        sot: Path,
+        *,
+        remote: str = "mirror",
+        branches: Sequence[str] = ("dev", "main"),
+        creds_ref: str | None = None,
+    ) -> dict:
+        """Écart SoT↔remote **par branche** + rollup projet, avec **dégradation honnête**. Fetch best-effort
+        d'abord (`fetch_remote`, auth transitoire via `creds_ref` — jamais persisté), puis compare chaque
+        branche locale à sa ref de suivi. Renvoie `{remote, fetched, branches, state}` où `branches` mappe
+        `<b> → {ahead, behind, state}` et `state` est le rollup.
+
+        Convention (identique à `ahead_behind`) : `<remote-ref>...<local-ref>` → gauche = commits remote
+        absents en local = `behind` ; droite = commits locaux absents du remote = `ahead`. États :
+        `synced | local_ahead | remote_ahead | diverged`.
+
+        **Jamais de 0/0 faux-vert** : remote non configuré → `no_mirror` (rien à comparer) ; fetch échoué
+        (injoignable/auth) → `unreachable` — dans les deux cas `branches={}` et `fetched=False`, l'appelant
+        signale l'état dégradé au lieu d'afficher « à jour ». Une branche absente d'un côté est un écart réel
+        (remote sans la branche → `local_ahead` ; local sans la branche → `remote_ahead`), pas `synced`."""
+        if not _git(sot, "remote", "get-url", remote).ok:
+            return {"remote": remote, "fetched": False, "branches": {}, "state": "no_mirror"}
+        if not self.fetch_remote(sot, remote, creds_ref=creds_ref):
+            return {"remote": remote, "fetched": False, "branches": {}, "state": "unreachable"}
+
+        per: dict[str, dict] = {}
+        for b in branches:
+            local = f"refs/heads/{b}"
+            tracked = f"refs/remotes/{remote}/{b}"
+            has_local = _git(sot, "rev-parse", "--verify", "--quiet", local).ok
+            has_tracked = _git(sot, "rev-parse", "--verify", "--quiet", tracked).ok
+            if not has_local and not has_tracked:
+                continue  # branche demandée inexistante des deux côtés → hors rapport (pas un faux-vert)
+            if has_local and has_tracked:
+                out = _checked(sot, "rev-list", "--left-right", "--count", f"{tracked}...{local}").stdout
+                left, _, right = out.strip().partition("\t")
+                behind, ahead = int(left or 0), int(right or 0)
+            elif has_local:  # le remote n'a pas encore la branche → tout le local est en avance
+                ahead = int(_checked(sot, "rev-list", "--count", local).stdout.strip() or 0)
+                behind = 0
+            else:  # seule la ref de suivi existe → le local est en retard de toute la branche remote
+                behind = int(_checked(sot, "rev-list", "--count", tracked).stdout.strip() or 0)
+                ahead = 0
+            per[b] = {"ahead": ahead, "behind": behind, "state": _branch_sync_state(ahead, behind)}
+
+        return {"remote": remote, "fetched": True, "branches": per, "state": _rollup_sync_state(per)}
 
     # -- exploration read-only du dépôt (arbre + contenu, bare-safe) ---------------------------------
 

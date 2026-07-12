@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from cockpit.core import run
+from cockpit.git.backend import GitBackend
 from cockpit.git.internal import (
     GitOpError,
     InternalGit,
@@ -279,6 +280,111 @@ def test_fetch_remote_missing_remote_returns_false_without_raising(tmp_path: Pat
     côté divergence P2). Best-effort strict : le miroir ne bloque jamais (spec forge-sot-local)."""
     sot = _seed_bare(tmp_path)
     assert InternalGit().fetch_remote(sot, "nope") is False
+
+
+def _advance(bare: Path, branch: str, wt: Path) -> str:
+    """Avance `branch` d'un commit sur un dépôt bare (worktree jetable). Renvoie le nouveau SHA."""
+    run.run(["git", "-C", str(bare), "worktree", "add", "-q", str(wt), branch], env=_ENV)
+    (wt / "change.txt").write_text(f"{wt.name}\n", encoding="utf-8")
+    _run("add", "-A", cwd=wt)
+    _run("commit", "-q", "-m", f"advance {branch}", cwd=wt)
+    return run.run(["git", "-C", str(bare), "rev-parse", branch], env=_ENV).stdout.strip()
+
+
+def _sot_with_mirror(tmp_path: Path) -> tuple[Path, Path, InternalGit]:
+    """Un upstream « GitHub » bare seedé + un SoT cloné DE lui (histoire partagée) + remote `mirror` câblé."""
+    up_root = tmp_path / "up"
+    down_root = tmp_path / "down"
+    up_root.mkdir()
+    down_root.mkdir()
+    upstream = _seed_bare(up_root)
+    sot = down_root / "sot"
+    assert run.run(["git", "clone", "--bare", "-q", str(upstream), str(sot)], env=_ENV).ok
+    git = InternalGit()
+    git.set_remote(sot, "mirror", str(upstream))
+    return upstream, sot, git
+
+
+def test_internal_git_satisfies_extended_backend_contract():
+    """InternalGit honore le contrat `GitBackend` étendu (bump P2 : `remote_divergence`) — garde-fou du
+    contrat figé runtime_checkable après ajout d'une méthode."""
+    assert isinstance(InternalGit(), GitBackend)
+
+
+def test_remote_divergence_all_synced(tmp_path: Path):
+    """SoT fraîchement cloné de l'upstream, rien n'a bougé → chaque branche `synced`, rollup `synced`."""
+    _upstream, sot, git = _sot_with_mirror(tmp_path)
+    d = git.remote_divergence(sot, remote="mirror", branches=("dev", "main"))
+    assert d["fetched"] is True and d["state"] == "synced"
+    assert d["branches"]["dev"] == {"ahead": 0, "behind": 0, "state": "synced"}
+    assert d["branches"]["main"] == {"ahead": 0, "behind": 0, "state": "synced"}
+
+
+def test_remote_divergence_remote_ahead(tmp_path: Path):
+    """GitHub prend de l'avance sur `dev` (cas vécu : travail hors cockpit) → `dev` `remote_ahead` (behind>0,
+    ahead=0), `main` `synced`, rollup `remote_ahead`."""
+    upstream, sot, git = _sot_with_mirror(tmp_path)
+    _advance(upstream, "dev", tmp_path / "u1")
+    d = git.remote_divergence(sot, remote="mirror", branches=("dev", "main"))
+    assert d["branches"]["dev"] == {"ahead": 0, "behind": 1, "state": "remote_ahead"}
+    assert d["branches"]["main"]["state"] == "synced"
+    assert d["state"] == "remote_ahead"
+
+
+def test_remote_divergence_local_ahead(tmp_path: Path):
+    """Le SoT local prend de l'avance sur `dev` → `dev` `local_ahead` (ahead>0, behind=0), rollup
+    `local_ahead` (à pousser, pas à ff)."""
+    _upstream, sot, git = _sot_with_mirror(tmp_path)
+    _advance(sot, "dev", tmp_path / "s1")
+    d = git.remote_divergence(sot, remote="mirror", branches=("dev", "main"))
+    assert d["branches"]["dev"] == {"ahead": 1, "behind": 0, "state": "local_ahead"}
+    assert d["state"] == "local_ahead"
+
+
+def test_remote_divergence_true_non_ff_on_one_branch(tmp_path: Path):
+    """`dev` avancé DES DEUX côtés → vraie divergence non-ff sur la branche (ahead>0 ET behind>0) → `diverged`
+    (spec forge-sot-local : signalé, jamais auto-mergé)."""
+    upstream, sot, git = _sot_with_mirror(tmp_path)
+    _advance(upstream, "dev", tmp_path / "u1")
+    _advance(sot, "dev", tmp_path / "s1")
+    d = git.remote_divergence(sot, remote="mirror", branches=("dev",))
+    assert d["branches"]["dev"] == {"ahead": 1, "behind": 1, "state": "diverged"}
+    assert d["state"] == "diverged"
+
+
+def test_remote_divergence_cross_branch_rolls_up_diverged(tmp_path: Path):
+    """Branches tirant en sens opposés (`dev` remote-avance, `main` local-avance) → aucune réconciliation ff
+    unique possible → rollup `diverged` même si chaque branche est ff-able isolément."""
+    upstream, sot, git = _sot_with_mirror(tmp_path)
+    _advance(upstream, "dev", tmp_path / "u1")
+    _advance(sot, "main", tmp_path / "s1")
+    d = git.remote_divergence(sot, remote="mirror", branches=("dev", "main"))
+    assert d["branches"]["dev"]["state"] == "remote_ahead"
+    assert d["branches"]["main"]["state"] == "local_ahead"
+    assert d["state"] == "diverged"
+
+
+def test_remote_divergence_branch_absent_on_remote_is_local_ahead(tmp_path: Path):
+    """Branche locale absente du remote → tout le local est « en avance » (`local_ahead`), jamais `synced`
+    (0/0 faux-vert interdit sur une branche non poussée)."""
+    _upstream, sot, git = _sot_with_mirror(tmp_path)
+    assert run.run(["git", "-C", str(sot), "branch", "feature-x", "dev"], env=_ENV).ok
+    d = git.remote_divergence(sot, remote="mirror", branches=("feature-x",))
+    fx = d["branches"]["feature-x"]
+    assert fx["behind"] == 0 and fx["ahead"] >= 1 and fx["state"] == "local_ahead"
+    assert d["state"] == "local_ahead"
+
+
+def test_remote_divergence_degrades_honestly_no_mirror_and_unreachable(tmp_path: Path):
+    """Dégradation honnête — jamais 0/0 faux-vert : pas de remote → `no_mirror` ; remote injoignable →
+    `unreachable`. Dans les deux cas `fetched=False`, `branches={}` (rien à comparer, on le DIT)."""
+    sot = _seed_bare(tmp_path)
+    git = InternalGit()
+    d0 = git.remote_divergence(sot, remote="mirror", branches=("dev", "main"))
+    assert d0 == {"remote": "mirror", "fetched": False, "branches": {}, "state": "no_mirror"}
+    git.set_remote(sot, "mirror", str(tmp_path / "does-not-exist.git"))
+    d1 = git.remote_divergence(sot, remote="mirror", branches=("dev", "main"))
+    assert d1 == {"remote": "mirror", "fetched": False, "branches": {}, "state": "unreachable"}
 
 
 def test_pure_parsers_and_classifiers():

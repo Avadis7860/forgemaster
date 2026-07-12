@@ -6,6 +6,7 @@ Statut : scaffoldé, non implémenté. Signatures figées par `git/backend.py`.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
 
@@ -38,6 +39,11 @@ class GitHubGit:
 
     def push_mirror(self, sot: Path, remote: str) -> bool:
         raise NotImplementedError("différé (P6) : backend GitHub")
+
+    def remote_divergence(
+        self, sot: Path, *, remote: str, branches: Sequence[str], creds_ref: str | None = None
+    ) -> dict:
+        raise NotImplementedError("différé (P6) : backend GitHub — écart SoT↔remote")
 
     def feature_sha(self, sot: Path, ref: str) -> str:
         raise NotImplementedError("différé (P6) : backend GitHub")

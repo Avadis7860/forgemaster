@@ -5,6 +5,26 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Sync miroir SoT↔GitHub — P2 : primitive `remote_divergence` (**bump du contrat `GitBackend`**)
+- **Le contrat figé `GitBackend` gagne une méthode** (`git/backend.py`, Protocol runtime-checkable) :
+  `remote_divergence(sot, *, remote, branches, creds_ref=None) -> dict`. Bump de contrat au sens de la
+  politique de versionnage (`docs/schema-contract.md`) : entrée dédiée, jamais en douce. `GitHubGit` stub le
+  reste cohérent (P6, `NotImplementedError`) ; `InternalGit` l'implémente.
+- **Écart SoT↔remote par branche + rollup projet, avec dégradation honnête** (`InternalGit.remote_divergence`,
+  à côté d'`ahead_behind`) : `fetch` best-effort (auth transitoire réutilisée de P1) puis
+  `rev-list --left-right --count <remote-ref>...<local-ref>` par branche → `{ahead, behind, state}` avec
+  `state ∈ {synced, local_ahead, remote_ahead, diverged}`. Renvoie
+  `{remote, fetched, branches, state}` où `state` est le rollup projet.
+- **Jamais de 0/0 faux-vert** (invariant central) : remote non configuré → `no_mirror` ; fetch échoué
+  (injoignable/auth) → `unreachable` — dans les deux cas `fetched=False` + `branches={}`. Une branche absente
+  d'un côté est un écart réel (`local_ahead`/`remote_ahead`), pas `synced`. Des branches qui tirent en sens
+  opposés (l'une local-avance, l'autre remote-avance) roulent en `diverged` (aucun ff unique) — la
+  réconciliation reste une op **séparée** (P5), la primitive ne mute pas le SoT.
+- Classifieurs **purs testables** extraits (`_branch_sync_state`, `_rollup_sync_state`). Verrous :
+  conformité au contrat étendu (`test_internal_git_satisfies_extended_backend_contract`) + matrice d'états
+  (synced / remote_ahead / local_ahead / non-ff sur une branche / rollup cross-branch `diverged` /
+  branche absente du remote / dégradations `no_mirror` + `unreachable`).
+
 ### Sync miroir SoT↔GitHub — P1 : remote fetchable + fetch authentifié (prérequis)
 - **Le miroir se matérialise enfin dans git** : `mirror_remote` n'était qu'une string en DB (jamais un
   `git remote`). `registry.create_project` (projet seedé) et `registry.set_mirror_remote` câblent désormais
