@@ -243,12 +243,35 @@ def test_deploy_rejects_invalid_branch_and_unknown_project(ctx):
         engine.deploy(conn, settings, slug="ghost", branch="dev", git=FakeGit(), backend=FakeBackend())
 
 
+class _NoComposeGit(FakeGit):
+    """Arbre archivé SANS aucun fichier compose — calque d'un type non-service (`cli-tool`/`generic`)."""
+
+    def archive(self, sot: Path, ref: str, dest_dir: Path) -> None:
+        Path(dest_dir).mkdir(parents=True, exist_ok=True)
+        (Path(dest_dir) / "README.md").write_text("pas de service déployable\n")
+        self.archived.append((ref, str(dest_dir)))
+
+
+def test_deploy_refuses_tree_without_compose(ctx):
+    """Pré-vol honnête (P3) : un arbre sans compose.yaml (type non-service) → `ValueError` clair (→ 400)
+    + `unhealthy`, et le backend n'est JAMAIS appelé (pas d'erreur podman opaque plus loin)."""
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="cli")
+    be = FakeBackend()
+    with pytest.raises(ValueError, match="n'expose pas de service déployable"):
+        engine.deploy(conn, settings, slug="cli", branch="dev", git=_NoComposeGit(), backend=be)
+    assert _dep(conn, "cli")["status"] == "unhealthy"       # jamais un faux-vert
+    assert be.calls == []                                   # refus AVANT tout appel moteur
+
+
 # -- routes POST du lifecycle (backend factice injecté au défaut de l'engine) ----------------------
 
 def test_deploy_route_up_reflected_then_down(client, monkeypatch):
     c, _ = client
     monkeypatch.setattr(engine, "PodmanCompose", lambda **_kw: FakeBackend())
-    assert c.post("/api/projects", json={"slug": "web"}).status_code == 201
+    # type-service : le SoT semé porte un compose.yaml (P3) → le pré-vol de `deploy` passe (le backend
+    # est un fake, mais `git.archive` est RÉEL → l'arbre doit vraiment contenir la config de run).
+    assert c.post("/api/projects", json={"slug": "web", "project_type": "service-api"}).status_code == 201
     r = c.post("/api/projects/web/deployments/dev/up")
     assert r.status_code == 200
     dep = r.json()["deployment"]

@@ -5,6 +5,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+import yaml
 
 from cockpit.provision import BUNDLE_TYPES, facet, load_bundle, load_payload
 
@@ -190,3 +191,55 @@ def test_activate_facet_failsoft_when_no_settings_local(tmp_path: Path):
     (tmp_path / ".claude" / "facets" / "doc").mkdir(parents=True)
     assert facet.activate_facet(tmp_path, "doc") is None
     assert not (tmp_path / ".claude" / "settings.local.json").exists()
+
+
+# -- P3 : config de run semée (types-services déployables sans édition) -----------------------------
+
+# Les types-SERVICE portent une config de run (compose + Dockerfile + stub runnable) ; les autres non
+# (un CLI / un projet générique n'expose aucun service long-running à héberger).
+_SERVICE_TYPES = ("service-api", "front-ts")
+_NON_SERVICE_TYPES = ("generic", "cli-tool")
+_APP_STUB = {"service-api": "app.py", "front-ts": "server.mjs"}   # stub runnable par type-service
+
+
+@pytest.mark.parametrize("project_type", _SERVICE_TYPES)
+def test_service_type_seeds_deployable_run_config(project_type):
+    """Un type-service sème, à la RACINE de l'arbre, la config de run complète : compose.yaml + Dockerfile
+    + stub d'app runnable + .dockerignore → un projet frais est déployable SANS édition manuelle (P3)."""
+    bundle = load_bundle(project_type)
+    for f in ("compose.yaml", "Dockerfile", ".dockerignore", _APP_STUB[project_type]):
+        assert f in bundle, f"{project_type} : {f} non semé à la racine"
+        assert bundle[f].strip(), f"{project_type} : {f} vide"
+
+
+@pytest.mark.parametrize("project_type", _NON_SERVICE_TYPES)
+def test_non_service_type_seeds_no_run_config(project_type):
+    """`generic`/`cli-tool` ne sèment NI compose NI Dockerfile : l'engine refusera proprement leur deploy
+    (pas de faux service). La non-déployabilité est une propriété assumée, pas un oubli."""
+    bundle = load_bundle(project_type)
+    assert "compose.yaml" not in bundle
+    assert "Dockerfile" not in bundle
+
+
+@pytest.mark.parametrize("project_type", _SERVICE_TYPES)
+def test_seeded_compose_builds_from_repo_and_fails_loud_on_missing_port(project_type):
+    """Le compose semé est un YAML valide qui BUILD depuis le repo (`build:`, pas `image:` en dur) et publie
+    le port INJECTÉ avec interpolation fail-loud `${COCKPIT_PORT:?...}` — jamais un port figé, jamais de
+    faux-vert si le cockpit n'injecte pas le port."""
+    compose_text = load_bundle(project_type)["compose.yaml"]
+    doc = yaml.safe_load(compose_text)
+    web = doc["services"]["web"]
+    assert web["build"] == "."                               # build depuis l'arbre, Dockerfile canonique
+    assert "image" not in web                                # jamais une image figée (≠ smoke P2)
+    assert "${COCKPIT_PORT:?" in compose_text                # interpolation fail-loud (doc compose 0103)
+    assert ":8000" in "".join(web["ports"])                  # port interne du contrat (stub écoute 8000)
+
+
+@pytest.mark.parametrize("project_type", _SERVICE_TYPES)
+def test_seeded_run_config_is_generic_no_hardcoded_slug(project_type):
+    """Invariant de genericité du payload : le stub d'app et le compose ne portent AUCUN nom de projet en
+    dur (le payload est réutilisable à l'identique pour tout projet du type)."""
+    bundle = load_bundle(project_type)
+    for f in ("compose.yaml", "Dockerfile", _APP_STUB[project_type]):
+        assert "cockpit-" not in bundle[f]                   # pas de compose-project/namespace figé
+        assert "demo" not in bundle[f].lower()               # aucun slug d'exemple figé

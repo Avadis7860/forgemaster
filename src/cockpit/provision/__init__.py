@@ -27,11 +27,15 @@ BUNDLE_TYPES = ("generic", "service-api", "cli-tool", "front-ts")
 
 def _walk_files(base: Path) -> Iterator[Path]:
     """Parcourt récursivement `base`, ordre **trié** par nom à chaque niveau (déterministe). `iterdir()`
-    inclut les dotfiles (`.docsmap.toml`, `.claude/`, `.cockpit/`) — voulu."""
+    inclut les dotfiles (`.docsmap.toml`, `.claude/`, `.cockpit/`) — voulu. Les artefacts de compilation
+    (`__pycache__/`, `*.pyc`) sont **exclus** : un payload semé porte des SOURCES, jamais du byte-code
+    binaire (qui casserait la lecture UTF-8 et polluerait le SoT d'un projet)."""
     for entry in sorted(base.iterdir(), key=lambda p: p.name):
+        if entry.name == "__pycache__":
+            continue
         if entry.is_dir():
             yield from _walk_files(entry)
-        elif entry.is_file():
+        elif entry.is_file() and entry.suffix != ".pyc":
             yield entry
 
 

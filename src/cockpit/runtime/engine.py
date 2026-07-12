@@ -29,6 +29,9 @@ from cockpit.runtime.paths import compose_project_name, deploy_dir_for
 _BRANCHES = ("main", "dev")
 # pool de ports **deploy**, DISTINCT du pool worktree (5170-5249) → jamais de collision worktree↔deploy.
 DEPLOY_RANGE: tuple[int, int] = (5250, 5329)
+# Noms de fichier compose reconnus à la racine de l'arbre (auto-découverts par `compose`). Un type sans
+# aucun de ces fichiers (`cli-tool`, `generic`) n'expose pas de service → deploy refuse proprement (P3).
+_COMPOSE_FILENAMES = ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")
 
 
 def _deploy_purpose(branch: str) -> str:
@@ -67,6 +70,13 @@ def deploy(conn: sqlite3.Connection, settings: Settings, *, slug: str, branch: s
     except GitOpError as exc:
         set_deployment(conn, project_id, branch, status="unhealthy")
         raise ValueError(f"contexte de build indisponible ({branch}) : {exc}") from exc
+
+    # Pré-vol honnête : pas de compose à la racine → ce type n'expose pas de service déployable
+    # (`cli-tool`/`generic`). Refus clair (→ 400) plutôt qu'une erreur `compose` opaque plus loin.
+    if not any((workdir / fn).is_file() for fn in _COMPOSE_FILENAMES):
+        set_deployment(conn, project_id, branch, status="unhealthy")
+        raise ValueError(f"{slug}/{branch} n'expose pas de service déployable (aucun compose.yaml — "
+                         "type de projet non hébergeable)")
 
     res = ports.reserve(conn, project=slug, purpose=_deploy_purpose(branch),
                         port_range=DEPLOY_RANGE, probe=ports.local_probe)

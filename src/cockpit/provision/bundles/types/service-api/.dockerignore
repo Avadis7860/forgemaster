@@ -1,0 +1,16 @@
+# .dockerignore — garde hors du contexte de build ce qui n'est PAS l'app runtime (semé par le cockpit,
+# P3) : outillage IA, docs, cartes, méta git. Image mince, build rapide et reproductible.
+.git
+.gitignore
+.dockerignore
+.claude
+.cockpit
+docs
+CLAUDE.md
+.docsmap.toml
+.codemap.toml
+.frontmap.toml
+compose.yaml
+Dockerfile
+__pycache__
+*.pyc
