@@ -19,7 +19,7 @@ from cockpit.db import store
 from cockpit.dispatch import jobs, worktree
 from cockpit.gate import toolchain
 from cockpit.git.identity import resolve_identity
-from cockpit.git.internal import InternalGit
+from cockpit.git.internal import InternalGit, writeback_env
 from cockpit.projects import registry
 from cockpit.roadmap import model
 from cockpit.terminal import pty
@@ -268,6 +268,44 @@ def test_git_view_read_only_over_http(client):
     assert body["logs"]["dev"][0]["subject"] == "root: cockpit seed"
     # projet inconnu → 404 (handler KeyError global), jamais un demi-état inventé
     assert c.get("/api/projects/ghost/git").status_code == 404
+
+
+def test_git_sync_endpoint_reports_divergence_and_degrades(client, tmp_path: Path):
+    """`GET .../git/sync` (réseau, séparé du `/git` idempotent) rend l'écart SoT↔miroir par branche + rollup,
+    avec dégradation honnête : pas de miroir → `no_mirror` ; miroir en avance → `remote_ahead`. Jamais un
+    faux-vert 0/0 ni un demi-état inventé (projet absent → 404)."""
+    c, settings = client
+    env = writeback_env(("T", "t@example.invalid"))
+
+    # projet SANS miroir → dégradation honnête `no_mirror` (fetched=False, rien à comparer, on le DIT)
+    c.post("/api/projects", json={"slug": "bare"})
+    s0 = c.get("/api/projects/bare/git/sync")
+    assert s0.status_code == 200
+    assert s0.json() == {"project": "bare", "remote": "mirror", "fetched": False,
+                         "branches": {}, "state": "no_mirror"}
+
+    # projet AVEC miroir câblé (clone du SoT → histoire partagée) → `synced` au départ
+    c.post("/api/projects", json={"slug": "proj"})
+    mirror = tmp_path / "mirror.git"
+    assert run.run(["git", "clone", "--bare", "-q",
+                    str(registry.sot_path_for(settings, "proj")), str(mirror)]).ok
+    assert c.patch("/api/projects/proj", json={"mirror_remote": str(mirror)}).status_code == 200
+    s1 = c.get("/api/projects/proj/git/sync").json()
+    assert s1["state"] == "synced" and s1["fetched"] is True
+    assert s1["branches"]["dev"] == {"ahead": 0, "behind": 0, "state": "synced"}
+
+    # le miroir prend de l'avance sur `dev` (travail hors cockpit) → `remote_ahead` visible sans faux-vert
+    wt = tmp_path / "mwt"
+    assert run.run(["git", "-C", str(mirror), "worktree", "add", "-q", str(wt), "dev"], env=env).ok
+    (wt / "x.txt").write_text("ahead\n", encoding="utf-8")
+    assert run.run(["git", "-C", str(wt), "add", "-A"], env=env).ok
+    assert run.run(["git", "-C", str(wt), "commit", "-q", "-m", "ahead"], env=env).ok
+    s2 = c.get("/api/projects/proj/git/sync").json()
+    assert s2["branches"]["dev"]["behind"] == 1 and s2["branches"]["dev"]["state"] == "remote_ahead"
+    assert s2["branches"]["main"]["state"] == "synced" and s2["state"] == "remote_ahead"
+
+    # projet inconnu → 404 (handler KeyError global), jamais un demi-état inventé
+    assert c.get("/api/projects/ghost/git/sync").status_code == 404
 
 
 def test_git_tree_and_blob_read_only_over_http(client):

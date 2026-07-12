@@ -150,7 +150,13 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   réfs sont alignées (200, pas une erreur) ; **404** une réf introuvable). · `GET /api/projects/{p}/git/
   history?ref=&path=` (commits touchant un fichier, récents d'abord → `{project, ref, path, commits:[{sha,
   short, author, date, subject}]}` ; fichier sans historique → `commits=[]` (200) ; **404** réf introuvable).
-  Tous read-only, idempotents (goto-only safe).
+  Tous read-only, idempotents (goto-only safe). · `GET /api/projects/{p}/git/sync` (**écart SoT↔miroir
+  GitHub** : **RÉSEAU, non-idempotent** — fait un `git fetch` du miroir, donc **SÉPARÉ** des lectures
+  idempotentes ci-dessus, l'UI le rattache au refresh manuel, jamais au polling/goto-only → `{project, remote,
+  fetched, branches:{<b>:{ahead, behind, state}}, state}`, rollup `state` et par-branche `state ∈
+  {synced, local_ahead, remote_ahead, diverged}`. Dégradation **honnête, jamais 0/0 faux-vert** : miroir non
+  câblé → `state=no_mirror`, injoignable/auth → `unreachable` (`fetched=false`, `branches={}`). Auth
+  transitoire via le `credential_ref` du projet, jamais le token. **404** projet absent, **422** SoT illisible).
 - **onboarding** — `GET /api/onboarding` (état de config-requise : `secret_store` `{backend, ready, detail}`
   via `health()`, `requirements` `[{project, mirror_remote, needs_credential, linked, satisfied}]`,
   `complete`, `project_count`, `first_run` (aucun projet → instance neuve, le wizard guide au lieu d'annoncer

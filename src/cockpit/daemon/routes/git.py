@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from cockpit.daemon.deps import Deps, get_deps
 from cockpit.git.internal import GitOpError, InternalGit
 from cockpit.projects.registry import get_project
+from cockpit.secrets import cred_resolver
 
 _LOG_N = 20  # profondeur du log par réf (récents d'abord)
 
@@ -45,6 +46,31 @@ def make_git_router() -> APIRouter:
         except GitOpError as exc:
             raise HTTPException(status_code=422, detail=f"lecture git impossible : {exc}") from exc
         return {"project": project, "branches": branches, "ahead_behind": ahead_behind, "logs": logs}
+
+    @router.get("/api/projects/{project}/git/sync")
+    def git_sync(project: str, deps: Deps = Depends(get_deps)) -> dict:
+        """Écart SoT↔**miroir GitHub** par branche + rollup projet. **RÉSEAU, non-idempotent** : fait un
+        `git fetch` du miroir — donc **SÉPARÉ** du `GET .../git` idempotent no-poll (le runner de boucle
+        visuelle *goto-only* ne doit PAS déclencher de fetch réseau ; l'UI le rattache au `RefreshButton`
+        manuel, jamais au polling). Rend `{project, remote, fetched, branches:{<b>:{ahead, behind, state}},
+        state}` (rollup `synced|local_ahead|remote_ahead|diverged`). **Dégradation honnête, jamais 0/0
+        faux-vert** : miroir non câblé → `no_mirror` ; injoignable/auth → `unreachable` (`fetched=false`,
+        `branches={}`). Auth transitoire via le `credential_ref` du projet (à l'usage, jamais le token).
+        Projet absent → 404 ; SoT illisible/corrompu → 422."""
+        conn = deps.open_db()
+        try:
+            row = get_project(conn, project)   # KeyError projet absent → 404 (handler global)
+        finally:
+            conn.close()
+        git = InternalGit(cred_resolver=cred_resolver(deps.settings))
+        try:
+            div = git.remote_divergence(
+                Path(row["sot_path"]), remote="mirror", branches=("dev", "main"),
+                creds_ref=row["credential_ref"],
+            )
+        except GitOpError as exc:
+            raise HTTPException(status_code=422, detail=f"sync git impossible : {exc}") from exc
+        return {"project": project, **div}
 
     @router.get("/api/projects/{project}/git/tree")
     def git_tree(project: str, ref: str = "dev", path: str = "", deps: Deps = Depends(get_deps)) -> dict:

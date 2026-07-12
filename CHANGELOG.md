@@ -5,6 +5,19 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Sync miroir SoT↔GitHub — P3 : endpoint `GET /api/projects/{p}/git/sync` (réseau, dédié)
+- **Nouvelle route HTTP** (non-breaking → note, pas de bump `SCHEMA_VERSION` — cf. politique de versionnage) :
+  `GET /api/projects/{p}/git/sync` expose `InternalGit.remote_divergence` (P2) → `{project, remote, fetched,
+  branches:{<b>:{ahead, behind, state}}, state}`. Auth transitoire via le `credential_ref` du projet (résolu
+  à l'usage par le `cred_resolver` du store actif, jamais le token).
+- **Séparé du `GET .../git` idempotent** : `/git/sync` fait un `git fetch` **réseau, non-idempotent** — il ne
+  doit PAS être atteint par le runner de boucle visuelle goto-only ni par du polling ; l'UI (P4) le rattache
+  au refresh manuel. `/git` reste la vue read-only bare-safe (branches, log, ahead/behind local-vs-local).
+- **Dégradation honnête** propagée telle quelle : `no_mirror` (miroir non câblé), `unreachable` (fetch KO) —
+  jamais 0/0 faux-vert. Projet absent → 404 ; SoT illisible → 422. Verrou e2e (TestClient sur SoT réel +
+  miroir bare cloné) : `test_git_sync_endpoint_reports_divergence_and_degrades` (no_mirror → synced →
+  remote_ahead après avance du miroir → 404).
+
 ### Sync miroir SoT↔GitHub — P2 : primitive `remote_divergence` (**bump du contrat `GitBackend`**)
 - **Le contrat figé `GitBackend` gagne une méthode** (`git/backend.py`, Protocol runtime-checkable) :
   `remote_divergence(sot, *, remote, branches, creds_ref=None) -> dict`. Bump de contrat au sens de la
