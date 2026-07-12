@@ -18,6 +18,7 @@ from cockpit.config import Settings
 from cockpit.core import ids
 from cockpit.db import store
 from cockpit.git.internal import GitOpError, InternalGit, classify_push_error, credential_env
+from cockpit.projects.deployments import ensure_deployments
 from cockpit.provision import BUNDLE_TYPES, load_bundle
 from cockpit.secrets import cred_resolver
 
@@ -98,6 +99,7 @@ def create_project(conn: sqlite3.Connection, settings: Settings, *,
         git.init_sot(sot, payload=load_bundle(project_type))   # SEED : bundle du type (base ⊕ overlay)
         if mirror_remote:
             git.set_remote(sot, "mirror", mirror_remote)       # matérialise le miroir dans git (P1)
+    ensure_deployments(conn, str(row["id"]))   # 2 déploiements par branche (main/dev, no_deploy) — v7 runtime
     return row
 
 

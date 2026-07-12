@@ -4,7 +4,7 @@ Trois schémas sont un **contrat** : une couche produit, une autre consomme. On 
 librement ; changer un **schéma** exige une entrée CHANGELOG + un bump. Un schéma partiel qui se dit complet
 est un bug (jamais de cap silencieux).
 
-## 1. Schéma SQLite (`db/schema.py`, `SCHEMA_VERSION` = **6**)
+## 1. Schéma SQLite (`db/schema.py`, `SCHEMA_VERSION` = **7**)
 
 Base unique sous `settings.db_path` (`$COCKPIT_HOME/cockpit.db`). Modèle **feature-groupe-des-tasks**.
 
@@ -32,6 +32,14 @@ Base unique sous `settings.db_path` (`$COCKPIT_HOME/cockpit.db`). Modèle **feat
 - **`port_reservations`** (v2) — `id`, `project`, `purpose` (ex. `worktree:<feature>`), `port` (**unique
   global** : mono-hôte WSL), `created_at` ; unique `(project, purpose)`. Broker de ports déterministe :
   1 port stable/épinglé par worktree, relâché au teardown (spec worktree-cleanup).
+- **`deployments`** (**v7** — runtime-hosting) — `id`, `project_id`→projects (cascade), `branch`
+  (`main`|`dev` — **2 déploiements par projet** : prod + preview, spec project-hosting-branch-deploy-model),
+  `status` (`no_deploy`|`building`|`running`|`stopped`|`unhealthy`, défaut `no_deploy` ; **enum encodé en plein
+  dès v7** bien que seul `no_deploy` soit écrit — SQLite ne sait pas `ALTER` un `CHECK`, donc P5 écrira les
+  autres états sans migration), `port` (service alloué par le broker deploy, nullable), `url` (endpoint servi,
+  nullable), `compose_ref` (réf du compose-project = unité d'isolation, nullable), `last_deploy_sha` (nullable),
+  `created_at`, `updated_at` ; unique `(project_id, branch)`. Substrat conteneur (compose) en lightweight ; le
+  modèle d'identité est agnostique du substrat.
 
 Invariants durs portés par le SQL : FK + `ON DELETE CASCADE`, `CHECK` sur chaque enum de statut, `UNIQUE`
 sur les slugs scopés. `PRAGMA foreign_keys=ON`, `journal_mode=WAL` (concurrence CLI↔daemon).
@@ -64,6 +72,13 @@ défaut littéral requis par `ALTER`), `features` gagne `facet` (`TEXT`, nullabl
 (`TEXT`, nullable), via `ensure_columns`. Les lignes existantes prennent `project_type='generic'`, facet/
 acceptance `NULL`. Le `CHECK` de `project_type` vit dans le `DDL` (base neuve) et l'invariant est **re-validé**
 par `registry.create_project` ; l'enum `facet` est tenu en code par `roadmap/model.FACETS` (comme `priority`).
+Ajout **non-breaking**.
+
+**Migration v6→v7** (runtime-hosting) : **nouvelle table `deployments`** — créée sur une base existante par le
+`CREATE TABLE IF NOT EXISTS` de `create_schema` (même chemin que `port_reservations` en v2), donc **aucune
+entrée `ensure_columns`** (celui-ci ne sert qu'aux *colonnes* ajoutées à une table pré-existante). Les projets
+d'avant v7 obtiennent leurs 2 lignes (`main`/`dev`, `no_deploy`) au premier `list_deployments`
+(`ensure_deployments`, `INSERT OR IGNORE` idempotent) ; les projets créés après v7 les reçoivent à la création.
 Ajout **non-breaking**.
 
 ## 2. Schéma `.cockpit/roadmap.yaml` (in-repo, `roadmap/model.py`)

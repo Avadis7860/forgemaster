@@ -19,13 +19,17 @@ merge-writeback), résolue à l'usage au writeback git. v5 = `projects` gagne `s
 provenance d'un projet adopté). v6 (typed-bundles) = `projects` gagne `project_type` (enum du bundle semé
 à la création : `generic|service-api|cli-tool|front-ts`, défaut `generic`) ; `features` gagne `facet`
 (nullable : la facette de dispatch — `backend|frontend|tool|doc` — qui aligne le worker) ; `tasks` gagne
-`acceptance` (nullable, TEXT libre : critères de DoD injectés dans le prompt worker).
+`acceptance` (nullable, TEXT libre : critères de DoD injectés dans le prompt worker). v7
+(runtime-hosting) = nouvelle table `deployments` : un **projet** possède **2 déploiements par branche**
+(`main`=prod, `dev`=preview — spec project-hosting-branch-deploy-model) ; état de run + port + url + sha
+du dernier deploy. Substrat conteneur (compose) en lightweight ; le modèle d'identité est agnostique du
+substrat. Table neuve → créée sur base existante par `CREATE IF NOT EXISTS` (pas d'`ensure_columns`).
 """
 from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 # Ordre = ordre de création (les FK pointent vers des tables déjà créées). Chaque table porte les
 # invariants durs en contraintes SQL (NOT NULL, UNIQUE, FK, CHECK sur les enums de statut).
@@ -109,6 +113,26 @@ DDL: tuple[str, ...] = (
         UNIQUE (project, purpose)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS deployments (
+        id              TEXT PRIMARY KEY,
+        project_id      TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        branch          TEXT NOT NULL                 -- 2 déploiements par projet : prod + preview
+                            CHECK (branch IN ('main', 'dev')),
+        -- Enum de statut ENCODÉ EN PLEIN dès v7 alors que v7 n'écrit que 'no_deploy' : SQLite ne sait pas
+        -- ALTER un CHECK (il faudrait un rebuild de table), donc on pose l'enum cible du runtime dès
+        -- maintenant → P5 (observabilité) écrit running|stopped|unhealthy|building SANS toucher au schéma.
+        status          TEXT NOT NULL DEFAULT 'no_deploy'
+                            CHECK (status IN ('no_deploy', 'building', 'running', 'stopped', 'unhealthy')),
+        port            INTEGER,                      -- port de service alloué (broker deploy, P2), nullable
+        url             TEXT,                         -- endpoint servi (P2/P5), nullable tant que no_deploy
+        compose_ref     TEXT,                         -- réf du compose-project (unité d'isolation, P2)
+        last_deploy_sha TEXT,                         -- sha buildé au dernier deploy (P2)
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL,
+        UNIQUE (project_id, branch)
+    )
+    """,
 )
 
 # Colonnes ajoutées à une table pré-existante après sa v1 (chemin ALTER idempotent — cf. `ensure_columns`).
@@ -140,6 +164,7 @@ INDEXES: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS ix_features_project ON features(project_id)",
     "CREATE INDEX IF NOT EXISTS ix_tasks_feature ON tasks(feature_id)",
     "CREATE INDEX IF NOT EXISTS ix_jobs_task ON dispatch_jobs(task_id)",
+    "CREATE INDEX IF NOT EXISTS ix_deployments_project ON deployments(project_id)",
 )
 
 
