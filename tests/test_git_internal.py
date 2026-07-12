@@ -224,6 +224,63 @@ def test_merge_writeback_missing_secret_degrades_to_ambient_push(tmp_path: Path)
     assert run.run(["git", "-C", str(mirror), "rev-parse", "dev"], env=_ENV).ok
 
 
+def test_set_remote_is_idempotent_add_then_seturl(tmp_path: Path):
+    """set_remote ajoute le remote absent, puis bascule en `set-url` au ré-appel (idempotent)."""
+    git = InternalGit()
+    sot = _seed_bare(tmp_path)
+    run.run(["git", "-C", str(sot), "remote", "remove", "origin"], env=_ENV)   # clone bare → origin=seed
+    git.set_remote(sot, "mirror", "https://example.invalid/a.git")
+    assert run.run(["git", "-C", str(sot), "remote", "get-url", "mirror"], env=_ENV).stdout.strip() \
+        == "https://example.invalid/a.git"
+    git.set_remote(sot, "mirror", "https://example.invalid/b.git")             # ré-appel → set-url
+    assert run.run(["git", "-C", str(sot), "remote", "get-url", "mirror"], env=_ENV).stdout.strip() \
+        == "https://example.invalid/b.git"
+
+
+def test_remove_remote_is_best_effort(tmp_path: Path):
+    """remove_remote retire un remote présent et ne lève pas sur un remote absent."""
+    git = InternalGit()
+    sot = _seed_bare(tmp_path)
+    git.set_remote(sot, "mirror", "https://example.invalid/a.git")
+    git.remove_remote(sot, "mirror")
+    assert not run.run(["git", "-C", str(sot), "remote", "get-url", "mirror"], env=_ENV).ok
+    git.remove_remote(sot, "mirror")                          # absent → no-op, ne lève pas
+
+
+def test_fetch_remote_updates_tracking_and_resolves_creds_transiently(tmp_path: Path):
+    """fetch_remote met à jour les refs de suivi `refs/remotes/<remote>/*` ET résout `creds_ref` À L'USAGE
+    (la couture d'auth, invisible aux fakes de transport). Remote local → l'insteadOf github est inerte, mais
+    le fetch réussit et on PROUVE la résolution + que la ref de suivi reflète l'upstream."""
+    up_root = tmp_path / "up"                                # _seed_bare suppose un parent existant
+    down_root = tmp_path / "down"
+    up_root.mkdir()
+    down_root.mkdir()
+    upstream = _seed_bare(up_root)                           # « GitHub » local (bare seedé, dev+main)
+    sot = _seed_bare(down_root)                              # SoT local à re-synchroniser
+    wt = tmp_path / "up-wt"                                  # avance `dev` sur l'upstream → écart à fetcher
+    run.run(["git", "-C", str(upstream), "worktree", "add", "-q", str(wt), "dev"], env=_ENV)
+    (wt / "new.txt").write_text("ahead\n", encoding="utf-8")
+    _run("add", "-A", cwd=wt)
+    _run("commit", "-q", "-m", "ahead", cwd=wt)
+    up_dev = run.run(["git", "-C", str(upstream), "rev-parse", "dev"], env=_ENV).stdout.strip()
+
+    seen: list[str] = []
+    git = InternalGit(cred_resolver=lambda ref: (seen.append(ref) or "gh-token"))
+    git.set_remote(sot, "mirror", str(upstream))
+    assert git.fetch_remote(sot, "mirror", creds_ref="ref-1") is True
+    assert seen == ["ref-1"]                                 # résolu à l'usage, une fois
+    tracked = run.run(
+        ["git", "-C", str(sot), "rev-parse", "refs/remotes/mirror/dev"], env=_ENV).stdout.strip()
+    assert tracked == up_dev                                 # la ref de suivi reflète bien l'upstream
+
+
+def test_fetch_remote_missing_remote_returns_false_without_raising(tmp_path: Path):
+    """Remote inexistant → fetch_remote retourne False, ne lève jamais (dégradation honnête → `unreachable`
+    côté divergence P2). Best-effort strict : le miroir ne bloque jamais (spec forge-sot-local)."""
+    sot = _seed_bare(tmp_path)
+    assert InternalGit().fetch_remote(sot, "nope") is False
+
+
 def test_pure_parsers_and_classifiers():
     status = parse_status(
         "# branch.head feature/x\n# branch.ab +2 -1\n1 M. N... 100644 100644 100644 aa bb file.py\n"

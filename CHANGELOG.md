@@ -5,6 +5,20 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Sync miroir SoT↔GitHub — P1 : remote fetchable + fetch authentifié (prérequis)
+- **Le miroir se matérialise enfin dans git** : `mirror_remote` n'était qu'une string en DB (jamais un
+  `git remote`). `registry.create_project` (projet seedé) et `registry.set_mirror_remote` câblent désormais
+  le remote `mirror` sur le SoT bare (`add`/`set-url`, retrait sur `None`). Les entités adoptées gardent leur
+  `origin` (posé par `clone_sot`) — projets ⟶ `mirror`, outils ⟶ `origin`.
+- **Trois primitives `InternalGit`** (hors contrat figé `GitBackend` — le bump est réservé à P2/`remote_divergence`) :
+  `set_remote(sot, name, url)` (idempotent), `remove_remote(sot, name)` (best-effort), et
+  `fetch_remote(sot, remote, *, creds_ref=None) -> bool` — fetch **best-effort** (False sur remote absent/
+  injoignable/auth, ne lève jamais) avec **auth transitoire** : le token est résolu à l'usage via le
+  `cred_resolver` injecté et injecté par `credential_env` (jamais persisté, jamais en argv), `GIT_TERMINAL_PROMPT=0`.
+- Verrous : `test_set_remote_is_idempotent_add_then_seturl`, `test_remove_remote_is_best_effort`,
+  `test_fetch_remote_updates_tracking_and_resolves_creds_transiently`,
+  `test_fetch_remote_missing_remote_returns_false_without_raising`.
+
 ### Consommateur code-map : cache (SHA, schema_version) + découplage du layout interne (code-map P6)
 - **Clé de cache d'index enrichie de `schema_version`** (`codemap/index.py`) : le dossier dérivé passe de
   `home/codemap/<projet>/<sha>` à `home/codemap/<projet>/<sha>/<schema>`. Un upgrade de code-map (nouveau

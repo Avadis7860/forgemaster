@@ -96,6 +96,8 @@ def create_project(conn: sqlite3.Connection, settings: Settings, *,
         raise ValueError(f"projet déjà existant : {slug!r}") from exc
     if not source_url:
         git.init_sot(sot, payload=load_bundle(project_type))   # SEED : bundle du type (base ⊕ overlay)
+        if mirror_remote:
+            git.set_remote(sot, "mirror", mirror_remote)       # matérialise le miroir dans git (P1)
     return row
 
 
@@ -120,7 +122,14 @@ def set_mirror_remote(conn: sqlite3.Connection, slug: str, mirror_remote: str | 
     if cur.rowcount == 0:
         raise KeyError(slug)
     conn.commit()
-    return get_project(conn, slug)
+    proj = get_project(conn, slug)
+    sot = Path(proj["sot_path"])                       # matérialise (ou retire) le miroir dans git (P1)
+    git = InternalGit()
+    if normalized:
+        git.set_remote(sot, "mirror", normalized)
+    else:
+        git.remove_remote(sot, "mirror")
+    return proj
 
 
 def list_projects(conn: sqlite3.Connection) -> list[dict]:

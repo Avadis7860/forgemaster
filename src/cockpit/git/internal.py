@@ -356,6 +356,37 @@ class InternalGit:
         jamais (la vérité est le SoT local — spec forge-sot-local)."""
         return _git(sot, "push", remote, "--all").ok
 
+    # -- config de remote + fetch authentifié (sync miroir : projets ⟶ `mirror`, outils ⟶ `origin`) --
+
+    def set_remote(self, sot: Path, name: str, url: str) -> None:
+        """Configure (idempotent) le remote `name` → `url` sur le SoT bare : `set-url` s'il existe déjà,
+        sinon `add`. Câblé par `registry.create_project`/`set_mirror_remote` pour **matérialiser dans git**
+        le miroir qui n'était jusqu'ici qu'une string en DB (`mirror_remote`). Zéro réseau (config locale)."""
+        if _git(sot, "remote", "get-url", name).ok:
+            _checked(sot, "remote", "set-url", name, url)
+        else:
+            _checked(sot, "remote", "add", name, url)
+
+    def remove_remote(self, sot: Path, name: str) -> None:
+        """Retire le remote `name` s'il existe (best-effort : absent → no-op, ne lève pas). Symétrique de
+        `set_remote` pour le retrait d'un miroir (`set_mirror_remote(None)`)."""
+        _git(sot, "remote", "remove", name)
+
+    def fetch_remote(self, sot: Path, remote: str, *, creds_ref: str | None = None) -> bool:
+        """Fetch `remote` sur le SoT bare (met à jour `refs/remotes/<remote>/*`). **Best-effort** : retourne
+        False sur échec (remote absent / injoignable / auth), ne lève **jamais** — la vérité reste le SoT
+        local (spec forge-sot-local), et la couche divergence (P2) en dérivera un état honnête `unreachable`.
+        Auth **transitoire** : si `creds_ref` est fourni ET qu'un résolveur est injecté, le token est résolu
+        à l'usage et injecté via `credential_env` (jamais persisté, jamais en argv) le temps du fetch.
+        `GIT_TERMINAL_PROMPT=0` fait échouer bruyamment plutôt que pendre sur un prompt (privé sans token)."""
+        env: dict[str, str] = dict(os.environ)
+        if creds_ref and self._cred_resolver is not None:
+            token = self._cred_resolver(creds_ref)      # total : '' si absent/illisible → fetch ambiant
+            if token:
+                env = credential_env(token, base=env)
+        env.setdefault("GIT_TERMINAL_PROMPT", "0")
+        return _git(sot, "fetch", remote, env=env).ok
+
     # -- lectures pour le gate (SHA d'ancrage + diff base...head, read-only) -------------------------
 
     def feature_sha(self, sot: Path, ref: str) -> str:
