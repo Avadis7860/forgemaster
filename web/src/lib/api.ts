@@ -15,6 +15,7 @@ import {
   GitTreeSchema,
   GitViewSchema,
   GitSyncSchema,
+  GitReconcileSchema,
   FlowSchema,
   FlowOperationsSchema,
   HealthSchema,
@@ -88,6 +89,15 @@ export const api = {
   // JAMAIS via un runner goto-only ni un poll ; déclenché par le refresh manuel du GitTab uniquement.
   getGitSync: (project: string) =>
     request(`/api/projects/${encodeURIComponent(project)}/git/sync`, GitSyncSchema),
+  // POST /api/projects/{p}/git/sync/reconcile : réconciliation **ff-only** (la SEULE mutation git de l'UI, et
+  // gatée par construction — jamais de merge non-ff). L'UI montre d'ABORD la décision via le GET `/git/sync`
+  // (source unique = l'`state`), puis appelle ce POST pour exécuter — pas de dry-run POST.
+  reconcileGitSync: (project: string) =>
+    request(
+      `/api/projects/${encodeURIComponent(project)}/git/sync/reconcile`,
+      GitReconcileSchema,
+      { method: 'POST', body: '{}' },
+    ),
   // Exploration read-only : arbre d'un dossier + contenu d'un fichier à une réf. GET idempotents.
   getGitTree: (project: string, ref: string, path: string) =>
     request(

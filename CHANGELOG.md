@@ -5,6 +5,33 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Sync miroir SoT↔GitHub — P5 : réconciliation un-clic **ff-only** gatée (route + primitive + UI)
+- **Le contrat figé `GitBackend` gagne une méthode** (`git/backend.py`, Protocol runtime-checkable) :
+  `reconcile(sot, *, remote, branches, creds_ref=None) -> dict`. Extension de contrat (note dédiée, cf.
+  `docs/schema-contract.md`) ; `GitHubGit` la stub (P6, `NotImplementedError`), `InternalGit` l'implémente.
+- **Nouvelle route HTTP** (non-breaking → note, pas de bump `SCHEMA_VERSION`) : `POST
+  /api/projects/{p}/git/sync/reconcile` → `{project, remote, fetched, actions:{<b>:{action, from?, to?,
+  reason?}}, changed, blocked, state}`. **Preview d'ABORD via le `GET .../git/sync` idempotent** (source unique
+  = l'`state` par branche) ; ce POST **exécute** — jamais un dry-run POST (doctrine preview-gated-via-GET).
+- **Réconciliation ff-only, jamais de merge non-ff ni de `--force`** (`InternalGit.reconcile`) : recalcule la
+  divergence (l'état frais fait autorité) puis agit **par branche** : `remote_ahead` → **ff** local vers la
+  ref de suivi (`merge_ff`) ; `local_ahead` → **push ff** cette seule branche (refspec explicite, best-effort) ;
+  `diverged` → **bloqué**, aucune mutation (spec forge-sot-local : jamais d'auto-merge). La granularité
+  par-branche réconcilie chaque branche ff-able même quand le rollup projet est `diverged` (cross-branch).
+- **Garde-fou worktree** : on ne ff **jamais** une branche checked-out dans un worktree actif (`branch -f` la
+  refuserait) → `blocked_worktree`, aucune mutation. **Dégradation honnête** héritée : `no_mirror`/`unreachable`
+  → `fetched=False`, aucune action. Auth transitoire partagée (`_authed_env`, factorisé avec `fetch_remote`).
+- **UI (`web/`)** : bouton « ⟳ Réconcilier » (en-tête GitTab, visible sur une divergence réelle) → **panneau
+  inline preview** (plan dérivé de l'état : `dev → ff depuis GitHub (+N)`, `main → à jour`) → **Confirmer
+  (ff-only)** → résultat par branche → re-fetch du badge. Un état tout-divergé n'offre pas d'exécution : il
+  **explique** la résolution manuelle (Alert danger). Hook mutation `useReconcileSync` (invalide la vue git +
+  le rail ; le badge sync enabled:false est re-fetché à la main). Tons `reconcileTone` — blocages/échecs
+  **jamais verts** (anti-faux-succès).
+- **Verrous** : primitive (ff remote_ahead → synced · push local_ahead → miroir reçu · diverged bloqué sans
+  mutation · garde-fou worktree · cross-branch réconcilié indépendamment · dégradations) ; endpoint TestClient
+  (ff → badge `synced` · vraie divergence bloquée sans mutation · 404) ; vitest (plan/reconcilable/outcome/ton)
+  ; **boucle visuelle** (badge « GitHub +2 » + panneau preview `ff depuis GitHub (+2)` / `à jour` rendus).
+
 ### Sync miroir SoT↔GitHub — P3 : endpoint `GET /api/projects/{p}/git/sync` (réseau, dédié)
 - **Nouvelle route HTTP** (non-breaking → note, pas de bump `SCHEMA_VERSION` — cf. politique de versionnage) :
   `GET /api/projects/{p}/git/sync` expose `InternalGit.remote_divergence` (P2) → `{project, remote, fetched,

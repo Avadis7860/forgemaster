@@ -308,6 +308,46 @@ def test_git_sync_endpoint_reports_divergence_and_degrades(client, tmp_path: Pat
     assert c.get("/api/projects/ghost/git/sync").status_code == 404
 
 
+def test_git_sync_reconcile_ff_and_blocks_diverged(client, tmp_path: Path):
+    """`POST .../git/sync/reconcile` réconcilie **ff-only** : miroir en avance sur `dev` → ff le SoT (le
+    badge retombe `synced`) ; vraie divergence non-ff → **bloqué**, aucune mutation. Preview via le GET
+    idempotent, exécution via ce POST (jamais un dry-run POST). Projet absent → 404."""
+    c, settings = client
+    env = writeback_env(("T", "t@example.invalid"))
+
+    def advance(repo: Path, branch: str, wt: Path) -> str:
+        assert run.run(["git", "-C", str(repo), "worktree", "add", "-q", str(wt), branch], env=env).ok
+        (wt / f"{wt.name}.txt").write_text("x\n", encoding="utf-8")
+        assert run.run(["git", "-C", str(wt), "add", "-A"], env=env).ok
+        assert run.run(["git", "-C", str(wt), "commit", "-q", "-m", f"adv {branch}"], env=env).ok
+        sha = run.run(["git", "-C", str(repo), "rev-parse", branch], env=env).stdout.strip()
+        run.run(["git", "-C", str(repo), "worktree", "remove", "--force", str(wt)], env=env)  # libère la ref
+        return sha
+
+    c.post("/api/projects", json={"slug": "proj"})
+    sot = registry.sot_path_for(settings, "proj")
+    mirror = tmp_path / "mirror.git"
+    assert run.run(["git", "clone", "--bare", "-q", str(sot), str(mirror)]).ok
+    assert c.patch("/api/projects/proj", json={"mirror_remote": str(mirror)}).status_code == 200
+
+    # miroir en avance sur `dev` → reconcile ff le SoT ; badge retombe `synced`
+    mir_dev = advance(mirror, "dev", tmp_path / "m1")
+    rep = c.post("/api/projects/proj/git/sync/reconcile").json()
+    assert rep["actions"]["dev"]["action"] == "fast_forward" and rep["actions"]["dev"]["to"] == mir_dev
+    assert rep["changed"] is True and rep["blocked"] == []
+    assert c.get("/api/projects/proj/git/sync").json()["state"] == "synced"   # rattrapé
+
+    # vraie divergence non-ff (avancé des deux côtés) → BLOQUÉ, aucune mutation
+    advance(mirror, "dev", tmp_path / "m2")
+    local_dev = advance(sot, "dev", tmp_path / "s2")
+    blocked = c.post("/api/projects/proj/git/sync/reconcile").json()
+    assert blocked["actions"]["dev"]["action"] == "blocked_diverged" and blocked["blocked"] == ["dev"]
+    assert blocked["changed"] is False
+    assert run.run(["git", "-C", str(sot), "rev-parse", "dev"]).stdout.strip() == local_dev  # intact
+
+    assert c.post("/api/projects/ghost/git/sync/reconcile").status_code == 404
+
+
 def test_git_tree_and_blob_read_only_over_http(client):
     c, _ = client
     c.post("/api/projects", json={"slug": "proj"})   # SoT neuf : arbre racine = payload auto-travaillable

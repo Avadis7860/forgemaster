@@ -157,6 +157,14 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   {synced, local_ahead, remote_ahead, diverged}`. Dégradation **honnête, jamais 0/0 faux-vert** : miroir non
   câblé → `state=no_mirror`, injoignable/auth → `unreachable` (`fetched=false`, `branches={}`). Auth
   transitoire via le `credential_ref` du projet, jamais le token. **404** projet absent, **422** SoT illisible).
+  · `POST /api/projects/{p}/git/sync/reconcile` (**la SEULE mutation git du routeur**, gatée par construction :
+  réconciliation **ff-only**, jamais de merge non-ff ni `--force` — spec forge-sot-local. Preview d'ABORD via le
+  `GET .../git/sync` idempotent (source unique = l'`state`), ce POST **exécute** — pas de dry-run POST. Recalcule
+  la divergence puis par branche : `remote_ahead` → ff local · `local_ahead` → push ff · `diverged` → **bloqué**
+  sans mutation · garde-fou : jamais ff une branche checked-out dans un worktree → `blocked_worktree`. Rend
+  `{project, remote, fetched, actions:{<b>:{action, from?, to?, reason?}}, changed, blocked, state}`,
+  `action ∈ {already_synced, fast_forward, pushed, push_failed, blocked_worktree, blocked_diverged}`.
+  Dégradation honnête héritée (`no_mirror`/`unreachable` → aucune action). **404** projet absent, **422** op git dure).
 - **onboarding** — `GET /api/onboarding` (état de config-requise : `secret_store` `{backend, ready, detail}`
   via `health()`, `requirements` `[{project, mirror_remote, needs_credential, linked, satisfied}]`,
   `complete`, `project_count`, `first_run` (aucun projet → instance neuve, le wizard guide au lieu d'annoncer

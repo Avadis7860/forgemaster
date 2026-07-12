@@ -387,6 +387,91 @@ def test_remote_divergence_degrades_honestly_no_mirror_and_unreachable(tmp_path:
     assert d1 == {"remote": "mirror", "fetched": False, "branches": {}, "state": "unreachable"}
 
 
+def _sha(bare: Path, ref: str) -> str:
+    return run.run(["git", "-C", str(bare), "rev-parse", ref], env=_ENV).stdout.strip()
+
+
+def test_reconcile_fast_forwards_remote_ahead(tmp_path: Path):
+    """GitHub a pris de l'avance sur `dev` (cas vécu) → reconcile **ff** la branche locale vers la ref de
+    suivi (jamais de merge). `dev` passe `fast_forward` (from→to), `changed=True`, et une re-mesure de la
+    divergence retombe `synced` (la réconciliation a bien rattrapé)."""
+    upstream, sot, git = _sot_with_mirror(tmp_path)
+    up_dev = _advance(upstream, "dev", tmp_path / "u1")
+    before = _sha(sot, "dev")
+    rep = git.reconcile(sot, remote="mirror", branches=("dev", "main"))
+    assert rep["fetched"] is True and rep["changed"] is True and rep["blocked"] == []
+    assert rep["actions"]["dev"] == {"action": "fast_forward", "from": before, "to": up_dev}
+    assert rep["actions"]["main"] == {"action": "already_synced"}
+    assert _sha(sot, "dev") == up_dev                       # la ref locale a bien avancé au niveau GitHub
+    assert git.remote_divergence(sot, remote="mirror", branches=("dev", "main"))["state"] == "synced"
+
+
+def test_reconcile_pushes_local_ahead_to_mirror(tmp_path: Path):
+    """Le SoT local est en avance sur `dev` → reconcile **push ff** cette branche vers le miroir (best-effort,
+    jamais `--force`). Le miroir reçoit le commit ; action `pushed`, `changed=True`."""
+    upstream, sot, git = _sot_with_mirror(tmp_path)
+    sot_dev = _advance(sot, "dev", tmp_path / "s1")
+    rep = git.reconcile(sot, remote="mirror", branches=("dev", "main"))
+    assert rep["actions"]["dev"] == {"action": "pushed"} and rep["changed"] is True
+    assert rep["blocked"] == []
+    assert _sha(upstream, "dev") == sot_dev                 # le miroir a bien reçu l'avance locale
+    assert git.remote_divergence(sot, remote="mirror", branches=("dev", "main"))["state"] == "synced"
+
+
+def test_reconcile_blocks_diverged_without_mutation(tmp_path: Path):
+    """`dev` a divergé (avancé DES DEUX côtés, non-ff) → **bloqué**, AUCUNE mutation : ni ff ni push (spec
+    forge-sot-local, jamais d'auto-merge). La ref locale ne bouge pas, `blocked` liste `dev`."""
+    upstream, sot, git = _sot_with_mirror(tmp_path)
+    _advance(upstream, "dev", tmp_path / "u1")
+    local_dev = _advance(sot, "dev", tmp_path / "s1")
+    up_dev = _sha(upstream, "dev")
+    rep = git.reconcile(sot, remote="mirror", branches=("dev",))
+    assert rep["actions"]["dev"]["action"] == "blocked_diverged" and rep["blocked"] == ["dev"]
+    assert rep["changed"] is False
+    assert _sha(sot, "dev") == local_dev                    # ref locale INTACTE (aucune mutation)
+    assert _sha(upstream, "dev") == up_dev                  # miroir INTACT (rien poussé)
+
+
+def test_reconcile_guards_checked_out_branch(tmp_path: Path):
+    """Garde-fou : `dev` est en avance côté GitHub (ff-able) MAIS sortie dans un worktree actif → on ne la ff
+    JAMAIS (`branch -f` la refuserait) → `blocked_worktree`, aucune mutation de la ref locale."""
+    upstream, sot, git = _sot_with_mirror(tmp_path)
+    _advance(upstream, "dev", tmp_path / "u1")
+    wt = tmp_path / "sot-dev-wt"                            # sort `dev` sur le SoT → checked-out
+    assert run.run(["git", "-C", str(sot), "worktree", "add", "-q", str(wt), "dev"], env=_ENV).ok
+    local_dev = _sha(sot, "dev")
+    rep = git.reconcile(sot, remote="mirror", branches=("dev",))
+    assert rep["actions"]["dev"]["action"] == "blocked_worktree" and rep["blocked"] == ["dev"]
+    assert rep["changed"] is False and _sha(sot, "dev") == local_dev   # ref locale INTACTE
+
+
+def test_reconcile_cross_branch_reconciles_each_independently(tmp_path: Path):
+    """Rollup `diverged` cross-branche (`dev` remote-avance, `main` local-avance) MAIS chaque branche est
+    ff-able **isolément** → reconcile agit **par branche** : `dev` ff'd, `main` pushed. La granularité
+    par-branche bat le rollup conservateur — rien n'est bloqué car aucune branche n'est vraiment non-ff."""
+    upstream, sot, git = _sot_with_mirror(tmp_path)
+    up_dev = _advance(upstream, "dev", tmp_path / "u1")
+    sot_main = _advance(sot, "main", tmp_path / "s1")
+    rep = git.reconcile(sot, remote="mirror", branches=("dev", "main"))
+    assert rep["actions"]["dev"]["action"] == "fast_forward" and rep["actions"]["dev"]["to"] == up_dev
+    assert rep["actions"]["main"] == {"action": "pushed"}
+    assert rep["changed"] is True and rep["blocked"] == []
+    assert _sha(sot, "dev") == up_dev and _sha(upstream, "main") == sot_main
+
+
+def test_reconcile_degrades_honestly_no_mirror_and_unreachable(tmp_path: Path):
+    """Dégradation honnête (héritée de `remote_divergence`) : pas de miroir → `no_mirror` ; injoignable →
+    `unreachable`. Dans les deux cas `fetched=False`, aucune action, rien de bloqué (rien à réconcilier)."""
+    sot = _seed_bare(tmp_path)
+    git = InternalGit()
+    r0 = git.reconcile(sot, remote="mirror", branches=("dev", "main"))
+    assert r0 == {"remote": "mirror", "fetched": False, "actions": {}, "changed": False,
+                  "blocked": [], "state": "no_mirror"}
+    git.set_remote(sot, "mirror", str(tmp_path / "does-not-exist.git"))
+    r1 = git.reconcile(sot, remote="mirror", branches=("dev", "main"))
+    assert r1["fetched"] is False and r1["state"] == "unreachable" and r1["actions"] == {}
+
+
 def test_pure_parsers_and_classifiers():
     status = parse_status(
         "# branch.head feature/x\n# branch.ab +2 -1\n1 M. N... 100644 100644 100644 aa bb file.py\n"

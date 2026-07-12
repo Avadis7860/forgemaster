@@ -73,6 +73,16 @@ class GitBackend(Protocol):
         l'état, ne mute pas le SoT (la réconciliation ff est une op séparée — spec forge-sot-local)."""
         ...
 
+    def reconcile(
+        self, sot: Path, *, remote: str, branches: Sequence[str], creds_ref: str | None = None
+    ) -> dict:
+        """Réconcilie le SoT avec son miroir **ff-only** (jamais de merge non-ff ni de `--force`). Recalcule
+        la divergence puis agit par branche : `remote_ahead` → ff local vers la ref de suivi ; `local_ahead`
+        → push ff cette branche ; `diverged` → **bloqué**, aucune mutation (spec forge-sot-local). Garde-fou :
+        ne ff jamais une branche checked-out dans un worktree actif → `blocked_worktree`. Renvoie
+        `{remote, fetched, actions:{<b>:{action, from?, to?, reason?}}, changed, blocked, state}`."""
+        ...
+
     def feature_sha(self, sot: Path, ref: str) -> str:
         """SHA d'une réf (branche) sur le SoT — ancre de fraîcheur des verdicts SHA-bound du gate."""
         ...

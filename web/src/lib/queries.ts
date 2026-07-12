@@ -82,6 +82,21 @@ export function useGitSync(project: string) {
   })
 }
 
+// Réconciliation SoT↔miroir **ff-only** (POST) — la SEULE mutation git de l'UI. Preview d'ABORD via le GET
+// `useGitSync` (source unique = l'`state` par branche), puis ce POST exécute. À la résolution : invalide la vue
+// git read-only (branches/log/ahead-behind ont pu bouger) + les projets (dot rail) ; le badge sync lui-même est
+// re-fetché à la main par l'appelant (`useGitSync` est enabled:false — un invalidate ne le rejouerait pas).
+export function useReconcileSync(project: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.reconcileGitSync(project),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.git(project) })
+      qc.invalidateQueries({ queryKey: qk.projects })
+    },
+  })
+}
+
 // Carte docs d'un projet (lue depuis son repo). GET idempotent ; stable (la doc change peu).
 export function useDocs(project: string) {
   return useQuery({

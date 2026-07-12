@@ -7,10 +7,13 @@ import { ProjectCredentialCard } from '@/components/credential/ProjectCredential
 import { RepoExplorer } from '@/components/git/RepoExplorer'
 import { CommitDetailCard, DiffCard } from '@/components/git/GitIntelligence'
 import { ApiError } from '@/lib/api'
-import { useGit, useGitSync } from '@/lib/queries'
-import { isLogUnified, syncSummary } from '@/lib/git'
-import { gitBranchTone, syncTone } from '@/lib/statusTone'
-import type { GitAheadBehind, GitBranch, GitLogEntry } from '@/lib/schemas'
+import { useGit, useGitSync, useReconcileSync } from '@/lib/queries'
+import {
+  isLogUnified, isReconcilable, needsReconcile, reconcileActionLabel, reconcileOutcome,
+  reconcilePlan, syncSummary,
+} from '@/lib/git'
+import { gitBranchTone, reconcileTone, syncTone } from '@/lib/statusTone'
+import type { GitAheadBehind, GitBranch, GitLogEntry, GitSync } from '@/lib/schemas'
 
 type GitView = 'historique' | 'fichiers' | 'diff'
 
@@ -33,6 +36,7 @@ export function GitTab() {
   const onRefresh = () => { void refetch(); void sync.refetch() }
   const [sha, setSha] = useState<string | null>(null)  // commit sélectionné (clic sur log/branche)
   const [view, setView] = useState<GitView>('historique')
+  const [reconcileOpen, setReconcileOpen] = useState(false)  // panneau de réconciliation ff-only déplié
 
   if (isLoading) return <div className="p-8"><LoadingState label="Lecture du dépôt…" /></div>
   if (isError || !data) {
@@ -64,8 +68,19 @@ export function GitTab() {
         {headSha && <code className="font-mono text-xs text-faint">{headSha}</code>}
         {data.ahead_behind && <SyncChip ab={data.ahead_behind} />}
         <RemoteSyncChip sync={sync} />
+        {sync.data && needsReconcile(sync.data) && (
+          <Button variant="ghost" size="sm" onClick={() => setReconcileOpen((o) => !o)}
+            aria-expanded={reconcileOpen}>⟳ Réconcilier</Button>
+        )}
         <RefreshButton className="ml-auto" onClick={onRefresh} busy={isFetching || sync.isFetching} />
       </div>
+
+      {/* Réconciliation ff-only : preview (dérivée de l'état de sync) → confirme → exécute → re-fetch le badge.
+          Repliée par défaut, ouverte par le bouton « ⟳ Réconcilier ». */}
+      {reconcileOpen && sync.data && (
+        <ReconcilePanel project={project} sync={sync.data}
+          onDone={() => { void sync.refetch() }} onClose={() => setReconcileOpen(false)} />
+      )}
 
       {/* Config miroir/token = réglage, pas lecture → repliée par défaut pour rendre la hauteur au dépôt. */}
       <Collapsible title="Miroir GitHub & token de push">
@@ -149,6 +164,86 @@ function RemoteSyncChip({ sync }: { sync: ReturnType<typeof useGitSync> }) {
     <span className="inline-flex items-center" title={detail || `miroir ${data.remote} : ${data.state}`}>
       <Badge tone={syncTone(data.state)} dot>{syncSummary(data)}</Badge>
     </span>
+  )
+}
+
+/** Panneau de réconciliation **ff-only** (la seule mutation git de l'UI). **Preview d'abord** : le plan est
+ *  DÉRIVÉ de l'état de sync (source unique = l'`state` par branche du GET `/git/sync`), jamais un dry-run POST.
+ *  Confirme → POST `reconcile` (backend ff-only : jamais de merge non-ff) → affiche le résultat par branche →
+ *  re-fetch le badge. Un état sans branche ff-able (tout divergé) n'offre pas de bouton d'exécution : il
+ *  EXPLIQUE que la résolution est manuelle (spec forge-sot-local). */
+function ReconcilePanel({ project, sync, onDone, onClose }: {
+  project: string
+  sync: GitSync
+  onDone: () => void
+  onClose: () => void
+}) {
+  const reconcile = useReconcileSync(project)
+  const plan = reconcilePlan(sync)
+  const actionable = isReconcilable(sync)
+  const report = reconcile.data
+  return (
+    <Card className="space-y-3 border-warn-500/30 p-5">
+      <div className="flex items-center gap-2">
+        <p className="text-sm font-medium text-fg">Réconciliation miroir (fast-forward uniquement)</p>
+        <Button variant="ghost" size="sm" className="ml-auto" onClick={onClose}>Fermer</Button>
+      </div>
+
+      {/* Preview : ce que la réconciliation FERAIT, par branche (dérivé de l'état, pas d'appel réseau). */}
+      {!report && (
+        <>
+          <ul className="space-y-1.5">
+            {plan.map((p) => (
+              <li key={p.branch} className="flex items-center gap-2 text-sm">
+                <Badge tone={gitBranchTone(p.branch)}>{p.branch}</Badge>
+                <span className="text-muted">→</span>
+                <Badge tone={syncTone(p.state)} dot>{p.label}</Badge>
+              </li>
+            ))}
+          </ul>
+          {actionable ? (
+            <div className="flex items-center gap-2">
+              <Button variant="primary" size="sm" busy={reconcile.isPending}
+                onClick={() => reconcile.mutate(undefined, { onSuccess: onDone })}>
+                Confirmer (ff-only)
+              </Button>
+              <span className="text-xs text-faint">Aucun merge non-ff : les branches divergées sont laissées.</span>
+            </div>
+          ) : (
+            <Alert tone="danger" title="Divergence non fast-forward">
+              Aucune branche n'est réconciliable automatiquement (divergence réelle SoT↔GitHub). Résous le
+              conflit à la main — le cockpit ne merge jamais de non-ff (le SoT reste autoritaire).
+            </Alert>
+          )}
+        </>
+      )}
+
+      {/* Erreur d'exécution (ex. SoT corrompu) : honnête, jamais un demi-succès silencieux. */}
+      {reconcile.isError && (
+        <Alert tone="danger" title="Réconciliation impossible">
+          {reconcile.error instanceof ApiError ? reconcile.error.detail : String(reconcile.error)}
+        </Alert>
+      )}
+
+      {/* Résultat : l'action RÉELLEMENT appliquée par branche (fetch frais côté backend fait autorité). */}
+      {report && (
+        <>
+          <div className="flex items-center gap-2">
+            <Badge tone={report.blocked.length ? 'warn' : 'ok'} dot>{reconcileOutcome(report)}</Badge>
+          </div>
+          <ul className="space-y-1.5">
+            {Object.entries(report.actions).map(([branch, a]) => (
+              <li key={branch} className="flex items-center gap-2 text-sm">
+                <Badge tone={gitBranchTone(branch)}>{branch}</Badge>
+                <span className="text-muted">→</span>
+                <Badge tone={reconcileTone(a.action)} dot>{reconcileActionLabel(a.action)}</Badge>
+                {a.reason && <span className="text-xs text-faint" title={a.reason}>{a.reason}</span>}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </Card>
   )
 }
 

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { isLogUnified, syncSummary } from './git'
-import type { GitAheadBehind, GitSync } from './schemas'
+import {
+  isLogUnified, isReconcilable, needsReconcile, reconcileActionLabel, reconcileOutcome, reconcilePlan,
+  syncSummary,
+} from './git'
+import type { GitAheadBehind, GitReconcile, GitSync } from './schemas'
 
 const ab = (ahead: number, behind: number): GitAheadBehind => ({ base: 'main', head: 'dev', ahead, behind })
 
@@ -39,5 +42,66 @@ describe('syncSummary', () => {
     expect(syncSummary(sync('diverged'))).toBe('divergé')
     expect(syncSummary(sync('unreachable'))).toBe('injoignable')
     expect(syncSummary(sync('no_mirror'))).toBe('pas de miroir')
+  })
+})
+
+describe('reconcilePlan (preview dérivée de l’état, jamais un dry-run réseau)', () => {
+  it('dérive l’action ff-only par branche : ff GitHub / push / bloqué / rien', () => {
+    const data = sync('diverged', {
+      dev: { ahead: 0, behind: 2, state: 'remote_ahead' },   // miroir en avance → ff local
+      main: { ahead: 3, behind: 0, state: 'local_ahead' },   // SoT en avance → push miroir
+      feat: { ahead: 1, behind: 1, state: 'diverged' },      // vraie divergence → bloqué
+      old: { ahead: 0, behind: 0, state: 'synced' },         // rien à faire
+    })
+    const plan = Object.fromEntries(reconcilePlan(data).map((p) => [p.branch, p]))
+    expect(plan.dev).toMatchObject({ label: 'ff depuis GitHub (+2)', actionable: true })
+    expect(plan.main).toMatchObject({ label: 'pousser vers GitHub (+3)', actionable: true })
+    expect(plan.feat).toMatchObject({ label: 'divergé — réconciliation manuelle', actionable: false })
+    expect(plan.old).toMatchObject({ label: 'à jour', actionable: false })
+  })
+})
+
+describe('isReconcilable / needsReconcile', () => {
+  it('réconciliable ssi une branche est ff-able (avance d’un côté)', () => {
+    expect(isReconcilable(sync('remote_ahead', { dev: { ahead: 0, behind: 1, state: 'remote_ahead' } }))).toBe(true)
+    expect(isReconcilable(sync('local_ahead', { dev: { ahead: 1, behind: 0, state: 'local_ahead' } }))).toBe(true)
+    // rollup divergé cross-branche mais chaque branche ff-able → réconciliable (granularité par-branche)
+    expect(isReconcilable(sync('diverged', {
+      dev: { ahead: 0, behind: 1, state: 'remote_ahead' }, main: { ahead: 1, behind: 0, state: 'local_ahead' },
+    }))).toBe(true)
+    // vraie divergence sur la branche → rien de ff-able
+    expect(isReconcilable(sync('diverged', { dev: { ahead: 1, behind: 1, state: 'diverged' } }))).toBe(false)
+    expect(isReconcilable(sync('synced'))).toBe(false)
+  })
+
+  it('n’expose le bouton que sur une divergence réelle (jamais sur synced/dégradé)', () => {
+    expect(needsReconcile(sync('remote_ahead'))).toBe(true)
+    expect(needsReconcile(sync('diverged'))).toBe(true)   // exposé pour EXPLIQUER le blocage manuel
+    expect(needsReconcile(sync('synced'))).toBe(false)
+    expect(needsReconcile(sync('no_mirror'))).toBe(false)
+    expect(needsReconcile(sync('unreachable'))).toBe(false)
+  })
+})
+
+describe('reconcileOutcome / reconcileActionLabel (résultat post-POST honnête)', () => {
+  const rep = (over: Partial<GitReconcile>): GitReconcile => ({
+    project: 'p', remote: 'mirror', fetched: true, actions: {}, changed: false, blocked: [],
+    state: 'synced', ...over,
+  })
+
+  it('résume ce qui a bougé, et signale les blocages sans faux-succès', () => {
+    expect(reconcileOutcome(rep({
+      actions: { dev: { action: 'fast_forward' }, main: { action: 'pushed' } }, changed: true,
+    }))).toBe('2 branche(s) réconciliée(s)')
+    expect(reconcileOutcome(rep({
+      actions: { dev: { action: 'blocked_diverged' } }, blocked: ['dev'], state: 'diverged',
+    }))).toBe('1 branche(s) bloquée(s) — réconciliation manuelle requise')
+    expect(reconcileOutcome(rep({ actions: { dev: { action: 'already_synced' } } }))).toBe('déjà synchronisé')
+    expect(reconcileOutcome(rep({ fetched: false, state: 'no_mirror' }))).toBe('pas de miroir')
+  })
+
+  it('nomme chaque action appliquée', () => {
+    expect(reconcileActionLabel('fast_forward')).toBe('rattrapé (ff)')
+    expect(reconcileActionLabel('blocked_worktree')).toBe('bloqué (worktree actif)')
   })
 })

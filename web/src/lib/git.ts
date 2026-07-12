@@ -1,4 +1,4 @@
-import type { GitAheadBehind, GitSync } from './schemas'
+import type { GitAheadBehind, GitReconcile, GitReconcileAction, GitSync, GitSyncState } from './schemas'
 
 /** Vrai ssi les logs `dev`/`main` doivent être fusionnés en UN : les deux réfs sont alignées (même commit,
  *  logs identiques) ET les deux sont présentes. Pur — évite d'afficher deux colonnes de log redondantes. */
@@ -21,4 +21,68 @@ export function syncSummary(data: GitSync): string {
     case 'unreachable': return 'injoignable'
     case 'no_mirror': return 'pas de miroir'
   }
+}
+
+/** Une ligne du plan de réconciliation dérivé de l'état de sync (source unique = `state` par branche). */
+export interface ReconcilePlanItem {
+  branch: string
+  state: GitSyncState
+  /** Ce que la réconciliation ferait pour cette branche (preview, avant exécution). */
+  label: string
+  /** Vrai ssi ff-only applicable (miroir ou SoT en avance) ; faux = à jour ou bloqué (manuel). */
+  actionable: boolean
+}
+
+/** Plan de réconciliation **dérivé de l'état de sync** (preview AVANT le POST — jamais un dry-run réseau ;
+ *  la source unique backend est l'`state` par branche du GET `/git/sync`). Par branche : miroir en avance → ff
+ *  local ; SoT en avance → push miroir ; vraie divergence → bloqué (manuel) ; alignée → rien. Pur. */
+export function reconcilePlan(data: GitSync): ReconcilePlanItem[] {
+  return Object.entries(data.branches).map(([branch, s]) => {
+    switch (s.state) {
+      case 'remote_ahead':
+        return { branch, state: s.state, label: `ff depuis GitHub (+${s.behind})`, actionable: true }
+      case 'local_ahead':
+        return { branch, state: s.state, label: `pousser vers GitHub (+${s.ahead})`, actionable: true }
+      case 'diverged':
+        return { branch, state: s.state, label: 'divergé — réconciliation manuelle', actionable: false }
+      default:
+        return { branch, state: s.state, label: 'à jour', actionable: false }
+    }
+  })
+}
+
+/** Vrai ssi au moins une branche est réconciliable **ff-only** (miroir ou SoT en avance) → le bouton
+ *  « Réconcilier » exécute quelque chose. Tout-`synced` / `diverged` / dégradé n'a rien à ff. Pur. */
+export function isReconcilable(data: GitSync): boolean {
+  return reconcilePlan(data).some((p) => p.actionable)
+}
+
+/** Vrai ssi l'état mérite d'exposer le bouton « Réconcilier » : une divergence réelle (ff-able OU divergée,
+ *  pour EXPLIQUER le blocage manuel). Alignée / dégradée (`no_mirror`/`unreachable`) → rien à proposer. Pur. */
+export function needsReconcile(data: GitSync): boolean {
+  return data.state === 'remote_ahead' || data.state === 'local_ahead' || data.state === 'diverged'
+}
+
+const RECONCILE_LABELS: Record<GitReconcileAction, string> = {
+  already_synced: 'déjà à jour',
+  fast_forward: 'rattrapé (ff)',
+  pushed: 'poussé vers GitHub',
+  push_failed: 'push échoué',
+  blocked_worktree: 'bloqué (worktree actif)',
+  blocked_diverged: 'bloqué (divergé)',
+}
+
+/** Label lisible de l'action RÉELLEMENT appliquée à une branche (résultat du POST reconcile). Pur. */
+export function reconcileActionLabel(action: GitReconcileAction): string {
+  return RECONCILE_LABELS[action]
+}
+
+/** Résumé lisible du résultat d'une réconciliation (post-POST) : ce qui a bougé, ce qui reste bloqué. Pur. */
+export function reconcileOutcome(rep: GitReconcile): string {
+  if (!rep.fetched) return rep.state === 'no_mirror' ? 'pas de miroir' : 'miroir injoignable'
+  if (rep.blocked.length > 0) {
+    return `${rep.blocked.length} branche(s) bloquée(s) — réconciliation manuelle requise`
+  }
+  const moved = Object.values(rep.actions).filter((a) => a.action === 'fast_forward' || a.action === 'pushed')
+  return moved.length > 0 ? `${moved.length} branche(s) réconciliée(s)` : 'déjà synchronisé'
 }

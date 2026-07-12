@@ -272,6 +272,35 @@ export const GitSyncSchema = z.object({
 })
 export type GitSync = z.infer<typeof GitSyncSchema>
 
+// POST /api/projects/{p}/git/sync/reconcile : réconciliation **ff-only** (jamais de merge non-ff). Par
+// branche, l'action réellement APPLIQUÉE : `fast_forward` (miroir avancé → ff local), `pushed`/`push_failed`
+// (SoT avancé → push miroir), `already_synced`, ou bloquée honnêtement (`blocked_diverged` = vraie divergence,
+// `blocked_worktree` = branche sortie dans un worktree, jamais ff). `changed` = au moins une ref a bougé ;
+// `blocked` = branches non réconciliables ; `state` = rollup pré-action (l'UI re-lit `/git/sync` pour le badge).
+export const GitReconcileActionSchema = z.enum([
+  'already_synced', 'fast_forward', 'pushed', 'push_failed', 'blocked_worktree', 'blocked_diverged',
+])
+export type GitReconcileAction = z.infer<typeof GitReconcileActionSchema>
+
+export const GitBranchReconcileSchema = z.object({
+  action: GitReconcileActionSchema,
+  from: z.string().optional(),
+  to: z.string().optional(),
+  reason: z.string().optional(),
+})
+export type GitBranchReconcile = z.infer<typeof GitBranchReconcileSchema>
+
+export const GitReconcileSchema = z.object({
+  project: z.string(),
+  remote: z.string(),
+  fetched: z.boolean(),
+  actions: z.record(z.string(), GitBranchReconcileSchema),
+  changed: z.boolean(),
+  blocked: z.array(z.string()),
+  state: GitSyncStateSchema,
+})
+export type GitReconcile = z.infer<typeof GitReconcileSchema>
+
 // Une entrée d'arbre (dossier du dépôt à une réf) : blob (fichier), tree (dossier) ou commit (sous-module).
 // `size` = null pour un arbre.
 export const GitTreeEntrySchema = z.object({

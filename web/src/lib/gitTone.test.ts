@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { gitBranchTone, syncTone } from './statusTone'
+import { gitBranchTone, reconcileTone, syncTone } from './statusTone'
 
 describe('gitBranchTone', () => {
   it('distingue les réfs protégées (main=ok, dev=info) des features (accent)', () => {
@@ -27,5 +27,20 @@ describe('syncTone', () => {
     expect(syncTone('unreachable')).toBe('neutral')
     expect(syncTone('no_mirror')).toBe('neutral')
     expect(syncTone('inconnu')).toBe('neutral')
+  })
+})
+
+describe('reconcileTone', () => {
+  it('teinte en succès ce qui a avancé (ff / push / déjà à jour)', () => {
+    expect(reconcileTone('fast_forward')).toBe('ok')
+    expect(reconcileTone('pushed')).toBe('ok')
+    expect(reconcileTone('already_synced')).toBe('ok')
+  })
+
+  it('garde les blocages/échecs NON verts (jamais de faux-succès) et replie sur neutral', () => {
+    expect(reconcileTone('push_failed')).toBe('danger')
+    expect(reconcileTone('blocked_diverged')).toBe('danger')
+    expect(reconcileTone('blocked_worktree')).toBe('warn')
+    expect(reconcileTone('inconnu')).toBe('neutral')
   })
 })

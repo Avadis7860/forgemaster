@@ -401,20 +401,25 @@ class InternalGit:
         `set_remote` pour le retrait d'un miroir (`set_mirror_remote(None)`)."""
         _git(sot, "remote", "remove", name)
 
+    def _authed_env(self, creds_ref: str | None) -> dict[str, str]:
+        """Env d'un enfant git avec auth **transitoire** pour un aller-retour réseau (fetch/push). Si
+        `creds_ref` est fourni ET qu'un résolveur est injecté, le token est résolu à l'usage et injecté via
+        `credential_env` (jamais persisté, jamais en argv). `GIT_TERMINAL_PROMPT=0` fait échouer bruyamment
+        plutôt que pendre sur un prompt (privé sans token). Sinon → env ambiant (compat historique)."""
+        env: dict[str, str] = dict(os.environ)
+        if creds_ref and self._cred_resolver is not None:
+            token = self._cred_resolver(creds_ref)      # total : '' si absent/illisible → op ambiante
+            if token:
+                env = credential_env(token, base=env)
+        env.setdefault("GIT_TERMINAL_PROMPT", "0")
+        return env
+
     def fetch_remote(self, sot: Path, remote: str, *, creds_ref: str | None = None) -> bool:
         """Fetch `remote` sur le SoT bare (met à jour `refs/remotes/<remote>/*`). **Best-effort** : retourne
         False sur échec (remote absent / injoignable / auth), ne lève **jamais** — la vérité reste le SoT
         local (spec forge-sot-local), et la couche divergence (P2) en dérivera un état honnête `unreachable`.
-        Auth **transitoire** : si `creds_ref` est fourni ET qu'un résolveur est injecté, le token est résolu
-        à l'usage et injecté via `credential_env` (jamais persisté, jamais en argv) le temps du fetch.
-        `GIT_TERMINAL_PROMPT=0` fait échouer bruyamment plutôt que pendre sur un prompt (privé sans token)."""
-        env: dict[str, str] = dict(os.environ)
-        if creds_ref and self._cred_resolver is not None:
-            token = self._cred_resolver(creds_ref)      # total : '' si absent/illisible → fetch ambiant
-            if token:
-                env = credential_env(token, base=env)
-        env.setdefault("GIT_TERMINAL_PROMPT", "0")
-        return _git(sot, "fetch", remote, env=env).ok
+        Auth **transitoire** via `_authed_env` (token résolu à l'usage, jamais persisté ni en argv)."""
+        return _git(sot, "fetch", remote, env=self._authed_env(creds_ref)).ok
 
     # -- lectures pour le gate (SHA d'ancrage + diff base...head, read-only) -------------------------
 
@@ -512,6 +517,80 @@ class InternalGit:
             per[b] = {"ahead": ahead, "behind": behind, "state": _branch_sync_state(ahead, behind)}
 
         return {"remote": remote, "fetched": True, "branches": per, "state": _rollup_sync_state(per)}
+
+    def _checked_out_branches(self, sot: Path) -> set[str]:
+        """Branches **sorties dans un worktree actif** (`worktree list --porcelain` → lignes `branch
+        refs/heads/<b>`). `branch -f <b>` refuserait une branche checked-out → on ne la ff JAMAIS (garde-fou
+        `reconcile`). Un bare sans worktree lié → set vide. Best-effort (echec → set vide, prudent)."""
+        out = _git(sot, "worktree", "list", "--porcelain").stdout
+        return {
+            line[len("branch "):].strip().removeprefix("refs/heads/")
+            for line in out.splitlines() if line.startswith("branch ")
+        }
+
+    def reconcile(
+        self,
+        sot: Path,
+        *,
+        remote: str = "mirror",
+        branches: Sequence[str] = ("dev", "main"),
+        creds_ref: str | None = None,
+    ) -> dict:
+        """Réconcilie le SoT avec son miroir **ff-only**, sans jamais de merge non-ff ni de `--force`.
+        **Recalcule d'abord la divergence** (fetch + compare — l'état frais fait autorité, pas un snapshot
+        d'UI périmé), puis agit par branche selon son état :
+        - `remote_ahead` → **ff** la branche locale vers sa ref de suivi (`merge_ff` = avance de ref sur un
+          bare) ;
+        - `local_ahead` → **push ff** cette seule branche vers le miroir (refspec explicite, best-effort,
+          jamais `--force`) ;
+        - `synced` → rien ;
+        - `diverged` (non-ff) → **BLOQUÉ**, aucune mutation, raison honnête (spec forge-sot-local : jamais
+          d'auto-merge).
+
+        **Garde-fou** : on ne ff **jamais** une branche sortie dans un worktree actif (`branch -f` la
+        refuserait) → `blocked_worktree`, aucune mutation. **Dégradation honnête** héritée : `no_mirror` /
+        `unreachable` (fetch KO) → aucune action, `fetched=False`.
+
+        Renvoie `{remote, fetched, actions:{<b>:{action, from?, to?, reason?}}, changed, blocked, state}` :
+        `action` ∈ `already_synced | fast_forward | pushed | push_failed | blocked_worktree |
+        blocked_diverged` ; `changed` = au moins une ref a bougé ; `blocked` = branches non réconciliables ;
+        `state` = rollup **pré-action** (l'UI re-fetch `/git/sync` pour le badge frais). Idempotent en régime
+        `synced` (rien à faire) ; un ff est ré-appliquable sans dommage."""
+        div = self.remote_divergence(sot, remote=remote, branches=branches, creds_ref=creds_ref)
+        if not div["fetched"]:   # no_mirror / unreachable → rien à réconcilier, honnête
+            return {"remote": remote, "fetched": False, "actions": {}, "changed": False,
+                    "blocked": [], "state": div["state"]}
+        checked_out = self._checked_out_branches(sot)
+        authed = self._authed_env(creds_ref)
+        actions: dict[str, dict] = {}
+        blocked: list[str] = []
+        changed = False
+        for b, info in div["branches"].items():
+            state = info["state"]
+            if state == "synced":
+                actions[b] = {"action": "already_synced"}
+            elif state == "remote_ahead":
+                if b in checked_out:
+                    actions[b] = {"action": "blocked_worktree",
+                                  "reason": f"{b} est sortie dans un worktree actif — ff refusé"}
+                    blocked.append(b)
+                    continue
+                old = self.feature_sha(sot, b)
+                self.merge_ff(sot, into=b, source=f"refs/remotes/{remote}/{b}")  # ff garanti (into ancêtre)
+                actions[b] = {"action": "fast_forward", "from": old, "to": self.feature_sha(sot, b)}
+                changed = True
+            elif state == "local_ahead":
+                pushed = _git(sot, "push", remote, f"refs/heads/{b}:refs/heads/{b}", env=authed).ok
+                actions[b] = {"action": "pushed" if pushed else "push_failed"}
+                changed = changed or pushed
+                if not pushed:
+                    blocked.append(b)
+            else:  # diverged → jamais d'auto-merge non-ff
+                actions[b] = {"action": "blocked_diverged",
+                              "reason": f"{b} a divergé (non-ff) — réconciliation manuelle requise"}
+                blocked.append(b)
+        return {"remote": remote, "fetched": True, "actions": actions, "changed": changed,
+                "blocked": blocked, "state": div["state"]}
 
     # -- exploration read-only du dépôt (arbre + contenu, bare-safe) ---------------------------------
 

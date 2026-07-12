@@ -45,6 +45,11 @@ class GitHubGit:
     ) -> dict:
         raise NotImplementedError("différé (P6) : backend GitHub — écart SoT↔remote")
 
+    def reconcile(
+        self, sot: Path, *, remote: str, branches: Sequence[str], creds_ref: str | None = None
+    ) -> dict:
+        raise NotImplementedError("différé (P6) : backend GitHub — réconciliation ff SoT↔remote")
+
     def feature_sha(self, sot: Path, ref: str) -> str:
         raise NotImplementedError("différé (P6) : backend GitHub")
 

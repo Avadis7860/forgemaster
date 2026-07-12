@@ -1,7 +1,9 @@
 """routes/git — router de domaine « git » (visibilité read-only sur le SoT bare d'un projet : branches,
-avance/retard `main` vs `dev`, log court, **et exploration de l'arbre + contenu d'un fichier**). **AUCUNE
-mutation** : le SoT est un bare (pas de working-tree) et le cycle git mutant vit dans `gate/merge` ; ce
-routeur ne fait que lire. Sert « où en est main vs dev ? » ET « voyager dans les fichiers du dépôt »."""
+avance/retard `main` vs `dev`, log court, écart SoT↔miroir, **et exploration de l'arbre + contenu d'un
+fichier**). **Read-only sauf UNE op gatée** : `POST .../git/sync/reconcile` réconcilie le miroir **ff-only**
+(jamais de merge non-ff, spec forge-sot-local) — tout le reste ne fait que lire ; le cycle git mutant de
+développement (worktree → gate → merge) vit dans `gate/merge`. Sert « où en est main vs dev ? », « suis-je à
+jour vs GitHub ? » ET « voyager dans les fichiers du dépôt »."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -71,6 +73,31 @@ def make_git_router() -> APIRouter:
         except GitOpError as exc:
             raise HTTPException(status_code=422, detail=f"sync git impossible : {exc}") from exc
         return {"project": project, **div}
+
+    @router.post("/api/projects/{project}/git/sync/reconcile")
+    def git_sync_reconcile(project: str, deps: Deps = Depends(get_deps)) -> dict:
+        """Réconcilie le SoT avec son miroir GitHub **ff-only** — la SEULE mutation de ce routeur, et elle est
+        **gatée par construction** : jamais de merge non-ff ni de `--force` (spec forge-sot-local). L'UI
+        montre d'ABORD la décision via le GET `/git/sync` idempotent (source unique = l'`state` par branche),
+        puis appelle ce POST pour exécuter — pas de dry-run POST. Recalcule la divergence (l'état frais fait
+        autorité), puis par branche : `remote_ahead` → ff local ; `local_ahead` → push ff ; `diverged` →
+        **bloqué** sans mutation ; garde-fou : jamais ff une branche sortie dans un worktree actif. Rend
+        `{project, remote, fetched, actions:{<b>:{action, from?, to?, reason?}}, changed, blocked, state}`.
+        Projet absent → 404 ; op git dure (ex. ref corrompue) → 422."""
+        conn = deps.open_db()
+        try:
+            row = get_project(conn, project)   # KeyError projet absent → 404 (handler global)
+        finally:
+            conn.close()
+        git = InternalGit(cred_resolver=cred_resolver(deps.settings))
+        try:
+            report = git.reconcile(
+                Path(row["sot_path"]), remote="mirror", branches=("dev", "main"),
+                creds_ref=row["credential_ref"],
+            )
+        except GitOpError as exc:
+            raise HTTPException(status_code=422, detail=f"réconciliation impossible : {exc}") from exc
+        return {"project": project, **report}
 
     @router.get("/api/projects/{project}/git/tree")
     def git_tree(project: str, ref: str = "dev", path: str = "", deps: Deps = Depends(get_deps)) -> dict:

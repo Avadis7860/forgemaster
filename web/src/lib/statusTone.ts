@@ -94,6 +94,22 @@ export function syncTone(state: string): Tone {
   return GIT_SYNC_TONE[state] ?? 'neutral'
 }
 
+/** Action RÉELLEMENT appliquée à une branche par la réconciliation (résultat du POST) → Tone. Ce qui a
+ *  avancé est vert/info ; les blocages restent **non verts** (danger/warn), jamais un faux-succès. */
+export const GIT_RECONCILE_TONE: Record<string, Tone> = {
+  fast_forward: 'ok',       // rattrapé sur GitHub
+  pushed: 'ok',             // miroir mis à jour
+  already_synced: 'ok',     // rien à faire, déjà aligné
+  push_failed: 'danger',    // push best-effort échoué → honnête, surtout pas vert
+  blocked_worktree: 'warn', // ff refusé (branche sortie) → à débloquer
+  blocked_diverged: 'danger', // non-ff → réconciliation manuelle
+}
+
+/** Ton de l'action de réconciliation (repli neutre sur une action inconnue). */
+export function reconcileTone(action: string): Tone {
+  return GIT_RECONCILE_TONE[action] ?? 'neutral'
+}
+
 /** Résout une valeur métier en Tone via une map, avec repli neutre. */
 export function toneFor(map: Record<string, Tone>, value: string | null | undefined): Tone {
   return (value && map[value]) || 'neutral'
