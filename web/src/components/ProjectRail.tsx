@@ -1,6 +1,7 @@
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
-import { useProjects } from '@/lib/queries'
+import { useProjects, useGitSync } from '@/lib/queries'
 import { cn } from '@/lib/cn'
+import { syncTone, dotClasses } from '@/lib/statusTone'
 import { Alert, Badge, Card, Eyebrow, EmptyState, LoadingState } from '@/components/ui'
 import { NewProjectForm } from '@/components/NewProjectForm'
 import type { Project } from '@/lib/schemas'
@@ -11,6 +12,10 @@ import type { Project } from '@/lib/schemas'
 /** Une entité du rail (projet ou outil) : carte sélectionnable → workspace. */
 function EntityCard({ p, active }: { p: Project; active: string | undefined }) {
   const isActive = p.slug === active
+  // Dot rollup de sync miroir : lecture SEULE du cache (même queryKey que le GitTab, enabled:false) — ne
+  // déclenche AUCUN fetch réseau. Absent tant que le projet n'a pas été vérifié ; `no_mirror` = pas de dot.
+  const sync = useGitSync(p.slug)
+  const syncState = sync.data?.state
   return (
     <Card
       as="li"
@@ -18,7 +23,13 @@ function EntityCard({ p, active }: { p: Project; active: string | undefined }) {
     >
       <Link to="/$project" params={{ project: p.slug }} className="block rounded-card px-3 py-2">
         <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-sm font-medium text-fg">{p.slug}</span>
+          <span className="flex min-w-0 items-center gap-1.5">
+            {syncState && syncState !== 'no_mirror' && (
+              <span className={cn('size-1.5 shrink-0 rounded-pill', dotClasses(syncTone(syncState)))}
+                title={`miroir : ${syncState}`} />
+            )}
+            <span className="truncate text-sm font-medium text-fg">{p.slug}</span>
+          </span>
           <Badge tone={isActive ? 'accent' : 'neutral'}>{p.backend}</Badge>
         </div>
         {p.name && <p className="truncate text-xs text-muted">{p.name}</p>}

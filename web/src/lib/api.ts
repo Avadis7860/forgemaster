@@ -14,6 +14,7 @@ import {
   GitHistorySchema,
   GitTreeSchema,
   GitViewSchema,
+  GitSyncSchema,
   FlowSchema,
   FlowOperationsSchema,
   HealthSchema,
@@ -83,6 +84,10 @@ export const api = {
   // aucun effet (le runner de boucle visuelle goto-only l'atteint sans risque).
   getGit: (project: string) =>
     request(`/api/projects/${encodeURIComponent(project)}/git`, GitViewSchema),
+  // GET /api/projects/{p}/git/sync : écart SoT↔miroir GitHub. RÉSEAU (git fetch), NON-idempotent →
+  // JAMAIS via un runner goto-only ni un poll ; déclenché par le refresh manuel du GitTab uniquement.
+  getGitSync: (project: string) =>
+    request(`/api/projects/${encodeURIComponent(project)}/git/sync`, GitSyncSchema),
   // Exploration read-only : arbre d'un dossier + contenu d'un fichier à une réf. GET idempotents.
   getGitTree: (project: string, ref: string, path: string) =>
     request(

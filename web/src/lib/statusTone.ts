@@ -78,6 +78,22 @@ export function gitBranchTone(name: string): Tone {
   return 'neutral'
 }
 
+/** État de sync SoT↔miroir GitHub (rollup projet ou par-branche) → Tone. Les dégradations restent
+ *  **non vertes** (jamais de faux-vert) : `unreachable`/`no_mirror` en neutre, jamais `ok`. */
+export const GIT_SYNC_TONE: Record<string, Tone> = {
+  synced: 'ok',
+  local_ahead: 'info',     // SoT en avance sur le miroir → à pousser (notre sens de marche : informatif)
+  remote_ahead: 'warn',    // GitHub en avance → le SoT est périmé, à réconcilier (P5) : attention
+  diverged: 'danger',      // non-ff → vraie divergence, bloquée (aucun auto-merge)
+  unreachable: 'neutral',  // miroir injoignable/auth → honnête, surtout PAS vert
+  no_mirror: 'neutral',    // aucun miroir câblé
+}
+
+/** Ton de l'état de sync miroir (repli neutre — jamais un faux-vert sur un état inconnu). */
+export function syncTone(state: string): Tone {
+  return GIT_SYNC_TONE[state] ?? 'neutral'
+}
+
 /** Résout une valeur métier en Tone via une map, avec repli neutre. */
 export function toneFor(map: Record<string, Tone>, value: string | null | undefined): Tone {
   return (value && map[value]) || 'neutral'

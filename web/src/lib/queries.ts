@@ -10,6 +10,7 @@ export const qk = {
   project: (slug: string) => ['projects', slug] as const,
   roadmap: (project: string) => ['roadmap', project] as const,
   git: (project: string) => ['git', project] as const,
+  gitSync: (project: string) => ['git-sync', project] as const,
   gitTree: (project: string, ref: string, path: string) => ['git-tree', project, ref, path] as const,
   gitBlob: (project: string, ref: string, path: string) => ['git-blob', project, ref, path] as const,
   gitCommit: (project: string, sha: string) => ['git-commit', project, sha] as const,
@@ -63,6 +64,21 @@ export function useGit(project: string) {
     queryKey: qk.git(project),
     queryFn: () => api.getGit(project),
     enabled: Boolean(project),
+  })
+}
+
+// Sync SoT↔miroir GitHub : RÉSEAU (git fetch), NON-idempotent → `enabled:false`, JAMAIS auto ni greffé sur
+// `useGit` no-poll. Déclenché À LA MAIN par le RefreshButton du GitTab (`.refetch()`). `staleTime`/`gcTime`
+// Infinity : le résultat manuel PERSISTE en cache — le rail (EntityCard) le relit en lecture seule (même
+// queryKey, `enabled:false`) pour un dot rollup, sans jamais déclencher de fetch réseau.
+export function useGitSync(project: string) {
+  return useQuery({
+    queryKey: qk.gitSync(project),
+    queryFn: () => api.getGitSync(project),
+    enabled: false,
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
   })
 }
 

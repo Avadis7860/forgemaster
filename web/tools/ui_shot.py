@@ -251,10 +251,13 @@ def _seed_gate_states(home: Path, proj: str) -> None:
 def _seed_git_state(home: Path, proj: str) -> None:
     """Avance `dev` d'un cran au-dessus de `main` (ff dev sur une feature déjà committée par le seed Gate),
     pour rendre l'onglet Git VOYANT : la bannière montre « main en retard de N sur dev » (le signal
-    main-rattrape-dev), sans toucher main. Aucune API ne fait ça — plumbing direct sur le SoT jetable."""
+    main-rattrape-dev), sans toucher main. PUIS câble un **miroir bare LOCAL** en avance sur le SoT (cas
+    vécu : travail hors cockpit) → le badge sync miroir affiche `remote_ahead` après un refresh manuel.
+    Aucune API ne fait ça — plumbing direct sur le SoT + un « GitHub » jetable local (zéro réseau)."""
     try:
         from cockpit.config import Settings
-        from cockpit.git.internal import GitOpError, InternalGit
+        from cockpit.core import run
+        from cockpit.git.internal import GitOpError, InternalGit, writeback_env
         from cockpit.projects import registry
     except ImportError:
         return  # build-only → vue à 0/0, sans casser le screenshot
@@ -264,6 +267,21 @@ def _seed_git_state(home: Path, proj: str) -> None:
         InternalGit().merge_ff(sot, into="dev", source="feature/gate-green-demo")  # dev avance, main reste
     except GitOpError:
         return  # feature absente (seed Gate sauté) → vue à 0/0, sans casser le screenshot
+    # Miroir divergent LOCAL : cloné du SoT (histoire partagée), câblé comme remote `mirror`, puis SON `dev`
+    # avancé de 2 commits → le miroir prend de l'avance sur le SoT (remote_ahead). L'endpoint /git/sync le
+    # verra au refresh manuel ; le badge rend « GitHub +2 » (jamais un faux-vert). Zéro réseau.
+    env = writeback_env(("Seed", "seed@cockpit.local"))
+    mirror = home / "seed-mirror" / f"{proj}.git"
+    mirror.parent.mkdir(parents=True, exist_ok=True)
+    if not run.run(["git", "clone", "--bare", "-q", str(sot), str(mirror)], env=env).ok:
+        return  # clone KO → vue sans badge sync, sans casser le screenshot
+    InternalGit().set_remote(sot, "mirror", str(mirror))
+    wt = home / "seed-mirror" / f"{proj}-wt"
+    if run.run(["git", "-C", str(mirror), "worktree", "add", "-q", str(wt), "dev"], env=env).ok:
+        for i in (1, 2):
+            (wt / f"hors-cockpit-{i}.txt").write_text("travail hors cockpit\n", encoding="utf-8")
+            run.run(["git", "-C", str(wt), "add", "-A"], env=env)
+            run.run(["git", "-C", str(wt), "commit", "-q", "-m", f"hors cockpit {i}"], env=env)
 
 
 def _seed_credential_state(home: Path, slugs: list[str]) -> None:

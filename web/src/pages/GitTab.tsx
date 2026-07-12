@@ -7,9 +7,9 @@ import { ProjectCredentialCard } from '@/components/credential/ProjectCredential
 import { RepoExplorer } from '@/components/git/RepoExplorer'
 import { CommitDetailCard, DiffCard } from '@/components/git/GitIntelligence'
 import { ApiError } from '@/lib/api'
-import { useGit } from '@/lib/queries'
-import { isLogUnified } from '@/lib/git'
-import { gitBranchTone } from '@/lib/statusTone'
+import { useGit, useGitSync } from '@/lib/queries'
+import { isLogUnified, syncSummary } from '@/lib/git'
+import { gitBranchTone, syncTone } from '@/lib/statusTone'
 import type { GitAheadBehind, GitBranch, GitLogEntry } from '@/lib/schemas'
 
 type GitView = 'historique' | 'fichiers' | 'diff'
@@ -27,6 +27,10 @@ const VIEWS = [
 export function GitTab() {
   const project = useParams({ strict: false }).project ?? ''
   const { data, isLoading, isError, error, refetch, isFetching } = useGit(project)
+  // Sync miroir : RÉSEAU, manuel — jamais auto (enabled:false) ; le refresh manuel déclenche les DEUX
+  // (vue read-only idempotente + fetch du miroir), pour que le badge reflète l'état après un clic.
+  const sync = useGitSync(project)
+  const onRefresh = () => { void refetch(); void sync.refetch() }
   const [sha, setSha] = useState<string | null>(null)  // commit sélectionné (clic sur log/branche)
   const [view, setView] = useState<GitView>('historique')
 
@@ -37,7 +41,7 @@ export function GitTab() {
         <Alert tone="danger" title="Vue Git indisponible">
           {error instanceof ApiError ? error.detail : String(error)}
         </Alert>
-        <RefreshButton onClick={() => refetch()} busy={isFetching} />
+        <RefreshButton onClick={onRefresh} busy={isFetching} />
       </div>
     )
   }
@@ -59,7 +63,8 @@ export function GitTab() {
         ))}
         {headSha && <code className="font-mono text-xs text-faint">{headSha}</code>}
         {data.ahead_behind && <SyncChip ab={data.ahead_behind} />}
-        <RefreshButton className="ml-auto" onClick={() => refetch()} busy={isFetching} />
+        <RemoteSyncChip sync={sync} />
+        <RefreshButton className="ml-auto" onClick={onRefresh} busy={isFetching || sync.isFetching} />
       </div>
 
       {/* Config miroir/token = réglage, pas lecture → repliée par défaut pour rendre la hauteur au dépôt. */}
@@ -121,6 +126,28 @@ function SyncChip({ ab }: { ab: GitAheadBehind }) {
   return (
     <span className="inline-flex items-center gap-1.5" title={`dev mène de ${ab.ahead} commit(s)`}>
       <Badge tone="warn" dot>main −{ab.ahead}</Badge>
+    </span>
+  )
+}
+
+/** Puce de synchro SoT↔**miroir GitHub** (RÉSEAU). Rendue seulement APRÈS une vérif manuelle (le fetch n'est
+ *  pas auto) — avant, une invite discrète « miroir ? ». Chaque état a son ton (jamais de faux-vert :
+ *  injoignable / pas-de-miroir restent neutres, jamais `ok`). Le `title` détaille l'écart par branche. */
+function RemoteSyncChip({ sync }: { sync: ReturnType<typeof useGitSync> }) {
+  if (sync.isFetching) return <Badge tone="neutral" dot>miroir…</Badge>
+  const data = sync.data
+  if (!data) {
+    return (
+      <span title="Clique ⟳ pour vérifier la synchro avec le miroir GitHub">
+        <Badge tone="neutral" className="opacity-60">miroir ?</Badge>
+      </span>
+    )
+  }
+  const detail = Object.entries(data.branches)
+    .map(([b, s]) => `${b} : +${s.ahead} / −${s.behind}`).join(' · ')
+  return (
+    <span className="inline-flex items-center" title={detail || `miroir ${data.remote} : ${data.state}`}>
+      <Badge tone={syncTone(data.state)} dot>{syncSummary(data)}</Badge>
     </span>
   )
 }

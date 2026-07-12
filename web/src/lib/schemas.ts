@@ -248,6 +248,30 @@ export const GitViewSchema = z.object({
 })
 export type GitView = z.infer<typeof GitViewSchema>
 
+// GET /api/projects/{p}/git/sync : écart SoT↔miroir GitHub (RÉSEAU). `state` = rollup projet ; par-branche
+// {ahead, behind, state}. Dégradation honnête : `no_mirror` (miroir non câblé) / `unreachable` (fetch KO)
+// → `fetched:false`, `branches:{}` (jamais 0/0 faux-vert). `local_ahead`/`remote_ahead` = SoT/miroir en avance.
+export const GitSyncStateSchema = z.enum([
+  'synced', 'local_ahead', 'remote_ahead', 'diverged', 'no_mirror', 'unreachable',
+])
+export type GitSyncState = z.infer<typeof GitSyncStateSchema>
+
+export const GitBranchSyncSchema = z.object({
+  ahead: z.number(),
+  behind: z.number(),
+  state: GitSyncStateSchema,
+})
+export type GitBranchSync = z.infer<typeof GitBranchSyncSchema>
+
+export const GitSyncSchema = z.object({
+  project: z.string(),
+  remote: z.string(),
+  fetched: z.boolean(),
+  branches: z.record(z.string(), GitBranchSyncSchema),
+  state: GitSyncStateSchema,
+})
+export type GitSync = z.infer<typeof GitSyncSchema>
+
 // Une entrée d'arbre (dossier du dépôt à une réf) : blob (fichier), tree (dossier) ou commit (sous-module).
 // `size` = null pour un arbre.
 export const GitTreeEntrySchema = z.object({
