@@ -348,6 +348,55 @@ def test_git_sync_reconcile_ff_and_blocks_diverged(client, tmp_path: Path):
     assert c.post("/api/projects/ghost/git/sync/reconcile").status_code == 404
 
 
+def test_tool_sync_ff_and_fail_close_on_project(client, tmp_path: Path, monkeypatch):
+    """`POST .../tool/sync` re-synchronise un outil **pull-only ff** : amont en avance sur `dev` → ff le SoT
+    (auto-répare le refspec du clone bare au passage), `changed=True`. **Fail-close** : un projet refuse la
+    route → 409 (sa voie est `reconcile`) ; entité absente → 404. Pré-chauffage d'index monkeypatché (test
+    — la glue best-effort est couverte par test_toolsync)."""
+    c, settings = client
+    from cockpit import toolsync
+    from cockpit.codemap.index import IndexHandle
+    monkeypatch.setattr(toolsync, "ensure_index",
+                        lambda s, p, sot, *, ref="dev", runner=None:
+                        IndexHandle(project=p, ref=ref, sha="d", root=Path(sot)))
+    env = writeback_env(("T", "t@example.invalid"))
+
+    # upstream « GitHub » non-bare (main+dev) puis adoption comme OUTIL (clone bare, origin sans refspec)
+    up = tmp_path / "upstream"
+    up.mkdir()
+    assert run.run(["git", "init", "-q", "-b", "main", str(up)], env=env).ok
+    (up / "README.md").write_text("outil\n", encoding="utf-8")
+    assert run.run(["git", "-C", str(up), "add", "-A"], env=env).ok
+    assert run.run(["git", "-C", str(up), "commit", "-q", "-m", "adoption"], env=env).ok
+    assert run.run(["git", "-C", str(up), "branch", "dev"], env=env).ok
+    conn = store.open_db(settings)
+    registry.create_project(conn, settings, slug="code-map", kind="tool", source_url=str(up))
+    conn.close()
+    sot = registry.sot_path_for(settings, "code-map")
+
+    # à jour d'abord → 200, already_synced, changed=False
+    r0 = c.post("/api/projects/code-map/tool/sync")
+    assert r0.status_code == 200 and r0.json()["actions"]["dev"] == {"action": "already_synced"}
+    assert r0.json()["changed"] is False
+
+    # l'amont avance sur dev → ff descendant, SoT à origin/dev
+    assert run.run(["git", "-C", str(up), "checkout", "-q", "dev"], env=env).ok
+    (up / "work.txt").write_text("amont\n", encoding="utf-8")
+    assert run.run(["git", "-C", str(up), "add", "-A"], env=env).ok
+    assert run.run(["git", "-C", str(up), "commit", "-q", "-m", "advance dev"], env=env).ok
+    up_dev = run.run(["git", "-C", str(up), "rev-parse", "dev"], env=env).stdout.strip()
+    r1 = c.post("/api/projects/code-map/tool/sync").json()
+    assert r1["actions"]["dev"]["action"] == "fast_forward" and r1["actions"]["dev"]["to"] == up_dev
+    assert r1["changed"] is True and r1["index_refreshed"] is True
+    assert run.run(["git", "-C", str(sot), "rev-parse", "dev"], env=env).stdout.strip() == up_dev
+
+    # fail-close : un PROJET refuse la route pull-only → 409 (sa voie de sync est reconcile)
+    c.post("/api/projects", json={"slug": "my-proj"})
+    assert c.post("/api/projects/my-proj/tool/sync").status_code == 409
+    # entité absente → 404
+    assert c.post("/api/projects/ghost/tool/sync").status_code == 404
+
+
 def test_git_tree_and_blob_read_only_over_http(client):
     c, _ = client
     c.post("/api/projects", json={"slug": "proj"})   # SoT neuf : arbre racine = payload auto-travaillable

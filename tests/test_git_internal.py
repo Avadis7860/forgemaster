@@ -472,6 +472,105 @@ def test_reconcile_degrades_honestly_no_mirror_and_unreachable(tmp_path: Path):
     assert r1["fetched"] is False and r1["state"] == "unreachable" and r1["actions"] == {}
 
 
+# -- sync_tracking (P6 : re-sync pull-only ff d'un outil adopté, remote `origin` sans refspec) -------
+
+def _tool_clone(tmp_path: Path) -> tuple[Path, Path, InternalGit]:
+    """Un upstream « GitHub » bare seedé + un SoT **cloné bare** de lui — exactement comme un outil adopté par
+    `clone_sot` : `origin` est posé par le clone MAIS **sans refspec de fetch** (gotcha bare-clone que
+    `sync_tracking` doit auto-réparer). Contraste avec `_sot_with_mirror` (remote `mirror` via `remote add`,
+    qui, lui, pose le refspec)."""
+    up_root = tmp_path / "up"
+    down_root = tmp_path / "down"
+    up_root.mkdir()
+    down_root.mkdir()
+    upstream = _seed_bare(up_root)
+    sot = down_root / "tool.git"
+    assert run.run(["git", "clone", "--bare", "-q", str(upstream), str(sot)], env=_ENV).ok
+    return upstream, sot, InternalGit()
+
+
+def test_ensure_fetch_refspec_self_heals_bare_clone(tmp_path: Path):
+    """Un `git clone --bare` ne pose AUCUN refspec de fetch → un `fetch origin` nu ne peuple pas
+    `refs/remotes/origin/*`. `ensure_fetch_refspec` le répare (idempotent) ; après, le fetch peuple bien les
+    refs de suivi. Garde-fou du gotcha central de P6 (dégèle un outil déjà adopté)."""
+    _upstream, sot, git = _tool_clone(tmp_path)
+    assert not run.run(["git", "-C", str(sot), "config", "--get", "remote.origin.fetch"], env=_ENV).ok
+    git.ensure_fetch_refspec(sot, "origin")
+    got = run.run(["git", "-C", str(sot), "config", "--get", "remote.origin.fetch"], env=_ENV).stdout.strip()
+    assert got == "+refs/heads/*:refs/remotes/origin/*"
+    git.ensure_fetch_refspec(sot, "origin")   # idempotent : ré-appliquer ne duplique pas
+    all_specs = run.run(["git", "-C", str(sot), "config", "--get-all", "remote.origin.fetch"],
+                        env=_ENV).stdout.strip().splitlines()
+    assert all_specs == ["+refs/heads/*:refs/remotes/origin/*"]
+    assert git.fetch_remote(sot, "origin") is True
+    assert _sha(sot, "refs/remotes/origin/dev") == _sha(sot, "dev")
+
+
+def test_sync_tracking_fast_forwards_remote_ahead(tmp_path: Path):
+    """L'amont a pris de l'avance sur `dev` (cas vécu : outil figé au commit d'adoption, travaillé en amont) →
+    `sync_tracking` **ff** la branche locale (auto-réparant le refspec au passage). `dev` passe `fast_forward`
+    (from→to), `changed=True`, et une re-mesure retombe `synced`."""
+    upstream, sot, git = _tool_clone(tmp_path)
+    up_dev = _advance(upstream, "dev", tmp_path / "u1")
+    before = _sha(sot, "dev")
+    rep = git.sync_tracking(sot, remote="origin", branches=("dev", "main"))
+    assert rep["fetched"] is True and rep["changed"] is True and rep["blocked"] == []
+    assert rep["actions"]["dev"] == {"action": "fast_forward", "from": before, "to": up_dev}
+    assert rep["actions"]["main"] == {"action": "already_synced"}
+    assert _sha(sot, "dev") == up_dev
+    assert git.remote_divergence(sot, remote="origin", branches=("dev", "main"))["state"] == "synced"
+
+
+def test_sync_tracking_skips_local_ahead_never_pushes(tmp_path: Path):
+    """Frontière read-only stricte : le SoT local a des commits d'avance sur `dev` → `sync_tracking` NE
+    POUSSE JAMAIS l'amont (contraste avec `reconcile` qui, lui, pousse). Action `local_ahead_skipped`,
+    `changed=False`, l'amont reste INTACT."""
+    upstream, sot, git = _tool_clone(tmp_path)
+    up_dev_before = _sha(upstream, "dev")
+    _advance(sot, "dev", tmp_path / "s1")
+    rep = git.sync_tracking(sot, remote="origin", branches=("dev", "main"))
+    assert rep["actions"]["dev"] == {
+        "action": "local_ahead_skipped",
+        "reason": "dev a des commits locaux — outil read-only, aucun push amont"}
+    assert rep["changed"] is False and rep["blocked"] == []
+    assert _sha(upstream, "dev") == up_dev_before   # amont INTACT (aucun push, jamais)
+
+
+def test_sync_tracking_blocks_diverged_without_mutation(tmp_path: Path):
+    """`dev` a divergé (avancé DES DEUX côtés, non-ff) → **bloqué**, AUCUNE mutation (ni ff ni push). La ref
+    locale ne bouge pas, `blocked` liste `dev` (spec forge-sot-local : jamais d'auto-merge)."""
+    upstream, sot, git = _tool_clone(tmp_path)
+    _advance(upstream, "dev", tmp_path / "u1")
+    local_dev = _advance(sot, "dev", tmp_path / "s1")
+    rep = git.sync_tracking(sot, remote="origin", branches=("dev",))
+    assert rep["actions"]["dev"]["action"] == "blocked_diverged" and rep["blocked"] == ["dev"]
+    assert rep["changed"] is False
+    assert _sha(sot, "dev") == local_dev            # ref locale INTACTE
+
+
+def test_sync_tracking_guards_checked_out_branch(tmp_path: Path):
+    """Garde-fou : `dev` est ff-able (amont en avance) MAIS sortie dans un worktree actif → on ne la ff JAMAIS
+    (`branch -f` la refuserait) → `blocked_worktree`, aucune mutation de la ref locale."""
+    upstream, sot, git = _tool_clone(tmp_path)
+    _advance(upstream, "dev", tmp_path / "u1")
+    wt = tmp_path / "tool-dev-wt"
+    assert run.run(["git", "-C", str(sot), "worktree", "add", "-q", str(wt), "dev"], env=_ENV).ok
+    local_dev = _sha(sot, "dev")
+    rep = git.sync_tracking(sot, remote="origin", branches=("dev",))
+    assert rep["actions"]["dev"]["action"] == "blocked_worktree" and rep["blocked"] == ["dev"]
+    assert rep["changed"] is False and _sha(sot, "dev") == local_dev
+
+
+def test_sync_tracking_degrades_honestly_when_unreachable(tmp_path: Path):
+    """Dégradation honnête : `origin` pointant sur un chemin inexistant → fetch KO → `unreachable`,
+    `fetched=False`, aucune action, rien de bloqué (jamais un 0/0 faux-vert)."""
+    _upstream, sot, git = _tool_clone(tmp_path)
+    git.set_remote(sot, "origin", str(tmp_path / "does-not-exist.git"))
+    rep = git.sync_tracking(sot, remote="origin", branches=("dev", "main"))
+    assert rep["fetched"] is False and rep["state"] == "unreachable"
+    assert rep["actions"] == {} and rep["changed"] is False and rep["blocked"] == []
+
+
 def test_pure_parsers_and_classifiers():
     status = parse_status(
         "# branch.head feature/x\n# branch.ab +2 -1\n1 M. N... 100644 100644 100644 aa bb file.py\n"

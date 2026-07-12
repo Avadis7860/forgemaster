@@ -5,6 +5,34 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Sync miroir SoT↔GitHub — P6 : re-sync des outils adoptés **pull-only ff** (CLI + endpoint) — dégèle le CT
+- **Nouvelle sous-commande CLI** `cockpit tool sync <slug>` (`cli.py` + `toolsync.py`) **et** route HTTP
+  (non-breaking → note, pas de bump `SCHEMA_VERSION`) : `POST /api/projects/{slug}/tool/sync` → `{project,
+  slug, kind, remote, fetched, actions:{<b>:{action, from?, to?, reason?}}, changed, blocked, state,
+  index_refreshed}`. Re-fetch un **outil adopté** (`kind=tool`) et avance ses refs suivies (`dev`, `main`)
+  quand l'amont GitHub a pris de l'avance — **pull-only, ff-only, jamais de push** (frontière read-only stricte).
+- **`InternalGit.sync_tracking`** (nouvelle primitive, **PAS** sur le Protocol figé — op spécifique au clone bare
+  d'un outil, contrairement à `reconcile` qui est un concept forge partagé ; ajouter au contrat forcerait un stub
+  vide de sens sur `GitHubGit`) : recalcule la divergence puis par branche — `remote_ahead` → **ff** local ;
+  `local_ahead` → `local_ahead_skipped` (**jamais de push amont** : un outil read-only n'a aucune autorité
+  d'écriture) ; `diverged` → `blocked_diverged` ; garde-fou worktree (`blocked_worktree`) et dégradation honnête
+  (`unreachable`/`no_mirror`) hérités.
+- **Correctif de fond `ensure_fetch_refspec`** : un `git clone --bare` (voie d'adoption, `clone_sot`) NE POSE
+  AUCUN refspec de fetch → `git fetch origin` échouait à peupler `refs/remotes/origin/*` (les 4 outils du rail
+  étaient donc **infetchables**, pas seulement figés). `sync_tracking` **auto-répare** le refspec avant de fetcher
+  → dégèle aussi les clones déjà adoptés sans les ré-adopter.
+- **Fail-close symétrique** : la route/CLI ne cible QUE `kind=tool`. Un **projet** (SoT autoritatif) la **refuse**
+  → **409** (`NotAToolError`, intercepté avant le handler `ValueError→400` global) : sa voie de sync est la
+  réconciliation gatée `reconcile` (P5), jamais ce pull-only descendant.
+- **Fraîcheur Flow gratuite** : l'index code-map est **caché par (SHA, schema)** → un `dev` avancé reconstruit
+  au prochain accès Flow (aucune « bust » : le symptôme « Flow périmé » venait du SoT jamais re-fetché). On
+  **pré-chauffe** best-effort après un sync qui bouge (`index_refreshed`) — jamais bloquant (code-map absent →
+  `False`, honnête).
+- **Verrous** : primitive (ff remote_ahead → synced · local_ahead **jamais poussé** · diverged bloqué · garde-fou
+  worktree · self-heal refspec bare-clone · dégradation unreachable) ; module (fail-close projet → 409 · absent →
+  KeyError · pré-chauffe best-effort · no-change n'appelle pas l'index) ; endpoint TestClient (ff + already_synced
+  · 409 projet · 404 absent) ; CLI (codes de sortie).
+
 ### Sync miroir SoT↔GitHub — P5 : réconciliation un-clic **ff-only** gatée (route + primitive + UI)
 - **Le contrat figé `GitBackend` gagne une méthode** (`git/backend.py`, Protocol runtime-checkable) :
   `reconcile(sot, *, remote, branches, creds_ref=None) -> dict`. Extension de contrat (note dédiée, cf.

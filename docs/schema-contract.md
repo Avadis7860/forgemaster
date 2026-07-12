@@ -165,6 +165,15 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   `{project, remote, fetched, actions:{<b>:{action, from?, to?, reason?}}, changed, blocked, state}`,
   `action ∈ {already_synced, fast_forward, pushed, push_failed, blocked_worktree, blocked_diverged}`.
   Dégradation honnête héritée (`no_mirror`/`unreachable` → aucune action). **404** projet absent, **422** op git dure).
+- **tool** — `POST /api/projects/{slug}/tool/sync` (re-sync d'un **outil adopté** `kind=tool` avec son amont
+  `origin`, **pull-only ff-only** — jamais de push ni de merge non-ff, frontière read-only stricte). Auto-répare
+  le refspec de fetch d'un clone bare (dégèle un outil figé), fetch + avance les refs suivies (`dev`, `main`)
+  quand l'amont est en avance ; après un sync qui bouge, pré-chauffe best-effort l'index Flow. Rend `{project,
+  slug, kind, remote, fetched, actions:{<b>:{action, from?, to?, reason?}}, changed, blocked, state,
+  index_refreshed}`, `action ∈ {already_synced, fast_forward, local_ahead_skipped, blocked_worktree,
+  blocked_diverged}` (jamais `pushed` : un outil ne réécrit pas son amont). **Fail-close** : entité qui n'est pas
+  un outil → **409** (un projet passe par la réconciliation gatée `reconcile`) ; entité absente → **404** ; op git
+  dure → **422**. CLI miroir : `cockpit tool sync <slug>`.
 - **onboarding** — `GET /api/onboarding` (état de config-requise : `secret_store` `{backend, ready, detail}`
   via `health()`, `requirements` `[{project, mirror_remote, needs_credential, linked, satisfied}]`,
   `complete`, `project_count`, `first_run` (aucun projet → instance neuve, le wizard guide au lieu d'annoncer

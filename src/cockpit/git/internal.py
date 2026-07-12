@@ -421,6 +421,19 @@ class InternalGit:
         Auth **transitoire** via `_authed_env` (token résolu à l'usage, jamais persisté ni en argv)."""
         return _git(sot, "fetch", remote, env=self._authed_env(creds_ref)).ok
 
+    def ensure_fetch_refspec(self, sot: Path, remote: str) -> None:
+        """Garantit (idempotent) le refspec de fetch standard `+refs/heads/*:refs/remotes/<remote>/*` sur
+        `remote`. **Pourquoi** : un `git clone --bare` (voie d'adoption d'un outil, `clone_sot`) NE POSE
+        AUCUN refspec de fetch — contrairement à `git remote add` (voie miroir). Sans lui, `git fetch
+        <remote>` échoue à peupler `refs/remotes/<remote>/*`, ce qui fausserait `remote_divergence` (branches
+        de suivi absentes → faux `local_ahead`). `sync_tracking` l'appelle avant de fetcher un outil ⟶
+        **auto-répare** aussi les clones déjà adoptés (les 4 outils du rail, gelés sans refspec). Remote
+        absent → no-op (best-effort). `--replace-all` → exactement un refspec, ré-appliquable sans dommage."""
+        if not _git(sot, "remote", "get-url", remote).ok:
+            return
+        _git(sot, "config", "--replace-all",
+             f"remote.{remote}.fetch", f"+refs/heads/*:refs/remotes/{remote}/*")
+
     # -- lectures pour le gate (SHA d'ancrage + diff base...head, read-only) -------------------------
 
     def feature_sha(self, sot: Path, ref: str) -> str:
@@ -588,6 +601,65 @@ class InternalGit:
             else:  # diverged → jamais d'auto-merge non-ff
                 actions[b] = {"action": "blocked_diverged",
                               "reason": f"{b} a divergé (non-ff) — réconciliation manuelle requise"}
+                blocked.append(b)
+        return {"remote": remote, "fetched": True, "actions": actions, "changed": changed,
+                "blocked": blocked, "state": div["state"]}
+
+    def sync_tracking(
+        self,
+        sot: Path,
+        *,
+        remote: str = "origin",
+        branches: Sequence[str] = ("dev", "main"),
+        creds_ref: str | None = None,
+    ) -> dict:
+        """Re-synchronise un SoT **read-only** (outil adopté, `kind=tool`) avec son amont : **pull-only, ff
+        seulement**. L'amont FAIT autorité (à l'inverse de `reconcile` où le SoT local est autoritatif) → la
+        mutation est **uniquement descendante**. Auto-répare d'abord le refspec de fetch
+        (`ensure_fetch_refspec` — un outil cloné bare n'en a pas), recalcule la divergence (fetch + compare),
+        puis par branche :
+        - `remote_ahead` → **ff** la branche locale vers sa ref de suivi (`merge_ff` = avance de ref bare) ;
+        - `local_ahead` → **JAMAIS de push** (`local_ahead_skipped`) : un outil read-only n'a aucune autorité
+          d'écriture sur son amont — on laisse les commits locaux (anomalie signalée, pas propagée) ;
+        - `synced` → rien (`already_synced`) ;
+        - `diverged` (non-ff) → `blocked_diverged`, aucune mutation.
+
+        **Garde-fou** hérité : jamais de ff sur une branche sortie dans un worktree actif → `blocked_worktree`
+        (aucune mutation).
+        **Dégradation honnête** héritée de `remote_divergence` : `no_mirror`/`unreachable` → `fetched=False`,
+        aucune action. Renvoie `{remote, fetched, actions:{<b>:{action, from?, to?, reason?}}, changed,
+        blocked, state}` ; `action` ∈ `already_synced | fast_forward | local_ahead_skipped | blocked_worktree`
+        `| blocked_diverged`. `changed` = au moins une ref a avancé ; `state` = rollup pré-action. Idempotent
+        en régime `synced` ; un ff est ré-appliquable sans dommage."""
+        self.ensure_fetch_refspec(sot, remote)   # auto-répare le clone bare (origin sans refspec de fetch)
+        div = self.remote_divergence(sot, remote=remote, branches=branches, creds_ref=creds_ref)
+        if not div["fetched"]:   # no_mirror / unreachable → rien à synchroniser, honnête
+            return {"remote": remote, "fetched": False, "actions": {}, "changed": False,
+                    "blocked": [], "state": div["state"]}
+        checked_out = self._checked_out_branches(sot)
+        actions: dict[str, dict] = {}
+        blocked: list[str] = []
+        changed = False
+        for b, info in div["branches"].items():
+            state = info["state"]
+            if state == "synced":
+                actions[b] = {"action": "already_synced"}
+            elif state == "remote_ahead":
+                if b in checked_out:
+                    actions[b] = {"action": "blocked_worktree",
+                                  "reason": f"{b} est sortie dans un worktree actif — ff refusé"}
+                    blocked.append(b)
+                    continue
+                old = self.feature_sha(sot, b)
+                self.merge_ff(sot, into=b, source=f"refs/remotes/{remote}/{b}")  # ff garanti (into ancêtre)
+                actions[b] = {"action": "fast_forward", "from": old, "to": self.feature_sha(sot, b)}
+                changed = True
+            elif state == "local_ahead":   # outil read-only : on NE POUSSE JAMAIS l'amont (frontière stricte)
+                actions[b] = {"action": "local_ahead_skipped",
+                              "reason": f"{b} a des commits locaux — outil read-only, aucun push amont"}
+            else:  # diverged (non-ff) → jamais d'auto-merge
+                actions[b] = {"action": "blocked_diverged",
+                              "reason": f"{b} a divergé (non-ff) — outil read-only, résolution manuelle"}
                 blocked.append(b)
         return {"remote": remote, "fetched": True, "actions": actions, "changed": changed,
                 "blocked": blocked, "state": div["state"]}

@@ -3,7 +3,7 @@ sous-commandes existent, `--help` marche) ; les handlers **délèguent aux couch
 de sorte que le parser se construit sans tirer fastapi/uvicorn ni aucune couche stub.
 
 Sous-commandes = la surface de la spine (phases du produit) :
-  project (create|list|get) · roadmap (add-feature|show) · task (add|next) ·
+  project (create|list|get) · tool (sync) · roadmap (add-feature|show) · task (add|next) ·
   dispatch · run · gate (review|verify|toolchain) · merge · onboard · serve · setup · install-service
 
 Chaque handler reçoit `(settings, args)` et retourne un code de sortie. Tant que les couches sont des
@@ -45,6 +45,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_project_sub.add_parser("list", parents=[common], help="lister les projets")
     pg = p_project_sub.add_parser("get", parents=[common], help="détail d'un projet")
     pg.add_argument("slug")
+
+    # -- tool ---------------------------------------------------------------------------------------
+    p_tool = sub.add_parser("tool", parents=[common],
+                            help="outils adoptés (kind=tool) : re-sync pull-only avec l'amont")
+    p_tool_sub = p_tool.add_subparsers(dest="action", required=True, metavar="<action>")
+    tsy = p_tool_sub.add_parser("sync", parents=[common],
+                                help="re-synchroniser un outil avec son amont (ff-only, jamais de push)")
+    tsy.add_argument("slug")
 
     # -- roadmap ------------------------------------------------------------------------------------
     p_roadmap = sub.add_parser("roadmap", parents=[common], help="roadmap in-repo (features + tasks)")
@@ -157,6 +165,11 @@ def _h_project(settings: Settings, args: argparse.Namespace) -> int:
     return registry.cli_dispatch(settings, args)
 
 
+def _h_tool(settings: Settings, args: argparse.Namespace) -> int:
+    from cockpit import toolsync
+    return toolsync.cli_dispatch(settings, args)
+
+
 def _h_roadmap(settings: Settings, args: argparse.Namespace) -> int:
     from cockpit.roadmap import model
     return model.cli_dispatch(settings, args)
@@ -232,6 +245,7 @@ def _h_install_service(settings: Settings, args: argparse.Namespace) -> int:
 
 _HANDLERS = {
     "project": _h_project,
+    "tool": _h_tool,
     "roadmap": _h_roadmap,
     "task": _h_task,
     "dispatch": _h_dispatch,
