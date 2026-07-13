@@ -18,6 +18,7 @@ import json
 import sqlite3
 import time
 from collections.abc import Callable
+from pathlib import Path
 
 from cockpit import auth
 from cockpit.config import Settings
@@ -28,6 +29,7 @@ from cockpit.git.backend import GitBackend
 from cockpit.git.identity import resolve_identity
 from cockpit.git.internal import InternalGit
 from cockpit.projects.registry import get_project
+from cockpit.provision.mcp import inject_mcp_config
 from cockpit.roadmap import model, resolver
 from cockpit.roadmap.prompt import build_worker_prompt
 
@@ -44,10 +46,12 @@ Runner = Callable[..., run.RunResult]
 
 
 def build_headless_argv(*, session_id: str, work: bool = True, model: str | None = None,
-                        output_format: str = "json") -> list[str]:
+                        output_format: str = "json", mcp_config: Path | None = None) -> list[str]:
     """Argv de `claude -p` **local** (le prompt part sur le stdin, jamais l'argv). `--session-id` fixe le
     transcript à un chemin déterministe (suivi live). `work=True` → allowlist code + `acceptEdits` ;
-    `work=False` → lecture seule (preuve de canal). Le DENY destructif est posé dans tous les cas. PUR."""
+    `work=False` → lecture seule (preuve de canal). Le DENY destructif est posé dans tous les cas. Si
+    `mcp_config` est fourni, `--mcp-config <f>` charge le MCP de corpus injecté (non-strict : garde les autres
+    configs). PUR."""
     argv = ["claude", "-p", "--output-format", output_format, "--session-id", session_id]
     if model:
         argv += ["--model", model]
@@ -55,6 +59,8 @@ def build_headless_argv(*, session_id: str, work: bool = True, model: str | None
     argv += ["--disallowedTools", DENY_DESTRUCTIVE]
     if work:
         argv += ["--permission-mode", WRITE_PERMISSION_MODE]
+    if mcp_config is not None:
+        argv += ["--mcp-config", str(mcp_config)]
     return argv
 
 
@@ -137,7 +143,10 @@ def dispatch_next(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
     job_id = jobs.record_start(conn, task_id=nxt["id"], worktree=str(res["path"]),
                                port=res["port"], session_id=session_id, log_path=str(log_path))
 
-    argv = build_headless_argv(session_id=session_id, work=True)
+    # Câble le MCP de corpus dans le worktree (JWT minté, hors-git) → le worker « connaît ses outils ».
+    # No-op honnête si le secret n'est pas configuré (install sans corpus privé) : le worker tourne sans MCP.
+    mcp_path = inject_mcp_config(res["path"], settings, slug=project)
+    argv = build_headless_argv(session_id=session_id, work=True, mcp_config=mcp_path)
     started = time.monotonic()
     try:
         proc = runner(argv, cwd=res["path"], input_text=prompt, timeout=DISPATCH_TIMEOUT)

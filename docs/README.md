@@ -25,3 +25,4 @@
 - `runtime-antipollution` — env compose en allowlist (0 secret daemon) ; ACL secrets par projet ; FS/réseau/ports isolés vérifiés.
 - `runtime-observability` — santé live (reconcile séparé du GET pur) ; logs tail bornés read-only ; liens health-gated ; onglet Runtime, aucun faux-vert.
 - `runtime-e2e-verification` — harnais d'acceptance rejouable (podman réel) : déploiement main+dev, 2 projets simultanés, non-pollution, feature-verified SHA-bound ; clôt l'épic.
+- `bundle-crash-test` — câblage MCP réel dans un worker + crash-test void-runner (create browser-game → dispatch `claude -p` sans crash → commit propre, JWT hors historique) ; clôt l'épic bundle-system.

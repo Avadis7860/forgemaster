@@ -10,6 +10,10 @@
 .claude/settings.local.json
 .claude/*.local.json
 
+# Câblage MCP injecté au dispatch — porte un Bearer (JWT) → JAMAIS committé (le `git add -A` de la forge
+# doit l'ignorer, sinon le token fuit dans l'historique). Cf. provision/mcp.py.
+.mcp.json
+
 # Artefacts de build / caches
 __pycache__/
 *.py[cod]
