@@ -64,8 +64,8 @@ def build_parser() -> argparse.ArgumentParser:
     rf.add_argument("project")
     rf.add_argument("slug")
     rf.add_argument("--title")
-    rf.add_argument("--facet", choices=["backend", "frontend", "tool", "doc"],
-                    help="facette de dispatch (aligne le worker) ; défaut = default_facet du bundle")
+    rf.add_argument("--facet",   # vocab validé par add_feature contre le bundle DU projet (registre)
+                    help="facette de dispatch selon le bundle du projet ; défaut = default_facet du bundle")
     rs = p_roadmap_sub.add_parser("show", parents=[common], help="afficher la roadmap d'un projet")
     rs.add_argument("project")
 

@@ -14,6 +14,7 @@ from cockpit.db import schema, store
 from cockpit.dispatch import jobs, ports, worker, worktree
 from cockpit.git.internal import InternalGit
 from cockpit.projects import registry
+from cockpit.provision import load_bundle
 from cockpit.roadmap import model, prompt
 
 
@@ -317,3 +318,26 @@ def test_build_worker_prompt_failsoft_without_facet_files_or_acceptance(tmp_path
     assert "Facette : doc" in text                              # fallback
     assert "Critères d'acceptation" not in text                 # pas de DoD si acceptance absente
     assert "worker autonome" in text                            # le mandat reste présent
+
+
+def test_build_worker_prompt_carries_real_vendored_game_design_persona(tmp_path: Path):
+    """DoD P4 (bout-en-bout, contenu RÉEL vendoré) : un dispatch sur une feature `game-design` d'un
+    projet browser-game porte la persona/méthode game-design ; `backend` porte une casquette DISTINCTE.
+    On seede la worktree depuis `load_bundle("browser-game")` (les vrais `.claude/facets/<f>/`)."""
+    root = tmp_path / "wt"
+    for rel, content in load_bundle("browser-game").items():    # matérialise le bundle réel sur disque
+        dst = root / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(content, encoding="utf-8")
+    project = {"slug": "void-runner", "name": "Void Runner"}
+    task = {"slug": "econ", "title": "Économie", "priority": "P1"}
+
+    gd = prompt.build_worker_prompt(
+        project, {"slug": "balance", "branch": "feature/balance", "facet": "game-design"}, task, root=root)
+    assert "Facette : game-design" in gd
+    assert "game-designer" in gd and "Décider, pas coder" in gd  # persona + méthode game-design injectées
+
+    be = prompt.build_worker_prompt(
+        project, {"slug": "api", "branch": "feature/api", "facet": "backend"}, task, root=root)
+    assert "le serveur fait autorité" in be                     # persona backend, casquette distincte
+    assert "game-designer" not in be and gd != be               # chaque facette porte SA casquette

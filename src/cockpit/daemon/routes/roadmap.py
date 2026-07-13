@@ -12,7 +12,7 @@ from cockpit.roadmap import model, resolver
 class FeatureCreate(BaseModel):
     slug: str
     title: str | None = None
-    facet: str | None = None         # facette de dispatch (v6) : backend|frontend|tool|doc (validé → 400)
+    facet: str | None = None         # facette de dispatch — validée contre le bundle du projet → 400
 
 
 class TaskCreate(BaseModel):

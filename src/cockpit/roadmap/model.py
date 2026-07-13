@@ -20,6 +20,7 @@ from cockpit.config import Settings
 from cockpit.core import ids
 from cockpit.db import store
 from cockpit.projects.registry import get_project
+from cockpit.provision import BundleError, read_bundle_manifest
 
 ROADMAP_VERSION = 1
 
@@ -28,17 +29,27 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-FACETS = ("backend", "frontend", "tool", "doc")   # facettes de dispatch (v6) — enum en code (cf. priority)
+def _project_facets(project: dict) -> set[str]:
+    """Vocabulaire de facettes **valide pour CE projet** = les facettes déclarées par son bundle (registre
+    filesystem, keyed par `project_type`) — registre-driven, jamais un enum global (`bundle_registry_source`).
+    Type retiré/cassé du registre → fallback `{'doc'}` (facette de base, toujours présente). Fail-soft."""
+    try:
+        return set(read_bundle_manifest(project.get("project_type") or "generic").get("facets") or [])
+    except BundleError:
+        return {"doc"}
 
 
 def add_feature(conn: sqlite3.Connection, *, project_slug: str, slug: str, title: str | None = None,
                 facet: str | None = None) -> dict:
     """Ajoute une feature à un projet (branche `feature/<slug>`, statut `planned`). `facet` (optionnel) =
-    la facette de dispatch qui alignera le worker ; NULL → défaut résolu du `bundle.toml` au dispatch."""
+    la facette de dispatch qui alignera le worker ; NULL → défaut résolu du `bundle.toml` au dispatch.
+    `facet` est validée contre les facettes **du bundle du projet** (registre), pas un vocab global."""
     ids.ensure_slug(slug, field="feature")
-    if facet is not None and facet not in FACETS:
-        raise ValueError(f"facette hors vocab {FACETS} : {facet!r}")
     project = get_project(conn, project_slug)
+    valid = _project_facets(project)
+    if facet is not None and facet not in valid:
+        raise ValueError(f"facette {facet!r} hors vocab du bundle {project['project_type']!r} "
+                         f"du projet {project_slug} : {sorted(valid)}")
     row = {"id": ids.new_id(), "project_id": project["id"], "slug": slug, "title": title or slug,
            "branch": f"feature/{slug}", "worktree_path": None, "status": "planned", "facet": facet,
            "created_at": _now()}

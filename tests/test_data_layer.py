@@ -320,7 +320,7 @@ def test_create_project_rejects_unknown_type_before_any_effect(ctx):
 
 def test_add_feature_facet_and_task_acceptance_round_trip(ctx):
     settings, conn = ctx
-    registry.create_project(conn, settings, slug="proj")
+    registry.create_project(conn, settings, slug="proj", project_type="front-ts")   # bundle déclare backend
     f = model.add_feature(conn, project_slug="proj", slug="api", title="API", facet="backend")
     assert f["facet"] == "backend"
     model.add_task(conn, feature_ref="proj/api", slug="schema",
@@ -333,9 +333,27 @@ def test_add_feature_facet_and_task_acceptance_round_trip(ctx):
 
 def test_add_feature_rejects_bad_facet(ctx):
     settings, conn = ctx
-    registry.create_project(conn, settings, slug="proj")
+    registry.create_project(conn, settings, slug="proj")                          # generic → facets = {doc}
     with pytest.raises(ValueError):
-        model.add_feature(conn, project_slug="proj", slug="x", facet="widget")   # hors vocab FACETS
+        model.add_feature(conn, project_slug="proj", slug="x", facet="widget")    # hors vocab du bundle
+
+
+def test_add_feature_facet_is_registry_driven_per_project(ctx):
+    """La facette valide d'une feature = les facettes du bundle DU projet (registre), pas un enum global.
+    Débloque `game-design` sur browser-game (le DoD) ET durcit le cas latent (backend sur un generic)."""
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="game", project_type="browser-game")
+    registry.create_project(conn, settings, slug="svc", project_type="service-api")
+    registry.create_project(conn, settings, slug="plain")                         # generic → {doc}
+    # game-design est ACCEPTÉE sur browser-game (son bundle la déclare) — c'était impossible avant P4.
+    gd = model.add_feature(conn, project_slug="game", slug="hud", facet="game-design")
+    assert gd["facet"] == "game-design"
+    # la MÊME facette est REJETÉE sur un service-api (son bundle ne la déclare pas)…
+    with pytest.raises(ValueError, match="hors vocab"):
+        model.add_feature(conn, project_slug="svc", slug="hud", facet="game-design")
+    # …et `backend` sur un generic est désormais fail-closed (avant P4 : accepté à tort → persona-fantôme).
+    with pytest.raises(ValueError, match="hors vocab"):
+        model.add_feature(conn, project_slug="plain", slug="api", facet="backend")
 
 
 def test_add_feature_facet_none_is_default(ctx):
@@ -348,7 +366,7 @@ def test_add_feature_facet_none_is_default(ctx):
 
 def test_roadmap_to_yaml_carries_facet_and_acceptance(ctx):
     settings, conn = ctx
-    registry.create_project(conn, settings, slug="proj")
+    registry.create_project(conn, settings, slug="proj", project_type="front-ts")   # bundle déclare frontend
     model.add_feature(conn, project_slug="proj", slug="ui", title="UI", facet="frontend")
     model.add_feature(conn, project_slug="proj", slug="plain")           # ni facette ni acceptance
     model.add_task(conn, feature_ref="proj/ui", slug="screen", acceptance="Le login s'affiche.")
