@@ -127,9 +127,13 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     conn = store.open_db(settings)
     try:
         if args.action == "add":
+            acceptance = getattr(args, "acceptance", None)
+            if not (acceptance or "").strip():
+                print("erreur : --acceptance ne peut pas être vide (task sans DoD = non dispatchable)")
+                return 1
             t = model.add_task(conn, feature_ref=args.feature, slug=args.slug, title=args.title,
-                               depends_on=args.depends_on, priority="P1",
-                               acceptance=getattr(args, "acceptance", None))
+                               depends_on=args.depends_on, priority=getattr(args, "priority", "P1"),
+                               acceptance=acceptance)
             print(f"task créée : {args.feature}/{t['slug']} (priorité {t['priority']})")
             return 0
         # action == "next"

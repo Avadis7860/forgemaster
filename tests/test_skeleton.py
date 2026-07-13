@@ -109,6 +109,27 @@ def test_cli_parser_wires_all_subcommands():
     }
 
 
+def test_cli_task_add_priority_and_acceptance():
+    args = build_parser().parse_args(
+        ["task", "add", "proj/feat", "t", "--priority", "P0", "--acceptance", "x"])
+    assert args.priority == "P0" and args.acceptance == "x"
+    assert build_parser().parse_args(                             # défaut P1
+        ["task", "add", "proj/feat", "t", "--acceptance", "x"]).priority == "P1"
+
+
+def test_cli_task_add_requires_acceptance_and_valid_priority():
+    with pytest.raises(SystemExit):                              # --acceptance obligatoire
+        build_parser().parse_args(["task", "add", "proj/feat", "t"])
+    with pytest.raises(SystemExit):                              # priorité hors P0-P3
+        build_parser().parse_args(
+            ["task", "add", "proj/feat", "t", "--priority", "P9", "--acceptance", "x"])
+
+
+def test_cli_roadmap_check_parses():
+    args = build_parser().parse_args(["roadmap", "check", "demo"])
+    assert args.command == "roadmap" and args.action == "check" and args.project == "demo"
+
+
 def test_cli_run_parses_project_and_max_parallel():
     args = build_parser().parse_args(["run", "demo", "--max-parallel", "3"])
     assert args.command == "run" and args.project == "demo" and args.max_parallel == 3

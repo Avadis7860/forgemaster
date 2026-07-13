@@ -90,6 +90,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="facette de dispatch selon le bundle du projet ; défaut = default_facet du bundle")
     rs = p_roadmap_sub.add_parser("show", parents=[common], help="afficher la roadmap d'un projet")
     rs.add_argument("project")
+    rc = p_roadmap_sub.add_parser("check", parents=[common],
+                                  help="vérifier qu'une roadmap est opérationnelle (gate de complétude)")
+    rc.add_argument("project")
 
     # -- task ---------------------------------------------------------------------------------------
     p_task = sub.add_parser("task", parents=[common], help="tasks d'une feature (DAG depends_on)")
@@ -99,7 +102,10 @@ def build_parser() -> argparse.ArgumentParser:
     ta.add_argument("slug")
     ta.add_argument("--title")
     ta.add_argument("--depends-on", nargs="*", default=[], help="ids de tasks prérequises")
-    ta.add_argument("--acceptance", help="critères de DoD injectés dans le prompt du worker au dispatch")
+    ta.add_argument("--priority", choices=["P0", "P1", "P2", "P3"], default="P1",
+                    help="priorité P0-P3 (défaut P1) — classée par priorité effective au résolveur")
+    ta.add_argument("--acceptance", required=True,
+                    help="critères de DoD (obligatoire) injectés dans le prompt du worker au dispatch")
     tn = p_task_sub.add_parser("next", parents=[common], help="prochaine task dispatchable (résolveur DAG)")
     tn.add_argument("feature")
 
@@ -246,6 +252,9 @@ def _h_bundle(settings: Settings, args: argparse.Namespace) -> int:
 
 
 def _h_roadmap(settings: Settings, args: argparse.Namespace) -> int:
+    if args.action == "check":
+        from cockpit.roadmap import check
+        return check.cli_dispatch(settings, args)
     from cockpit.roadmap import model
     return model.cli_dispatch(settings, args)
 

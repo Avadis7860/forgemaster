@@ -1,6 +1,7 @@
 """Tests du résolveur DAG : classification à ordre figé, cycle, dangling, eff_prio transitif, NEXT."""
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 from cockpit.config import Settings
@@ -71,6 +72,28 @@ def test_resolve_next_none_when_all_blocked_or_done():
 def test_next_tiebreak_is_slug_stable():
     idx = _index(_t("zeta", prio="P1", created="2026-01-01"), _t("alpha", prio="P1", created="2026-01-01"))
     assert resolver.resolve_next(idx)["slug"] == "alpha"   # même prio+date → tiebreak slug
+
+
+def test_task_add_cli_uses_priority_and_requires_acceptance(tmp_path: Path):
+    settings = Settings.resolve(home=tmp_path / "h", projects_root=tmp_path / "p")
+    conn = store.open_db(settings)
+    registry.create_project(conn, settings, slug="proj")
+    model.add_feature(conn, project_slug="proj", slug="feat")
+    conn.close()
+    # priorité transmise (plus de P1 figé en dur)
+    rc = resolver.cli_dispatch(settings, argparse.Namespace(
+        action="add", feature="proj/feat", slug="t1", title=None, depends_on=[],
+        priority="P0", acceptance="critère binaire testé"))
+    assert rc == 0
+    conn = store.open_db(settings)
+    feat = model.resolve_feature(conn, "proj/feat")
+    assert model.list_tasks(conn, feat["id"])[0]["priority"] == "P0"
+    conn.close()
+    # acceptance vide/blanche → rc 1 (task non créée)
+    rc = resolver.cli_dispatch(settings, argparse.Namespace(
+        action="add", feature="proj/feat", slug="t2", title=None, depends_on=[],
+        priority="P1", acceptance="   "))
+    assert rc == 1
 
 
 def test_index_for_feature_and_next_e2e(tmp_path: Path):
