@@ -57,6 +57,7 @@ def build_app(settings: Settings) -> FastAPI:
         roadmap,
         terminal,
         tool,
+        types,
     )
 
     app = FastAPI(title="cockpit", version=__version__)
@@ -80,7 +81,8 @@ def build_app(settings: Settings) -> FastAPI:
                         git.make_git_router, codemap.make_codemap_router,
                         docs.make_docs_router, onboarding.make_onboarding_router,
                         bootstrap.make_bootstrap_router, terminal.make_terminal_router,
-                        tool.make_tool_router, deployments.make_deployments_router):
+                        tool.make_tool_router, deployments.make_deployments_router,
+                        types.make_types_router):
         app.include_router(make_router())
 
     @app.exception_handler(KeyError)

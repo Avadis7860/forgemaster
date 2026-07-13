@@ -288,6 +288,28 @@ def test_create_typed_project_seeds_overlay_and_persists_type(ctx):
     assert "service / API" in arch                                              # doc pré-optimisée du type
 
 
+def test_create_project_stamps_provenance_in_sot(ctx):
+    """P3 : tout SoT semé porte un tampon `.cockpit/provenance.toml` = de quel `bundle@version` il DÉRIVE,
+    et quand (SoT-and-derive → dérive détectable, re-sync opt-in). Un typé stampe son type ; le générique
+    stampe `generic`. `created_at` cohérent avec la row DB (même horodatage)."""
+    settings, conn = ctx
+    import tomllib
+    p = registry.create_project(conn, settings, slug="void-runner", project_type="browser-game")
+    sot = registry.sot_path_for(settings, "void-runner")
+    names = run.run(["git", "-C", str(sot), "ls-tree", "-r", "--name-only", "dev"]).stdout.split()
+    assert ".cockpit/provenance.toml" in names
+    stamp = tomllib.loads(
+        run.run(["git", "-C", str(sot), "show", "dev:.cockpit/provenance.toml"]).stdout)["provenance"]
+    assert stamp["bundle"] == "browser-game"
+    assert stamp["version"] == "1"
+    assert stamp["created_at"] == p["created_at"]                 # tampon SoT ≡ row DB (même horodatage)
+    # le générique stampe aussi (bundle = generic) — la provenance est universelle, pas réservée aux typés
+    registry.create_project(conn, settings, slug="plain")
+    gen = run.run(["git", "-C", str(registry.sot_path_for(settings, "plain")),
+                   "show", "dev:.cockpit/provenance.toml"]).stdout
+    assert tomllib.loads(gen)["provenance"]["bundle"] == "generic"
+
+
 def test_create_project_rejects_unknown_type_before_any_effect(ctx):
     settings, conn = ctx
     with pytest.raises(ValueError, match="inconnu"):

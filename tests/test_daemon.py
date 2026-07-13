@@ -56,6 +56,23 @@ def test_projects_crud_over_http(client):
     assert c.post("/api/projects", json={"slug": "bad", "kind": "widget"}).status_code == 400
 
 
+def test_types_endpoint_lists_valid_registry_and_create_echoes_type(client):
+    """P3 : GET /api/types = registre des types OFFERTS (filtré par validation, goto-safe) — alimente le
+    dropdown de création. browser-game y figure avec ses métadonnées ; et créer un projet typé échoie son
+    type dans la réponse (le contrat que l'UI lit pour confirmer)."""
+    c, _ = client
+    r = c.get("/api/types")
+    assert r.status_code == 200
+    by_type = {t["type"]: t for t in r.json()["types"]}
+    assert "generic" in by_type and "browser-game" in by_type
+    bg = by_type["browser-game"]
+    assert bg["version"] == "1" and bg["default_facet"] == "backend"
+    assert set(bg["facets"]) == {"frontend", "backend", "game-design", "doc"}
+    # boucle complète : le type offert crée réellement un projet typé, et l'API échoie le type créé
+    created = c.post("/api/projects", json={"slug": "vr", "project_type": "browser-game"})
+    assert created.status_code == 201 and created.json()["project_type"] == "browser-game"
+
+
 # -- service SPA + CORS ----------------------------------------------------------------------------
 
 def test_spa_served_with_client_side_fallback_when_build_present(client):

@@ -6,6 +6,7 @@ import type { BootstrapRunInput, CredentialLinkInput, CreateProjectInput, MergeI
 
 export const qk = {
   health: ['health'] as const,
+  types: ['types'] as const,
   projects: ['projects'] as const,
   project: (slug: string) => ['projects', slug] as const,
   roadmap: (project: string) => ['roadmap', project] as const,
@@ -35,6 +36,12 @@ export const qk = {
 export function useHealth() {
   // Sonde de liveness — rafraîchie périodiquement pour la pastille d'état du daemon.
   return useQuery({ queryKey: qk.health, queryFn: api.health, refetchInterval: 10_000, retry: false })
+}
+
+// Les types de projet offerts (registre filtré par validation). Stable (change au dépôt d'un overlay) →
+// staleTime élevé. Alimente le dropdown de création ; GET idempotent, pas de poll.
+export function useTypes() {
+  return useQuery({ queryKey: qk.types, queryFn: api.listTypes, staleTime: 60_000 })
 }
 
 export function useProjects() {

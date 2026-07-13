@@ -120,6 +120,30 @@ def validate_bundle(project_type: str = "generic") -> None:
             raise BundleError(f"bundle {project_type!r} : facette {fac!r} sans dossier {prefix}")
 
 
+def list_valid_types() -> list[dict]:
+    """Les types de projet **valides** (registre filesystem filtré par `validate_bundle`, fail-closed) avec
+    leurs métadonnées de manifeste — LA source unique des types *offerts* : le dropdown de création (UI) ET
+    le durcissement des `choices` CLI la consomment (zéro liste dupliquée). Un overlay cassé (manifeste
+    absent/incohérent, facette sans dossier de support) est **silencieusement écarté** : on n'offre jamais
+    un type qu'on ne saurait pas semer. Chaque entrée : `{type, version, project_type, facets,
+    default_facet}`. Déterministe, ordre de `discover_types` (generic en tête)."""
+    valid: list[dict] = []
+    for project_type in discover_types():
+        try:
+            validate_bundle(project_type)
+        except BundleError:
+            continue                                           # cassé → non offert (fail-closed)
+        manifest = read_bundle_manifest(project_type)
+        valid.append({
+            "type": project_type,
+            "version": manifest.get("version", ""),
+            "project_type": manifest.get("project_type", project_type),
+            "facets": manifest.get("facets", []),
+            "default_facet": manifest.get("default_facet", ""),
+        })
+    return valid
+
+
 def load_payload() -> dict[str, str]:
     """Compat : le bundle générique (base seule). Conservé pour les appelants qui ne typent pas encore."""
     return load_bundle("generic")

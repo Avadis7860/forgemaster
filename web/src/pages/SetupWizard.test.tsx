@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/lib/queries', () => ({
   useOnboarding: () => ({ data: h.data, isLoading: false, isError: false, error: null, refetch: vi.fn(), isFetching: false }),
+  useTypes: () => ({ data: [{ type: 'generic', version: '1', facets: ['doc'], default_facet: 'doc' }], isPending: false }),
   useCreateProject: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
   useSetMirror: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),
   useLinkCredential: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null }),

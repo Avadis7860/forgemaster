@@ -16,6 +16,7 @@ export const ProjectSchema = z.object({
   kind: z.string(),                 // 'project' | 'tool' (v3) — classification, pilote le rail 2 sections
   owner: z.string().nullable(),     // compat multi-utilisateur (v3, nullable en mono-user)
   credential_ref: z.string().nullable(),  // réf opaque vers le token du store (v4) — jamais le token
+  project_type: z.string(),         // bundle semé (v6) — la réponse échoie le type créé (sert la vérif UI)
   created_at: z.string(),
 })
 export type Project = z.infer<typeof ProjectSchema>
@@ -74,11 +75,24 @@ export type Next = z.infer<typeof NextSchema>
 
 export const ProjectsListSchema = z.object({ projects: z.array(ProjectSchema) })
 
+// Un type de projet OFFERT (registre filesystem filtré par validation) + ses métadonnées de manifeste.
+// Source unique du dropdown de création (GET /api/types) — mêmes types que le durcissement CLI.
+export const BundleTypeSchema = z.object({
+  type: z.string(),               // le nom du type = l'overlay (== project_type pour un bundle valide)
+  version: z.string(),
+  facets: z.array(z.string()),    // granularités de dispatch adossées (une par dossier .claude/facets/<f>/)
+  default_facet: z.string(),
+})
+export type BundleType = z.infer<typeof BundleTypeSchema>
+
+export const TypesListSchema = z.object({ types: z.array(BundleTypeSchema) })
+
 export interface CreateProjectInput {
   slug: string
   name?: string | null
   mirror_remote?: string | null
   kind?: string             // 'project' (défaut) | 'tool'
+  project_type?: string     // type de bundle semé (défaut 'generic' côté daemon)
 }
 
 // -- V3 dispatch : job (run worker) + rapport de dispatch + événements de transcript (streamés en WS) --

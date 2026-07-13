@@ -30,6 +30,7 @@ import {
   ProjectSchema,
   ProjectsListSchema,
   RoadmapSchema,
+  TypesListSchema,
   type BootstrapRunInput,
   type CredentialLinkInput,
   type CreateProjectInput,
@@ -79,6 +80,10 @@ function deploymentAction(project: string, branch: string, action: 'up' | 'down'
 
 export const api = {
   health: () => request('/health', HealthSchema),
+
+  // Registre des bundles : les types de projet OFFERTS à la création (filtrés par validation, fail-closed).
+  // GET idempotent (lecture du filesystem vendoré — goto-safe). Alimente le dropdown de NewProjectForm.
+  listTypes: () => request('/api/types', TypesListSchema).then((r) => r.types),
 
   listProjects: () => request('/api/projects', ProjectsListSchema).then((r) => r.projects),
   getProject: (slug: string) => request(`/api/projects/${encodeURIComponent(slug)}`, ProjectSchema),

@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
-import { useCreateProject } from '@/lib/queries'
+import { useCreateProject, useTypes } from '@/lib/queries'
 import { ApiError } from '@/lib/api'
-import { Alert, Button, Eyebrow, Input } from '@/components/ui'
+import { Alert, Button, Eyebrow, Input, Select } from '@/components/ui'
 import type { Project } from '@/lib/schemas'
 
 /** Formulaire de création de projet — **source unique** partagée par le rail (nav rapide) et le wizard
@@ -12,21 +12,29 @@ export function NewProjectForm(
   { onCreated?: (project: Project) => void; title?: string | null; submitLabel?: string },
 ) {
   const create = useCreateProject()
+  const types = useTypes()
   const [slug, setSlug] = useState('')
   const [name, setName] = useState('')
   const [mirror, setMirror] = useState('')
+  const [projectType, setProjectType] = useState('generic')
 
   function onSubmit(e: FormEvent) {
     e.preventDefault()
     const trimmed = slug.trim()
     if (!trimmed) return
     create.mutate(
-      { slug: trimmed, name: name.trim() || null, mirror_remote: mirror.trim() || null },
+      {
+        slug: trimmed,
+        name: name.trim() || null,
+        mirror_remote: mirror.trim() || null,
+        project_type: projectType,
+      },
       {
         onSuccess: (project) => {
           setSlug('')
           setName('')
           setMirror('')
+          setProjectType('generic')
           onCreated?.(project)
         },
       },
@@ -54,6 +62,18 @@ export function NewProjectForm(
         placeholder="miroir GitHub (optionnel)"
         aria-label="miroir GitHub du projet"
       />
+      <Select
+        value={projectType}
+        onChange={(e) => setProjectType(e.target.value)}
+        aria-label="type de projet"
+        disabled={types.isPending}
+      >
+        {(types.data ?? [{ type: 'generic', version: '', facets: [], default_facet: '' }]).map((t) => (
+          <option key={t.type} value={t.type}>
+            {t.type}
+          </option>
+        ))}
+      </Select>
       {create.isError && (
         <Alert tone="danger">
           {create.error instanceof ApiError ? create.error.detail : 'Échec de la création.'}

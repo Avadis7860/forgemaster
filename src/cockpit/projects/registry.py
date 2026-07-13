@@ -19,16 +19,31 @@ from cockpit.core import ids
 from cockpit.db import store
 from cockpit.git.internal import GitOpError, InternalGit, classify_push_error, credential_env
 from cockpit.projects.deployments import ensure_deployments
-from cockpit.provision import load_bundle, validate_bundle
+from cockpit.provision import load_bundle, read_bundle_manifest, validate_bundle
 from cockpit.secrets import cred_resolver
 
 _COLS = ("id", "slug", "name", "sot_path", "mirror_remote", "backend", "kind", "owner",
          "credential_ref", "source_url", "project_type", "created_at")
 _KINDS = ("project", "tool")   # classification (v3) : entité travaillée vs outil générique du framework
+_PROVENANCE_PATH = ".cockpit/provenance.toml"   # tampon `bundle@version` semé dans le SoT (SoT-and-derive)
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _render_provenance(bundle: str, version: str, created_at: str) -> str:
+    """Le tampon de provenance semé dans le SoT (`.cockpit/provenance.toml`) : de quel `bundle@version` ce
+    projet a été **dérivé**, et quand. Ajouté à l'INSTANCIATION (jamais vendoré dans un overlay) → la
+    provenance est **par-projet**, pas par-bundle, et garde `bundle.toml` dans son rôle de descripteur.
+    Socle du SoT-and-derive : dérive détectable, re-sync opt-in (outillé en P5+). TOML minimal rendu à la
+    main (3 clés, valeurs contrôlées : slug kebab validé, version de manifeste, `created_at` ISO-8601)."""
+    return (
+        "[provenance]\n"
+        f'bundle = "{bundle}"\n'
+        f'version = "{version}"\n'
+        f'created_at = "{created_at}"\n'
+    )
 
 
 def sot_path_for(settings: Settings, slug: str) -> Path:
@@ -79,10 +94,11 @@ def create_project(conn: sqlite3.Connection, settings: Settings, *,
             hint = classify_push_error("", str(exc))
             raise ValueError(
                 f"clone échoué ({hint}) : {source_url} — introuvable ou token sans accès ({exc})") from exc
+    created_at = _now()   # calculé une fois : partagé par la row DB ET le tampon de provenance (accord)
     row = {"id": ids.new_id(), "slug": slug, "name": name or slug, "sot_path": str(sot),
            "mirror_remote": mirror_remote, "backend": "internal", "kind": kind, "owner": owner,
            "credential_ref": credential_ref, "source_url": source_url, "project_type": project_type,
-           "created_at": _now()}
+           "created_at": created_at}
     try:
         conn.execute(
             "INSERT INTO projects (id, slug, name, sot_path, mirror_remote, backend, kind, owner, "
@@ -95,7 +111,10 @@ def create_project(conn: sqlite3.Connection, settings: Settings, *,
             shutil.rmtree(sot, ignore_errors=True)    # course perdue → rollback du clone qu'on vient de faire
         raise ValueError(f"projet déjà existant : {slug!r}") from exc
     if not source_url:
-        git.init_sot(sot, payload=load_bundle(project_type))   # SEED : bundle du type (base ⊕ overlay)
+        payload = load_bundle(project_type)                    # SEED : bundle du type (base ⊕ overlay)
+        version = read_bundle_manifest(project_type)["version"]   # non-vide (garanti par validate_bundle)
+        payload[_PROVENANCE_PATH] = _render_provenance(project_type, version, created_at)
+        git.init_sot(sot, payload=payload)                     # + tampon de provenance bundle@version
         if mirror_remote:
             git.set_remote(sot, "mirror", mirror_remote)       # matérialise le miroir dans git (P1)
     ensure_deployments(conn, str(row["id"]))   # 2 déploiements par branche (main/dev, no_deploy) — v7 runtime

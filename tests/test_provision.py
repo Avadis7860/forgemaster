@@ -10,6 +10,7 @@ import yaml
 from cockpit.provision import (
     discover_types,
     facet,
+    list_valid_types,
     load_bundle,
     load_payload,
     read_bundle_manifest,
@@ -116,6 +117,45 @@ def test_validate_bundle_rejects_broken(tmp_path, monkeypatch):
     assert "broken" in prov.discover_types()
     with pytest.raises(prov.BundleError, match="default_facet"):
         prov.validate_bundle("broken")
+
+
+def test_list_valid_types_returns_metadata():
+    """P3 : `list_valid_types` = LA source des types OFFERTS (dropdown UI + choices CLI). Chaque type
+    découvert **valide** y figure avec ses métadonnées de manifeste ; browser-game porte ses 4 facettes."""
+    valid = list_valid_types()
+    by_type = {e["type"]: e for e in valid}
+    assert set(by_type) == set(discover_types())        # tous les bundles vendorés valides → tous offerts
+    for e in valid:
+        assert e["version"], f"{e['type']} : version absente de l'entrée"
+        assert e["default_facet"] in e["facets"]
+    bg = by_type["browser-game"]
+    assert bg["version"] == "1"
+    assert bg["default_facet"] == "backend"
+    assert set(bg["facets"]) == {"frontend", "backend", "game-design", "doc"}
+
+
+def test_list_valid_types_excludes_broken(tmp_path, monkeypatch):
+    """Fail-closed : un overlay cassé (default_facet hors facets) est DÉCOUVERT mais **écarté** de
+    `list_valid_types` — on n'offre jamais un type qu'on ne saurait pas semer. Le valide reste offert."""
+    import cockpit.provision as prov
+    meta = tmp_path / "bundles" / "base" / ".cockpit"
+    meta.mkdir(parents=True)
+    (meta / "bundle.toml").write_text(
+        '[bundle]\nversion = "1"\nproject_type = "generic"\nfacets = ["doc"]\ndefault_facet = "doc"\n',
+        encoding="utf-8")
+    doc = tmp_path / "bundles" / "base" / ".claude" / "facets" / "doc"
+    doc.mkdir(parents=True)
+    (doc / "PERSONA.md").write_text("x", encoding="utf-8")
+    broken = tmp_path / "bundles" / "types" / "broken" / ".cockpit"
+    broken.mkdir(parents=True)
+    (broken / "bundle.toml").write_text(
+        '[bundle]\nversion = "1"\nproject_type = "broken"\nfacets = ["doc"]\ndefault_facet = "nope"\n',
+        encoding="utf-8")
+    monkeypatch.setattr(prov, "_BUNDLES_DIR", tmp_path / "bundles")
+    offered = {e["type"] for e in prov.list_valid_types()}
+    assert "broken" in prov.discover_types()            # découvert par le filesystem...
+    assert "broken" not in offered                      # ...mais pas offert (validation fail-closed)
+    assert "generic" in offered                         # le type valide reste offert
 
 
 def test_browser_game_wires_game_dev_identity():
