@@ -37,8 +37,9 @@ Univers **TypeScript unique** :
   - **Aucune logique de jeu côté client** (anti-triche) — le client propose, le serveur dispose.
   - **Simulation déterministe** (même seed + commandes → même état) ; la résolution se teste en pur avant l'UI.
   - **Échelle différée** — monolithe + SQLite d'abord, pas de sur-architecture.
-- **Anti-patterns** (jamais) : signature d'API « de mémoire » → **interroge le MCP**
-  (`query(type=tech, scope=browser-game)`) avant tout import non trivial (React Query / Hono / Drizzle / Zod) ;
+- **Anti-patterns** (jamais) : signature d'API « de mémoire » avant un import non trivial (React Query / Hono /
+  Drizzle / Zod) → **si un MCP de corpus est câblé** (`cockpit mcp wire`), interroge-le
+  (`query(type=tech, scope=browser-game)`) ; sinon appuie-toi sur la doc et le code du projet — n'invente pas ;
   `grep` aveugle pour t'orienter → `codemap where` d'abord ; commit direct `main`/`dev` ; merge/push **sans GO
   humain** (fail-closed).
 

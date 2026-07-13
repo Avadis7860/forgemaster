@@ -183,6 +183,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("doctor", parents=[common],
                    help="sonder la présence de l'outillage déclaré par les facettes (rc 0 sain / 1 manquant)")
 
+    # -- mcp ----------------------------------------------------------------------------------------
+    p_mcp = sub.add_parser("mcp", parents=[common], help="câbler un MCP de corpus (mcp-catalogs)")
+    p_mcp_sub = p_mcp.add_subparsers(dest="action", required=True, metavar="<action>")
+    pmw = p_mcp_sub.add_parser("wire", parents=[common],
+                               help="poser la ref du secret + l'endpoint MCP dans cockpit.env")
+    pmw.add_argument("--secret-file", help="fichier du secret HMAC partagé (jamais en argv)")
+    pmw.add_argument("--secret-ref", help="UUID d'un secret déjà dans le coffre (voie BWS)")
+    pmw.add_argument("--endpoint", help="endpoint MCP (défaut : l'instance mcp-catalogs)")
+
     return parser
 
 
@@ -304,6 +313,11 @@ def _h_doctor(settings: Settings, args: argparse.Namespace) -> int:
     return doctor.cli_dispatch(settings, args)
 
 
+def _h_mcp(settings: Settings, args: argparse.Namespace) -> int:
+    from cockpit.provision import mcp
+    return mcp.cli_dispatch(settings, args)
+
+
 _HANDLERS = {
     "project": _h_project,
     "tool": _h_tool,
@@ -322,4 +336,5 @@ _HANDLERS = {
     "setup": _h_setup,
     "install-service": _h_install_service,
     "doctor": _h_doctor,
+    "mcp": _h_mcp,
 }

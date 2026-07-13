@@ -9,10 +9,31 @@ place (pas de footgun privilège, pas d'effet caché).
 from __future__ import annotations
 
 import getpass
+import os
 import sys
 from pathlib import Path
 
 from cockpit.config import Settings
+
+
+def set_env_keys(env_path: Path, updates: dict[str, str]) -> None:
+    """Pose/écrase des clés `CLÉ=valeur` dans un `cockpit.env` (EnvironmentFile systemd) de façon
+    **idempotente** et **atomique** (tmp + `os.replace`, 0600). Préserve les autres lignes (commentaires
+    inclus) ; ajoute en fin les clés neuves. Crée le fichier (en-tête minimal) s'il manque. Les valeurs sont
+    des **références opaques** ou des réglages non-secrets — jamais un secret en clair (cf. `mcp wire`)."""
+    env_path = Path(env_path)
+    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+    remaining = dict(updates)
+    out: list[str] = []
+    for line in lines:
+        key = line.split("=", 1)[0].strip() if ("=" in line and not line.lstrip().startswith("#")) else None
+        out.append(f"{key}={remaining.pop(key)}" if key in remaining else line)
+    out.extend(f"{key}={val}" for key, val in remaining.items())   # clés neuves → en fin
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = env_path.with_name(env_path.name + ".tmp")
+    tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
+    tmp.chmod(0o600)
+    os.replace(tmp, env_path)
 
 
 def _cockpit_bin() -> str:

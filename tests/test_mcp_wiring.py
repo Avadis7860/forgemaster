@@ -149,3 +149,67 @@ def test_dispatch_injects_mcp_and_worker_sees_it(tmp_path: Path, monkeypatch: py
         assert "--mcp-config" in seen["argv"]
     finally:
         conn.close()
+
+
+# -- upsert cockpit.env (set_env_keys) --------------------------------------------------------------
+
+def test_set_env_keys_adds_updates_and_preserves(tmp_path: Path):
+    from cockpit.service import set_env_keys
+    env = tmp_path / "cockpit.env"
+    env.write_text("# en-tête\nCOCKPIT_HOME=/x\n# COCKPIT_SECRET_STORE=bws\n", encoding="utf-8")
+    set_env_keys(env, {"COCKPIT_MCP_ENDPOINT": "http://h/mcp"})     # clé neuve → en fin
+    set_env_keys(env, {"COCKPIT_HOME": "/y"})                       # clé existante → écrasée sur place
+    text = env.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    assert "COCKPIT_HOME=/y" in lines and "COCKPIT_HOME=/x" not in lines   # pas de doublon
+    assert text.count("COCKPIT_HOME=") == 1
+    assert "COCKPIT_MCP_ENDPOINT=http://h/mcp" in lines
+    assert "# en-tête" in lines and "# COCKPIT_SECRET_STORE=bws" in lines  # commentaires préservés
+    assert (env.stat().st_mode & 0o777) == 0o600
+
+
+def test_set_env_keys_creates_file_when_absent(tmp_path: Path):
+    from cockpit.service import set_env_keys
+    env = tmp_path / "sub" / "cockpit.env"
+    set_env_keys(env, {"COCKPIT_MCP_JWT_SECRET_REF": "ref-abc"})
+    assert env.read_text(encoding="utf-8").splitlines() == ["COCKPIT_MCP_JWT_SECRET_REF=ref-abc"]
+
+
+# -- cockpit mcp wire -------------------------------------------------------------------------------
+
+def test_mcp_wire_file_path_persists_ref_never_plaintext(tmp_path: Path):
+    import argparse
+    settings = _settings(tmp_path)
+    settings.home.mkdir(parents=True, exist_ok=True)
+    secret_file = tmp_path / "secret.txt"
+    secret_file.write_text(_SECRET, encoding="utf-8")
+    rc = mcp.cli_dispatch(settings, argparse.Namespace(
+        action="wire", secret_file=str(secret_file), secret_ref=None, endpoint="http://192.168.0.153:8080/mcp"))
+    assert rc == 0
+    env_text = (settings.home / "cockpit.env").read_text(encoding="utf-8")
+    assert _SECRET not in env_text                                  # le secret n'est JAMAIS en clair
+    assert "COCKPIT_MCP_ENDPOINT=http://192.168.0.153:8080/mcp" in env_text
+    # la ref posée résout vers le secret dans le coffre
+    ref = next(line.split("=", 1)[1] for line in env_text.splitlines()
+               if line.startswith("COCKPIT_MCP_JWT_SECRET_REF="))
+    assert build_store(settings).get(ref) == _SECRET
+
+
+def test_mcp_wire_rejects_both_or_neither(tmp_path: Path):
+    import argparse
+    settings = _settings(tmp_path)
+    both = mcp.cli_dispatch(settings, argparse.Namespace(
+        action="wire", secret_file="x", secret_ref="y", endpoint=None))
+    neither = mcp.cli_dispatch(settings, argparse.Namespace(
+        action="wire", secret_file=None, secret_ref=None, endpoint=None))
+    assert both == 2 and neither == 2                               # exactement-un imposé
+
+
+def test_mcp_wire_ref_path_missing_ref_fails_and_writes_nothing(tmp_path: Path):
+    import argparse
+    settings = _settings(tmp_path)
+    settings.home.mkdir(parents=True, exist_ok=True)
+    rc = mcp.cli_dispatch(settings, argparse.Namespace(
+        action="wire", secret_file=None, secret_ref="00000000-inexistant", endpoint=None))
+    assert rc == 1                                                  # ref introuvable → fail-loud
+    assert not (settings.home / "cockpit.env").exists()             # rien posé
