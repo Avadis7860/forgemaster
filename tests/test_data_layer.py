@@ -290,7 +290,7 @@ def test_create_typed_project_seeds_overlay_and_persists_type(ctx):
 
 def test_create_project_rejects_unknown_type_before_any_effect(ctx):
     settings, conn = ctx
-    with pytest.raises(ValueError, match="type invalide"):
+    with pytest.raises(ValueError, match="inconnu"):
         registry.create_project(conn, settings, slug="bad", project_type="rust")
     assert [x["slug"] for x in registry.list_projects(conn)] == []              # aucun effet
     assert not registry.sot_path_for(settings, "bad").exists()
@@ -377,4 +377,44 @@ def test_ensure_columns_migrates_v5_to_v6_in_place(tmp_path: Path):
     assert conn.execute("SELECT project_type FROM projects WHERE slug='legacy'").fetchone()[0] == "generic"
     assert conn.execute("SELECT facet FROM features WHERE slug='feat'").fetchone()[0] is None
     assert conn.execute("SELECT acceptance FROM tasks WHERE slug='task'").fetchone()[0] is None
+
+
+def test_migrate_v8_drops_project_type_check(tmp_path: Path):
+    """Une base v7 portant le `CHECK` figé sur `project_type` migre en v8 par rebuild de table : le CHECK
+    disparaît (enum registre-driven), les données sont préservées, et un `project_type` hors ancien enum est
+    désormais accepté côté DB. Gardé (no-op sans CHECK) + idempotent au niveau du gate de migration."""
+    import sqlite3
+
+    from cockpit.db import schema, store
+    conn = store.connect(tmp_path / "v7.db")
+    conn.executescript(
+        "CREATE TABLE projects ("
+        " id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, name TEXT NOT NULL, sot_path TEXT NOT NULL,"
+        " mirror_remote TEXT, backend TEXT NOT NULL DEFAULT 'internal',"
+        " kind TEXT NOT NULL DEFAULT 'project', owner TEXT,"
+        " credential_ref TEXT, source_url TEXT,"
+        " project_type TEXT NOT NULL DEFAULT 'generic'"
+        "   CHECK (project_type IN ('generic','service-api','cli-tool','front-ts')),"
+        " created_at TEXT NOT NULL);")
+    conn.execute("INSERT INTO projects (id, slug, name, sot_path, backend, kind, project_type, created_at) "
+                 "VALUES ('i1','keep','Keep','/x','internal','project','service-api','2026-01-01')")
+    conn.execute("PRAGMA user_version = 7")
+    conn.commit()
+    # avant migration : le CHECK figé rejette un type hors ancien enum
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO projects (id, slug, name, sot_path, created_at, project_type) "
+                     "VALUES ('i2','bad','Bad','/y','2026-01-01','browser-game')")
+    conn.rollback()
+
+    assert store.migrate(conn) == schema.SCHEMA_VERSION                     # migre → v8 (rebuild de table)
+    ddl = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='projects'").fetchone()[0]
+    assert "CHECK (project_type IN" not in ddl                             # le CHECK a disparu
+    assert conn.execute("SELECT project_type FROM projects WHERE slug='keep'").fetchone()[0] == "service-api"
+    # après migration : un type hors ancien enum est accepté côté DB (autorité désormais applicative)
+    conn.execute("INSERT INTO projects (id, slug, name, sot_path, backend, kind, project_type, created_at) "
+                 "VALUES ('i3','bg','BG','/z','internal','project','browser-game','2026-01-01')")
+    conn.commit()
+    assert conn.execute("SELECT project_type FROM projects WHERE slug='bg'").fetchone()[0] == "browser-game"
+    assert store.migrate(conn) == schema.SCHEMA_VERSION                     # idempotent (gate de migration)
+    conn.close()
     conn.close()

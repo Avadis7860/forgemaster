@@ -5,6 +5,18 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Schéma DB v8 — registre de bundles registre-driven : `project_type` CHECK RETIRÉ (bump `SCHEMA_VERSION` 7→8)
+- **Breaking (schéma SQLite)** → bump `SCHEMA_VERSION = 8` + migration. Le `CHECK (project_type IN (...))` figé
+  sur `projects` est **retiré** : les types de projet sont désormais **découverts sur le filesystem**
+  (`provision.discover_types` — un type = un dossier `bundles/types/<type>/`), et validés fail-closed par
+  `provision.validate_bundle` (manifeste `.cockpit/bundle.toml` : `version`, `project_type`, `facets`,
+  `default_facet` + dossiers `.claude/facets/<f>/` de support) dans `registry.create_project`.
+- **Migration** `schema._migrate_v8_drop_project_type_check` : rebuild de table **gardé** (no-op si pas de CHECK)
+  + **idempotent** ; `foreign_keys` désactivées le temps du rebuild (id préservé, FK enfants intactes).
+- **CLI** `cockpit project create --type` : `choices` dérivés de `discover_types()` (plus de liste en dur).
+- Nouveaux helpers `provision.{discover_types, read_bundle_manifest, validate_bundle}` + exception `BundleError` ;
+  le manifeste `.cockpit/bundle.toml` gagne `version` (provenance amont, consommée par la sélection/stamp en P3).
+
 ### Sync miroir SoT↔GitHub — P6 : re-sync des outils adoptés **pull-only ff** (CLI + endpoint) — dégèle le CT
 - **Nouvelle sous-commande CLI** `cockpit tool sync <slug>` (`cli.py` + `toolsync.py`) **et** route HTTP
   (non-breaking → note, pas de bump `SCHEMA_VERSION`) : `POST /api/projects/{slug}/tool/sync` → `{project,

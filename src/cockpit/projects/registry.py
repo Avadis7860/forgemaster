@@ -19,7 +19,7 @@ from cockpit.core import ids
 from cockpit.db import store
 from cockpit.git.internal import GitOpError, InternalGit, classify_push_error, credential_env
 from cockpit.projects.deployments import ensure_deployments
-from cockpit.provision import BUNDLE_TYPES, load_bundle
+from cockpit.provision import load_bundle, validate_bundle
 from cockpit.secrets import cred_resolver
 
 _COLS = ("id", "slug", "name", "sot_path", "mirror_remote", "backend", "kind", "owner",
@@ -62,8 +62,7 @@ def create_project(conn: sqlite3.Connection, settings: Settings, *,
     ids.ensure_slug(slug, field="project")
     if kind not in _KINDS:
         raise ValueError(f"kind invalide : {kind!r} (attendu {' | '.join(_KINDS)})")
-    if project_type not in BUNDLE_TYPES:   # re-valide l'enum (le CHECK DDL le tient côté DB base neuve)
-        raise ValueError(f"type invalide : {project_type!r} (attendu {' | '.join(BUNDLE_TYPES)})")
+    validate_bundle(project_type)   # fail-closed : type hors registre OU manifeste invalide, AVANT tout effet
     sot = sot_path_for(settings, slug)
     git = InternalGit()
     if source_url:

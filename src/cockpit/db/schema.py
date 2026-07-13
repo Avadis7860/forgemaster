@@ -23,13 +23,16 @@ provenance d'un projet adopté). v6 (typed-bundles) = `projects` gagne `project_
 (runtime-hosting) = nouvelle table `deployments` : un **projet** possède **2 déploiements par branche**
 (`main`=prod, `dev`=preview — spec project-hosting-branch-deploy-model) ; état de run + port + url + sha
 du dernier deploy. Substrat conteneur (compose) en lightweight ; le modèle d'identité est agnostique du
-substrat. Table neuve → créée sur base existante par `CREATE IF NOT EXISTS` (pas d'`ensure_columns`).
+substrat. Table neuve → créée sur base existante par `CREATE IF NOT EXISTS` (pas d'`ensure_columns`). v8
+(bundle-storage-registry) = le `CHECK` figé sur `projects.project_type` est RETIRÉ : l'enum devient
+**registre-driven** (`provision.discover_types`), l'autorité passe à `provision.validate_bundle` dans
+`create_project`. SQLite ne sait pas ALTER un CHECK → rebuild de table gardé (`_migrate_v8_...`).
 """
 from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # Ordre = ordre de création (les FK pointent vers des tables déjà créées). Chaque table porte les
 # invariants durs en contraintes SQL (NOT NULL, UNIQUE, FK, CHECK sur les enums de statut).
@@ -48,8 +51,7 @@ DDL: tuple[str, ...] = (
         owner         TEXT,                            -- à qui appartient l'entité (v3, nullable : mono-user)
         credential_ref TEXT,                           -- réf opaque vers le token du store (v4, nullable)
         source_url    TEXT,                            -- URL adoptée (v5) : provenance (jamais un secret)
-        project_type  TEXT NOT NULL DEFAULT 'generic'  -- bundle semé à la création (v6, typed-bundles)
-                          CHECK (project_type IN ('generic', 'service-api', 'cli-tool', 'front-ts')),
+        project_type  TEXT NOT NULL DEFAULT 'generic',  -- bundle semé (v6) ; CHECK retiré en v8
         created_at    TEXT NOT NULL
     )
     """,
@@ -149,9 +151,9 @@ _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
     # token lié tant que l'onboarding ne pose pas de référence).
     # v5 : `source_url` (nullable) = provenance d'un projet ADOPTÉ (clone d'un repo distant) ; NULL pour un
     # projet semé. Métadonnée pure (jamais un secret), habilite la reprise idempotente + le refresh.
-    # v6 : `project_type` (NOT NULL, défaut littéral 'generic' — ALTER exige un défaut littéral). Le CHECK
-    # n'est pas re-portable par ALTER en SQLite → l'enum est tenu par le DDL (base neuve) ET validé par
-    # `registry.create_project` (toute base). `features.facet` / `tasks.acceptance` : nullables, aucun défaut.
+    # v6 : `project_type` (NOT NULL, défaut littéral 'generic' — ALTER exige un défaut littéral). En v8 le
+    # CHECK figé a été retiré (rebuild de table, `_migrate_v8_drop_project_type_check`) → l'enum est désormais
+    # registre-driven, tenu par `provision.validate_bundle`. `features.facet`/`tasks.acceptance` : nullables.
     "projects": (("kind", "TEXT NOT NULL DEFAULT 'project'"), ("owner", "TEXT"),
                  ("credential_ref", "TEXT"), ("source_url", "TEXT"),
                  ("project_type", "TEXT NOT NULL DEFAULT 'generic'")),
@@ -178,6 +180,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     for stmt in INDEXES:
         conn.execute(stmt)
     ensure_columns(conn)
+    _migrate_v8_drop_project_type_check(conn)
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     conn.commit()
 
@@ -192,6 +195,46 @@ def ensure_columns(conn: sqlite3.Connection) -> None:
         for name, decl in cols:
             if name not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+
+
+def _migrate_v8_drop_project_type_check(conn: sqlite3.Connection) -> None:
+    """v7→v8 : retire le `CHECK` figé sur `projects.project_type`. L'enum devient **registre-driven**
+    (`provision.discover_types`) et l'autorité passe à `provision.validate_bundle` dans `create_project`.
+    SQLite ne sait pas ALTER un CHECK → **rebuild de table**. GARDÉ (no-op si le CHECK est déjà absent : une
+    base montée par ALTER/`ensure_columns` ne l'a jamais eu) et IDEMPOTENT. Les FK enfants
+    (`features`/`tasks`/`deployments` → `projects.id`) restent valides : l'id est préservé et les FK sont
+    désactivées le temps du rebuild."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='projects'").fetchone()
+    if row is None or "CHECK (project_type IN" not in row[0]:
+        return                              # base neuve v8 (DDL sans CHECK) ou déjà migrée → no-op
+    fk_prev = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    conn.commit()                           # clôt toute transaction (PRAGMA FK est no-op en transaction)
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.executescript(
+        "BEGIN;\n"
+        "CREATE TABLE projects_new (\n"
+        "    id            TEXT PRIMARY KEY,\n"
+        "    slug          TEXT NOT NULL UNIQUE,\n"
+        "    name          TEXT NOT NULL,\n"
+        "    sot_path      TEXT NOT NULL,\n"
+        "    mirror_remote TEXT,\n"
+        "    backend       TEXT NOT NULL DEFAULT 'internal' CHECK (backend IN ('internal', 'github')),\n"
+        "    kind          TEXT NOT NULL DEFAULT 'project' CHECK (kind IN ('project', 'tool')),\n"
+        "    owner         TEXT,\n"
+        "    credential_ref TEXT,\n"
+        "    source_url    TEXT,\n"
+        "    project_type  TEXT NOT NULL DEFAULT 'generic',\n"
+        "    created_at    TEXT NOT NULL\n"
+        ");\n"
+        "INSERT INTO projects_new SELECT id, slug, name, sot_path, mirror_remote, backend, kind, owner,"
+        " credential_ref, source_url, project_type, created_at FROM projects;\n"
+        "DROP TABLE projects;\n"
+        "ALTER TABLE projects_new RENAME TO projects;\n"
+        "COMMIT;\n"
+    )
+    if fk_prev:
+        conn.execute("PRAGMA foreign_keys=ON")
 
 
 def schema_version(conn: sqlite3.Connection) -> int:

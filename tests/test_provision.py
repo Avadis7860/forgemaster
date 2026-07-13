@@ -7,7 +7,14 @@ from pathlib import Path
 import pytest
 import yaml
 
-from cockpit.provision import BUNDLE_TYPES, facet, load_bundle, load_payload
+from cockpit.provision import (
+    discover_types,
+    facet,
+    load_bundle,
+    load_payload,
+    read_bundle_manifest,
+    validate_bundle,
+)
 
 # Fichiers-clés attendus dans le payload (dont dotfiles / dossiers cachés).
 _EXPECTED = (
@@ -55,7 +62,7 @@ def test_load_payload_is_deterministic():
 
 # -- v6 (typed-bundles) : base ⊕ overlay ------------------------------------------------------------
 
-_OVERLAY_TYPES = ("service-api", "cli-tool", "front-ts")
+_OVERLAY_TYPES = tuple(t for t in discover_types() if t != "generic")
 
 
 def test_generic_equals_base_equals_load_payload():
@@ -64,12 +71,55 @@ def test_generic_equals_base_equals_load_payload():
 
 
 def test_load_bundle_rejects_unknown_type():
-    with pytest.raises(ValueError, match="type de projet invalide"):
+    with pytest.raises(ValueError, match="type de projet inconnu"):
         load_bundle("rust-cli")
 
 
+def test_discover_types_from_filesystem():
+    # Le registre = le filesystem : `generic` en tête + un dossier par overlay sous bundles/types/.
+    types = discover_types()
+    assert types[0] == "generic"
+    assert set(_OVERLAY_TYPES) <= set(types)
+
+
+def test_read_bundle_manifest_has_version_and_facets():
+    for t in discover_types():
+        m = read_bundle_manifest(t)
+        assert m.get("version"), f"{t} : version manquante au manifeste"
+        assert m["project_type"] == t
+        assert m["default_facet"] in m["facets"]
+
+
+def test_validate_bundle_passes_for_all_discovered():
+    for t in discover_types():
+        validate_bundle(t)          # ne lève pas : tous les bundles vendorés sont valides
+
+
+def test_validate_bundle_rejects_broken(tmp_path, monkeypatch):
+    # Un type découvert mais incohérent (default_facet hors facets) est refusé (fail-closed), sans toucher
+    # au vrai registre : on monkeypatche `_BUNDLES_DIR` sur une arbo temporaire isolée.
+    import cockpit.provision as prov
+    meta = tmp_path / "bundles" / "base" / ".cockpit"
+    meta.mkdir(parents=True)
+    (meta / "bundle.toml").write_text(
+        '[bundle]\nversion = "1"\nproject_type = "generic"\nfacets = ["doc"]\ndefault_facet = "doc"\n',
+        encoding="utf-8")
+    doc = tmp_path / "bundles" / "base" / ".claude" / "facets" / "doc"
+    doc.mkdir(parents=True)
+    (doc / "PERSONA.md").write_text("x", encoding="utf-8")
+    broken = tmp_path / "bundles" / "types" / "broken" / ".cockpit"
+    broken.mkdir(parents=True)
+    (broken / "bundle.toml").write_text(
+        '[bundle]\nversion = "1"\nproject_type = "broken"\nfacets = ["doc"]\ndefault_facet = "nope"\n',
+        encoding="utf-8")
+    monkeypatch.setattr(prov, "_BUNDLES_DIR", tmp_path / "bundles")
+    assert "broken" in prov.discover_types()
+    with pytest.raises(prov.BundleError, match="default_facet"):
+        prov.validate_bundle("broken")
+
+
 def test_load_bundle_is_deterministic():
-    for t in BUNDLE_TYPES:
+    for t in discover_types():
         assert load_bundle(t) == load_bundle(t)     # lecture triée + merge `|` déterministe
 
 
@@ -117,7 +167,7 @@ _CLAUDE_SECTIONS = (
 )
 
 
-@pytest.mark.parametrize("project_type", BUNDLE_TYPES)
+@pytest.mark.parametrize("project_type", discover_types())
 def test_claude_md_follows_canonical_six_sections(project_type):
     """Tout CLAUDE.md semé (base ⊕ overlay) suit la grille en 6 sections : contexte, persona, stack,
     conventions, format des réponses, workflows. Chaque section porte de la substance (persona + gate)."""
@@ -132,7 +182,7 @@ def test_claude_md_follows_canonical_six_sections(project_type):
 def test_methodology_skills_present_in_every_bundle():
     """Phase 6 : les deux skills de méthodo sont dans la base → présents et non vides dans CHAQUE type
     (base ⊕ overlay), et le CLAUDE.md socle les référence (une session doit pouvoir les découvrir)."""
-    for t in BUNDLE_TYPES:
+    for t in discover_types():
         bundle = load_bundle(t)
         for skill in _METHOD_SKILLS:
             assert skill in bundle, f"{t} : skill méthodo manquant {skill}"

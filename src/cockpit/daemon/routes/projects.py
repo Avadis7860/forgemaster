@@ -16,7 +16,7 @@ class ProjectCreate(BaseModel):
     name: str | None = None
     mirror_remote: str | None = None
     kind: str = "project"            # 'project' | 'tool' (validé par registry.create_project → 400 si autre)
-    project_type: str = "generic"    # bundle semé (v6) : generic|service-api|cli-tool|front-ts (validé → 400)
+    project_type: str = "generic"    # bundle semé (v6) : type registre-driven, validé → 400
     source_url: str | None = None    # adopter un repo existant (clone). Via l'API = repos PUBLICS ;
     #                                  l'adoption privée (avec credential) passe par `cockpit bootstrap` (P2).
 

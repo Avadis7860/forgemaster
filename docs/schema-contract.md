@@ -81,6 +81,14 @@ d'avant v7 obtiennent leurs 2 lignes (`main`/`dev`, `no_deploy`) au premier `lis
 (`ensure_deployments`, `INSERT OR IGNORE` idempotent) ; les projets créés après v7 les reçoivent à la création.
 Ajout **non-breaking**.
 
+**Migration v7→v8** (bundle-storage-registry) : le `CHECK` figé sur `projects.project_type` est **retiré** —
+l'enum des types de projet devient **registre-driven** (dérivé du filesystem par `provision.discover_types` :
+ajouter un type = déposer `bundles/types/<type>/`), l'autorité de validation passant à `provision.validate_bundle`
+(fail-closed) dans `registry.create_project`. SQLite ne sachant pas `ALTER` un `CHECK`, la migration fait un
+**rebuild de table gardé** (`schema._migrate_v8_drop_project_type_check` : détecte le CHECK dans `sqlite_master`,
+recrée `projects` sans lui, recopie ; `foreign_keys` off le temps du rebuild — id préservé, FK enfants intactes).
+No-op sur une base sans CHECK (montée par ALTER) ; idempotent. Changement d'enum → **breaking, bump 7→8**.
+
 ## 2. Schéma `.cockpit/roadmap.yaml` (in-repo, `roadmap/model.py`)
 
 Versionné **avec le projet** (source de vérité côté repo), synchronisé vers la DB (index). Manifeste SEC

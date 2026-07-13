@@ -20,6 +20,8 @@ from cockpit.config import Settings
 
 def build_parser() -> argparse.ArgumentParser:
     """Construit le parser complet (racines communes + toutes les sous-commandes). PUR, sans import lourd."""
+    # registre des types = filesystem (stdlib-only, import léger — le parser reste sans dép lourde)
+    from cockpit.provision import discover_types
     parser = argparse.ArgumentParser(prog="cockpit", description="Forge/orchestrateur local de projets.")
     parser.add_argument("--version", action="version", version=f"cockpit {__version__}")
 
@@ -38,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     pc.add_argument("--kind", choices=["project", "tool"], default="project",
                     help="classification : projet travaillé (défaut) ou outil générique du framework")
     pc.add_argument("--type", dest="project_type",
-                    choices=["generic", "service-api", "cli-tool", "front-ts"], default="generic",
+                    choices=discover_types(), default="generic",
                     help="bundle semé par type de projet (base ⊕ overlay) — défaut generic (base seule)")
     pc.add_argument("--from", dest="source_url", metavar="URL",
                     help="adopter un repo existant : cloner son historique réel comme SoT (au lieu de semer)")

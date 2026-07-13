@@ -94,10 +94,10 @@ def test_migration_v6_to_v7_creates_deployments_table_in_place(tmp_path: Path):
     tables_before = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert "deployments" not in tables_before
 
-    assert store.migrate(conn) == 7                              # migre → version cible
+    assert store.migrate(conn) == schema.SCHEMA_VERSION          # migre → version cible
     tables_after = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert "deployments" in tables_after
-    assert schema.schema_version(conn) == 7
+    assert schema.schema_version(conn) == schema.SCHEMA_VERSION
     conn.close()
 
 
