@@ -42,7 +42,7 @@ class _Runner:
         self.feature_peak = 0
         self.calls: list[str] = []          # features appelées, dans l'ordre d'entrée
 
-    def __call__(self, argv, *, cwd, input_text, timeout):
+    def __call__(self, argv, *, cwd, input_text, timeout, env=None):
         feature = Path(cwd).name
         with self._lock:
             self._active += 1

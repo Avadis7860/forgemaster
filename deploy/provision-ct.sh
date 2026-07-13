@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # provision-ct.sh — provisionne un hôte VIERGE en cockpit prêt-à-l'emploi, batteries incluses, EN UNE
-# COMMANDE : venv → install du wheel → [Claude Code, opt-in] → service systemd → dépôt du manifeste d'outils
-# → `cockpit bootstrap` → activation. AUCUN Node requis (l'UI voyage dans le wheel).
+# COMMANDE : venv → install du wheel → [Claude Code, opt-in] → service systemd → OUTILLAGE hôte-niveau
+# (`cockpit tools install` : maps + Node + qualité py, ce que les bundles DÉCLARENT) → dépôt du manifeste
+# → `cockpit bootstrap` → activation. AUCUN Node requis au build (l'UI voyage dans le wheel ; Node runtime
+# est provisionné par l'étape outillage pour les projets front que le worker travaillera).
 #
 # À lancer SUR l'hôte cible, en tant que l'utilisateur qui fera tourner le service (JAMAIS root pour un
 # service `--user` : la DB écrite par le bootstrap doit appartenir à l'utilisateur du service). Le wheel,
@@ -77,20 +79,28 @@ install_claude() {
   echo "   ✓ Claude OK : $(claude --version 2>/dev/null || echo installé) — tape \`claude\` dans le terminal pour te connecter"
 }
 
-echo "→ [1/7] venv Python : $venv"
+echo "→ [1/8] venv Python : $venv"
 python3 -m venv "$venv"
 
-echo "→ [2/7] install du wheel (sans Node — l'UI est empaquetée dans le wheel)"
+echo "→ [2/8] install du wheel (sans Node — l'UI est empaquetée dans le wheel)"
 "$venv/bin/pip" install --quiet --upgrade "$wheel"
 echo -n "   "; "$cockpit" --version
 
-echo "→ [3/7] Claude Code dans le terminal ($([ "$with_claude" = yes ] && echo "installe" || echo "ignoré — passe --with-claude"))"
+echo "→ [3/8] Claude Code dans le terminal ($([ "$with_claude" = yes ] && echo "installe" || echo "ignoré — passe --with-claude"))"
 if [ "$with_claude" = "yes" ]; then install_claude; fi
 
-echo "→ [4/7] unité systemd (portée $scope, host=$host port=$port)"
+# Outillage hôte-niveau : ce que les bundles DÉCLARENT (codemap/docsmap/frontmap + Node + ruff/pytest/mypy),
+# installé dans un venv d'outils dédié sous COCKPIT_HOME et exposé sur tools/bin — le dispatch worker ET le
+# gate natif préfixent ce bin au PATH. Sans ça, un worker sur n'importe quel type CONSTATE ses outils absents
+# (le wheel n'expose que `cockpit`). Idempotent, fail-loud. Token partagé (--token-file) pour les cartes
+# privées ; repos publics → clone anonyme. Node via nodeenv (rootless), sans sudo.
+echo "→ [4/8] outillage hôte-niveau (maps + Node + qualité py → $home/tools/bin)"
+if [ -n "$token_file" ]; then "$cockpit" tools install --token-file "$token_file"; else "$cockpit" tools install; fi
+
+echo "→ [5/8] unité systemd (portée $scope, host=$host port=$port)"
 "$cockpit" install-service $svc_flag --host "$host" --port "$port"
 
-echo "→ [5/7] dépôt du manifeste d'outils sous COCKPIT_HOME"
+echo "→ [6/8] dépôt du manifeste d'outils sous COCKPIT_HOME"
 mkdir -p "$home"
 if [ -n "$manifest" ]; then
   install -m 0644 "$manifest" "$home/bootstrap.yaml"
@@ -99,14 +109,14 @@ else
   echo "   (pas de --manifest : install générique — le wizard /setup reste intact)"
 fi
 
-echo "→ [6/7] amorçage des outils (idempotent — skip ceux déjà adoptés)"
+echo "→ [7/8] amorçage des outils (idempotent — skip ceux déjà adoptés)"
 if [ -n "$manifest" ]; then
   if [ -n "$token_file" ]; then "$cockpit" bootstrap --token-file "$token_file"; else "$cockpit" bootstrap; fi
 else
   echo "   (rien à amorcer sans manifeste)"
 fi
 
-echo "→ [7/7] activation du service"
+echo "→ [8/8] activation du service"
 if [ "$enable" = "no" ]; then
   echo "   (--no-enable) active-le : $sysctl daemon-reload && $sysctl enable --now cockpit"
 else

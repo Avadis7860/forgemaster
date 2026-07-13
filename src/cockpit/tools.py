@@ -1,0 +1,202 @@
+"""tools — provisionnement **hôte-niveau** de l'outillage que les bundles DÉCLARENT (les 3 cartes + Node +
+qualité py), dans un venv d'outils dédié sous `$COCKPIT_HOME/tools/`, exposé sur un **unique** `tools/bin`
+que le dispatch worker ET le gate natif préfixent au PATH. Ferme le fossé « déclaré → présent » (P0 de
+l'épic tooling-fulfillment) : `bundles/base/CLAUDE.md` promet `codemap`/`docsmap`/`frontmap`/`node`/`ruff`…
+mais le wheel n'expose que `cockpit` (`codemap` n'est qu'un module `-m codemap`), les cartes voisines ne
+sont que *clonées* (jamais pip-installées), Node n'est provisionné nulle part, et le worker spawn en
+`env=None` (PATH systemd minimal, hérité passif) — même présents, il ne les verrait pas.
+
+Conception (mêmes conventions que `dispatch`/`codemap`) : des seams **PURS** testables sans subprocess —
+`tools_bin`/`tools_env` (composition PATH), `install_plan` (quels paquets, quel venv, quels symlinks : les
+argv pip/nodeenv) ; l'exécution passe par un `runner` **injecté**. Le pip/nodeenv réel est prouvé à la
+vérif install fraîche, jamais au gate déterministe.
+
+Pas dans le venv du cockpit (ne pas polluer ses deps ni son PATH systemd) : un venv **séparé** sous
+COCKPIT_HOME. Node via **nodeenv** (rootless, pip-natif) → autonome, marche en portée `--user` sans sudo.
+Auth des cartes privées par **credential_env** transitoire (jamais de token en argv ni dans l'URL loggée) ;
+repos publics à terme → clone anonyme, aucun changement (forward-compatible).
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from collections.abc import Callable, Mapping
+from pathlib import Path
+
+from cockpit.config import Settings
+from cockpit.core.run import RunResult, run
+from cockpit.git.internal import credential_env
+from cockpit.secrets import cred_resolver
+
+Runner = Callable[..., RunResult]
+
+# Les 3 cartes du framework, packagées (console_scripts codemap/docsmap/frontmap). Installées depuis leur
+# repo GitHub à une réf suivie — token de lecture partagé si privé (aujourd'hui), anonyme quand publiées.
+MAP_REPOS: dict[str, str] = {
+    "code-map": "https://github.com/Avadis7860/code-map.git",
+    "docs-map": "https://github.com/Avadis7860/docs-map.git",
+    "front-map": "https://github.com/Avadis7860/front-map.git",
+}
+MAP_REF = "main"
+# Outils qualité Python (extra `cockpit[dev]`, NON tirés par `pip install <wheel>` — deps runtime seules).
+PY_QUALITY: tuple[str, ...] = ("ruff", "pytest", "mypy")
+# Node LTS via nodeenv (rootless) — prefix autonome sous tools/nodeenv, ses bin symlinkés dans tools/bin.
+NODE_VERSION = "lts"
+# Exécutables exposés sur tools/bin — ceux que le worker et le gate résolvent (par-type : le worker n'utilise
+# que ceux de sa facette, mais on expose tout une fois ; le preflight P1 vérifie la présence par-facette).
+_VENV_BINS: tuple[str, ...] = ("codemap", "docsmap", "frontmap", "ruff", "pytest", "mypy")
+_NODE_BINS: tuple[str, ...] = ("node", "npm", "npx")
+
+_STEP_TIMEOUT_S = 900   # pip (clone git + build) / nodeenv (download Node) : lents mais bornés (fail-loud).
+
+
+# -- seams PURS (composition de chemins / PATH — zéro subprocess) ------------------------------------
+
+def tools_root(settings: Settings) -> Path:
+    """Racine de l'outillage hôte-niveau : `$COCKPIT_HOME/tools/`."""
+    return settings.home / "tools"
+
+
+def tools_venv(settings: Settings) -> Path:
+    """Venv Python DÉDIÉ des outils (séparé du venv cockpit) : `tools/venv`."""
+    return tools_root(settings) / "venv"
+
+
+def nodeenv_prefix(settings: Settings) -> Path:
+    """Prefix Node autonome installé par nodeenv : `tools/nodeenv` (contient `bin/node`, `bin/npm`)."""
+    return tools_root(settings) / "nodeenv"
+
+
+def tools_bin(settings: Settings) -> Path:
+    """Le RÉPERTOIRE bin unique où tous les exécutables sont symlinkés — une seule entrée PATH."""
+    return tools_root(settings) / "bin"
+
+
+def tools_env(settings: Settings, *, base: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Compose un env dont le PATH est préfixé par `tools/bin` — à passer au subprocess worker et au gate
+    natif (dont `core.run` **remplace** l'env, l'appelant compose donc depuis `os.environ`). Ne mute pas
+    `base`/`os.environ`. PUR."""
+    env = dict(base if base is not None else os.environ)
+    tb = str(tools_bin(settings))
+    path = env.get("PATH", "")
+    env["PATH"] = f"{tb}{os.pathsep}{path}" if path else tb
+    return env
+
+
+def _symlink_sources(settings: Settings) -> dict[str, Path]:
+    """Table `nom d'exécutable → source réelle` à exposer dans `tools/bin`. PUR (chemins seulement)."""
+    venv_bin = tools_venv(settings) / "bin"
+    node_bin = nodeenv_prefix(settings) / "bin"
+    srcs: dict[str, Path] = {name: venv_bin / name for name in _VENV_BINS}
+    srcs.update({name: node_bin / name for name in _NODE_BINS})
+    return srcs
+
+
+def install_plan(settings: Settings) -> list[dict[str, object]]:
+    """Étapes ordonnées `{name, argv}` de l'install (PUR — construit les argv, n'exécute rien). Un seul
+    `pip install` pour les 3 cartes (`git+<url>@<ref>`) + les outils qualité py ; puis nodeenv ; puis Node."""
+    pip = str(tools_venv(settings) / "bin" / "pip")
+    map_specs = [f"git+{url}@{MAP_REF}" for url in MAP_REPOS.values()]
+    return [
+        {"name": "pip-tools", "argv": [pip, "install", "--upgrade", *map_specs, *PY_QUALITY]},
+        {"name": "pip-nodeenv", "argv": [pip, "install", "--upgrade", "nodeenv"]},
+        {"name": "nodeenv", "argv": [str(tools_venv(settings) / "bin" / "nodeenv"),
+                                     f"--node={NODE_VERSION}", "--force", str(nodeenv_prefix(settings))]},
+    ]
+
+
+# -- exécution (IMPUR : subprocess via runner injecté ; symlinks) ------------------------------------
+
+def _default_runner(argv: list[str], *, env: Mapping[str, str] | None, timeout: float) -> RunResult:
+    return run(argv, env=env, timeout=timeout, check=False)
+
+
+def install_tools(settings: Settings, *, token: str | None = None, token_ref: str | None = None,
+                  runner: Runner | None = None) -> dict:
+    """Provisionne l'outillage hôte-niveau (IDEMPOTENT, FAIL-LOUD). Crée le venv d'outils, installe les 3
+    cartes + qualité py + Node (nodeenv), puis symlinke chaque exécutable dans `tools/bin`. Auth des cartes
+    privées : `token` (lu d'un `--token-file`) ou `token_ref` (résolu par le store) → `credential_env`
+    transitoire (jamais en argv/URL). Une étape rouge (rc≠0) **abandonne** (jamais un demi-provisioning) et
+    retourne `{ok:False, steps, error}`. Retour `{ok, steps:[{name, ok, exit_code, error?}], symlinks:[nom]}`.
+    """
+    runner = runner or _default_runner
+    root = tools_root(settings)
+    root.mkdir(parents=True, exist_ok=True)
+    report: dict[str, object] = {"ok": True, "steps": [], "symlinks": []}
+    steps: list[dict] = report["steps"]  # type: ignore[assignment]
+
+    # 1. venv d'outils (idempotent : `python -m venv` sur un venv existant est sûr).
+    venv_step = {"name": "venv", "argv": [sys.executable, "-m", "venv", str(tools_venv(settings))]}
+    if not _run_step(runner, venv_step, env=dict(os.environ), steps=steps):
+        report["ok"] = False
+        report["error"] = "création du venv d'outils échouée"
+        return report
+
+    # 2. auth transitoire (token → credential_env) pour les clones git de pip. Total : token vide → ambiant.
+    tok = token if token is not None else (cred_resolver(settings)(token_ref) if token_ref else "")
+    env = credential_env(tok, base=os.environ) if tok else dict(os.environ)
+
+    # 3. installs (fail-loud : abandon au 1er rouge).
+    for step in install_plan(settings):
+        if not _run_step(runner, step, env=env, steps=steps):
+            report["ok"] = False
+            report["error"] = f"étape {step['name']} échouée"
+            return report
+
+    # 4. symlinks vers le bin unique (idempotent : on remplace un lien existant). Une source manquante après
+    #    des installs vertes = incohérence → fail-loud.
+    bin_dir = tools_bin(settings)
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    for name, src in _symlink_sources(settings).items():
+        if not src.exists():
+            report["ok"] = False
+            report["error"] = f"exécutable attendu absent après install : {src}"
+            return report
+        link = bin_dir / name
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        link.symlink_to(src)
+        report["symlinks"].append(name)  # type: ignore[attr-defined]
+    return report
+
+
+def _run_step(runner: Runner, step: dict, *, env: Mapping[str, str], steps: list[dict]) -> bool:
+    """Lance une étape via le runner, journalise le résultat dans `steps`, retourne `ok`. Ne lève pas :
+    une erreur de transport (binaire absent…) devient un step rouge."""
+    from cockpit.core.run import RunError, RunTimeout
+    entry: dict = {"name": step["name"]}
+    try:
+        r = runner(step["argv"], env=env, timeout=_STEP_TIMEOUT_S)
+        entry.update(ok=r.ok, exit_code=r.returncode)
+        if not r.ok:
+            entry["error"] = (r.stderr.strip() or r.stdout.strip())[:300]
+    except (RunTimeout, RunError, OSError) as exc:
+        entry.update(ok=False, exit_code=None, error=f"{type(exc).__name__}: {exc}"[:300])
+    steps.append(entry)
+    return bool(entry["ok"])
+
+
+def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
+    """Route `cockpit tools install` : provisionne l'outillage hôte-niveau. `--token-file <f>` lit un token
+    de lecture partagé (voie fichier — jamais en argv) pour les cartes privées. Imprime chaque étape ; code
+    de sortie 1 si une étape a échoué (fail-loud)."""
+    token: str | None = None
+    tf = getattr(args, "token_file", None)
+    if tf:
+        try:
+            token = Path(tf).expanduser().read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            print(f"erreur : token-file illisible — {exc}")
+            return 1
+    report = install_tools(settings, token=token)
+    for s in report["steps"]:  # type: ignore[attr-defined]
+        mark = "🟢" if s.get("ok") else "🔴"
+        extra = f" (exit {s.get('exit_code')}: {s['error']})" if s.get("error") else ""
+        print(f"  {mark} {s['name']}{extra}")
+    if report["ok"]:
+        n = len(report["symlinks"])  # type: ignore[arg-type]
+        print(f"outillage provisionné → {tools_bin(settings)} ({n} exécutable(s) exposé(s)).")
+        return 0
+    print(f"🔴 échec : {report.get('error')}")
+    return 1

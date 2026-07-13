@@ -159,14 +159,14 @@ def test_concurrent_add_worktree_serialized_by_flock(ctx):
 
 # -- gate no-task-no-dispatch + spawn (runner injecté) ----------------------------------------------
 
-def _ok_runner(argv, *, cwd, input_text, timeout):
+def _ok_runner(argv, *, cwd, input_text, timeout, env=None):
     sid = argv[argv.index("--session-id") + 1]
     out = json.dumps({"is_error": False, "result": "fait", "session_id": sid,
                       "total_cost_usd": 0.02, "num_turns": 2})
     return run.RunResult(argv=list(argv), returncode=0, stdout=out, stderr="")
 
 
-def _fail_runner(argv, *, cwd, input_text, timeout):
+def _fail_runner(argv, *, cwd, input_text, timeout, env=None):
     return run.RunResult(argv=list(argv), returncode=1, stdout="boom", stderr="err")
 
 
@@ -203,6 +203,25 @@ def test_dispatch_failure_reverts_task_to_todo(ctx):
     assert job["status"] == "failed"
     task = conn.execute("SELECT status FROM tasks WHERE slug='schema'").fetchone()
     assert task["status"] == "todo"        # re-dispatchable
+
+
+def test_dispatch_injects_tools_bin_on_worker_path(ctx):
+    """Le worker est spawné avec un `env` explicite dont le PATH commence par `$COCKPIT_HOME/tools/bin` —
+    fin du `env=None` passif : il RÉSOUT codemap/docsmap/frontmap/node/… que sa facette déclare."""
+    from cockpit.tools import tools_bin
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    captured: dict = {}
+
+    def capturing_runner(argv, *, cwd, input_text, timeout, env=None):
+        captured["env"] = env
+        out = json.dumps({"is_error": False, "result": "ok",
+                          "session_id": argv[argv.index("--session-id") + 1], "num_turns": 1})
+        return run.RunResult(argv=list(argv), returncode=0, stdout=out, stderr="")
+
+    worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=capturing_runner)
+    assert captured["env"] is not None                                   # env explicite (plus None)
+    assert captured["env"]["PATH"].split(":")[0] == str(tools_bin(settings))   # tools/bin EN TÊTE
 
 
 # -- suivi de log incrémental + normaliseur ---------------------------------------------------------

@@ -17,7 +17,7 @@ import argparse
 import json
 import sqlite3
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from cockpit import auth
@@ -32,6 +32,7 @@ from cockpit.projects.registry import get_project
 from cockpit.provision.mcp import inject_mcp_config
 from cockpit.roadmap import model, resolver
 from cockpit.roadmap.prompt import build_worker_prompt
+from cockpit.tools import tools_env
 
 # -- politique d'outils (verbatim de worker_dispatch.py) --------------------------------------------
 WRITE_PERMISSION_MODE = "acceptEdits"   # sans lui, `claude -p` refuse Write/Edit (aucun interlocuteur)
@@ -41,7 +42,7 @@ DENY_DESTRUCTIVE = "Bash(rm *),Bash(git push *),Bash(git reset *),Bash(sudo *)"
 
 DISPATCH_TIMEOUT = 1800.0   # s ; un worker qui pend ne bloque pas la forge (→ RunTimeout)
 
-# runner(argv, *, cwd, input_text, timeout) -> RunResult. Défaut = subprocess local ; injecté en test.
+# runner(argv, *, cwd, input_text, timeout, env) -> RunResult. Défaut = subprocess local ; injecté en test.
 Runner = Callable[..., run.RunResult]
 
 
@@ -108,8 +109,9 @@ def parse_headless_result(stdout: str, returncode: int = 0) -> dict:
             "num_turns": obj.get("num_turns"), "error": err, "raw": stdout}
 
 
-def _default_runner(argv: list[str], *, cwd: object, input_text: str, timeout: float) -> run.RunResult:
-    return run.run(argv, cwd=cwd, input_text=input_text, timeout=timeout)   # type: ignore[arg-type]
+def _default_runner(argv: list[str], *, cwd: object, input_text: str, timeout: float,
+                    env: Mapping[str, str] | None = None) -> run.RunResult:
+    return run.run(argv, cwd=cwd, input_text=input_text, timeout=timeout, env=env)   # type: ignore[arg-type]
 
 
 def dispatch_next(conn: sqlite3.Connection, settings: Settings, *, feature_ref: str,
@@ -147,9 +149,12 @@ def dispatch_next(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
     # No-op honnête si le secret n'est pas configuré (install sans corpus privé) : le worker tourne sans MCP.
     mcp_path = inject_mcp_config(res["path"], settings, slug=project)
     argv = build_headless_argv(session_id=session_id, work=True, mcp_config=mcp_path)
+    # PATH d'outils préfixé (`tools/bin`) → le worker RÉSOUT `codemap`/`docsmap`/`frontmap`/`node`/`ruff`…
+    # que sa facette déclare (fin du `env=None` passif : le PATH systemd minimal ne les portait pas).
     started = time.monotonic()
     try:
-        proc = runner(argv, cwd=res["path"], input_text=prompt, timeout=DISPATCH_TIMEOUT)
+        proc = runner(argv, cwd=res["path"], input_text=prompt, timeout=DISPATCH_TIMEOUT,
+                      env=tools_env(settings))
         parsed = parse_headless_result(proc.stdout, proc.returncode)
     except run.RunTimeout as exc:
         parsed = {"ok": False, "session_id": session_id, "num_turns": None, "cost_usd": None,

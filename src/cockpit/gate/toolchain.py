@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -100,10 +101,14 @@ def _steps_for(group: str, worktree: Path) -> list[dict]:
 
 # -- runner (IMPUR : subprocess ; ne lève JAMAIS → step rouge fail-closed) ---------------------------
 
-def run_toolchain(worktree: Path, diff_files: list[str], *, timeout_s: int = DEFAULT_TIMEOUT_S) -> list[dict]:
+def run_toolchain(worktree: Path, diff_files: list[str], *, timeout_s: int = DEFAULT_TIMEOUT_S,
+                  env: Mapping[str, str] | None = None) -> list[dict]:
     """Lance les steps des groupes à la fois **présents** (détectés dans le worktree) ET **déclenchés** par le
     diff, dans l'ordre, en s'arrêtant au 1ᵉʳ rouge. Retourne la liste des résultats de step
-    `{group, name, cmd, exit_code, ok, error?}`. Ne lève jamais (timeout/binaire absent → step rouge)."""
+    `{group, name, cmd, exit_code, ok, error?}`. Ne lève jamais (timeout/binaire absent → step rouge).
+    `env` (optionnel) REMPLACE l'environnement des steps — l'appelant compose depuis `os.environ` pour
+    préfixer `tools/bin` au PATH (ruff/mypy/pytest/npm résolus sur un hôte frais) ; `None` = héritage
+    passif (comportement historique, préservé pour les tests)."""
     present = set(detect_groups(worktree))
     groups = [g for g in applicable_triggers(diff_files) if g in present]
     results: list[dict] = []
@@ -112,7 +117,7 @@ def run_toolchain(worktree: Path, diff_files: list[str], *, timeout_s: int = DEF
             argv = step["argv"]
             res: dict = {"group": group, "name": step["name"], "cmd": " ".join(argv)}
             try:
-                r = run(argv, cwd=step["cwd"], timeout=timeout_s, check=False)
+                r = run(argv, cwd=step["cwd"], env=env, timeout=timeout_s, check=False)
                 res.update(exit_code=r.returncode, ok=r.ok)
                 if not r.ok:
                     res["error"] = (r.stderr.strip() or r.stdout.strip())[:300]
@@ -225,7 +230,8 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     except GitOpError as exc:
         print(f"🔴 branche/diff introuvable : {exc}")
         return 1
-    results = run_toolchain(wt, diff_files)
+    from cockpit.tools import tools_env
+    results = run_toolchain(wt, diff_files, env=tools_env(settings))   # PATH: ruff/mypy/pytest/npm présents
     verdict = write_verdict(settings, project_slug, feature_slug, results, sha=head_sha)
     for s in results:
         mark = "🟢" if s.get("ok") else "🔴"

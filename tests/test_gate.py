@@ -338,6 +338,24 @@ def test_run_toolchain_fails_closed_on_missing_binary(tmp_path, monkeypatch):
     assert len(results) == 1 and results[0]["ok"] is False and results[0].get("error")
 
 
+def test_run_toolchain_forwards_env_to_steps(tmp_path, monkeypatch):
+    """`env` (optionnel) est REMPLACÉ dans le subprocess des steps → l'appelant y préfixe `tools/bin`
+    (ruff/mypy/npm présents sur un hôte frais). `None` = héritage passif (non-régression, testé ailleurs)."""
+    from cockpit.core.run import RunResult
+    root = tmp_path / "wt"
+    (root / "src").mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    captured: dict = {}
+
+    def fake_run(argv, *, cwd, env=None, timeout=None, check=False):
+        captured["env"] = env
+        return RunResult(argv=list(argv), returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(toolchain, "run", fake_run)
+    toolchain.run_toolchain(root, ["x.py"], timeout_s=5, env={"PATH": "/opt/tools/bin"})
+    assert captured["env"] == {"PATH": "/opt/tools/bin"}
+
+
 # -- intégration avec compose_merge_decision (les formes de status nourrissent le natif) -------------
 
 def test_compose_native_from_toolchain_absent_blocks_even_with_go():

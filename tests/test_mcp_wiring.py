@@ -134,7 +134,7 @@ def test_dispatch_injects_mcp_and_worker_sees_it(tmp_path: Path, monkeypatch: py
         monkeypatch.setenv(mcp.ENV_MCP_JWT_SECRET_REF, ref)
         seen: dict = {}
 
-        def runner(argv, *, cwd, input_text, timeout):
+        def runner(argv, *, cwd, input_text, timeout, env=None):
             seen["argv"] = list(argv)
             seen["mcp_present"] = (Path(cwd) / ".mcp.json").exists()
             sid = argv[argv.index("--session-id") + 1]

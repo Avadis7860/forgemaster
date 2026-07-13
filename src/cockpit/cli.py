@@ -3,7 +3,7 @@ sous-commandes existent, `--help` marche) ; les handlers **délèguent aux couch
 de sorte que le parser se construit sans tirer fastapi/uvicorn ni aucune couche stub.
 
 Sous-commandes = la surface de la spine (phases du produit) :
-  project (create|list|get) · tool (sync) · roadmap (add-feature|show) · task (add|next) ·
+  project (create|list|get) · tool (sync) · tools (install) · roadmap (add-feature|show) · task (add|next) ·
   dispatch · run · gate (review|verify|toolchain) · merge · onboard · serve · setup · install-service
 
 Chaque handler reçoit `(settings, args)` et retourne un code de sortie. Tant que les couches sont des
@@ -56,6 +56,15 @@ def build_parser() -> argparse.ArgumentParser:
     tsy = p_tool_sub.add_parser("sync", parents=[common],
                                 help="re-synchroniser un outil avec son amont (ff-only, jamais de push)")
     tsy.add_argument("slug")
+
+    # -- tools (outillage hôte-niveau : maps + Node + qualité py, exposés sur tools/bin pour worker+gate) --
+    p_tools = sub.add_parser("tools", parents=[common],
+                             help="outillage hôte-niveau que les bundles déclarent (install)")
+    p_tools_sub = p_tools.add_subparsers(dest="action", required=True, metavar="<action>")
+    ti = p_tools_sub.add_parser("install", parents=[common],
+                                help="installer maps + Node + qualité py sous COCKPIT_HOME/tools")
+    ti.add_argument("--token-file",
+                    help="fichier d'un token de lecture partagé (cartes privées — jamais en argv)")
 
     # -- bundle -------------------------------------------------------------------------------------
     p_bundle = sub.add_parser("bundle", parents=[common],
@@ -198,6 +207,11 @@ def _h_tool(settings: Settings, args: argparse.Namespace) -> int:
     return toolsync.cli_dispatch(settings, args)
 
 
+def _h_tools(settings: Settings, args: argparse.Namespace) -> int:
+    from cockpit import tools
+    return tools.cli_dispatch(settings, args)
+
+
 def _h_bundle(settings: Settings, args: argparse.Namespace) -> int:
     from cockpit.provision import manage
     return manage.cli_dispatch(settings, args)
@@ -284,6 +298,7 @@ def _h_install_service(settings: Settings, args: argparse.Namespace) -> int:
 _HANDLERS = {
     "project": _h_project,
     "tool": _h_tool,
+    "tools": _h_tools,
     "bundle": _h_bundle,
     "roadmap": _h_roadmap,
     "task": _h_task,
