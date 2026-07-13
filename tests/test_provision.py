@@ -118,6 +118,31 @@ def test_validate_bundle_rejects_broken(tmp_path, monkeypatch):
         prov.validate_bundle("broken")
 
 
+def test_browser_game_wires_game_dev_identity():
+    """P2 : le type `browser-game` sème une identité game-dev complète + outils câblés par référence.
+    Contrat de la phase (void-runner créable de zéro) : cadre verrouillé dans le CLAUDE.md, foyer de design
+    (idea_home), engine code-map épinglé ts, et les 4 facettes de dispatch adossées."""
+    bundle = load_bundle("browser-game")
+    # (a) identité : le CLAUDE.md porte le cadre VERROUILLÉ de l'archétype (serveur-autoritatif, stack TS).
+    claude = bundle["CLAUDE.md"]
+    for marker in ("serveur-autoritatif", "browser-game", "Hono", "Vite", "VERROUILLÉ"):
+        assert marker in claude, f"CLAUDE.md sans marqueur « {marker} »"
+    # (b) idea_home : la conception vit dans docs/design.md (jamais inlinée dans le CLAUDE.md).
+    assert "docs/design.md" in bundle and bundle["docs/design.md"].strip()
+    assert "idea_home" in bundle["docs/design.md"]
+    # (c) câblage d'outil par référence : code-map épinglé à l'engine ts (correct dès l'amorçage vide).
+    assert 'select = "ts"' in bundle[".codemap.toml"]
+    # (d) les 4 facettes de dispatch sont adossées (frontend/backend/game-design de l'overlay, doc de base).
+    manifest = read_bundle_manifest("browser-game")
+    assert manifest["default_facet"] == "backend"
+    assert set(manifest["facets"]) == {"frontend", "backend", "game-design", "doc"}
+    # (e) fidélité de la bulle game-design NO-CODE : ses permissions n'ouvrent AUCUN Bash de build/test
+    #     (sinon la posture « imaginer » dérive en « coder »).
+    gd_settings = bundle[".claude/facets/game-design/settings.local.json"]
+    for forbidden in ("npm:", "node:", "tsc:", "vitest:", "eslint:"):
+        assert forbidden not in gd_settings, f"game-design ne doit pas permettre Bash({forbidden}…)"
+
+
 def test_load_bundle_is_deterministic():
     for t in discover_types():
         assert load_bundle(t) == load_bundle(t)     # lecture triée + merge `|` déterministe
@@ -248,7 +273,9 @@ def test_activate_facet_failsoft_when_no_settings_local(tmp_path: Path):
 # Les types-SERVICE portent une config de run (compose + Dockerfile + stub runnable) ; les autres non
 # (un CLI / un projet générique n'expose aucun service long-running à héberger).
 _SERVICE_TYPES = ("service-api", "front-ts")
-_NON_SERVICE_TYPES = ("generic", "cli-tool")
+# `browser-game` est ultimement déployable mais P2 ne sème PAS de run config (runtime hors-scope de l'épic
+# bundle) : non-déployabilité assumée au stade amorçage — l'identité + le câblage d'abord, le runtime en P6.
+_NON_SERVICE_TYPES = ("generic", "cli-tool", "browser-game")
 _APP_STUB = {"service-api": "app.py", "front-ts": "server.mjs"}   # stub runnable par type-service
 
 

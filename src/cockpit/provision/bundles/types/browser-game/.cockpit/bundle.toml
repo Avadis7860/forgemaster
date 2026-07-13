@@ -1,0 +1,5 @@
+[bundle]
+version = "1"
+project_type = "browser-game"
+facets = ["frontend", "backend", "game-design", "doc"]
+default_facet = "backend"
