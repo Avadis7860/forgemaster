@@ -32,7 +32,7 @@ from cockpit.projects.registry import get_project
 from cockpit.provision.mcp import inject_mcp_config
 from cockpit.roadmap import model, resolver
 from cockpit.roadmap.prompt import build_worker_prompt
-from cockpit.tools import tools_env
+from cockpit.tools import ToolPreflightError, preflight_tools, tools_env
 
 # -- politique d'outils (verbatim de worker_dispatch.py) --------------------------------------------
 WRITE_PERMISSION_MODE = "acceptEdits"   # sans lui, `claude -p` refuse Write/Edit (aucun interlocuteur)
@@ -150,13 +150,18 @@ def dispatch_next(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
     mcp_path = inject_mcp_config(res["path"], settings, slug=project)
     argv = build_headless_argv(session_id=session_id, work=True, mcp_config=mcp_path)
     # PATH d'outils préfixé (`tools/bin`) → le worker RÉSOUT `codemap`/`docsmap`/`frontmap`/`node`/`ruff`…
-    # que sa facette déclare (fin du `env=None` passif : le PATH systemd minimal ne les portait pas).
+    # que sa facette déclare (fin du `env=None` passif : le PATH systemd minimal ne les portait pas). Le MÊME
+    # env sert au preflight (which) ET au spawn — cohérence garantie.
+    env = tools_env(settings)
     started = time.monotonic()
     try:
-        proc = runner(argv, cwd=res["path"], input_text=prompt, timeout=DISPATCH_TIMEOUT,
-                      env=tools_env(settings))
+        # Preflight fail-loud : tout binaire déclaré par la facette (allowedTools) doit résoudre AVANT le
+        # spawn — sinon le worker le découvrirait absent à l'usage (échec tardif et opaque). Absent → job
+        # échoué + task re-dispatchable (comme un RunTimeout), le runner n'est jamais appelé.
+        preflight_tools(res["path"], settings, env=env)
+        proc = runner(argv, cwd=res["path"], input_text=prompt, timeout=DISPATCH_TIMEOUT, env=env)
         parsed = parse_headless_result(proc.stdout, proc.returncode)
-    except run.RunTimeout as exc:
+    except (ToolPreflightError, run.RunTimeout) as exc:
         parsed = {"ok": False, "session_id": session_id, "num_turns": None, "cost_usd": None,
                   "error": str(exc)}
     wall_s = time.monotonic() - started

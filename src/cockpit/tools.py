@@ -19,7 +19,9 @@ repos publics à terme → clone anonyme, aucun changement (forward-compatible).
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import shutil
 import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -30,6 +32,11 @@ from cockpit.git.internal import credential_env
 from cockpit.secrets import cred_resolver
 
 Runner = Callable[..., RunResult]
+
+
+class ToolPreflightError(RuntimeError):
+    """Un binaire déclaré par la facette active (`allowedTools`) ne résout pas sur le PATH du worker.
+    Levé AVANT le spawn (fail-loud, actionnable) : le worker ne découvre plus l'absence à l'usage."""
 
 # Les 3 cartes du framework, packagées (console_scripts codemap/docsmap/frontmap). Installées depuis leur
 # repo GitHub à une réf suivie — token de lecture partagé si privé (aujourd'hui), anonyme quand publiées.
@@ -47,6 +54,11 @@ NODE_VERSION = "lts"
 # que ceux de sa facette, mais on expose tout une fois ; le preflight P1 vérifie la présence par-facette).
 _VENV_BINS: tuple[str, ...] = ("codemap", "docsmap", "frontmap", "ruff", "pytest", "mypy")
 _NODE_BINS: tuple[str, ...] = ("node", "npm", "npx")
+# Catalogue des outils que l'HÔTE provisionne (`cockpit tools install` → `tools/bin`) : ceux-là DOIVENT
+# préexister au dispatch → le preflight les gate. Les autres binaires qu'une facette déclare (`eslint`,
+# `tsc`, `vitest`, `pip install`…) sont **projet-locaux** (le worker les installe via `npm install`/le venv
+# projet) → jamais dans `tools/bin`, jamais gatés (sinon on bloquerait un worktree neuf à tort).
+HOST_TOOLS: frozenset[str] = frozenset((*_VENV_BINS, *_NODE_BINS))
 
 _STEP_TIMEOUT_S = 900   # pip (clone git + build) / nodeenv (download Node) : lents mais bornés (fail-loud).
 
@@ -82,6 +94,49 @@ def tools_env(settings: Settings, *, base: Mapping[str, str] | None = None) -> d
     path = env.get("PATH", "")
     env["PATH"] = f"{tb}{os.pathsep}{path}" if path else tb
     return env
+
+
+# -- preflight de présence (P1 : ce que la facette DÉCLARE doit résoudre) -----------------------------
+
+def required_bins(settings_local: Path) -> set[str]:
+    """Binaires exigés par une facette = les entrées `Bash(<cmd>:*)` de `permissions.allow` d'un
+    `settings.local.json`, réduites à leur exécutable (1er mot du préfixe : `Bash(pip install:*)` → `pip`,
+    `Bash(codemap:*)` → `codemap`). Ignore les entrées non-`Bash(...)` (`Read`, `Glob`, `Edit`…). Fail-soft :
+    fichier absent/illisible/mal formé → `set()` (rien à exiger, on ne bloque pas un dispatch sain). PUR."""
+    try:
+        data = json.loads(Path(settings_local).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    allow = (data.get("permissions") or {}).get("allow") or []
+    bins: set[str] = set()
+    for entry in allow:
+        if not (isinstance(entry, str) and entry.startswith("Bash(") and entry.endswith(")")):
+            continue
+        inner = entry[len("Bash("):-1]           # `pip install:*`, `ruff:*`, `node:*`
+        prefix = inner.split(":", 1)[0]           # retire le glob `:*` → `pip install`, `ruff`
+        head = prefix.split()                     # 1er mot = l'exécutable → `pip`, `ruff`
+        if head:
+            bins.add(head[0])
+    return bins
+
+
+def missing_bins(bins: set[str], env: Mapping[str, str]) -> list[str]:
+    """Sous-ensemble de `bins` qui ne résout PAS via `env["PATH"]` (`shutil.which`), trié. PUR."""
+    path = env.get("PATH", "")
+    return sorted(b for b in bins if shutil.which(b, path=path) is None)
+
+
+def preflight_tools(worktree: Path, settings: Settings, *, env: Mapping[str, str] | None = None) -> None:
+    """Vérifie que tout binaire déclaré par la facette active (`<worktree>/.claude/settings.local.json`,
+    posé par `activate_facet`) résout sur le PATH du worker (`tools_env`). Absent → `ToolPreflightError`
+    fail-loud AVANT le spawn. No-op si la facette n'exige aucun binaire (fail-soft de `required_bins`)."""
+    env = env if env is not None else tools_env(settings)
+    declared = required_bins(Path(worktree) / ".claude" / "settings.local.json")
+    missing = missing_bins(declared & HOST_TOOLS, env)   # ne gate QUE les outils hôte-provisionnés
+    if missing:
+        raise ToolPreflightError(
+            f"outils déclarés par la facette absents du PATH worker : {', '.join(missing)} — "
+            f"pose-les (`cockpit tools install`) puis relance. worktree={worktree}")
 
 
 def _symlink_sources(settings: Settings) -> dict[str, Path]:

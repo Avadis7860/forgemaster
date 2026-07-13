@@ -19,9 +19,10 @@ from cockpit.roadmap import model, prompt
 
 
 @pytest.fixture
-def ctx(tmp_path: Path):
+def ctx(tmp_path: Path, fake_tools):
     settings = Settings.resolve(home=tmp_path / "home", projects_root=tmp_path / "projects")
     conn = store.open_db(settings)
+    fake_tools(settings)                    # hôte provisionné → le preflight de dispatch passe
     yield settings, conn
     conn.close()
 

@@ -123,12 +123,14 @@ def test_build_headless_argv_wires_mcp_config(tmp_path: Path):
     assert "--mcp-config" not in worker.build_headless_argv(session_id="s", work=True)
 
 
-def test_dispatch_injects_mcp_and_worker_sees_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_dispatch_injects_mcp_and_worker_sees_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                 fake_tools):
     """Bout du chemin réel : secret dans le coffre fichier + ref via env → `dispatch_next` injecte le
     `.mcp.json` dans le worktree et passe `--mcp-config` au runner ; le worker le voit dans son cwd."""
     settings = _settings(tmp_path)
     conn = store.open_db(settings)
     try:
+        fake_tools(settings)                 # hôte provisionné → le preflight de dispatch passe
         _seed_project(conn, settings)
         ref = build_store(settings).put(_SECRET, label="mcp-jwt")
         monkeypatch.setenv(mcp.ENV_MCP_JWT_SECRET_REF, ref)

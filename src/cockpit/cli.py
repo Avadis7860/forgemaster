@@ -179,6 +179,10 @@ def build_parser() -> argparse.ArgumentParser:
     pi.add_argument("--host", default="127.0.0.1", help="bind du daemon (0.0.0.0 pour le réseau local)")
     pi.add_argument("--port", type=int, default=8700)
 
+    # -- doctor -------------------------------------------------------------------------------------
+    sub.add_parser("doctor", parents=[common],
+                   help="sonder la présence de l'outillage déclaré par les facettes (rc 0 sain / 1 manquant)")
+
     return parser
 
 
@@ -295,6 +299,11 @@ def _h_install_service(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+def _h_doctor(settings: Settings, args: argparse.Namespace) -> int:
+    from cockpit import doctor
+    return doctor.cli_dispatch(settings, args)
+
+
 _HANDLERS = {
     "project": _h_project,
     "tool": _h_tool,
@@ -312,4 +321,5 @@ _HANDLERS = {
     "serve": _h_serve,
     "setup": _h_setup,
     "install-service": _h_install_service,
+    "doctor": _h_doctor,
 }
