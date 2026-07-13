@@ -32,7 +32,10 @@ def _mandate() -> str:
         "headless : aucun interlocuteur). Le projet porte sa propre doc dans `docs/` — interroge-la avec "
         "`docsmap where \"<intention>\"` (→ fichier:lignes de la section pertinente) plutôt que de tout lire "
         "en bloc. NE touche PAS au cycle git (pas de branch/commit/push) — la forge s'en charge après ton "
-        "run. Reste STRICTEMENT dans le périmètre de la task ; ne déborde pas."
+        "run. Reste STRICTEMENT dans le périmètre de la task ; ne déborde pas. "
+        "TERMINE ton message final par une section `## Décisions prises` : les choix que tu as retenus, "
+        "les alternatives que tu as écartées (et pourquoi), et les contraintes que tu as découvertes. La "
+        "forge récolte ce bloc en minerai durable (`docs/decisions/`) — sois concret, pas de remplissage."
     )
 
 

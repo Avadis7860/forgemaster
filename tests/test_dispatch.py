@@ -225,6 +225,43 @@ def test_dispatch_injects_tools_bin_on_worker_path(ctx):
     assert captured["env"]["PATH"].split(":")[0] == str(tools_bin(settings))   # tools/bin EN TÊTE
 
 
+# -- P1 : récolte du minerai de décisions (worker.result → docs/decisions/) -------------------------
+
+def test_dispatch_harvests_decision_doc_on_success(ctx):
+    """Run réussi → le `result` du worker devient `docs/decisions/<date>--<task>.md` dans le worktree,
+    embarqué par le commit forge. `_ok_runner` rend result='fait'."""
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    report = worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=_ok_runner)
+    wt = Path(jobs.get_job(conn, report["job_id"])["worktree_path"])
+    docs = list((wt / "docs" / "decisions").glob("*--schema.md"))
+    assert len(docs) == 1 and docs[0].read_text(encoding="utf-8").strip() == "fait"
+
+
+def test_dispatch_no_decision_doc_on_failure(ctx):
+    """Run raté (task revient `todo`) → AUCUN minerai orphelin dans docs/decisions/."""
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    report = worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=_fail_runner)
+    wt = Path(jobs.get_job(conn, report["job_id"])["worktree_path"])
+    assert list((wt / "docs" / "decisions").glob("*.md")) == []          # rien écrit
+    task = conn.execute("SELECT status FROM tasks WHERE slug='schema'").fetchone()
+    assert task["status"] == "todo"
+
+
+def test_write_decision_doc_writes_body_and_skips_blank(tmp_path: Path):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    doc = worker.write_decision_doc(wt, "my-task", "corps\n## Décisions prises\n- choix x",
+                                    date_str="2026-07-14")
+    assert doc == wt / "docs" / "decisions" / "2026-07-14--my-task.md"
+    assert doc.read_text(encoding="utf-8").endswith("\n") and "## Décisions prises" in doc.read_text("utf-8")
+    # blanc ou absent → None, aucun fichier (pas de doc vide)
+    assert worker.write_decision_doc(wt, "blank", "   \n ", date_str="2026-07-14") is None
+    assert worker.write_decision_doc(wt, "none", None, date_str="2026-07-14") is None
+    assert list((wt / "docs" / "decisions").glob("*--blank.md")) == []
+
+
 # -- suivi de log incrémental + normaliseur ---------------------------------------------------------
 
 def test_read_events_incremental_and_partial_line(tmp_path: Path):
@@ -273,6 +310,8 @@ def test_build_worker_prompt_uses_project_docs(tmp_path: Path):
     assert "Un super produit." in text and "docs/design.md" in text
     # conscience de la carte de doc : le mandat oriente vers `docsmap where`
     assert "docsmap where" in text
+    # le mandat exige un épilogue de décisions (récolté en minerai par la forge, cf. write_decision_doc)
+    assert "## Décisions prises" in text
     # projet sans docs → fallback explicite, jamais un crash
     bare = prompt.build_worker_prompt(project, feature, task, root=tmp_path / "empty")
     assert "aucun `docs/`" in bare

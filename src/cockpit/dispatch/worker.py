@@ -18,6 +18,7 @@ import json
 import sqlite3
 import time
 from collections.abc import Callable, Mapping
+from datetime import date
 from pathlib import Path
 
 from cockpit import auth
@@ -109,6 +110,22 @@ def parse_headless_result(stdout: str, returncode: int = 0) -> dict:
             "num_turns": obj.get("num_turns"), "error": err, "raw": stdout}
 
 
+def write_decision_doc(worktree: Path, task_slug: str, result: str | None, *,
+                       date_str: str) -> Path | None:
+    """Persiste le message final du worker (`result`) en **minerai local** durable :
+    `<worktree>/docs/decisions/<date_str>--<task_slug>.md`, corps **verbatim** (le worker le termine par une
+    section `## Décisions prises`, cf. `prompt._mandate`). Provenance portée par le NOM (date+slug) +
+    l'auteur git du commit — pas de frontmatter neuf. **No-op** (retourne `None`, n'écrit rien) si `result`
+    est absent ou blanc : pas de doc vide, pas de minerai orphelin. PUR (date injectée → testable sans
+    horloge). L'appelant ne l'invoque que dans la branche run-réussi → jamais de trace sur un run raté."""
+    if not result or not result.strip():
+        return None
+    doc = Path(worktree) / "docs" / "decisions" / f"{date_str}--{task_slug}.md"
+    doc.parent.mkdir(parents=True, exist_ok=True)
+    doc.write_text(result if result.endswith("\n") else result + "\n", encoding="utf-8")
+    return doc
+
+
 def _default_runner(argv: list[str], *, cwd: object, input_text: str, timeout: float,
                     env: Mapping[str, str] | None = None) -> run.RunResult:
     return run.run(argv, cwd=cwd, input_text=input_text, timeout=timeout, env=env)   # type: ignore[arg-type]
@@ -167,6 +184,10 @@ def dispatch_next(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
     wall_s = time.monotonic() - started
     jobs.record_finish(conn, job_id, parsed, wall_s=wall_s)
     if parsed.get("ok"):
+        # Récolte le minerai AVANT le commit : le message final du worker (ses décisions) devient un
+        # `docs/decisions/<date>--<task>.md` durable, embarqué dans le même commit que le code. Dans la
+        # branche ok uniquement → un run raté (revient `todo`) ne laisse jamais de minerai orphelin.
+        write_decision_doc(res["path"], nxt["slug"], parsed.get("result"), date_str=date.today().isoformat())
         # Le worker écrit le code mais NE fait PAS de git (mandat) → la forge committe son travail sur la
         # branche de feature dès le run réussi, pour que le gate SHA-bound ait un HEAD à ancrer. Arbre propre
         # (le worker n'a rien changé) → no-op propre (la feature reste alignée sur sa base).
