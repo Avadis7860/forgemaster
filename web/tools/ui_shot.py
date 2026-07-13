@@ -167,6 +167,7 @@ def _seed(port: int, slugs: list[str], *, home: Path) -> None:
     _seed_gate_states(home, proj)
     _seed_git_state(home, proj)
     _seed_credential_state(home, slugs)
+    _seed_deploy_state(home, proj)
 
 
 def _seed_dispatch_job(home: Path, proj: str) -> None:
@@ -306,6 +307,29 @@ def _seed_credential_state(home: Path, slugs: list[str]) -> None:
         conn.commit()
         # 1er projet : token lié (voie fichier) → réf en DB, valeur chiffrée dans le store. Le 2ᵉ reste 🔴.
         link_credential(conn, build_store(settings), slugs[0], token="ghp_demo_token", label="github")
+    finally:
+        conn.close()
+
+
+def _seed_deploy_state(home: Path, proj: str) -> None:
+    """Pose le déploiement `dev` en `running` (+ port/url/sha) et laisse `main` en `no_deploy`, pour rendre
+    l'onglet Runtime VOYANT : une carte « en marche » avec **lien health-gated actif** + une carte « jamais
+    déployé » avec lien inerte. Plumbing direct sur la DB jetable — aucun conteneur réel (c'est l'ITÉRATION
+    visuelle, pas le smoke ; la santé live se réconcilierait à `stopped` sans conteneur, ce qu'on ne fait pas
+    ici pour figer l'état running visible)."""
+    try:
+        from cockpit.config import Settings
+        from cockpit.db import store
+        from cockpit.projects import deployments, registry
+    except ImportError:
+        return  # build-only → 2 cartes `no_deploy`, sans casser le screenshot
+    settings = Settings.resolve(home=home / "home", projects_root=home / "projects")
+    conn = store.open_db(settings)
+    try:
+        pid = registry.get_project(conn, proj)["id"]
+        deployments.ensure_deployments(conn, pid)
+        deployments.set_deployment(conn, pid, "dev", status="running", port=5250,
+                                   url="http://127.0.0.1:5250", last_deploy_sha="cafe1234deadbeef")
     finally:
         conn.close()
 

@@ -18,6 +18,9 @@ export const qk = {
   gitHistory: (project: string, ref: string, path: string) =>
     ['git-history', project, ref, path] as const,
   docs: (project: string) => ['docs', project] as const,
+  deployments: (project: string) => ['deployments', project] as const,
+  deploymentLogs: (project: string, branch: string, tail: number) =>
+    ['deployment-logs', project, branch, tail] as const,
   flowOps: (project: string, ref: string) => ['flow-ops', project, ref] as const,
   flow: (project: string, selector: string, ref: string, depth: number) =>
     ['flow', project, selector, ref, depth] as const,
@@ -106,6 +109,57 @@ export function useDocs(project: string) {
     staleTime: 60_000,
   })
 }
+
+// -- Runtime (P5) : déploiements observables (santé + logs + lifecycle) ------------------------------
+
+// Les 2 déploiements (main/dev) d'un projet — liste PURE-DB (GET idempotent). Source des cartes Runtime.
+export function useDeployments(project: string) {
+  return useQuery({
+    queryKey: qk.deployments(project),
+    queryFn: () => api.getDeployments(project),
+    enabled: Boolean(project),
+  })
+}
+
+// Reconcile LIVE des 2 déploiements (`compose ps` par branche → écrit la DB). Modelé en mutation : c'est un
+// GET mais à effet (rapproche la DB du réel) → déclenché À LA MAIN par le RefreshButton du RuntimeTab, jamais
+// en poll (calque `/git/sync`). À la résolution, invalide la liste → les cartes relisent l'état réconcilié.
+export function useReconcileDeployments(project: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () =>
+      Promise.all([api.getDeploymentStatus(project, 'main'), api.getDeploymentStatus(project, 'dev')]),
+    onSettled: () => qc.invalidateQueries({ queryKey: qk.deployments(project) }),
+  })
+}
+
+// Tail borné des logs d'un déploiement. `enabled` piloté par l'ouverture du log viewer (jamais auto) ;
+// `staleTime:0` → un refetch relit toujours du frais. Le tail fait partie de la clé (changer = nouvelle vue).
+export function useDeploymentLogs(project: string, branch: string, tail: number, enabled: boolean) {
+  return useQuery({
+    queryKey: qk.deploymentLogs(project, branch, tail),
+    queryFn: () => api.getDeploymentLogs(project, branch, tail),
+    enabled: Boolean(project && branch && enabled),
+    staleTime: 0,
+    retry: false,
+  })
+}
+
+// Lifecycle mutant (deploy/stop/restart) d'un déploiement. Chaque mutation invalide la liste (l'état de run
+// change) — le front ne devine jamais le nouvel état, il relit la source Python.
+function useDeploymentAction(project: string, branch: string, fn: (p: string, b: string) => Promise<unknown>) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => fn(project, branch),
+    onSettled: () => qc.invalidateQueries({ queryKey: qk.deployments(project) }),
+  })
+}
+export const useDeploy = (project: string, branch: string) =>
+  useDeploymentAction(project, branch, api.deploymentUp)
+export const useStopDeployment = (project: string, branch: string) =>
+  useDeploymentAction(project, branch, api.deploymentDown)
+export const useRestartDeployment = (project: string, branch: string) =>
+  useDeploymentAction(project, branch, api.deploymentRestart)
 
 // Arbre d'un dossier du dépôt à une réf (explorateur). GET idempotent, pas de poll.
 export function useGitTree(project: string, ref: string, path: string) {

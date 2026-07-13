@@ -55,10 +55,12 @@ class FakeGit:
 class FakeBackend:
     """ComposeBackend factice : enregistre les appels, ne spawne rien."""
 
-    def __init__(self, *, fail_up: bool = False, ps_rows: list[dict] | None = None) -> None:
+    def __init__(self, *, fail_up: bool = False, ps_rows: list[dict] | None = None,
+                 log_lines: list[str] | None = None) -> None:
         self.calls: list[tuple] = []
         self.fail_up = fail_up
         self.ps_rows = ps_rows or []
+        self.log_lines = log_lines or []
 
     def up(self, name: str, workdir: Path, *, env: dict | None = None) -> None:
         self.calls.append(("up", name, str(workdir), dict(env or {})))
@@ -74,6 +76,10 @@ class FakeBackend:
     def ps(self, name: str, workdir: Path, *, env: dict | None = None) -> list[dict]:
         self.calls.append(("ps", name, str(workdir), dict(env or {})))
         return self.ps_rows
+
+    def logs(self, name: str, workdir: Path, *, tail: int, env: dict | None = None) -> list[str]:
+        self.calls.append(("logs", name, str(workdir), tail, dict(env or {})))
+        return self.log_lines
 
 
 # -- paths : le nom de compose-project EST la frontière d'isolation --------------------------------
@@ -133,6 +139,52 @@ def test_compose_checked_raises_on_failure(tmp_path: Path):
         return RunResult(argv=list(argv), returncode=1, stdout="", stderr="nope")
     with pytest.raises(backend_mod.ComposeError):
         PodmanCompose(runner=rec_fail).up("n", tmp_path)
+
+
+def test_logs_queries_engine_directly_bounded_readonly(tmp_path: Path):
+    """`logs()` interroge le moteur DIRECTEMENT (`<engine> logs --tail N <cid>`), PAS `compose logs` : d'abord
+    `ps` (par label) pour trouver le conteneur, puis ses logs **bornés** (jamais `--follow`)."""
+    calls: list[list[str]] = []
+
+    def rec(argv, *, cwd, env, timeout):
+        calls.append(list(argv))
+        if argv[1] == "ps":                                  # 1er appel : découverte du conteneur
+            return RunResult(argv=list(argv), returncode=0, stdout='[{"Id": "abc123"}]', stderr="")
+        return RunResult(argv=list(argv), returncode=0, stdout="", stderr="")
+
+    PodmanCompose(cmd=("podman", "compose"), runner=rec).logs("cockpit-x-dev", tmp_path, tail=100)
+    logs_argv = calls[1]
+    assert logs_argv == ["podman", "logs", "--timestamps", "--tail", "100", "abc123"]
+    assert "--follow" not in logs_argv and "-f" not in logs_argv    # borné : jamais un flux long-vécu
+
+
+def test_logs_reads_both_stdout_and_stderr(tmp_path: Path):
+    """Un handler http logge souvent sur **stderr** → `logs()` lit les deux flux (jamais un vide trompeur)."""
+    def rec(argv, *, cwd, env, timeout):
+        if argv[1] == "ps":
+            return RunResult(argv=list(argv), returncode=0, stdout='[{"Id": "c1"}]', stderr="")
+        return RunResult(argv=list(argv), returncode=0, stdout="sortie 1\n", stderr="acces stderr\n")
+
+    lines = PodmanCompose(runner=rec).logs("n", tmp_path, tail=50)
+    assert lines == ["sortie 1", "acces stderr"]             # stdout PUIS stderr, aucune perte
+
+
+def test_ps_queries_container_engine_directly_by_compose_label(tmp_path: Path):
+    """`ps()` interroge le MOTEUR directement (`<engine> ps --format json --filter label=…`), PAS `compose ps`
+    (podman-compose 1.0.6 ne supporte ni `--format json` ni `-a`, et re-parse le compose). Filtre par
+    `com.docker.compose.project` (label posé par docker ET podman) → cross-backend, sans re-parse compose."""
+    calls: list[list[str]] = []
+
+    def cap(argv, *, cwd, env, timeout):
+        calls.append(list(argv))
+        return RunResult(argv=list(argv), returncode=0, stdout='[{"State": "running"}]', stderr="")
+
+    rows = PodmanCompose(cmd=("podman", "compose"), runner=cap).ps("cockpit-x-dev", tmp_path)
+    argv = calls[0]
+    assert argv[0] == "podman" and argv[1] == "ps"           # moteur direct, jamais `compose ps`
+    assert "--format" in argv and "json" in argv
+    assert "label=com.docker.compose.project=cockpit-x-dev" in argv
+    assert rows == [{"State": "running"}]                    # état honnête parsé (is_running le lit)
 
 
 def test_parse_ps_handles_array_and_ndjson():
@@ -249,6 +301,44 @@ def test_status_stopped_when_no_container_is_up(ctx):
     assert engine.status(conn, settings, slug="svc", branch="dev", backend=be)["status"] == "stopped"
 
 
+def test_logs_returns_lines_of_a_deployed_service(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="svc")
+    be = FakeBackend(log_lines=["2026-07-13T10:00:00Z boot", "2026-07-13T10:00:01Z serving :8000"])
+    engine.deploy(conn, settings, slug="svc", branch="dev", git=FakeGit(), backend=be)
+    out = engine.logs(conn, settings, slug="svc", branch="dev", backend=be)
+    assert out["lines"] == ["2026-07-13T10:00:00Z boot", "2026-07-13T10:00:01Z serving :8000"]
+
+
+def test_logs_are_honest_empty_when_never_deployed(ctx):
+    """Un déploiement jamais monté (`no_deploy`) → `lines: []` (vide honnête), et le backend n'est JAMAIS
+    appelé (pas de `compose logs` sur un projet sans workdir) — jamais une erreur ni un faux-vert."""
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="svc")
+    be = FakeBackend(log_lines=["ne devrait pas remonter"])
+    assert engine.logs(conn, settings, slug="svc", branch="dev", backend=be) == {"lines": []}
+    assert be.calls == []                                        # aucun appel moteur
+
+
+def test_logs_clamps_tail_to_the_hard_bound(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="svc")
+    be = FakeBackend()
+    engine.deploy(conn, settings, slug="svc", branch="dev", git=FakeGit(), backend=be)
+    engine.logs(conn, settings, slug="svc", branch="dev", tail=10_000, backend=be)   # au-delà de la borne
+    logs_call = next(c for c in be.calls if c[0] == "logs")
+    assert logs_call[3] == engine._LOGS_TAIL_MAX                 # tail clampé à la borne dure
+
+
+def test_logs_rejects_invalid_branch_and_unknown_project(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="svc")
+    with pytest.raises(ValueError, match="branche invalide"):
+        engine.logs(conn, settings, slug="svc", branch="prod", backend=FakeBackend())
+    with pytest.raises(KeyError):
+        engine.logs(conn, settings, slug="ghost", branch="dev", backend=FakeBackend())
+
+
 def test_deploy_rejects_invalid_branch_and_unknown_project(ctx):
     settings, conn = ctx
     registry.create_project(conn, settings, slug="svc")
@@ -339,3 +429,50 @@ def test_deploy_route_400_invalid_branch(client, monkeypatch):
     monkeypatch.setattr(engine, "PodmanCompose", lambda **_kw: FakeBackend())
     c.post("/api/projects", json={"slug": "web"})
     assert c.post("/api/projects/web/deployments/prod/up").status_code == 400
+
+
+# -- routes GET d'observabilité (P5) : status live + logs bornés --------------------------------------
+
+def test_status_route_reflects_live_container_state(client, monkeypatch):
+    """`GET .../status` réconcilie avec l'état live (`compose ps`) : un conteneur up → `running`."""
+    c, _ = client
+    monkeypatch.setattr(engine, "PodmanCompose",
+                        lambda **_kw: FakeBackend(ps_rows=[{"State": "running"}]))
+    assert c.post("/api/projects", json={"slug": "web", "project_type": "service-api"}).status_code == 201
+    c.post("/api/projects/web/deployments/dev/up")
+    r = c.get("/api/projects/web/deployments/dev/status")
+    assert r.status_code == 200 and r.json()["deployment"]["status"] == "running"
+
+
+def test_logs_route_returns_service_lines(client, monkeypatch):
+    c, _ = client
+    monkeypatch.setattr(engine, "PodmanCompose",
+                        lambda **_kw: FakeBackend(log_lines=["boot", "serving"]))
+    assert c.post("/api/projects", json={"slug": "web", "project_type": "service-api"}).status_code == 201
+    c.post("/api/projects/web/deployments/dev/up")
+    r = c.get("/api/projects/web/deployments/dev/logs?tail=100")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["branch"] == "dev" and body["lines"] == ["boot", "serving"]
+
+
+def test_logs_route_honest_empty_when_never_deployed(client, monkeypatch):
+    c, _ = client
+    monkeypatch.setattr(engine, "PodmanCompose", lambda **_kw: FakeBackend(log_lines=["x"]))
+    assert c.post("/api/projects", json={"slug": "web", "project_type": "service-api"}).status_code == 201
+    r = c.get("/api/projects/web/deployments/dev/logs")     # jamais déployé → vide honnête
+    assert r.status_code == 200 and r.json()["lines"] == []
+
+
+def test_logs_route_rejects_out_of_range_tail(client, monkeypatch):
+    c, _ = client
+    monkeypatch.setattr(engine, "PodmanCompose", lambda **_kw: FakeBackend())
+    c.post("/api/projects", json={"slug": "web", "project_type": "service-api"})
+    assert c.get("/api/projects/web/deployments/dev/logs?tail=99999").status_code == 422   # borné par Query
+
+
+def test_observability_routes_404_unknown_project(client, monkeypatch):
+    c, _ = client
+    monkeypatch.setattr(engine, "PodmanCompose", lambda **_kw: FakeBackend())
+    assert c.get("/api/projects/ghost/deployments/dev/status").status_code == 404
+    assert c.get("/api/projects/ghost/deployments/dev/logs").status_code == 404

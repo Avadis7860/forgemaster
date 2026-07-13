@@ -5,6 +5,9 @@ import type { z } from 'zod'
 import {
   BootstrapPreviewSchema,
   BootstrapReportSchema,
+  DeploymentActionSchema,
+  DeploymentLogsSchema,
+  DeploymentsSchema,
   DispatchReportSchema,
   DocsSchema,
   GateStatusSchema,
@@ -62,6 +65,16 @@ async function request<T>(path: string, schema: z.ZodType<T>, init?: RequestInit
     throw new ApiError(res.status, detail)
   }
   return schema.parse(body)
+}
+
+// POST lifecycle d'un déploiement (up|down|restart) → déploiement projeté. Factorisé : même forme, même
+// schéma de retour. Corps vide (`{}`) : les routes ne prennent pas de body (calque du POST reconcile).
+function deploymentAction(project: string, branch: string, action: 'up' | 'down' | 'restart') {
+  return request(
+    `/api/projects/${encodeURIComponent(project)}/deployments/${encodeURIComponent(branch)}/${action}`,
+    DeploymentActionSchema,
+    { method: 'POST', body: '{}' },
+  )
 }
 
 export const api = {
@@ -149,6 +162,27 @@ export const api = {
   // Docs : la carte du projet/outil, lue depuis son repo (SoT). GET idempotent (lecture bare, goto-safe).
   getDocs: (project: string) =>
     request(`/api/projects/${encodeURIComponent(project)}/docs`, DocsSchema),
+
+  // Runtime (P5) : observabilité des déploiements. `getDeployments` = liste pure-DB (GET idempotent,
+  // goto-safe) ; `getDeploymentStatus` = reconcile LIVE (`compose ps`, écrit la DB — comme `/git/sync`,
+  // rattaché au refresh manuel, jamais au poll goto-only) ; `getDeploymentLogs` = tail borné read-only.
+  getDeployments: (project: string) =>
+    request(`/api/projects/${encodeURIComponent(project)}/deployments`, DeploymentsSchema),
+  getDeploymentStatus: (project: string, branch: string) =>
+    request(
+      `/api/projects/${encodeURIComponent(project)}/deployments/${encodeURIComponent(branch)}/status`,
+      DeploymentActionSchema,
+    ),
+  getDeploymentLogs: (project: string, branch: string, tail: number) =>
+    request(
+      `/api/projects/${encodeURIComponent(project)}/deployments/${encodeURIComponent(branch)}` +
+        `/logs?tail=${tail}`,
+      DeploymentLogsSchema,
+    ),
+  // Lifecycle mutant (POST) : deploy/stop/restart un déploiement. Jamais atteint par un runner goto-only.
+  deploymentUp: (project: string, branch: string) => deploymentAction(project, branch, 'up'),
+  deploymentDown: (project: string, branch: string) => deploymentAction(project, branch, 'down'),
+  deploymentRestart: (project: string, branch: string) => deploymentAction(project, branch, 'restart'),
 
   getNext: (project: string, feature: string) =>
     request(

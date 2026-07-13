@@ -545,3 +545,36 @@ export const DocsSchema = z.object({
   truncated: z.boolean(),
 })
 export type Docs = z.infer<typeof DocsSchema>
+
+// -- Runtime (P5) : déploiements observables (santé + logs) ------------------------------------------
+
+// Un déploiement projeté à la surface publique (routes/deployments `_public`) : la branche, l'état de run
+// (`no_deploy | building | running | stopped | unhealthy`), le port de service, l'URL et le sha du dernier
+// deploy. `port`/`url`/`last_deploy_sha` null tant que jamais monté. Le front ne recalcule jamais l'état.
+export const DeploymentSchema = z.object({
+  branch: z.string(),
+  status: z.string(),
+  port: z.number().nullable(),
+  url: z.string().nullable(),
+  last_deploy_sha: z.string().nullable(),
+})
+export type Deployment = z.infer<typeof DeploymentSchema>
+
+// GET /api/projects/{p}/deployments : les 2 déploiements (main puis dev). Vide honnête = 2 lignes `no_deploy`.
+export const DeploymentsSchema = z.object({
+  project: z.string(),
+  deployments: z.array(DeploymentSchema),
+})
+export type Deployments = z.infer<typeof DeploymentsSchema>
+
+// GET .../status (reconcile live) et POST up/down/restart renvoient le déploiement projeté.
+export const DeploymentActionSchema = z.object({ project: z.string(), deployment: DeploymentSchema })
+export type DeploymentAction = z.infer<typeof DeploymentActionSchema>
+
+// GET .../logs?tail=N : les dernières lignes (bornées), vide honnête si jamais monté. Source unique backend.
+export const DeploymentLogsSchema = z.object({
+  project: z.string(),
+  branch: z.string(),
+  lines: z.array(z.string()),
+})
+export type DeploymentLogs = z.infer<typeof DeploymentLogsSchema>

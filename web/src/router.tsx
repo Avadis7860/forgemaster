@@ -7,6 +7,7 @@ import { DocsTab } from './pages/DocsTab'
 import { DispatchTab } from './pages/DispatchTab'
 import { GateTab } from './pages/GateTab'
 import { GitTab } from './pages/GitTab'
+import { RuntimeTab } from './pages/RuntimeTab'
 import { FlowTab } from './pages/FlowTab'
 import { TerminalTab } from './pages/TerminalTab'
 import { SettingsTab } from './pages/SettingsTab'
@@ -31,6 +32,7 @@ const docsRoute = createRoute({ getParentRoute: () => projectRoute, path: 'docs'
 const dispatchRoute = createRoute({ getParentRoute: () => projectRoute, path: 'dispatch', component: DispatchTab })
 const gateRoute = createRoute({ getParentRoute: () => projectRoute, path: 'gate', component: GateTab })
 const gitRoute = createRoute({ getParentRoute: () => projectRoute, path: 'git', component: GitTab })
+const runtimeRoute = createRoute({ getParentRoute: () => projectRoute, path: 'runtime', component: RuntimeTab })
 const flowRoute = createRoute({ getParentRoute: () => projectRoute, path: 'flow', component: FlowTab })
 const terminalRoute = createRoute({ getParentRoute: () => projectRoute, path: 'terminal', component: TerminalTab })
 
@@ -38,7 +40,7 @@ const routeTree = rootRoute.addChildren([
   indexRoute,
   setupRoute,
   settingsRoute,
-  projectRoute.addChildren([roadmapRoute, docsRoute, dispatchRoute, gateRoute, gitRoute, flowRoute, terminalRoute]),
+  projectRoute.addChildren([roadmapRoute, docsRoute, dispatchRoute, gateRoute, gitRoute, runtimeRoute, flowRoute, terminalRoute]),
 ])
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' })

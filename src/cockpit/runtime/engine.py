@@ -46,6 +46,14 @@ def _resolve(conn: sqlite3.Connection, slug: str, branch: str) -> dict:
     return get_project(conn, slug)
 
 
+def _compose_env(name: str, dep: dict) -> dict[str, str]:
+    """Env d'overlay pour TOUTE sous-commande compose mutante (down/restart) : le compose est **re-parsé à
+    chaque appel** et son `ports:` est fail-loud (`${COCKPIT_PORT:?}`) → COCKPIT_PORT doit être présent, sinon
+    podman/docker compose échoue au parse. On repasse le port réservé (en DB) ; placeholder non-vide `0` s'il
+    manque (le mapping n'est consommé qu'au `up`, pas au down/restart/logs — seule la présence compte ici)."""
+    return {"COMPOSE_PROJECT_NAME": name, "COCKPIT_PORT": str(dep.get("port") or 0)}
+
+
 def deploy(conn: sqlite3.Connection, settings: Settings, *, slug: str, branch: str,
            git: InternalGit | None = None, backend: ComposeBackend | None = None) -> dict:
     """Déploie (ou re-déploie) le service de `(slug, branch)` : `building` → extrait l'arbre de la réf →
@@ -108,7 +116,7 @@ def stop(conn: sqlite3.Connection, settings: Settings, *, slug: str, branch: str
     if dep["status"] == "no_deploy" or not workdir.exists():
         return dep                                        # rien à arrêter — vide honnête
     try:
-        backend.down(name, workdir, env={"COMPOSE_PROJECT_NAME": name})
+        backend.down(name, workdir, env=_compose_env(name, dep))
     except ComposeError as exc:
         raise ValueError(f"stop échoué ({slug}/{branch}) : {exc}") from exc
     return set_deployment(conn, project_id, branch, status="stopped")
@@ -123,8 +131,9 @@ def restart(conn: sqlite3.Connection, settings: Settings, *, slug: str, branch: 
     backend = backend or PodmanCompose(cmd=settings.compose_cmd)
     name = compose_project_name(slug, branch)
     workdir = deploy_dir_for(settings, slug, branch)
+    dep = get_deployment(conn, project_id, branch)         # port réservé → COCKPIT_PORT du re-parse compose
     try:
-        backend.restart(name, workdir, env={"COMPOSE_PROJECT_NAME": name})
+        backend.restart(name, workdir, env=_compose_env(name, dep))
     except ComposeError as exc:
         set_deployment(conn, project_id, branch, status="unhealthy")
         raise ValueError(f"restart échoué ({slug}/{branch}) : {exc}") from exc
@@ -151,6 +160,32 @@ def status(conn: sqlite3.Connection, settings: Settings, *, slug: str, branch: s
         return set_deployment(conn, project_id, branch, status="unhealthy")
     live = "running" if any(is_running(r) for r in rows) else "stopped"
     return set_deployment(conn, project_id, branch, status=live)
+
+
+_LOGS_TAIL_MAX = 1000   # borne dure du tail (coût mémoire/transport) ; l'UI demande 100/500 typiquement.
+
+
+def logs(conn: sqlite3.Connection, settings: Settings, *, slug: str, branch: str, tail: int = 200,
+         backend: ComposeBackend | None = None) -> dict:
+    """Les dernières lignes de logs d'un déploiement (`compose logs --tail <n>`) — read-only, borné. `tail`
+    est **clampé** dans `[1, 1000]` (jamais un tirage non borné). **Vide honnête** : un déploiement jamais
+    monté (`no_deploy` ou aucun workdir) rend `{"lines": []}` — pas un faux-vert ni une erreur. Un échec
+    `compose` est converti en `ValueError` (→ 400 route)."""
+    proj = _resolve(conn, slug, branch)
+    project_id = str(proj["id"])
+    backend = backend or PodmanCompose(cmd=settings.compose_cmd)
+    name = compose_project_name(slug, branch)
+    workdir = deploy_dir_for(settings, slug, branch)
+
+    dep = get_deployment(conn, project_id, branch)
+    if dep["status"] == "no_deploy" or not workdir.exists():
+        return {"lines": []}                              # rien de monté → vide honnête
+    n = max(1, min(int(tail), _LOGS_TAIL_MAX))
+    try:
+        lines = backend.logs(name, workdir, tail=n, env=_compose_env(name, dep))
+    except ComposeError as exc:
+        raise ValueError(f"lecture des logs échouée ({slug}/{branch}) : {exc}") from exc
+    return {"lines": lines}
 
 
 _ACTIONS = {"up": deploy, "down": stop, "restart": restart, "status": status}

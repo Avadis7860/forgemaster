@@ -70,6 +70,22 @@ export const GATE_SEVERITY_TONE: Record<'red' | 'yellow' | 'purple', Tone> = {
   purple: 'purple',
 }
 
+/** État de run d'un déploiement (P5, colonne `deployments.status`). Dégradation **non verte** : `unhealthy`
+ *  en danger, `stopped`/`no_deploy` en neutre — seul `running` est vert (jamais de faux-vert sur un service
+ *  arrêté ou en panne). `building` en info (transitoire). */
+export const DEPLOYMENT_STATUS_TONE: Record<string, Tone> = {
+  no_deploy: 'neutral',
+  building: 'info',
+  running: 'ok',
+  stopped: 'neutral',
+  unhealthy: 'danger',
+}
+
+/** Ton d'un état de déploiement (repli neutre — jamais un faux-vert sur un état inconnu). */
+export function deploymentTone(status: string): Tone {
+  return DEPLOYMENT_STATUS_TONE[status] ?? 'neutral'
+}
+
 /** Ton d'une branche du SoT (vue Git) : réfs protégées distinctes (main=ok, dev=info), features en accent. */
 export function gitBranchTone(name: string): Tone {
   if (name === 'main') return 'ok'

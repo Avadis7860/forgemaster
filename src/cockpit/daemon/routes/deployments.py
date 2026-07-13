@@ -4,7 +4,7 @@ Le GET reste **idempotent/pur-DB** (deep-link goto-only sûr) ; up/down/restart 
 jamais atteintes par un runner goto-only). Répond « où en sont mes déploiements ? » et « fais tourner »."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from cockpit.daemon.deps import Deps, get_deps
 from cockpit.projects.deployments import list_deployments
@@ -35,6 +35,34 @@ def make_deployments_router() -> APIRouter:
         finally:
             conn.close()
         return {"project": project, "deployments": [_public(d) for d in rows]}
+
+    @router.get("/api/projects/{project}/deployments/{branch}/status")
+    def deployment_status(project: str, branch: str, deps: Deps = Depends(get_deps)) -> dict:
+        """État **live** d'un déploiement : réconcilie la DB avec `compose ps` (`running`/`stopped`, ou
+        `unhealthy` si `ps` échoue ; `no_deploy` rendu tel quel — jamais un faux-vert). **Séparé** du GET
+        liste pur (goto-safe) : ce GET fait un appel `compose` réel, l'UI le rattache au RefreshButton, jamais
+        au polling d'un runner *goto-only* (calque `GET /git/sync` vs `GET /git`). Projet absent → 404,
+        branche invalide → 400."""
+        conn = deps.open_db()
+        try:
+            dep = engine.status(conn, deps.settings, slug=project, branch=branch)
+        finally:
+            conn.close()
+        return {"project": project, "deployment": _public(dep)}
+
+    @router.get("/api/projects/{project}/deployments/{branch}/logs")
+    def deployment_logs(project: str, branch: str, tail: int = Query(200, ge=1, le=1000),
+                        deps: Deps = Depends(get_deps)) -> dict:
+        """Les `tail` dernières lignes de logs d'un déploiement (`compose logs --tail`, borné) — read-only.
+        **Vide honnête** : un déploiement jamais monté rend `lines: []` (jamais une erreur ni un faux-vert).
+        Idempotent au sens observation (ne mute pas l'état) → deep-link *goto-only* sûr. Projet absent → 404,
+        branche invalide → 400."""
+        conn = deps.open_db()
+        try:
+            out = engine.logs(conn, deps.settings, slug=project, branch=branch, tail=tail)
+        finally:
+            conn.close()
+        return {"project": project, "branch": branch, "lines": out["lines"]}
 
     @router.post("/api/projects/{project}/deployments/{branch}/up")
     def deployment_up(project: str, branch: str, deps: Deps = Depends(get_deps)) -> dict:

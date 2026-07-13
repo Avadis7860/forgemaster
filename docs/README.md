@@ -23,3 +23,4 @@
 - `runtime-compose-backend` — moteur de run compose ; namespace `cockpit-<slug>-<branch>` = isolation ; pool deploy 5250-5329.
 - `runtime-seed-deploy-config` — config de run semée par type (compose+Dockerfile+stub) ; projet frais déployable sans édition ; non-service refusé.
 - `runtime-antipollution` — env compose en allowlist (0 secret daemon) ; ACL secrets par projet ; FS/réseau/ports isolés vérifiés.
+- `runtime-observability` — santé live (reconcile séparé du GET pur) ; logs tail bornés read-only ; liens health-gated ; onglet Runtime, aucun faux-vert.

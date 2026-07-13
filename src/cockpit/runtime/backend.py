@@ -67,6 +67,12 @@ class ComposeBackend(Protocol):
         status. Liste vide = rien ne tourne."""
         ...
 
+    def logs(self, project_name: str, workdir: Path, *, tail: int,
+             env: Mapping[str, str] | None = None) -> list[str]:
+        """Les `tail` dernières lignes de logs du compose-project (`logs --tail <n>`) — read-only, **borné**
+        (jamais `--follow` : un one-shot, pas un flux long-vécu). Une ligne par entrée. Vide = rien à lire."""
+        ...
+
 
 def _default_runner(argv: Sequence[str], *, cwd: object, env: Mapping[str, str],
                     timeout: float) -> run.RunResult:
@@ -81,17 +87,21 @@ class PodmanCompose:
         self._cmd = tuple(cmd)
         self._run: Runner = runner or _default_runner
 
+    def _base_env(self, env: Mapping[str, str] | None) -> dict[str, str]:
+        """Env scellé (anti-pollution P4) : **allowlist stricte** de l'env du daemon (`_COMPOSE_ENV_ALLOW` :
+        PATH/HOME/XDG… — le nécessaire pour que compose/podman tourne) ⊕ l'overlay explicite. AUCUN secret du
+        daemon n'y fuit ; `core.run.run` **remplace** l'env, jamais hérité en bloc depuis `os.environ`."""
+        base = {k: os.environ[k] for k in _COMPOSE_ENV_ALLOW if k in os.environ}
+        return {**base, **(dict(env) if env else {})}
+
     def _compose(self, project_name: str, workdir: Path, *args: str,
                  env: Mapping[str, str] | None = None) -> run.RunResult:
-        """Exécute `<cmd> -p <name> <args>` dans `workdir`. `core.run.run` **remplace** l'env → on part d'une
-        **allowlist stricte** de l'env du daemon (`_COMPOSE_ENV_ALLOW` : PATH/HOME/XDG… — le nécessaire pour
-        que compose/podman tourne) ⊕ l'overlay explicite (`COCKPIT_PORT`, `COMPOSE_PROJECT_NAME`, pour
-        l'interpolation `${VAR}`). AUCUN secret du daemon n'atteint le build/run d'un service : l'env est
-        scopé par construction (anti-pollution P4), jamais hérité en bloc depuis `os.environ`."""
+        """Exécute `<cmd> -p <name> <args>` dans `workdir`. L'overlay (`COCKPIT_PORT`, `COMPOSE_PROJECT_NAME`)
+        est requis pour l'interpolation `${VAR}` : le compose est **re-parsé à CHAQUE sous-commande** (up,
+        down, restart, logs…) et son `ports:` est fail-loud (`${COCKPIT_PORT:?}`) → l'engine injecte toujours
+        le port réservé. Env scellé par `_base_env` (allowlist P4)."""
         argv = [*self._cmd, "-p", project_name, *args]
-        base = {k: os.environ[k] for k in _COMPOSE_ENV_ALLOW if k in os.environ}
-        full_env = {**base, **(dict(env) if env else {})}
-        return self._run(argv, cwd=workdir, env=full_env, timeout=COMPOSE_TIMEOUT)
+        return self._run(argv, cwd=workdir, env=self._base_env(env), timeout=COMPOSE_TIMEOUT)
 
     def _checked(self, project_name: str, workdir: Path, *args: str,
                  env: Mapping[str, str] | None = None) -> run.RunResult:
@@ -111,8 +121,35 @@ class PodmanCompose:
 
     def ps(self, project_name: str, workdir: Path,
            *, env: Mapping[str, str] | None = None) -> list[dict]:
-        r = self._checked(project_name, workdir, "ps", "--format", "json", env=env)
+        # On interroge le moteur de conteneurs **directement** (`<engine> ps`), PAS `compose ps` :
+        # podman-compose 1.0.6 n'accepte ni `--format json` ni `-a` pour `ps`, et re-parse le compose
+        # (→ exige COCKPIT_PORT).
+        # Le filtre par label `com.docker.compose.project` (posé par docker ET podman) donne l'état honnête
+        # par conteneur, sans re-parse compose. Cross-backend (`self._cmd[0]` = podman|docker), env P4 scellé.
+        argv = [self._cmd[0], "ps", "-a", "--format", "json",
+                "--filter", f"label=com.docker.compose.project={project_name}"]
+        r = self._run(argv, cwd=workdir, env=self._base_env(env), timeout=COMPOSE_TIMEOUT)
+        if not r.ok:
+            raise ComposeError(f"ps @ {project_name}: {r.stderr.strip()[:200]}")
         return _parse_ps(r.stdout)
+
+    def logs(self, project_name: str, workdir: Path, *, tail: int,
+             env: Mapping[str, str] | None = None) -> list[str]:
+        # Comme `ps` : moteur DIRECT (`<engine> logs`), PAS `compose logs` — podman-compose n'écrit pas
+        # fiablement les lignes sur stdout (+ pollue de sa bannière). On liste les conteneurs du projet (via
+        # `ps`, par label) puis on tire leurs derniers logs, en lisant stdout ET stderr (un handler http logge
+        # souvent sur stderr → `podman logs` le route sur notre stderr). Borné (`--tail`, jamais `--follow`).
+        out: list[str] = []
+        for c in self.ps(project_name, workdir, env=env):
+            cid = str(c.get("Id") or c.get("ID") or "")       # podman: `Id` ; docker ndjson: `ID`
+            if not cid:
+                continue
+            argv = [self._cmd[0], "logs", "--timestamps", "--tail", str(tail), cid]
+            r = self._run(argv, cwd=workdir, env=self._base_env(env), timeout=COMPOSE_TIMEOUT)
+            if not r.ok:
+                raise ComposeError(f"logs @ {project_name}: {r.stderr.strip()[:200]}")
+            out.extend((r.stdout + r.stderr).splitlines())     # lignes sur l'un OU l'autre flux
+        return out[-tail:]                                     # borne finale (multi-conteneurs)
 
 
 def _parse_ps(stdout: str) -> list[dict]:
