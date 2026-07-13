@@ -57,6 +57,19 @@ def build_parser() -> argparse.ArgumentParser:
                                 help="re-synchroniser un outil avec son amont (ff-only, jamais de push)")
     tsy.add_argument("slug")
 
+    # -- bundle -------------------------------------------------------------------------------------
+    p_bundle = sub.add_parser("bundle", parents=[common],
+                              help="gestion des bundles (registre vendoré) : list|validate|show|version")
+    p_bundle_sub = p_bundle.add_subparsers(dest="action", required=True, metavar="<action>")
+    p_bundle_sub.add_parser("list", parents=[common], help="lister les types du registre + validité")
+    blv = p_bundle_sub.add_parser("validate", parents=[common],
+                                  help="valider un bundle (ou tous) — exit 1 si un est invalide")
+    blv.add_argument("type", nargs="?", help="type à valider ; défaut = tous")
+    bsh = p_bundle_sub.add_parser("show", parents=[common], help="détail d'un bundle")
+    bsh.add_argument("type")
+    bvr = p_bundle_sub.add_parser("version", parents=[common], help="version d'un bundle (ou de tous)")
+    bvr.add_argument("type", nargs="?", help="type ; défaut = tous")
+
     # -- roadmap ------------------------------------------------------------------------------------
     p_roadmap = sub.add_parser("roadmap", parents=[common], help="roadmap in-repo (features + tasks)")
     p_roadmap_sub = p_roadmap.add_subparsers(dest="action", required=True, metavar="<action>")
@@ -185,6 +198,11 @@ def _h_tool(settings: Settings, args: argparse.Namespace) -> int:
     return toolsync.cli_dispatch(settings, args)
 
 
+def _h_bundle(settings: Settings, args: argparse.Namespace) -> int:
+    from cockpit.provision import manage
+    return manage.cli_dispatch(settings, args)
+
+
 def _h_roadmap(settings: Settings, args: argparse.Namespace) -> int:
     from cockpit.roadmap import model
     return model.cli_dispatch(settings, args)
@@ -266,6 +284,7 @@ def _h_install_service(settings: Settings, args: argparse.Namespace) -> int:
 _HANDLERS = {
     "project": _h_project,
     "tool": _h_tool,
+    "bundle": _h_bundle,
     "roadmap": _h_roadmap,
     "task": _h_task,
     "dispatch": _h_dispatch,
