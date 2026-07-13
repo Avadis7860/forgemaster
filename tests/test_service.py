@@ -2,6 +2,7 @@
 écraser une conf existante). On n'active jamais systemctl en test (effet système)."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -53,3 +54,22 @@ def test_install_service_seeds_env_template_when_absent(tmp_path: Path, monkeypa
     _unit, env, _hint = service.install_service(settings, host="127.0.0.1", port=8700, scope="user")
     body = env.read_text()
     assert "COCKPIT_HOME=" in body and "COCKPIT_SECRET_STORE" in body
+
+
+def test_load_env_file_populates_environ_without_override(tmp_path: Path, monkeypatch):
+    env = tmp_path / "cockpit.env"
+    env.write_text("# commentaire\n\nCOCKPIT_MCP_JWT_SECRET_REF=ref-opaque-123\n"
+                   "COCKPIT_MCP_ENDPOINT=http://file:8080/mcp\n", encoding="utf-8")
+    monkeypatch.delenv("COCKPIT_MCP_JWT_SECRET_REF", raising=False)
+    monkeypatch.setenv("COCKPIT_MCP_ENDPOINT", "http://shell-wins:9/mcp")   # déjà dans l'env réel
+    try:
+        loaded = service.load_env_file(env)
+        assert os.environ["COCKPIT_MCP_JWT_SECRET_REF"] == "ref-opaque-123"    # posée depuis le fichier
+        assert os.environ["COCKPIT_MCP_ENDPOINT"] == "http://shell-wins:9/mcp"  # NON écrasée (shell gagne)
+        assert loaded == {"COCKPIT_MCP_JWT_SECRET_REF": "ref-opaque-123"}       # seule la clé neuve posée
+    finally:
+        os.environ.pop("COCKPIT_MCP_JWT_SECRET_REF", None)   # load écrit os.environ direct → nettoyage manuel
+
+
+def test_load_env_file_noop_when_absent(tmp_path: Path):
+    assert service.load_env_file(tmp_path / "nope.env") == {}

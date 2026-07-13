@@ -36,6 +36,29 @@ def set_env_keys(env_path: Path, updates: dict[str, str]) -> None:
     os.replace(tmp, env_path)
 
 
+def load_env_file(env_path: Path) -> dict[str, str]:
+    """Charge les paires `CLÉ=valeur` d'un `cockpit.env` (EnvironmentFile) dans `os.environ` — la CLI
+    obtient ainsi la même config que le service systemd (qui, lui, lit l'`EnvironmentFile`). **Non-override**
+    : une clé déjà présente dans l'environnement réel gagne (comme `Environment=` prime sur `EnvironmentFile=`
+    sous systemd). Ignore lignes vides et commentaires ; parse symétrique de `set_env_keys`. No-op si le
+    fichier est absent. Retourne les clés effectivement posées (diagnostic/test). Sans cette parité, un
+    `cockpit dispatch` en CLI perdait le câblage MCP **en silence** (seul le service lisait cockpit.env)."""
+    env_path = Path(env_path)
+    if not env_path.exists():
+        return {}
+    loaded: dict[str, str] = {}
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, val = stripped.split("=", 1)
+        key, val = key.strip(), val.strip()
+        if key and key not in os.environ:
+            os.environ[key] = val
+            loaded[key] = val
+    return loaded
+
+
 def _cockpit_bin() -> str:
     """Chemin du binaire `cockpit` (venv courant si présent, sinon le nom nu résolu par le PATH)."""
     cand = Path(sys.executable).with_name("cockpit")

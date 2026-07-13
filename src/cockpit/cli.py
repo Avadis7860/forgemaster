@@ -200,9 +200,24 @@ def _settings(args: argparse.Namespace) -> Settings:
                             projects_root=getattr(args, "projects_root", None))
 
 
+def _autoload_env(args: argparse.Namespace) -> None:
+    """Charge `$COCKPIT_HOME/cockpit.env` dans `os.environ` AVANT de résoudre les Settings — parité CLI ↔
+    service (le service lit l'`EnvironmentFile`, la CLI doit voir la même config, dont le câblage MCP). Sinon
+    un `cockpit dispatch` en shell perdait le MCP en silence. Home résolu comme `_settings` (flag > env >
+    défaut) ; le fichier ne surcharge jamais une clé déjà dans l'environnement réel."""
+    import os
+    from pathlib import Path
+
+    from cockpit.config import DEFAULT_HOME, ENV_HOME
+    from cockpit.service import load_env_file
+    home = getattr(args, "home", None) or os.environ.get(ENV_HOME) or DEFAULT_HOME
+    load_env_file(Path(os.path.expanduser(str(home))) / "cockpit.env")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    """Parse, résout les Settings, dispatche vers le handler de la couche (import paresseux)."""
+    """Parse, charge cockpit.env (parité service), résout les Settings, dispatche vers le handler."""
     args = build_parser().parse_args(argv)
+    _autoload_env(args)
     settings = _settings(args)
     handler = _HANDLERS[args.command]
     return handler(settings, args)
