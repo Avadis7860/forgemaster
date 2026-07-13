@@ -20,6 +20,20 @@ from cockpit.core import run
 DEFAULT_COMPOSE_CMD: tuple[str, ...] = ("podman", "compose")
 COMPOSE_TIMEOUT = 600.0   # s ; un `up --build` peut être long (pull d'image + build) sans pendre l'appelant.
 
+# Variables d'environnement du daemon **autorisées** à atteindre la CLI compose (allowlist, anti-pollution
+# P4). Le strict nécessaire pour que `podman`/`docker compose` tourne — rootless inclus : PATH, HOME, le
+# runtime XDG, la locale, les chemins de config containers/docker s'ils sont posés. JAMAIS un secret du
+# daemon (`BWS_ACCESS_TOKEN`, `COCKPIT_*`, `GITHUB_TOKEN`…) : l'env de build/run d'un service est scopé par
+# construction — il ne reçoit que cette base ⊕ l'overlay explicite de l'engine (`COCKPIT_PORT`,
+# `COMPOSE_PROJECT_NAME`), jamais l'environnement du daemon hérité en bloc.
+_COMPOSE_ENV_ALLOW: tuple[str, ...] = (
+    "PATH", "HOME", "USER", "LOGNAME", "TERM", "TMPDIR",
+    "XDG_RUNTIME_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
+    "LANG", "LC_ALL", "LC_CTYPE",
+    "CONTAINERS_STORAGE_CONF", "CONTAINERS_REGISTRIES_CONF",   # podman rootless : config si posée
+    "DOCKER_HOST", "DOCKER_CONFIG",                            # bascule docker compose : idem
+)
+
 # runner(argv, *, cwd, env, timeout) -> RunResult. Défaut = subprocess local ; injecté en test.
 Runner = Callable[..., run.RunResult]
 
@@ -69,11 +83,14 @@ class PodmanCompose:
 
     def _compose(self, project_name: str, workdir: Path, *args: str,
                  env: Mapping[str, str] | None = None) -> run.RunResult:
-        """Exécute `<cmd> -p <name> <args>` dans `workdir`. `core.run.run` **remplace** l'env → on compose
-        depuis `os.environ` + l'overlay (`COCKPIT_PORT`, etc.) pour que l'interpolation `${VAR}` du compose
-        voie le port publié tout en gardant PATH & co."""
+        """Exécute `<cmd> -p <name> <args>` dans `workdir`. `core.run.run` **remplace** l'env → on part d'une
+        **allowlist stricte** de l'env du daemon (`_COMPOSE_ENV_ALLOW` : PATH/HOME/XDG… — le nécessaire pour
+        que compose/podman tourne) ⊕ l'overlay explicite (`COCKPIT_PORT`, `COMPOSE_PROJECT_NAME`, pour
+        l'interpolation `${VAR}`). AUCUN secret du daemon n'atteint le build/run d'un service : l'env est
+        scopé par construction (anti-pollution P4), jamais hérité en bloc depuis `os.environ`."""
         argv = [*self._cmd, "-p", project_name, *args]
-        full_env = {**os.environ, **(dict(env) if env else {})}
+        base = {k: os.environ[k] for k in _COMPOSE_ENV_ALLOW if k in os.environ}
+        full_env = {**base, **(dict(env) if env else {})}
         return self._run(argv, cwd=workdir, env=full_env, timeout=COMPOSE_TIMEOUT)
 
     def _checked(self, project_name: str, workdir: Path, *args: str,

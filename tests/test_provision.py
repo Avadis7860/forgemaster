@@ -236,6 +236,19 @@ def test_seeded_compose_builds_from_repo_and_fails_loud_on_missing_port(project_
 
 
 @pytest.mark.parametrize("project_type", _SERVICE_TYPES)
+def test_seeded_compose_has_no_host_bind_or_shared_network(project_type):
+    """Anti-pollution P4 (frontière FS/réseau structurelle) : le compose semé ne déclare NI `volumes:` NI
+    `networks:` — ni au niveau top-level ni sur le service. Donc aucun bind vers le FS hôte (le service ne
+    voit que son image, buildée depuis SON arbre) et un réseau podman **par compose-project** (jamais un
+    réseau partagé où A joindrait B). L'isolation est une propriété du payload, pas une config à ajouter."""
+    doc = yaml.safe_load(load_bundle(project_type)["compose.yaml"])
+    assert "volumes" not in doc and "networks" not in doc     # rien de partagé au top-level
+    web = doc["services"]["web"]
+    assert "volumes" not in web                               # aucun bind/volume monté dans le conteneur
+    assert "networks" not in web                              # réseau par défaut = isolé par compose-project
+
+
+@pytest.mark.parametrize("project_type", _SERVICE_TYPES)
 def test_seeded_run_config_is_generic_no_hardcoded_slug(project_type):
     """Invariant de genericité du payload : le stub d'app et le compose ne portent AUCUN nom de projet en
     dur (le payload est réutilisable à l'identique pour tout projet du type)."""

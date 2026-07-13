@@ -17,7 +17,7 @@ from cockpit.projects import deployments, registry
 from cockpit.runtime import backend as backend_mod
 from cockpit.runtime import engine
 from cockpit.runtime.backend import PodmanCompose
-from cockpit.runtime.paths import compose_project_name
+from cockpit.runtime.paths import compose_project_name, deploy_dir_for
 
 
 @pytest.fixture
@@ -104,7 +104,22 @@ def test_podman_compose_builds_scoped_argv_and_merges_env(tmp_path: Path):
     assert argv == ["podman", "compose", "-p", "cockpit-x-dev", "up", "-d", "--build"]
     assert cwd == str(tmp_path)
     assert env["COCKPIT_PORT"] == "5250"          # overlay injecté (interpolation ${COCKPIT_PORT})
-    assert "PATH" in env                          # os.environ mergé (run REMPLACE l'env)
+    assert "PATH" in env                          # base allowlist du daemon (le nécessaire pour tourner)
+
+
+def test_compose_env_seals_daemon_secrets_out(tmp_path: Path, monkeypatch):
+    """Anti-pollution P4 : l'env passé à la CLI compose est une **allowlist** — aucun secret du daemon
+    (BWS_ACCESS_TOKEN, COCKPIT_*, GITHUB_TOKEN…) n'y fuit, même s'il est présent dans l'environnement du
+    daemon. Seuls la base autorisée ⊕ l'overlay explicite atteignent le build/run."""
+    for leaky in ("BWS_ACCESS_TOKEN", "COCKPIT_ADMIN_TOKEN", "GITHUB_TOKEN"):
+        monkeypatch.setenv(leaky, "s3cr3t-sentinelle")
+    calls, rec = _recorder()
+    PodmanCompose(runner=rec).up("cockpit-x-dev", tmp_path, env={"COCKPIT_PORT": "5250"})
+    env = calls[0][2]
+    assert "s3cr3t-sentinelle" not in env.values()                 # le secret n'a pas fui
+    for leaky in ("BWS_ACCESS_TOKEN", "COCKPIT_ADMIN_TOKEN", "GITHUB_TOKEN"):
+        assert leaky not in env                                    # clé hors allowlist → absente
+    assert set(env) <= set(backend_mod._COMPOSE_ENV_ALLOW) | {"COCKPIT_PORT"}   # allowlist ∪ overlay
 
 
 def test_compose_engine_is_a_setting_not_code(tmp_path: Path):
@@ -262,6 +277,36 @@ def test_deploy_refuses_tree_without_compose(ctx):
         engine.deploy(conn, settings, slug="cli", branch="dev", git=_NoComposeGit(), backend=be)
     assert _dep(conn, "cli")["status"] == "unhealthy"       # jamais un faux-vert
     assert be.calls == []                                   # refus AVANT tout appel moteur
+
+
+# -- anti-pollution P4 : frontière FS structurelle + pools de ports disjoints ----------------------
+
+def test_deploy_dirs_are_per_project_isolated(tmp_path: Path):
+    """Le contexte de build/run vit sous `<projects_root>/<slug>/deploy/<branch>` : chaque (projet, branche)
+    a son sous-arbre PROPRE, aucun n'est niché dans un autre → un service ne voit jamais l'arbre d'un voisin
+    (l'image ne reçoit que le `git archive` de SON SoT via `COPY . .`)."""
+    settings = Settings.resolve(home=tmp_path / "home", projects_root=tmp_path / "projects")
+    a_dev = deploy_dir_for(settings, "alpha", "dev")
+    b_dev = deploy_dir_for(settings, "beta", "dev")
+    a_main = deploy_dir_for(settings, "alpha", "main")
+    dirs = [a_dev, b_dev, a_main]
+    assert len({str(d) for d in dirs}) == 3                       # trois chemins distincts
+    for d in dirs:
+        assert settings.projects_root in d.parents               # borné sous projects_root
+    # aucun répertoire de déploiement n'est un ancêtre d'un autre (pas d'inclusion inter-projets)
+    for i, d in enumerate(dirs):
+        for j, other in enumerate(dirs):
+            if i != j:
+                assert d not in other.parents
+
+
+def test_deploy_and_worktree_pools_are_disjoint():
+    """Invariant P2 verrouillé (P4) : le pool de ports **deploy** et le pool **worktree** ne se recouvrent
+    jamais → une réservation de service ne peut pas coïncider avec un port de worktree (`UNIQUE(port)` global
+    fait le reste au sein d'un pool)."""
+    d_lo, d_hi = engine.DEPLOY_RANGE
+    w_lo, w_hi = ports.DEFAULT_RANGE
+    assert d_hi < w_lo or w_hi < d_lo                             # intervalles disjoints
 
 
 # -- routes POST du lifecycle (backend factice injecté au défaut de l'engine) ----------------------

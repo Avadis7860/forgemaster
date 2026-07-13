@@ -7,6 +7,7 @@ injecte la valeur le temps de l'op, ne la persiste jamais. Backend choisi global
 """
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable
 
 from cockpit.config import Settings
@@ -20,6 +21,7 @@ __all__ = [
     "SecretUnsupported",
     "build_store",
     "cred_resolver",
+    "scoped_cred_resolver",
 ]
 
 
@@ -45,6 +47,30 @@ def cred_resolver(settings: Settings) -> Callable[[str], str]:
     (jamais d'exception ici — l'auth git reste best-effort côté appelant). La *policy* de résolution vit ICI
     (couche secrets), jamais dans `git/internal` (qui n'importe pas ce paquet)."""
     def resolve(ref: str) -> str:
+        try:
+            return build_store(settings).get(ref)
+        except SecretStoreError:
+            return ""
+    return resolve
+
+
+def scoped_cred_resolver(settings: Settings, conn: sqlite3.Connection, *, slug: str) -> Callable[[str], str]:
+    """Résolveur `credential_ref → token` **scopé à un projet** (ACL, P4). Durcit `cred_resolver` : il ne
+    résout QUE le ref **lié à `slug`** (`projects.credential_ref`) — un ref appartenant à un autre projet (ou
+    à aucun) dégrade en `''`, jamais le token d'autrui. Ferme la pollution *control-plane* : le résolveur
+    d'un projet ne peut pas tirer le secret d'un voisin. **Lazy/Total** comme `cred_resolver` (store construit
+    à la demande ; absence / illisible / hors-scope → `''`, aucune exception ici). La *policy* d'appartenance
+    vit ICI (couche secrets), jamais dans `git/internal`. Import de `get_project` **paresseux** (le paquet
+    `projects.registry` importe `secrets` — cycle évité)."""
+    from cockpit.projects.registry import get_project
+
+    def resolve(ref: str) -> str:
+        try:
+            owned = get_project(conn, slug).get("credential_ref")
+        except KeyError:
+            return ""                                  # projet inconnu → rien à résoudre
+        if not ref or ref != owned:
+            return ""                                  # ref hors du projet demandeur → refusé (ACL)
         try:
             return build_store(settings).get(ref)
         except SecretStoreError:
