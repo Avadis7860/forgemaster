@@ -57,3 +57,6 @@ desktop.ini
 
 # index code-map local (cache dérivé, reconstructible — jamais suivi)
 .codemap/
+
+# index front-map local (cache dérivé per-racine, reconstructible — jamais suivi)
+.frontmap/
