@@ -1,17 +1,23 @@
-"""resolver — le résolveur DAG des tasks : classe chaque task (READY/BLOCKED_DEPS/CYCLE/ERROR + états de
-statut) et calcule la **NEXT** task dispatchable d'une feature. Le graphe est la **seule autorité de
-séquencement** (spec task-next-resolver-dag) ; zéro LLM, déterministe, read-only.
+"""resolver — adaptateur mince sur le moteur générique `taskmap` (SoT unique du séquencement).
 
-Port : `services/aggregator/lib/vault_tasks.py` (moteur `task-graph-v1` : `detect_cycles`, `classify`,
-`_rank_key`) **adapté au modèle cockpit** (tasks d'une feature, `depends_on` = slugs intra-feature).
-Refactor **#9** : classification à **ordre figé** (statut > ERROR dangling > CYCLE > BLOCKED_DEPS >
-READY) ; **`eff_prio` transitive absorbée** du proto (`task_resolver_proto` : une task qui débloque une
-priorité plus haute remonte) ; ordre total avec tiebreak `slug` (zéro ex-æquo). `task add` = saisie
-(délègue à `model`).
+Le DAG des tasks est classé et rangé par `taskmap.core.graph` (`detect_cycles`, `eff_prio`, rang canonique)
++ `taskmap.classify` (décision d'état), dé-forkés du vault. Ce module ne fait QUE l'adaptation à la forme
+cockpit : il projette les rows SQLite (`slug`/`created_at`/`status` cockpit) vers la forme de record du cœur
+(`id`/`created`/`status` taskmap), délègue, puis **re-traduit** au contrat JSON cockpit (état + blockers en
+vocab cockpit). Le graphe reste la **seule autorité de séquencement** ; zéro copie du moteur ici.
+
+Historique : ce fichier était un **fork vendoré** de `task-graph-v1` (port de `vault_tasks.py`, aggregator).
+Dé-forké au deep-dive `taskmap-cockpit-backlog-wiring` (P1) — au passage, la priorité effective transitive
+`eff_prio` a **gradué dans le cœur taskmap** (distillation-vers-le-centre). `task add`/`next` = saisie /
+résolution (délègue à `model` / au cœur).
 """
 from __future__ import annotations
 
 import argparse
+
+from taskmap.classify import classify as _tm_classify
+from taskmap.core.graph import eff_prio as _core_eff_prio
+from taskmap.core.graph import rank_ready as _core_rank_ready
 
 from cockpit.config import Settings
 from cockpit.db import store
@@ -19,101 +25,67 @@ from cockpit.roadmap import model
 
 PRIORITIES = ("P0", "P1", "P2", "P3")
 PRIO = {p: i for i, p in enumerate(PRIORITIES)}
-_UNKNOWN_PRIO = len(PRIORITIES)  # priorité hors vocab → derrière tout le monde (fail-soft)
+_UNKNOWN_PRIO = len(PRIORITIES)   # priorité hors vocab → dernier (rang de features, orchestrateur)
 
-# Statuts DB (cockpit) → états du résolveur. `todo` seul peut devenir READY/BLOCKED_DEPS.
-_TERMINAL_STATE = {"done": "DONE", "cancelled": "CANCELLED", "in_progress": "ACTIVE", "blocked": "BLOCKED"}
+# Statuts DB cockpit → vocab de statut taskmap. Seul `in_progress`→`active` diverge (todo/done/blocked/
+# cancelled communs) ; `todo` tombe dans la branche READY/BLOCKED_DEPS du cœur (non terminal).
+_STATUS_TO_TM = {"in_progress": "active"}
 
 
-def detect_cycles(index: dict[str, dict]) -> set[str]:
-    """Membres d'un cycle de dépendances (DFS colorée ; arêtes dangling ignorées). Porté de vault_tasks."""
-    color: dict[str, int] = {}   # 0 white / 1 grey / 2 black
-    members: set[str] = set()
+def _to_records(index: dict[str, dict]) -> dict[str, dict]:
+    """Projette les rows cockpit vers la forme de record du cœur taskmap. Superset (garde `slug`/`created_at`/
+    `status` originaux → permet la re-traduction) : `id`≡slug, `created`≡created_at, `tags:[]` (requis par
+    `taskmap.classify` ; jamais un épic sur un row cockpit), statut traduit."""
+    out: dict[str, dict] = {}
+    for slug, row in index.items():
+        status = row["status"]
+        out[slug] = {**row, "id": slug, "created": row.get("created_at") or "",
+                     "status": _STATUS_TO_TM.get(status, status), "tags": []}
+    return out
 
-    def visit(u: str, path: list[str]) -> None:
-        color[u] = 1
-        path.append(u)
-        for v in index[u]["depends_on"]:
-            if v not in index:
-                continue
-            if color.get(v, 0) == 1 and v in path:      # back-edge → cycle
-                members.update(path[path.index(v):])
-            elif color.get(v, 0) == 0:
-                visit(v, path)
-        color[u] = 2
-        path.pop()
 
-    for t in index:
-        if color.get(t, 0) == 0:
-            visit(t, [])
-    return members
+def _blockers(state: str, row: dict, index: dict[str, dict]) -> list[str]:
+    """Blockers en **vocab cockpit** (contrat JSON préservé), re-générés depuis l'index ORIGINAL : taskmap
+    fournit l'ÉTAT, cockpit garde sa copy UI. ERROR → dep absente « (task inconnue) » ; BLOCKED_DEPS → dep
+    non-done avec son statut ORIGINAL ; sinon aucun."""
+    deps = row["depends_on"]
+    if state == "ERROR":
+        return [f"{d} (task inconnue)" for d in deps if d not in index]
+    if state == "BLOCKED_DEPS":
+        return [f"{d} ({index[d]['status']})" for d in deps if index[d]["status"] != "done"]
+    return []
+
+
+def _classify_tm(index: dict[str, dict]) -> dict[str, dict]:
+    """Classe via le moteur taskmap (`root`/`today` None : ni trigger ni épic sur des rows cockpit → états =
+    sous-ensemble DONE/CANCELLED/ACTIVE/BLOCKED/ERROR/CYCLE/READY/BLOCKED_DEPS)."""
+    return _tm_classify(_to_records(index), None, None)
 
 
 def classify(index: dict[str, dict]) -> dict[str, dict]:
-    """Classe chaque task (ordre figé : statut terminal > ERROR dangling > CYCLE > BLOCKED_DEPS > READY).
-    Le **statut est la source de vérité** (pas de promotion silencieuse). Retourne {slug: {…, state,
-    blockers}}."""
-    cyc = detect_cycles(index)
+    """Classe chaque task — **état = autorité taskmap** — et rend le contrat cockpit `{**row, state,
+    blockers}` byte-identique (blockers re-traduits en vocab cockpit)."""
+    tm = _classify_tm(index)
     out: dict[str, dict] = {}
-    for sid, t in index.items():
-        status, deps = t["status"], t["depends_on"]
-        missing = [d for d in deps if d not in index]
-        blockers: list[str] = []
-        if status in _TERMINAL_STATE:
-            state = _TERMINAL_STATE[status]
-        elif missing:
-            state, blockers = "ERROR", [f"{d} (task inconnue)" for d in missing]
-        elif sid in cyc:
-            state = "CYCLE"
-        else:
-            unmet = [d for d in deps if index[d]["status"] != "done"]
-            state = "READY" if not unmet else "BLOCKED_DEPS"
-            blockers = [f"{d} ({index[d]['status']})" for d in unmet]
-        out[sid] = {**t, "state": state, "blockers": blockers}
+    for slug, row in index.items():
+        state = tm[slug]["state"]
+        out[slug] = {**row, "state": state, "blockers": _blockers(state, row, index)}
     return out
 
 
 def eff_prio(index: dict[str, dict]) -> dict[str, int]:
-    """Priorité **effective transitive** : `eff(t) = min(prio propre, min sur dépendants transitifs)`.
-    Une task de faible priorité qui débloque une task plus prioritaire remonte (absorbé du proto).
-    Robuste aux cycles (garde de pile)."""
-    dependents: dict[str, set[str]] = {sid: set() for sid in index}
-    for sid, t in index.items():
-        for d in t["depends_on"]:
-            if d in index:
-                dependents[d].add(sid)
-    memo: dict[str, int] = {}
-
-    def eff(sid: str, stack: frozenset[str]) -> int:
-        if sid in memo:
-            return memo[sid]
-        best = PRIO.get(index[sid]["priority"], _UNKNOWN_PRIO)
-        for child in dependents[sid]:
-            if child not in stack:
-                best = min(best, eff(child, stack | {sid}))
-        memo[sid] = best
-        return best
-
-    return {sid: eff(sid, frozenset()) for sid in index}
-
-
-def _rank_key(t: dict, effp: dict[str, int]) -> tuple:
-    """Ordre total : priorité effective ↑, puis date de création ↑, puis slug (tiebreak, zéro ex-æquo)."""
-    return (effp[t["slug"]], t.get("created_at") or "9999", t["slug"])
-
-
-def ready(index: dict[str, dict]) -> list[dict]:
-    """Tasks READY d'une feature, triées par ordre total (la tête = la NEXT)."""
-    classified = classify(index)
-    effp = eff_prio(index)
-    return sorted((t for t in classified.values() if t["state"] == "READY"),
-                  key=lambda t: _rank_key(t, effp))
+    """Priorité effective transitive (déléguée au cœur taskmap). Dict keyé par slug (record `id`≡slug)."""
+    return _core_eff_prio(_to_records(index), PRIO)
 
 
 def resolve_next(index: dict[str, dict]) -> dict | None:
-    """La prochaine task dispatchable (READY de plus haut rang), ou None si aucune."""
-    r = ready(index)
-    return r[0] if r else None
+    """La prochaine task dispatchable (READY de plus haut rang canonique), re-traduite au contrat cockpit ;
+    None si aucune READY. Rang délégué au cœur (`rank_ready` : `eff_prio` transitive + tiebreaks)."""
+    ranked = _core_rank_ready(_classify_tm(index), PRIO)
+    if not ranked:
+        return None
+    row = index[ranked[0]["id"]]              # ranked[0]["id"] ≡ slug
+    return {**row, "state": "READY", "blockers": []}
 
 
 def index_for_feature(conn, feature_ref: str) -> dict[str, dict]:

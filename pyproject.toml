@@ -21,6 +21,10 @@ dependencies = [
   # secret store par défaut (EncryptedFileStore) : chiffrement authentifié au repos (Fernet). Import PARESSEUX
   # dans secrets/file_store.py — le socle reste stdlib-pur, la dép n'est tirée qu'à l'usage du store fichier.
   "cryptography>=42",
+  # moteur de séquencement des tasks (DAG, classification, eff_prio) : dé-fork du resolver vendoré →
+  # `roadmap/resolver.py` importe `taskmap.core`. Une seule copie vivante du moteur (SoT = repo task-map,
+  # épinglé au SHA P0). Dep runtime privée : tirée au build du wheel (token repo privé au pip-install).
+  "task-map @ git+https://github.com/Avadis7860/task-map@85bd32e",
 ]
 
 [project.optional-dependencies]

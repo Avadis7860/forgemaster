@@ -1,4 +1,8 @@
-"""Tests du résolveur DAG : classification à ordre figé, cycle, dangling, eff_prio transitif, NEXT."""
+"""Tests du résolveur DAG — désormais un **adaptateur mince sur `taskmap.core`** (dé-fork P1). La surface
+publique (`classify`/`eff_prio`/`resolve_next`/`PRIO`) et le **contrat JSON cockpit** (états + blockers en
+vocab cockpit) sont préservés byte-identiques ; seul le moteur sous-jacent a changé. On vérifie la
+classification, le cycle/dangling, `eff_prio` transitif, le NEXT, et la **re-traduction** des blockers
+(statut original conservé malgré la projection `in_progress`→`active` côté taskmap)."""
 from __future__ import annotations
 
 import argparse
@@ -35,6 +39,15 @@ def test_classify_dangling_is_error_and_cycle_is_cycle():
     assert resolver.classify(_index(_t("a", deps=["ghost"])))["a"]["state"] == "ERROR"
     cyc = resolver.classify(_index(_t("a", deps=["b"]), _t("b", deps=["a"])))
     assert cyc["a"]["state"] == "CYCLE" and cyc["b"]["state"] == "CYCLE"
+
+
+def test_blocker_preserves_original_status_for_in_progress_dep():
+    # Une dép `in_progress` → BLOCKED_DEPS ; le blocker porte le statut ORIGINAL cockpit (« in_progress »),
+    # PAS le vocab taskmap (« active ») vers lequel l'adaptateur projette pour la décision d'état.
+    idx = _index(_t("a", status="in_progress"), _t("b", deps=["a"]))
+    c = resolver.classify(idx)
+    assert c["b"]["state"] == "BLOCKED_DEPS"
+    assert c["b"]["blockers"] == ["a (in_progress)"]   # re-traduction : contrat cockpit préservé
 
 
 def test_classify_terminal_states_take_precedence():
