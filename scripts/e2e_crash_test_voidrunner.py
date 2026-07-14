@@ -96,8 +96,15 @@ def main(argv: list[str] | None = None) -> int:
 
     home = Path(tempfile.mkdtemp(prefix="cockpit-crashtest-"))
     projects_root = home / "projects"
+    # `.venv/bin/python scripts/…` n'ACTIVE pas le venv → `.venv/bin` (console-scripts du framework :
+    # docsmap/codemap/ruff…) n'est PAS sur le PATH, et le worker échouerait au préflight d'outils
+    # (`Bash(docsmap:*)` de la facette doc introuvable). Le home jetable n'a pas de `tools/bin` (`cockpit
+    # tools install` — clone GitHub + Node, hors-sujet — jamais lancé). On préfixe donc le bin de
+    # l'interpréteur courant au PATH transmis : l'invocation documentée marche sans activation manuelle.
+    venv_bin = str(VENV_COCKPIT.parent)
     env = {**os.environ, "COCKPIT_HOME": str(home / "home"),
-           "COCKPIT_PROJECTS_ROOT": str(projects_root)}
+           "COCKPIT_PROJECTS_ROOT": str(projects_root),
+           "PATH": f"{venv_bin}{os.pathsep}{os.environ.get('PATH', '')}"}
     sot = projects_root / SLUG / "sot.git"
     try:
         # ---- 1. création de zéro ------------------------------------------------------------------
