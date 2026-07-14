@@ -4,7 +4,7 @@ Trois schémas sont un **contrat** : une couche produit, une autre consomme. On 
 librement ; changer un **schéma** exige une entrée CHANGELOG + un bump. Un schéma partiel qui se dit complet
 est un bug (jamais de cap silencieux).
 
-## 1. Schéma SQLite (`db/schema.py`, `SCHEMA_VERSION` = **7**)
+## 1. Schéma SQLite (`db/schema.py`, `SCHEMA_VERSION` = **9**)
 
 Base unique sous `settings.db_path` (`$COCKPIT_HOME/cockpit.db`). Modèle **feature-groupe-des-tasks**.
 
@@ -20,7 +20,9 @@ Base unique sous `settings.db_path` (`$COCKPIT_HOME/cockpit.db`). Modèle **feat
 - **`features`** — `id`, `project_id`→projects (cascade), `slug`, `title`, `branch` (`feature/<slug>`),
   `worktree_path` (nullable hors-vol), `status` (`planned`|`active`|`ready`|`merged`|`cancelled`),
   `facet` (nullable, **v6** — la facette de dispatch `backend`|`frontend`|`tool`|`doc` qui aligne le worker ;
-  `NULL` → défaut résolu du `.cockpit/bundle.toml` au dispatch), `created_at` ; unique `(project_id, slug)`.
+  `NULL` → défaut résolu du `.cockpit/bundle.toml` au dispatch), `blueprint` (nullable, **v9** — **ref STAMP** :
+  l'id d'un blueprint du capital central, résolu **en direct au read du board** via le client MCP, `NULL` →
+  pas de blueprint), `created_at` ; unique `(project_id, slug)`.
 - **`tasks`** — `id`, `feature_id`→features (cascade), `slug`, `title`, `status`
   (`todo`|`in_progress`|`done`|`blocked`|`cancelled`), `depends_on` (**JSON** : liste d'ids de tasks, DAG
   intra-feature), `priority` (`P0`..`P3`), `acceptance` (nullable TEXT, **v6** — critères de DoD injectés
@@ -89,6 +91,14 @@ ajouter un type = déposer `bundles/types/<type>/`), l'autorité de validation p
 recrée `projects` sans lui, recopie ; `foreign_keys` off le temps du rebuild — id préservé, FK enfants intactes).
 No-op sur une base sans CHECK (montée par ALTER) ; idempotent. Changement d'enum → **breaking, bump 7→8**.
 
+**Migration v8→v9** (board-native blueprint) : `features` gagne `blueprint` (`TEXT`, nullable, **aucun défaut**)
+via `ensure_columns` — les lignes existantes prennent `NULL` (pas de blueprint). C'est la **ref STAMP** (id d'un
+blueprint du capital central) portée par une feature ; l'id est stocké brut (opaque au niveau DB/modèle) et
+**résolu au read** du board via le client MCP runtime (`cockpit.mcp.blueprint_resolver`, seam
+`taskmap.context`) → `GET …/roadmap` rend `{blueprint:{id, posture, resolved, reason, …}}`, dégradation honnête
+si le MCP est coupé (`resolved:false` + raison, jamais inventé). Même patron additif que `facet` (v6). Ajout
+**non-breaking**.
+
 ## 2. Schéma `.cockpit/roadmap.yaml` (in-repo, `roadmap/model.py`)
 
 Versionné **avec le projet** (source de vérité côté repo), synchronisé vers la DB (index). Manifeste SEC
@@ -100,6 +110,7 @@ features:
   - slug: <kebab>
     title: <str>
     facet: backend|frontend|tool|doc               # v6, OPTIONNEL — facette de dispatch (omis si non posée)
+    blueprint: <blueprint-id>                       # v9, OPTIONNEL — ref STAMP (omis si non posée)
     phases: [[<task-slug>, …], [<task-slug>, …]]   # étapes ORDONNÉES ; chaque étape = ids parallèles
     tasks:
       - slug: <kebab>
@@ -109,9 +120,10 @@ features:
         acceptance: <str>                           # v6, OPTIONNEL — critères de DoD injectés au prompt worker
 ```
 
-`facet:`/`acceptance:` (v6) sont **émis seulement si présents** — une roadmap sans facette reste identique
-au contrat v1 (rétro-compatible). `facet` tague la feature du type de travail (aligne le worker au dispatch) ;
-`acceptance` porte les critères de succès de la task, rendus verbatim dans le prompt.
+`facet:`/`acceptance:` (v6) et `blueprint:` (v9) sont **émis seulement si présents** — une roadmap sans ces
+champs reste identique au contrat v1 (rétro-compatible). `facet` tague la feature du type de travail (aligne le
+worker au dispatch) ; `acceptance` porte les critères de succès de la task, rendus verbatim dans le prompt ;
+`blueprint` porte la ref STAMP (id brut) de la feature, résolue en verdict au read du board (`GET …/roadmap`).
 
 `phases:` (inter/intra ordonnancement) augmente `depends_on` **en union, jamais écrasement** ; sans
 `phases:`, comportement identique au `depends_on` seul (opt-in rétro-compatible). Cf. spec

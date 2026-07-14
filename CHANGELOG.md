@@ -5,6 +5,19 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Schéma DB v9 — board-native blueprint : `features.blueprint` (bump `SCHEMA_VERSION` 8→9)
+- **Additif non-breaking** → bump `SCHEMA_VERSION = 9` + migration `ensure_columns` (ALTER idempotent). `features`
+  gagne `blueprint` (nullable `TEXT`, aucun défaut → `NULL` pour l'existant) : la **ref STAMP** (id d'un blueprint
+  du capital central) portée par une feature. Patron identique à `facet` (v6).
+- **Modèle** `roadmap/model.py` : `add_feature(..., blueprint=None)` le stocke ; `_feature_doc` émet `blueprint`
+  dans `roadmap.yaml` **seulement si présent** (contrat rétro-compatible, comme `facet`/`acceptance`).
+- **Route** `GET /api/projects/{p}/roadmap` : chaque `features.blueprint` (ref brut) est **résolu en direct** via
+  le client MCP runtime (`cockpit.mcp.blueprint_resolver` P2, seam `taskmap.context._blueprint_verdict`) →
+  `{blueprint:{id, posture, resolved, reason, …champs fusionnés}}`. **Dégradation honnête** : MCP non câblé /
+  coupé / vide → `resolved:false` + raison, jamais inventé. Feature sans blueprint → `blueprint: null`. Contrat
+  existant (`tasks`/`state`/`blockers`/`next`) inchangé.
+- **HTTP** `POST /api/projects/{p}/features` : `FeatureCreate` gagne `blueprint` (optionnel).
+
 ### Schéma DB v8 — registre de bundles registre-driven : `project_type` CHECK RETIRÉ (bump `SCHEMA_VERSION` 7→8)
 - **Breaking (schéma SQLite)** → bump `SCHEMA_VERSION = 8` + migration. Le `CHECK (project_type IN (...))` figé
   sur `projects` est **retiré** : les types de projet sont désormais **découverts sur le filesystem**

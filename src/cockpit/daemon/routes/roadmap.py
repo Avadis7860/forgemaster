@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from taskmap.context import _blueprint_verdict
 
 from cockpit.daemon.deps import Deps, get_deps
+from cockpit.mcp import blueprint_resolver
 from cockpit.roadmap import model, resolver
 
 
@@ -13,6 +15,7 @@ class FeatureCreate(BaseModel):
     slug: str
     title: str | None = None
     facet: str | None = None         # facette de dispatch — validée contre le bundle du projet → 400
+    blueprint: str | None = None     # ref STAMP (v9) — id d'un blueprint résolu au read du board via MCP
 
 
 class TaskCreate(BaseModel):
@@ -34,6 +37,7 @@ def make_roadmap_router() -> APIRouter:
         conn = deps.open_db()
         try:
             features = model.list_features(conn, project)
+            resolve_bp = blueprint_resolver(deps.settings)   # client MCP runtime (P2) — 1× par requête board
             for f in features:
                 tasks = model.list_tasks(conn, f["id"])
                 index = {t["slug"]: t for t in tasks}
@@ -41,6 +45,12 @@ def make_roadmap_router() -> APIRouter:
                 f["tasks"] = [classified[t["slug"]] for t in tasks]   # ordre list_tasks préservé
                 nxt = resolver.resolve_next(index) if index else None
                 f["next"] = nxt["slug"] if nxt else None
+                # ref STAMP brute (v9) → verdict résolu via MCP (down → resolved:false, dégradation honnête).
+                # `_blueprint_verdict` = logique canonique du seam taskmap (réutilisée, jamais dupliquée).
+                f["blueprint"] = (
+                    _blueprint_verdict({"id": f["blueprint"], "posture": None}, resolve_bp)
+                    if f.get("blueprint") else None
+                )
             return {"project": project, "features": features}
         finally:
             conn.close()
@@ -50,7 +60,7 @@ def make_roadmap_router() -> APIRouter:
         conn = deps.open_db()
         try:
             return model.add_feature(conn, project_slug=project, slug=body.slug, title=body.title,
-                                     facet=body.facet)
+                                     facet=body.facet, blueprint=body.blueprint)
         finally:
             conn.close()
 

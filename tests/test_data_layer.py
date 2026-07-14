@@ -383,6 +383,29 @@ def test_roadmap_to_yaml_carries_facet_and_acceptance(ctx):
     assert "acceptance" not in plain["tasks"][0]
 
 
+def test_add_feature_blueprint_round_trip_and_yaml(ctx):
+    """`blueprint` (v9) = ref STAMP portée par une feature : stockée telle quelle (id brut), relue en DB, et
+    émise dans `roadmap.yaml` SEULEMENT si présente (rétro-compat, comme `facet`). Aucune résolution ici —
+    la ref reste un id opaque au niveau modèle ; le board la résout via MCP."""
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj")
+    f = model.add_feature(conn, project_slug="proj", slug="gate", title="Gate",
+                          blueprint="deterministic-tooling-gate")
+    assert f["blueprint"] == "deterministic-tooling-gate"
+    reread = model.resolve_feature(conn, "proj/gate")                    # relecture DB
+    assert reread["blueprint"] == "deterministic-tooling-gate"
+    model.add_feature(conn, project_slug="proj", slug="plain")           # sans blueprint → NULL
+    assert model.resolve_feature(conn, "proj/plain")["blueprint"] is None
+    features = model.list_features(conn, "proj")
+    for f in features:
+        f["tasks"] = model.list_tasks(conn, f["id"])
+    doc = yaml.safe_load(model.to_yaml("proj", features))
+    gate = next(f for f in doc["features"] if f["slug"] == "gate")
+    plain = next(f for f in doc["features"] if f["slug"] == "plain")
+    assert gate["blueprint"] == "deterministic-tooling-gate"             # ref brute émise si présente
+    assert "blueprint" not in plain                                      # rétro-compat : absent si non posé
+
+
 def test_ensure_columns_migrates_v5_to_v6_in_place(tmp_path: Path):
     """Une base v5 (projects sans project_type ; features sans facet ; tasks sans acceptance) migre en
     place : `ensure_columns` ajoute les 3 colonnes ; l'existant prend `project_type='generic'` (défaut
@@ -457,4 +480,28 @@ def test_migrate_v8_drops_project_type_check(tmp_path: Path):
     assert conn.execute("SELECT project_type FROM projects WHERE slug='bg'").fetchone()[0] == "browser-game"
     assert store.migrate(conn) == schema.SCHEMA_VERSION                     # idempotent (gate de migration)
     conn.close()
+    conn.close()
+
+
+def test_ensure_columns_migrates_v8_to_v9_in_place(tmp_path: Path):
+    """Une base v8 (features avec facet, sans blueprint) migre en place : `ensure_columns` ajoute la colonne
+    `blueprint` (nullable, aucun défaut → NULL pour l'existant). Additif, idempotent (2ᵉ appel no-op)."""
+    import sqlite3
+
+    from cockpit.db import schema
+    conn = sqlite3.connect(tmp_path / "v8.db")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE features (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, slug TEXT NOT "
+                 "NULL, title TEXT NOT NULL, branch TEXT NOT NULL, worktree_path TEXT, status TEXT NOT "
+                 "NULL DEFAULT 'planned', facet TEXT, created_at TEXT NOT NULL)")
+    conn.execute("INSERT INTO features (id, project_id, slug, title, branch, status, facet, created_at) "
+                 "VALUES ('f1', 'i1', 'feat', 'Feat', 'feature/feat', 'planned', 'backend', '2026-01-01')")
+    conn.commit()
+    assert "blueprint" not in {r[1] for r in conn.execute("PRAGMA table_info(features)")}
+    schema.ensure_columns(conn)
+    assert "blueprint" in {r[1] for r in conn.execute("PRAGMA table_info(features)")}
+    assert conn.execute("SELECT blueprint FROM features WHERE slug='feat'").fetchone()[0] is None
+    assert conn.execute("SELECT facet FROM features WHERE slug='feat'").fetchone()[0] == "backend"  # préservé
+    schema.ensure_columns(conn)                                            # 2ᵉ appel : no-op (ALTER gardé)
+    assert "blueprint" in {r[1] for r in conn.execute("PRAGMA table_info(features)")}
     conn.close()

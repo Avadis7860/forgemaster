@@ -133,6 +133,43 @@ def test_roadmap_features_tasks_and_next(client):
     assert api_task["blockers"] == ["schema (todo)"] and api_task["depends_on"] == ["schema"]
 
 
+def test_roadmap_surfaces_resolved_blueprint(client, monkeypatch):
+    """Une feature portant un `blueprint:` (ref STAMP, v9) ressort son verdict résolu sur le board : le client
+    MCP est monkeypatché (aucun réseau) pour rendre le corps → `resolved:true` + champs fusionnés. La feature
+    sans blueprint ressort `blueprint: null` (rétro-compat)."""
+    c, _ = client
+    # blueprint_resolver(settings) → un resolver factice qui rend le corps du blueprint (hit MCP simulé)
+    body = {"title": "Le gate déterministe", "status": "current"}
+    monkeypatch.setattr("cockpit.daemon.routes.roadmap.blueprint_resolver",
+                        lambda _s: (lambda _bp: body))
+    c.post("/api/projects", json={"slug": "proj"})
+    assert c.post("/api/projects/proj/features",
+                  json={"slug": "gate", "blueprint": "deterministic-tooling-gate"}).status_code == 201
+    c.post("/api/projects/proj/features", json={"slug": "plain"})       # sans blueprint
+    rm = c.get("/api/projects/proj/roadmap").json()
+    gate = next(f for f in rm["features"] if f["slug"] == "gate")
+    plain = next(f for f in rm["features"] if f["slug"] == "plain")
+    assert gate["blueprint"]["id"] == "deterministic-tooling-gate"
+    assert gate["blueprint"]["resolved"] is True
+    assert gate["blueprint"]["title"] == "Le gate déterministe"         # champ fusionné du corps résolu
+    assert plain["blueprint"] is None                                    # feature sans blueprint → null
+
+
+def test_roadmap_blueprint_honest_when_mcp_down(client, monkeypatch):
+    """MCP injoignable / non câblé → le board dégrade honnêtement : `resolved:false` + raison, jamais inventé.
+    Le contrat de la feature (state/blockers/next) reste inchangé."""
+    c, _ = client
+    monkeypatch.setattr("cockpit.daemon.routes.roadmap.blueprint_resolver",
+                        lambda _s: (lambda _bp: None))                   # resolver rend None (down/empty)
+    c.post("/api/projects", json={"slug": "proj"})
+    c.post("/api/projects/proj/features", json={"slug": "gate", "blueprint": "deterministic-tooling-gate"})
+    rm = c.get("/api/projects/proj/roadmap").json()
+    gate = next(f for f in rm["features"] if f["slug"] == "gate")
+    assert gate["blueprint"]["id"] == "deterministic-tooling-gate"
+    assert gate["blueprint"]["resolved"] is False
+    assert gate["blueprint"]["reason"]                                   # raison honnête, jamais inventée
+
+
 # -- dispatch (gate no-task-no-dispatch, sans spawn) -----------------------------------------------
 
 def test_dispatch_refused_without_task_no_spawn(client, monkeypatch):

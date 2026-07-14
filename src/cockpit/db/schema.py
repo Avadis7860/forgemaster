@@ -26,13 +26,16 @@ du dernier deploy. Substrat conteneur (compose) en lightweight ; le modèle d'id
 substrat. Table neuve → créée sur base existante par `CREATE IF NOT EXISTS` (pas d'`ensure_columns`). v8
 (bundle-storage-registry) = le `CHECK` figé sur `projects.project_type` est RETIRÉ : l'enum devient
 **registre-driven** (`provision.discover_types`), l'autorité passe à `provision.validate_bundle` dans
-`create_project`. SQLite ne sait pas ALTER un CHECK → rebuild de table gardé (`_migrate_v8_...`).
+`create_project`. SQLite ne sait pas ALTER un CHECK → rebuild de table gardé (`_migrate_v8_...`). v9
+(board-native blueprint) = `features` gagne `blueprint` (nullable) : la **ref STAMP** (id d'un blueprint du
+capital central, ex. `deterministic-tooling-gate`) portée par une feature ; l'id est résolu **au read du
+board** via le client MCP (`GET …/roadmap` → `{blueprint:{id, resolved, reason, …}}`, honnête si MCP coupé).
 """
 from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # Ordre = ordre de création (les FK pointent vers des tables déjà créées). Chaque table porte les
 # invariants durs en contraintes SQL (NOT NULL, UNIQUE, FK, CHECK sur les enums de statut).
@@ -66,6 +69,7 @@ DDL: tuple[str, ...] = (
         status        TEXT NOT NULL DEFAULT 'planned'
                           CHECK (status IN ('planned', 'active', 'ready', 'merged', 'cancelled')),
         facet         TEXT,                          -- facette de dispatch (v6, nullable ; défaut bundle)
+        blueprint     TEXT,                          -- ref blueprint STAMP (v9, nullable ; id résolu via MCP)
         created_at    TEXT NOT NULL,
         UNIQUE (project_id, slug)
     )
@@ -154,10 +158,11 @@ _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
     # v6 : `project_type` (NOT NULL, défaut littéral 'generic' — ALTER exige un défaut littéral). En v8 le
     # CHECK figé a été retiré (rebuild de table, `_migrate_v8_drop_project_type_check`) → l'enum est désormais
     # registre-driven, tenu par `provision.validate_bundle`. `features.facet`/`tasks.acceptance` : nullables.
+    # v9 : `features.blueprint` (nullable, aucun défaut → NULL pour l'existant) = ref STAMP résolue au read.
     "projects": (("kind", "TEXT NOT NULL DEFAULT 'project'"), ("owner", "TEXT"),
                  ("credential_ref", "TEXT"), ("source_url", "TEXT"),
                  ("project_type", "TEXT NOT NULL DEFAULT 'generic'")),
-    "features": (("facet", "TEXT"),),
+    "features": (("facet", "TEXT"), ("blueprint", "TEXT")),
     "tasks": (("acceptance", "TEXT"),),
 }
 

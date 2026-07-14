@@ -40,10 +40,11 @@ def _project_facets(project: dict) -> set[str]:
 
 
 def add_feature(conn: sqlite3.Connection, *, project_slug: str, slug: str, title: str | None = None,
-                facet: str | None = None) -> dict:
+                facet: str | None = None, blueprint: str | None = None) -> dict:
     """Ajoute une feature à un projet (branche `feature/<slug>`, statut `planned`). `facet` (optionnel) =
     la facette de dispatch qui alignera le worker ; NULL → défaut résolu du `bundle.toml` au dispatch.
-    `facet` est validée contre les facettes **du bundle du projet** (registre), pas un vocab global."""
+    `facet` est validée contre les facettes **du bundle du projet** (registre), pas un vocab global.
+    `blueprint` (optionnel, v9) = ref STAMP (id d'un blueprint central), résolue au read du board."""
     ids.ensure_slug(slug, field="feature")
     project = get_project(conn, project_slug)
     valid = _project_facets(project)
@@ -52,12 +53,12 @@ def add_feature(conn: sqlite3.Connection, *, project_slug: str, slug: str, title
                          f"du projet {project_slug} : {sorted(valid)}")
     row = {"id": ids.new_id(), "project_id": project["id"], "slug": slug, "title": title or slug,
            "branch": f"feature/{slug}", "worktree_path": None, "status": "planned", "facet": facet,
-           "created_at": _now()}
+           "blueprint": blueprint, "created_at": _now()}
     try:
         conn.execute(
             "INSERT INTO features (id, project_id, slug, title, branch, worktree_path, status, facet, "
-            "created_at) VALUES (:id, :project_id, :slug, :title, :branch, :worktree_path, :status, :facet, "
-            ":created_at)", row)
+            "blueprint, created_at) VALUES (:id, :project_id, :slug, :title, :branch, :worktree_path, "
+            ":status, :facet, :blueprint, :created_at)", row)
         conn.commit()
     except sqlite3.IntegrityError as exc:
         raise ValueError(f"feature déjà existante : {project_slug}/{slug}") from exc
@@ -117,11 +118,13 @@ def list_tasks(conn: sqlite3.Connection, feature_id: str) -> list[dict]:
 
 
 def _feature_doc(f: dict) -> dict:
-    """Un bloc feature du contrat roadmap.yaml. `facet`/`acceptance` (v6) émis SEULEMENT si présents
-    (contrat rétro-compatible : une roadmap sans facette reste identique à la v1)."""
+    """Un bloc feature du contrat roadmap.yaml. `facet`/`acceptance` (v6) et `blueprint` (v9) émis SEULEMENT
+    si présents (contrat rétro-compatible : une roadmap sans ces champs reste identique à la v1)."""
     doc: dict = {"slug": f["slug"], "title": f["title"]}
     if f.get("facet"):
         doc["facet"] = f["facet"]
+    if f.get("blueprint"):
+        doc["blueprint"] = f["blueprint"]     # ref STAMP brute (v9) ; la résolution est runtime/board-only
     doc["tasks"] = []
     for t in f.get("tasks", []):
         task: dict = {"slug": t["slug"], "title": t["title"], "priority": t["priority"],
