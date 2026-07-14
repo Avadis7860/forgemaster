@@ -25,6 +25,9 @@ dependencies = [
   # `roadmap/resolver.py` importe `taskmap.core`. Une seule copie vivante du moteur (SoT = repo task-map,
   # épinglé au SHA P0). Dep runtime privée : tirée au build du wheel (token repo privé au pip-install).
   "task-map @ git+https://github.com/Avadis7860/task-map@85bd32e",
+  # client MCP runtime (`mcp/client.py`) : résout un `blueprint:` en direct via `mcp-catalogs`. Même plancher
+  # que le serveur (≥3.2.0 pour CVE-2026-32871). Import PARESSEUX (tiré à l'appel, socle non alourdi).
+  "fastmcp>=3.3.1",
 ]
 
 [project.optional-dependencies]
