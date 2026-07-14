@@ -46,7 +46,7 @@ def test_install_plan_covers_maps_quality_and_node(settings):
     names = [s["name"] for s in plan]
     assert names == ["pip-tools", "pip-nodeenv", "nodeenv"]
     pip_tools = plan[0]["argv"]
-    # les 3 cartes en git+<url>@main + les 3 outils qualité, tous dans un seul pip install
+    # les 4 cartes en git+<url>@main + les 3 outils qualité, tous dans un seul pip install
     for repo_url in tools.MAP_REPOS.values():
         assert f"git+{repo_url}@{tools.MAP_REF}" in pip_tools
     for q in tools.PY_QUALITY:
@@ -58,7 +58,8 @@ def test_symlink_sources_split_venv_and_node(settings):
     srcs = tools._symlink_sources(settings)
     assert srcs["codemap"] == tools.tools_venv(settings) / "bin" / "codemap"
     assert srcs["node"] == tools.nodeenv_prefix(settings) / "bin" / "node"
-    assert set(srcs) == {"codemap", "docsmap", "frontmap", "ruff", "pytest", "mypy", "node", "npm", "npx"}
+    assert set(srcs) == {"codemap", "docsmap", "frontmap", "taskmap",
+                         "ruff", "pytest", "mypy", "node", "npm", "npx"}
 
 
 # -- install_tools (runner injecté qui matérialise les binaires) ------------------------------------
@@ -87,7 +88,7 @@ def _materializing_runner(settings, *, captured_envs=None, fail_on=None):
         if step == "venv":
             venv_bin.mkdir(parents=True, exist_ok=True)
         elif step == "pip-tools":
-            for name in ("codemap", "docsmap", "frontmap", "ruff", "pytest", "mypy"):
+            for name in ("codemap", "docsmap", "frontmap", "taskmap", "ruff", "pytest", "mypy"):
                 touch(venv_bin / name)
         elif step == "pip-nodeenv":
             touch(venv_bin / "nodeenv")
@@ -103,7 +104,7 @@ def test_install_tools_happy_path_exposes_all_bins(settings):
     report = tools.install_tools(settings, runner=_materializing_runner(settings))
     assert report["ok"] is True
     bin_dir = tools.tools_bin(settings)
-    for name in ("codemap", "docsmap", "frontmap", "ruff", "pytest", "mypy", "node", "npm", "npx"):
+    for name in ("codemap", "docsmap", "frontmap", "taskmap", "ruff", "pytest", "mypy", "node", "npm", "npx"):
         link = bin_dir / name
         assert link.is_symlink() and link.resolve().exists()            # exposé ET pointe une source réelle
     assert set(report["symlinks"]) == set(tools._symlink_sources(settings))
