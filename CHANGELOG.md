@@ -5,6 +5,11 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Build — `allow-direct-references` pour la dép git privée `task-map`
+- `pyproject.toml` : `[tool.hatch.metadata] allow-direct-references = true`. La dép runtime `task-map` est une
+  référence directe (`git+https`, repo privé épinglé au SHA) ; sans cet opt-in, `pip wheel .` échoue en
+  `metadata-generation-failed`. Fix build-time pur, aucun changement de comportement.
+
 ### Schéma DB v9 — board-native blueprint : `features.blueprint` (bump `SCHEMA_VERSION` 8→9)
 - **Additif non-breaking** → bump `SCHEMA_VERSION = 9` + migration `ensure_columns` (ALTER idempotent). `features`
   gagne `blueprint` (nullable `TEXT`, aucun défaut → `NULL` pour l'existant) : la **ref STAMP** (id d'un blueprint
