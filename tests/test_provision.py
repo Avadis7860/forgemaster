@@ -12,6 +12,7 @@ from cockpit.provision import (
     facet,
     list_valid_types,
     load_bundle,
+    load_launch_roadmap,
     load_payload,
     read_bundle_manifest,
     validate_bundle,
@@ -186,6 +187,34 @@ def test_browser_game_wires_game_dev_identity():
 def test_load_bundle_is_deterministic():
     for t in discover_types():
         assert load_bundle(t) == load_bundle(t)     # lecture triée + merge `|` déterministe
+
+
+def test_launch_roadmap_generic_is_socle_with_acceptance():
+    rm = load_launch_roadmap("generic")
+    feats = {f["slug"]: f for f in rm["features"]}
+    assert set(feats) == {"socle"} and feats["socle"]["facet"] == "doc"
+    tasks = {t["slug"]: t for t in feats["socle"]["tasks"]}
+    assert tasks["decompose"]["depends_on"] == ["cadrage"]          # ordre porté par la graine
+    assert all(t.get("acceptance") for t in tasks.values())        # DoD binaire partout
+
+
+def test_launch_roadmap_browser_game_overrides_whole_file():
+    rm = load_launch_roadmap("browser-game")
+    feats = {f["slug"]: f for f in rm["features"]}
+    assert set(feats) == {"socle-design"}                          # remplace le socle générique, pas fusionné
+    assert feats["socle-design"]["facet"] == "game-design"
+    assert {t["slug"] for t in feats["socle-design"]["tasks"]} == {"interview", "boucle-eco", "decompose"}
+
+
+def test_launch_roadmap_absent_type_is_failsoft(tmp_path, monkeypatch):
+    # un type sans .cockpit/launch-roadmap.yaml → {} (aucun seed), jamais un crash
+    monkeypatch.setattr("cockpit.provision.load_bundle", lambda *_a, **_k: {"CLAUDE.md": "x"})
+    assert load_launch_roadmap("whatever") == {}
+
+
+def test_launch_roadmap_is_deterministic():
+    for t in discover_types():
+        assert load_launch_roadmap(t) == load_launch_roadmap(t)
 
 
 def test_overlay_adds_facets_and_overrides_whole_file():

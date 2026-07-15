@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import shutil
 import sqlite3
 from collections.abc import Callable
@@ -117,8 +118,23 @@ def create_project(conn: sqlite3.Connection, settings: Settings, *,
         git.init_sot(sot, payload=payload)                     # + tampon de provenance bundle@version
         if mirror_remote:
             git.set_remote(sot, "mirror", mirror_remote)       # matérialise le miroir dans git (P1)
+        _seed_launch_roadmap(conn, slug=slug, project_type=project_type)   # roadmap de lancement (fail-soft)
     ensure_deployments(conn, str(row["id"]))   # 2 déploiements par branche (main/dev, no_deploy) — v7 runtime
     return row
+
+
+def _seed_launch_roadmap(conn: sqlite3.Connection, *, slug: str, project_type: str) -> None:
+    """Sème la roadmap de lancement du bundle dans le board du projet neuf (chemin SEED). **Fail-soft** :
+    la roadmap de lancement est un bonus d'amorçage, pas un bloqueur de création — un échec (graine cassée,
+    doublon) émet un warning et on continue, on n'annule **NI** la row **NI** le SoT (déjà durables). Import
+    **paresseux** de `roadmap.seed` : casse le cycle d'import `registry ↔ roadmap.model` (qui importe
+    `registry.get_project`)."""
+    try:
+        from cockpit.roadmap.seed import seed_launch_roadmap
+        seed_launch_roadmap(conn, project_slug=slug, project_type=project_type)
+    except Exception as exc:   # noqa: BLE001 — bonus d'amorçage : jamais bloquant pour la création du projet
+        logging.getLogger("cockpit").warning(
+            "roadmap de lancement non semée pour %s (%s) : %s", slug, project_type, exc)
 
 
 def set_credential_ref(conn: sqlite3.Connection, slug: str, credential_ref: str | None) -> dict:

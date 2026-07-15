@@ -40,9 +40,18 @@ def test_healthy_roadmap_has_no_issues(ctx):
 def test_empty_project_then_empty_feature(ctx):
     settings, conn = ctx
     registry.create_project(conn, settings, slug="proj", project_type="front-ts")
+    conn.execute("DELETE FROM features")   # vide la roadmap de lancement semée → teste le cas board vide
+    conn.commit()
     assert _kinds(check.check_roadmap(conn, "proj")) == ["EMPTY"]        # projet sans feature
     model.add_feature(conn, project_slug="proj", slug="api", facet="backend")
     assert "EMPTY" in _kinds(check.check_roadmap(conn, "proj"))          # feature sans task
+
+
+@pytest.mark.parametrize("project_type", ["generic", "browser-game"])
+def test_seeded_launch_roadmap_passes_check(ctx, project_type):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj", project_type=project_type)
+    assert check.check_roadmap(conn, "proj") == []      # la roadmap de lancement semée est opérationnelle
 
 
 def test_missing_acceptance_is_flagged(ctx):

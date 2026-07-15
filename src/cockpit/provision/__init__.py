@@ -22,8 +22,11 @@ import tomllib
 from collections.abc import Iterator
 from pathlib import Path
 
+import yaml
+
 _BUNDLES_DIR = Path(__file__).parent / "bundles"
 _MANIFEST_PATH = ".cockpit/bundle.toml"   # descripteur [bundle], vendoré, lu au dispatch (facet.py)
+_LAUNCH_ROADMAP_PATH = ".cockpit/launch-roadmap.yaml"   # graine de roadmap de lancement (seed au create)
 
 
 class BundleError(ValueError):
@@ -142,6 +145,18 @@ def list_valid_types() -> list[dict]:
             "default_facet": manifest.get("default_facet", ""),
         })
     return valid
+
+
+def load_launch_roadmap(project_type: str = "generic") -> dict:
+    """La graine de **roadmap de lancement** d'un type (`base ⊕ overlay(type)`, whole-file), parsée depuis
+    `.cockpit/launch-roadmap.yaml` du bundle composé. Schéma = contrat `roadmap.yaml` SANS la clé `project:`
+    (le slug est fourni au seed). Retourne `{}` **fail-soft** si le type ne porte aucune graine (aucun seed,
+    jamais un crash). Le parse est **strict** (un YAML vendoré cassé = bug dev, attrapé par les tests, jamais
+    avalé). Déterministe. Lève `BundleError` si `project_type` est hors registre (via `load_bundle`)."""
+    raw = load_bundle(project_type).get(_LAUNCH_ROADMAP_PATH)
+    if raw is None:
+        return {}
+    return yaml.safe_load(raw) or {}
 
 
 def load_payload() -> dict[str, str]:

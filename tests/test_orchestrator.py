@@ -65,6 +65,15 @@ class _Runner:
                 self._per[feature] -= 1
 
 
+def _new_project(conn, settings, slug: str) -> None:
+    """Crée un projet PUIS vide sa roadmap de lancement semée : ces tests pilotent un board CONTRÔLÉ
+    (DAG explicite), le socle d'amorçage universel serait du bruit pour la mécanique de drainage."""
+    registry.create_project(conn, settings, slug=slug)
+    conn.execute("DELETE FROM tasks")
+    conn.execute("DELETE FROM features")
+    conn.commit()
+
+
 def _seed(conn, settings, project: str, feature: str, tasks: list[tuple[str, list[str]]]) -> None:
     """Ajoute `feature` (+ ses tasks `(slug, depends_on)`) à `project` (déjà créé par le test)."""
     model.add_feature(conn, project_slug=project, slug=feature)
@@ -82,7 +91,7 @@ def _statuses(conn, feature: str) -> dict[str, str]:
 
 def test_run_project_drains_intra_feature_dag_in_order(ctx):
     settings, conn = ctx
-    registry.create_project(conn, settings, slug="proj")
+    _new_project(conn, settings, "proj")
     _seed(conn, settings, "proj", "feat", [("t1", []), ("t2", ["t1"]), ("t3", ["t2"])])
     r = _Runner()
     summary = orchestrator.run_project(conn, settings, project="proj", git=InternalGit(), runner=r)
@@ -96,7 +105,7 @@ def test_run_project_drains_intra_feature_dag_in_order(ctx):
 
 def test_run_project_parallelizes_independent_features_up_to_max(ctx):
     settings, conn = ctx
-    registry.create_project(conn, settings, slug="proj")
+    _new_project(conn, settings, "proj")
     for f in ("fa", "fb", "fc"):
         _seed(conn, settings, "proj", f, [("t", [])])
     r = _Runner(delay=0.12)
@@ -110,7 +119,7 @@ def test_run_project_parallelizes_independent_features_up_to_max(ctx):
 
 def test_run_project_never_two_workers_on_one_feature(ctx):
     settings, conn = ctx
-    registry.create_project(conn, settings, slug="proj")
+    _new_project(conn, settings, "proj")
     # une feature, deux tasks INDÉPENDANTES (les deux READY d'emblée) + budget parallèle large
     _seed(conn, settings, "proj", "feat", [("t-a", []), ("t-b", [])])
     r = _Runner()
@@ -125,7 +134,7 @@ def test_run_project_never_two_workers_on_one_feature(ctx):
 
 def test_run_project_isolates_failure_and_continues(ctx):
     settings, conn = ctx
-    registry.create_project(conn, settings, slug="proj")
+    _new_project(conn, settings, "proj")
     _seed(conn, settings, "proj", "good", [("t", [])])
     _seed(conn, settings, "proj", "bad", [("t", [])])
     r = _Runner(fail=("bad",))
@@ -140,7 +149,7 @@ def test_run_project_isolates_failure_and_continues(ctx):
 
 def test_run_project_terminates_when_next_always_fails(ctx):
     settings, conn = ctx
-    registry.create_project(conn, settings, slug="proj")
+    _new_project(conn, settings, "proj")
     _seed(conn, settings, "proj", "stuck", [("t1", []), ("t2", ["t1"])])
     r = _Runner(fail=("stuck",))
     summary = orchestrator.run_project(conn, settings, project="proj", git=InternalGit(), runner=r)
@@ -158,7 +167,7 @@ def test_cli_dispatch_reports_empty_roadmap(ctx, capsys, monkeypatch):
     settings, conn = ctx
     monkeypatch.setattr("cockpit.auth.claude_auth_status",             # auth présente → on teste le rapport
                         lambda *a, **k: {"authenticated": True, "source": "test"})
-    registry.create_project(conn, settings, slug="empty")
+    _new_project(conn, settings, "empty")
     import argparse
     code = orchestrator.cli_dispatch(settings, argparse.Namespace(
         project="empty", home=None, projects_root=None))
@@ -172,7 +181,7 @@ def test_cli_dispatch_refuses_without_claude_auth(ctx, capsys, monkeypatch):
     settings, conn = ctx
     monkeypatch.setattr("cockpit.auth.claude_auth_status",
                         lambda *a, **k: {"authenticated": False, "source": None})
-    registry.create_project(conn, settings, slug="empty")
+    _new_project(conn, settings, "empty")
     import argparse
     code = orchestrator.cli_dispatch(settings, argparse.Namespace(
         project="empty", home=None, projects_root=None))
