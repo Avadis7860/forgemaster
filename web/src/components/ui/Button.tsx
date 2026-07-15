@@ -8,7 +8,7 @@ type Size = 'sm' | 'md'
 // `primary` = l'action primaire d'une vue (fusionne l'ancien ActBtn : variation trop faible pour
 // une primitive séparée). Classes littérales par variante (Tailwind scanne le source).
 const VARIANT: Record<Variant, string> = {
-  primary: 'border-transparent bg-accent-600 text-white hover:bg-accent-500',
+  primary: 'border-transparent bg-accent-600 text-on-accent hover:bg-accent-500',
   secondary: 'border-border bg-surface-raised text-fg hover:border-border-strong',
   ghost: 'border-transparent bg-transparent text-muted hover:bg-surface-raised hover:text-fg',
   danger: 'border-danger-500/30 bg-danger-500/15 text-danger-500 hover:bg-danger-500/25',

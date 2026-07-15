@@ -2,7 +2,7 @@
 
 /* ────────────────────────────────────────────────────────────────────────────
    Tokens — véhicule UNIQUE du design-system (Tailwind v4 @theme → CSS custom
-   properties + utilitaires générés). Charte cockpit : accent teal AVAgency,
+   properties + utilitaires générés). Charte AvaGency : accent CUIVRE (§identite),
    élévation à 2 rôles, motion à 2 rôles. V1 = dark-first (thème unique) : les
    surfaces vivent dans @theme sans flip ; un light-theme migrera vers :root/.dark
    (nesting interdit par @theme) le jour venu. Aucune valeur magique hors d'ici.
@@ -11,21 +11,27 @@
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, "JetBrains Mono", "Fira Code", "SFMono-Regular", monospace;
 
-  /* Surfaces (dark-first) — du fond au premier plan */
-  --color-bg: #0a0f1a;
-  --color-surface: #111a2b;
-  --color-surface-raised: #16233b;
-  --color-border: #243049;
-  --color-border-strong: #33415e;
-  --color-fg: #e7eef8;
-  --color-muted: #93a1b8;
-  --color-faint: #64748b;
+  /* Surfaces — charte AvaGency (§identite : identité sombre bronze/cuivre) : charbon CHAUD du fond au relief,
+     dérivé du `#2B2828` de la marque. Recalibré AA (fg 15:1, muted 7.5:1, faint 4.7:1 sur surface). */
+  --color-bg: #17110f;
+  --color-surface: #211a17;
+  --color-surface-raised: #2c231f;
+  --color-border: #3d322c;
+  --color-border-strong: #584940;
+  --color-fg: #f2e9e3;
+  --color-muted: #bca89d;
+  --color-faint: #a28d79;  /* relevé (audit charte) : le slug/tertiaire clair franchit AA (4.8:1) sur la surface raised. */
 
-  /* Accent teal AVAgency — 500 = marque, 600 calé AA 4.9:1 sur texte clair */
-  --color-accent-400: #3cb4a4;
-  --color-accent-500: #2a9d8f;
-  --color-accent-600: #248b7e;
-  --color-accent-700: #1c6c62;
+  /* Accent CUIVRE AvaGency (« texture cuivre » de la charte) — penché rouge pour se DISTINGUER de l'ambre
+     `warn`. 500 = marque, 600 = fond de bouton primaire (texte `on-accent` AA 5.0:1), 300 = hover clair. */
+  --color-accent-300: #eec08a;
+  --color-accent-400: #e29f52;
+  --color-accent-500: #c26a30;
+  --color-accent-600: #a2531f;
+  --color-accent-700: #7c3e18;
+  /* Texte sur fond accent (bouton primaire) — token de RÔLE, remplace le `text-white` magique (audit axe charte).
+     Crème chaud (5.3:1 sur accent-600) : marge au-dessus d'AA pour tenir malgré l'anti-aliasing du petit texte. */
+  --color-on-accent: #fefaf7;
 
   /* Teintes sémantiques de statut (consommées via lib/statusTone.ts, source unique) */
   --color-ok-500: #22a06b;
