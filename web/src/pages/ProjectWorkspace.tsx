@@ -5,7 +5,7 @@ import { Alert, Badge } from '@/components/ui'
 import { WorkspaceTabs } from '@/components/WorkspaceTabs'
 
 /** Layout du workspace projet (IA option A) : identité condensée + barre d'onglets + onglet actif.
- *  Home du projet = l'onglet Roadmap (route index). Les autres onglets arrivent dans leurs vagues. */
+ *  Home du projet = l'**Accueil** (route index, Docs fondu dedans) ; Roadmap · Travail · Ops suivent. */
 export function ProjectWorkspace() {
   const { project } = useParams({ from: '/$project' })
   const { data, isError, error } = useProject(project)

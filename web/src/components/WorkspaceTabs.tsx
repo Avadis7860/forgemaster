@@ -1,13 +1,14 @@
 import { Link } from '@tanstack/react-router'
 import { cn } from '@/lib/cn'
 
-// Onglets du workspace projet (refonte IA v3) : Dispatch+Gate → « Travail » (P2) ; Git+Runtime+Flow+Terminal
-// → « Ops » (P3). Accueil (Docs fondu) suit (P4). L'onglet actif est souligné par l'accent via `activeProps`.
+// Onglets du workspace projet (refonte IA v3, 8 plats → 3 + accueil) : **Accueil** = index (Docs fondu dedans,
+// P4) ; Dispatch+Gate → « Travail » (P2) ; Git+Runtime+Flow+Terminal → « Ops » (P3). L'onglet actif est souligné
+// par l'accent via `activeProps`. `exact:true` sur l'Accueil : sinon il resterait actif sur tous les sous-onglets.
 type Tab = { key: string; label: string; to: string; exact: boolean }
 
 const TABS: Tab[] = [
-  { key: 'roadmap', label: 'Roadmap', to: '/$project', exact: true },
-  { key: 'docs', label: 'Docs', to: '/$project/docs', exact: false },
+  { key: 'accueil', label: 'Accueil', to: '/$project', exact: true },
+  { key: 'roadmap', label: 'Roadmap', to: '/$project/roadmap', exact: false },
   { key: 'travail', label: 'Travail', to: '/$project/travail', exact: false },
   { key: 'ops', label: 'Ops', to: '/$project/ops', exact: false },
 ]

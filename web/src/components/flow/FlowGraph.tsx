@@ -89,6 +89,8 @@ export function FlowGraph({ flow }: { flow: Flow }) {
         {flow.stats && <span className="ml-auto tabular-nums">{flow.stats.nodes} nœuds · {flow.stats.edges} appels</span>}
       </div>
 
+      {/* `relative` : ancre le repère de scroll au VIEWPORT, pas au contenu qui défile. */}
+      <div className="relative">
       <div className="overflow-x-auto">
         <div className="relative" style={{ width: layout.width, height: layout.height }}>
           {/* En-têtes de colonnes (entrée · étape N) */}
@@ -145,6 +147,10 @@ export function FlowGraph({ flow }: { flow: Flow }) {
             <FlowNodeBox key={n.id} node={n} isEntry={n.id === layout.entry} />
           ))}
         </div>
+      </div>
+        {/* Repère de scroll : dégradé bord-droit signalant « la suite est à droite ». Présentationnel pur
+            (pointer-events-none), inerte s'il n'y a rien à révéler — aucun JS ni listener. */}
+        <div className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-surface to-transparent" />
       </div>
     </div>
   )
