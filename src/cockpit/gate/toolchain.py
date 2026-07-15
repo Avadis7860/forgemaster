@@ -10,12 +10,19 @@ Frontière (même patron que `gate/verify` et `gate/review`) :
   `cockpit gate toolchain` / `POST …/toolchain`) qui **écrit** le verdict.
 - **fail-CLOSED** : toolchain applicable (le diff la déclenche) mais verdict **absent/périmé/rouge** →
   bloque (déterministe, non-overridable). Non applicable → **N/A** (compose l'ignore, zéro régression).
-- **auto-détection par CONVENTION** depuis le worktree (pas de config déclarative) : `web/package.json` avec
-  un script `gate` → groupe **front** (`npm run gate` = eslint+vitest+build) ; `pyproject.toml` racine →
-  groupe **backend** (`ruff check` → `mypy` → `pytest`). Steps ordonnés, arrêt au 1ᵉʳ rouge (`failed_step`).
+- **auto-détection par CONVENTION** depuis le worktree (pas de config déclarative), en **déléguant** la
+  composition de la toolchain au script `gate` du projet (jamais de hardcode eslint/tsc/vitest) :
+  `web/package.json` avec un script `gate` → groupe **front** ; un fichier node (`.ts/.js…`) **hors `web/`**
+  (canonique `server/`, univers TS unifié) avec `server/package.json`+`gate` → groupe **backend-node** ;
+  `pyproject.toml` racine → groupe **backend** (`ruff` → `mypy` → `pytest`). Un `package.json` **racine** avec
+  un script `gate` couvre `web/` ET `server/` d'un seul run (workspaces). Steps ordonnés, arrêt au 1ᵉʳ rouge.
+- **fail-CLOSED sur trigger non couvert** : un diff déclenche un groupe (touche `web/`, un node hors `web/`,
+  ou un `*.py`) mais **aucune** unité de gate ne le prend en charge → **step rouge synthétique** (« toolchain
+  non montable »), jamais un drop silencieux ni un vert à 0 step. Referme le faux-vert du dogfood void-runner
+  (backend `server/` en TS mergé sans vérif, 2026-07-15).
 
-Précondition : le worktree est **dep-ready** (le worker de dispatch a installé les deps). Deps front
-absentes → un `npm ci` de secours est préfixé ; deps py absentes → le step échoue (rouge fail-closed).
+Précondition : le worktree est **dep-ready** (le worker de dispatch a installé les deps). Deps node absentes
+→ un `npm ci` de secours est préfixé ; deps py absentes → le step échoue (rouge fail-closed).
 """
 from __future__ import annotations
 
@@ -33,14 +40,23 @@ DEFAULT_TIMEOUT_S = 900          # npm ci + build (ou pytest) peut être long �
 
 # Déclencheurs (dérivés du DIFF seul, pour que `status`/`evaluate_gate` restent sans worktree) :
 FRONT_DIR = "web/"               # un diff qui touche web/ → toolchain front applicable
-PY_SUFFIX = ".py"                # un diff qui touche un *.py → toolchain backend applicable
+PY_SUFFIX = ".py"                # un diff qui touche un *.py → toolchain backend (python) applicable
+# un fichier node HORS web/ (canonique server/, univers TS unifié) → toolchain backend-node applicable :
+NODE_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts")
+
+# Messages fail-closed : trigger déclenché par le diff mais aucune unité de gate ne le couvre.
+_ABSENT_MSG = {
+    "front": "web/ modifié mais aucun package.json (racine ou web/) avec script `gate` — front non montable",
+    "backend-node": "backend node modifié (hors web/, ex. server/) mais aucun package.json "
+                    "(racine ou server/) avec script `gate` — backend-node non montable",
+    "backend": "*.py modifié mais pas de pyproject.toml racine — toolchain backend python non montable",
+}
 
 
 # -- détection par convention (PUR) -----------------------------------------------------------------
 
-def _has_front_gate(worktree: Path) -> bool:
-    """True ssi le projet a une toolchain front conventionnelle : `web/package.json` avec un script `gate`."""
-    pkg = worktree / "web" / "package.json"
+def _has_gate_script(pkg: Path) -> bool:
+    """True ssi `pkg` est un package.json portant un script npm `gate` (la toolchain node conventionnelle)."""
     if not pkg.is_file():
         return False
     try:
@@ -49,12 +65,26 @@ def _has_front_gate(worktree: Path) -> bool:
         return False
 
 
+def _node_gate_dir(worktree: Path, group: str) -> Path | None:
+    """Dossier où lancer `npm run gate` pour un trigger node (`front`|`backend-node`), ou None si non couvert.
+    Un `package.json` **racine** avec un script `gate` couvre tout (univers TS unifié / workspaces) ; sinon
+    per-dir : `web/` pour `front`, `server/` pour `backend-node`."""
+    if _has_gate_script(worktree / "package.json"):
+        return worktree                                    # unité racine unifiée (couvre web/ ET server/)
+    subdir = "web" if group == "front" else "server"
+    d = worktree / subdir
+    return d if _has_gate_script(d / "package.json") else None
+
+
 def detect_groups(worktree: Path) -> list[str]:
-    """Groupes de toolchain présents dans le projet (convention) : `front` si `web/package.json` a un script
-    `gate` ; `backend` si `pyproject.toml` à la racine. Sert le RUN (qui a le worktree)."""
+    """Groupes de toolchain PRÉSENTS (couvrables) dans le projet, par convention : `front` (web/ ou racine
+    portant un script `gate`) ; `backend-node` (server/ ou racine portant un script `gate`) ; `backend`
+    (`pyproject.toml` racine). Descriptif — l'autorité du RUN est `_steps_for` (qui porte le fail-closed)."""
     groups: list[str] = []
-    if _has_front_gate(worktree):
+    if _node_gate_dir(worktree, "front") is not None:
         groups.append("front")
+    if _node_gate_dir(worktree, "backend-node") is not None:
+        groups.append("backend-node")
     if (worktree / "pyproject.toml").is_file():
         groups.append("backend")
     return groups
@@ -64,33 +94,47 @@ def touches_front(files: list[str]) -> bool:
     return any(FRONT_DIR in f for f in files)
 
 
+def touches_node_backend(files: list[str]) -> bool:
+    """True ssi un fichier node (TS/JS) HORS `web/` est touché → backend node (canonique `server/`)."""
+    return any(f.endswith(NODE_SUFFIXES) and FRONT_DIR not in f for f in files)
+
+
 def touches_py(files: list[str]) -> bool:
     return any(f.endswith(PY_SUFFIX) for f in files)
 
 
 def applicable_triggers(diff_files: list[str]) -> list[str]:
     """Groupes DÉCLENCHÉS par le diff (dérivés du diff SEUL — pas besoin du worktree). Source d'autorité de
-    l'applicabilité côté `status`/`evaluate_gate`."""
+    l'applicabilité côté `status`/`evaluate_gate`. Ordre : front → backend-node → backend (python)."""
     trig: list[str] = []
     if touches_front(diff_files):
         trig.append("front")
+    if touches_node_backend(diff_files):
+        trig.append("backend-node")
     if touches_py(diff_files):
         trig.append("backend")
     return trig
 
 
-def _steps_for(group: str, worktree: Path) -> list[dict]:
-    """Steps ordonnés d'un groupe : `{name, argv, cwd}`. Front = [npm ci si node_modules absent] + npm run
-    gate ; backend = ruff → mypy → pytest (cible `src` si src-layout, sinon `.`)."""
-    if group == "front":
-        web = worktree / "web"
+def _steps_for(group: str, worktree: Path) -> list[dict] | None:
+    """Steps ordonnés d'un groupe : `{name, argv, cwd}`, ou **None** si le groupe est DÉCLENCHÉ par le diff
+    mais **non couvert** par une unité de gate présente (→ fail-closed dans `run_toolchain`). Node
+    (`front`/`backend-node`) = [npm ci si node_modules absent] + `npm run gate` dans le dossier de l'unité
+    (racine unifiée ou per-dir) ; `backend` (python) = ruff → mypy → pytest (cible `src` si src-layout,
+    sinon `.`)."""
+    if group in ("front", "backend-node"):
+        d = _node_gate_dir(worktree, group)
+        if d is None:                                    # trigger node non couvert → fail-closed
+            return None
         steps: list[dict] = []
-        if not (web / "node_modules").is_dir():          # worktree pas dep-ready → secours (borné)
+        if not (d / "node_modules").is_dir():            # worktree pas dep-ready → secours (borné)
             steps.append({"name": "npm-ci", "argv": ["npm", "ci", "--prefer-offline", "--no-audit",
-                                                      "--no-fund"], "cwd": web})
-        steps.append({"name": "npm-run-gate", "argv": ["npm", "run", "gate"], "cwd": web})
+                                                      "--no-fund"], "cwd": d})
+        steps.append({"name": "npm-run-gate", "argv": ["npm", "run", "gate"], "cwd": d})
         return steps
-    # backend
+    # backend (python)
+    if not (worktree / "pyproject.toml").is_file():      # *.py touché mais pas de pyproject → fail-closed
+        return None
     mypy_target = "src" if (worktree / "src").is_dir() else "."
     return [
         {"name": "ruff", "argv": ["ruff", "check", "."], "cwd": worktree},
@@ -108,12 +152,19 @@ def run_toolchain(worktree: Path, diff_files: list[str], *, timeout_s: int = DEF
     `{group, name, cmd, exit_code, ok, error?}`. Ne lève jamais (timeout/binaire absent → step rouge).
     `env` (optionnel) REMPLACE l'environnement des steps — l'appelant compose depuis `os.environ` pour
     préfixer `tools/bin` au PATH (ruff/mypy/pytest/npm résolus sur un hôte frais) ; `None` = héritage
-    passif (comportement historique, préservé pour les tests)."""
-    present = set(detect_groups(worktree))
-    groups = [g for g in applicable_triggers(diff_files) if g in present]
+    passif (comportement historique, préservé pour les tests).
+
+    **fail-CLOSED** : un groupe déclenché par le diff mais **non couvert** par une unité de gate présente
+    (`_steps_for` → None) produit un **step rouge synthétique** (« toolchain non montable »), jamais un drop
+    silencieux ni un vert à 0 step. Un diff sans trigger (doc-only) → `[]` (vacuously vert, légitime)."""
     results: list[dict] = []
-    for group in groups:
-        for step in _steps_for(group, worktree):
+    for group in applicable_triggers(diff_files):
+        steps = _steps_for(group, worktree)
+        if steps is None:                                     # déclenché mais non couvert → fail-closed
+            results.append({"group": group, "name": "toolchain-absente", "cmd": "-",
+                            "exit_code": None, "ok": False, "error": _ABSENT_MSG[group]})
+            return results
+        for step in steps:
             argv = step["argv"]
             res: dict = {"group": group, "name": step["name"], "cmd": " ".join(argv)}
             try:
@@ -137,8 +188,9 @@ def state_path(settings: Settings, project: str, feature: str) -> Path:
 
 
 def build_verdict(step_results: list[dict], *, sha: str | None, ts: str) -> dict:
-    """PUR. Assemble le verdict. `ok=True` ssi tous les steps lancés sont verts (0 step = vacuously vert : le
-    diff n'a déclenché aucune toolchain présente). `failed_step` = 1ᵉʳ step rouge. `sha`/`ts` injectés."""
+    """PUR. Assemble le verdict. `ok=True` ssi tous les steps lancés sont verts. 0 step = vacuously vert, mais
+    `run_toolchain` ne rend `[]` que sur un diff **sans trigger** (doc-only) — un trigger non couvert y
+    produit un step rouge (fail-closed) → pas de faux-vert. `failed_step` = 1ᵉʳ rouge. `sha`/`ts` injectés."""
     failed = next((s for s in step_results if not s.get("ok")), None)
     return {
         "contract_version": CONTRACT_VERSION,
@@ -183,8 +235,8 @@ def is_fresh(verdict: dict | None, *, current_sha: str | None) -> bool:
 def status(settings: Settings, project: str, feature: str, *, current_sha: str | None,
            diff_files: list[str]) -> dict:
     """Synthèse au format `native_status` consommé par `compose_merge_decision`. L'**applicabilité** dérive du
-    DIFF seul (front↔`web/`, backend↔`*.py`) → pas besoin du worktree ici. Fail-CLOSED : applicable mais
-    verdict absent/périmé → `ok=False` (bloque). Non applicable → `applicable=False` (N/A)."""
+    DIFF seul (front↔`web/`, backend-node↔node hors `web/`, backend↔`*.py`) → pas besoin du worktree ici.
+    Fail-CLOSED : applicable mais verdict absent/périmé → `ok=False` (bloque). Non applicable → N/A."""
     trig = applicable_triggers(diff_files)
     if not trig:
         return {"applicable": False}

@@ -273,6 +273,13 @@ def test_toolchain_detect_groups_by_convention(tmp_path):
     assert toolchain.detect_groups(root) == ["front", "backend"]
     (root / "web" / "package.json").write_text('{"scripts": {"build": "x"}}', encoding="utf-8")
     assert toolchain.detect_groups(root) == ["backend"]              # pas de script `gate` → pas de front
+    # backend-node : server/package.json avec un script `gate` → groupe couvrable
+    (root / "server").mkdir()
+    (root / "server" / "package.json").write_text('{"scripts": {"gate": "x"}}', encoding="utf-8")
+    assert toolchain.detect_groups(root) == ["backend-node", "backend"]
+    # package.json RACINE avec `gate` → couvre front ET backend-node (univers TS unifié / workspaces)
+    (root / "package.json").write_text('{"scripts": {"gate": "x"}}', encoding="utf-8")
+    assert toolchain.detect_groups(root) == ["front", "backend-node", "backend"]
 
 
 def test_toolchain_applicable_triggers_from_diff():
@@ -280,6 +287,10 @@ def test_toolchain_applicable_triggers_from_diff():
     assert toolchain.applicable_triggers(["src/cockpit/x.py"]) == ["backend"]
     assert toolchain.applicable_triggers(["web/vite.config.ts", "src/x.py"]) == ["front", "backend"]
     assert toolchain.applicable_triggers(["README.md", "docs/x.rst"]) == []
+    # backend node (TS/JS hors web/, canonique server/) → nouveau trigger, distinct du front
+    assert toolchain.applicable_triggers(["server/index.ts"]) == ["backend-node"]
+    assert toolchain.applicable_triggers(["server/db.ts", "web/App.tsx"]) == ["front", "backend-node"]
+    assert toolchain.applicable_triggers(["web/x.ts"]) == ["front"]     # node SOUS web/ = front
 
 
 def test_toolchain_build_verdict_ok_and_failed_step():
@@ -289,8 +300,8 @@ def test_toolchain_build_verdict_ok_and_failed_step():
     red = toolchain.build_verdict([{"name": "ruff", "ok": True}, {"name": "vitest", "ok": False}],
                                   sha="abc", ts="t")
     assert red["ok"] is False and red["failed_step"] == "vitest"
-    empty = toolchain.build_verdict([], sha="abc", ts="t")            # 0 step = vacuously vert
-    assert empty["ok"] is True and empty["failed_step"] is None
+    empty = toolchain.build_verdict([], sha="abc", ts="t")            # 0 step = vacuously vert (contrat PUR)
+    assert empty["ok"] is True and empty["failed_step"] is None       # [] seulement si no-trigger
 
 
 def test_toolchain_status_na_fresh_absent_stale(ctx):
@@ -319,12 +330,60 @@ def test_toolchain_status_fresh_red_reports_failed_step(ctx):
     assert st["ok"] is False and st["failed_step"] == "npm-run-gate" and st["exit_code"] == 1
 
 
-def test_run_toolchain_skips_when_no_group_present(tmp_path):
-    """Diff qui déclenche `backend` mais projet SANS `pyproject.toml` (groupe absent) → aucun step, pas de
-    subprocess, ne lève pas. (Le RUN croise déclencheurs ET groupes présents.)"""
+def test_run_toolchain_fails_closed_on_triggered_but_uncovered(tmp_path):
+    """Un groupe DÉCLENCHÉ par le diff mais SANS unité de gate présente (`.py` sans `pyproject.toml`, ou node
+    hors web/ sans `package.json` gate) → step ROUGE synthétique (fail-closed), JAMAIS un drop silencieux ni
+    un vert à 0 step. Referme le faux-vert du dogfood void-runner (backend `server/` TS mergé sans vérif)."""
     root = tmp_path / "wt"
     root.mkdir()
-    assert toolchain.run_toolchain(root, ["x.py"], timeout_s=5) == []
+    # backend python déclenché, pas de pyproject → 1 step rouge (pas [] ni subprocess)
+    py = toolchain.run_toolchain(root, ["x.py"], timeout_s=5)
+    assert len(py) == 1 and py[0]["ok"] is False and py[0]["group"] == "backend"
+    assert toolchain.build_verdict(py, sha="s", ts="t")["ok"] is False        # PAS de vert par vacuité
+    # backend node déclenché (server/), aucun package.json avec `gate` → 1 step rouge
+    node = toolchain.run_toolchain(root, ["server/index.ts"], timeout_s=5)
+    assert len(node) == 1 and node[0]["ok"] is False and node[0]["group"] == "backend-node"
+    # diff doc-only (aucun trigger) → [] légitime (vacuously vert)
+    assert toolchain.run_toolchain(root, ["README.md"], timeout_s=5) == []
+
+
+def test_run_toolchain_runs_node_backend_gate_when_present(tmp_path, monkeypatch):
+    """`server/package.json` avec un script `gate` → `run_toolchain` lance `npm run gate` DANS server/ (couvre
+    le backend node TS, ex. void-runner). Le subprocess est monkeypatché (pas de vrai npm en test)."""
+    from cockpit.core.run import RunResult
+    root = tmp_path / "wt"
+    (root / "server").mkdir(parents=True)
+    (root / "server" / "package.json").write_text('{"scripts": {"gate": "x"}}', encoding="utf-8")
+    (root / "server" / "node_modules").mkdir()                # dep-ready → pas de npm ci de secours
+    calls: list = []
+
+    def fake_run(argv, *, cwd, env=None, timeout=None, check=False):
+        calls.append((list(argv), str(cwd)))
+        return RunResult(argv=list(argv), returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(toolchain, "run", fake_run)
+    results = toolchain.run_toolchain(root, ["server/index.ts"], timeout_s=5)
+    assert len(results) == 1 and results[0]["ok"] is True and results[0]["group"] == "backend-node"
+    assert calls == [(["npm", "run", "gate"], str(root / "server"))]
+
+
+def test_run_toolchain_root_unified_gate_covers_server(tmp_path, monkeypatch):
+    """`package.json` RACINE avec un script `gate` → un diff `server/` lance `npm run gate` à la RACINE
+    (univers TS unifié / workspaces) — réconcilie la convention web/-centrée avec le layout unifié."""
+    from cockpit.core.run import RunResult
+    root = tmp_path / "wt"
+    root.mkdir()
+    (root / "package.json").write_text('{"scripts": {"gate": "x"}}', encoding="utf-8")
+    (root / "node_modules").mkdir()
+    calls: list = []
+
+    def fake_run(argv, *, cwd, env=None, timeout=None, check=False):
+        calls.append((list(argv), str(cwd)))
+        return RunResult(argv=list(argv), returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(toolchain, "run", fake_run)
+    results = toolchain.run_toolchain(root, ["server/index.ts"], timeout_s=5)
+    assert results[0]["ok"] is True and calls == [(["npm", "run", "gate"], str(root))]
 
 
 def test_run_toolchain_fails_closed_on_missing_binary(tmp_path, monkeypatch):
