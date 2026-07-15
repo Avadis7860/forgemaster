@@ -18,8 +18,10 @@ const TABS: Tab[] = [
 
 const BASE = 'shrink-0 whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors'
 
-/** Barre d'onglets du workspace (IA option A complète). Les 4 onglets sont navigables ; l'onglet actif est
- *  souligné par l'accent via `activeProps` (le routeur sait quel onglet est courant). */
+/** Barre d'onglets du workspace (IA option A complète). Les onglets sont navigables ; l'onglet actif est
+ *  souligné par l'accent. Styles actif/inactif **mutuellement exclusifs** (`activeProps`/`inactiveProps`) —
+ *  jamais empilés dans `className` : `cn` ne fait pas de tailwind-merge et le routeur CONCATÈNE `activeProps`,
+ *  donc un `border-transparent`/`text-muted` de base écraserait l'accent actif par ordre-source CSS. */
 export function WorkspaceTabs({ project, className }: { project: string; className?: string }) {
   return (
     <nav className={cn('-mb-px flex items-center gap-1 overflow-x-auto', className)}>
@@ -29,8 +31,9 @@ export function WorkspaceTabs({ project, className }: { project: string; classNa
           to={t.to}
           params={{ project }}
           activeOptions={{ exact: t.exact }}
-          className={cn(BASE, 'border-transparent text-muted hover:text-fg')}
-          activeProps={{ className: cn(BASE, 'border-accent-500 text-fg') }}
+          className={BASE}
+          activeProps={{ className: 'border-accent-500 text-fg' }}
+          inactiveProps={{ className: 'border-transparent text-muted hover:text-fg' }}
         >
           {t.label}
         </Link>
