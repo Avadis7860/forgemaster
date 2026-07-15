@@ -36,7 +36,7 @@
   /* Teintes sémantiques de statut (consommées via lib/statusTone.ts, source unique) */
   --color-ok-500: #22a06b;
   --color-warn-500: #d99a2b;
-  --color-danger-500: #dc5a5a;
+  --color-danger-500: #e5706e;  /* relevé (audit charte P5.4) : le texte danger sur son badge /15 franchit AA (≥4.5:1) — reste rouge franc, distinct du cuivre. */
   --color-info-500: #3b82c4;
   --color-purple-500: #8b6fd6;
 
