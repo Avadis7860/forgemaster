@@ -1,37 +1,36 @@
-import { useNavigate, useParams, useSearch } from '@tanstack/react-router'
+import { useNavigate, useSearch } from '@tanstack/react-router'
 import { Alert, EmptyState, LoadingState, RefreshButton } from '@/components/ui'
 import { FlowGraph } from '@/components/flow/FlowGraph'
 import { useFlow, useFlowOperations } from '@/lib/queries'
 
-/** Onglet Flow : le FLOT D'EXÉCUTION d'une opération (route API ou verbe CLI) du projet, rendu par
- *  `<FlowGraph/>` depuis l'index code-map (boîte-noire). Le sélecteur liste les opérations découvertes ;
- *  `?op=<entry>` rend la vue deep-linkable (goto-safe pour la boucle visuelle). L'`entry` (`file::qualname`,
- *  UNIQUE) sert d'identité — PAS le label : deux opérations peuvent partager un label (ex. `cli:main` dans
- *  deux fichiers), et l'adresser par label en masquerait une (le backend résout le 1ᵉʳ match). */
-export function FlowTab() {
-  const project = useParams({ strict: false }).project ?? ''
+/** Vue Flow : le FLOT D'EXÉCUTION d'une opération (route API ou verbe CLI) du projet, rendu par `<FlowGraph/>`
+ *  depuis l'index code-map. `?op=<entry>` rend la sélection deep-linkable (goto-safe). L'`entry`
+ *  (`file::qualname`, UNIQUE) sert d'identité — PAS le label (deux opérations peuvent partager un label).
+ *  Extrait de l'ex-onglet Flow ; rendu dans le modal Ops (regarde-et-ferme). L'écriture `?op=` PRÉSERVE le
+ *  `?panel=flow` (updater fonctionnel) pour ne pas refermer le modal en changeant d'opération. */
+export function FlowPanel({ project }: { project: string }) {
   const { op } = useSearch({ strict: false }) as { op?: string }
   const navigate = useNavigate()
 
   const ops = useFlowOperations(project)
   const operations = ops.data?.operations ?? []
-  // Sélection par `entry` (unique) : ?op= si présent, sinon la 1ʳᵉ route (frontière la plus parlante), sinon
-  // la 1ʳᵉ op. On tolère un ?op= désormais introuvable (index nettoyé/rebuild) en retombant sur le défaut.
+  // Sélection par `entry` (unique) : ?op= si présent, sinon la 1ʳᵉ route, sinon la 1ʳᵉ op. On tolère un ?op=
+  // désormais introuvable (index rebuild) en retombant sur le défaut.
   const known = operations.some((o) => o.entry === op)
   const selected =
     (known ? op : undefined) ?? operations.find((o) => o.kind === 'route')?.entry ?? operations[0]?.entry ?? ''
   const flow = useFlow(project, selected)
 
   const setOp = (value: string) =>
-    navigate({ to: '/$project/flow', params: { project }, search: { op: value }, replace: true })
+    navigate({ to: '/$project/ops', params: { project }, search: (prev) => ({ ...prev, op: value }), replace: true })
 
   // Deux opérations peuvent porter le même label → on montre le fichier pour désambiguïser à l'œil.
   const fileOf = (entry: string) => entry.split('::')[0]
 
-  if (ops.isLoading) return <div className="p-8"><LoadingState label="Découverte des opérations…" /></div>
+  if (ops.isLoading) return <div className="py-6"><LoadingState label="Découverte des opérations…" /></div>
   if (ops.isError) {
     return (
-      <div className="space-y-3 p-8">
+      <div className="space-y-3 py-6">
         <Alert tone="danger" title="Opérations indisponibles">{ops.error.message}</Alert>
         <RefreshButton onClick={() => ops.refetch()} busy={ops.isFetching} />
       </div>
@@ -39,12 +38,10 @@ export function FlowTab() {
   }
   if (operations.length === 0) {
     return (
-      <div className="mx-auto max-w-2xl p-8">
-        <EmptyState
-          title="Aucune opération"
-          description="code-map n'a découvert aucune route API ni verbe CLI dans ce projet (rien à cartographier)."
-        />
-      </div>
+      <EmptyState
+        title="Aucune opération"
+        description="code-map n'a découvert aucune route API ni verbe CLI dans ce projet (rien à cartographier)."
+      />
     )
   }
 
@@ -52,7 +49,7 @@ export function FlowTab() {
   const clis = operations.filter((o) => o.kind === 'cli')
 
   return (
-    <div className="space-y-4 p-6">
+    <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <label className="text-sm font-medium text-muted" htmlFor="flow-op">Opération</label>
         <select

@@ -78,7 +78,7 @@ export function useGit(project: string) {
 }
 
 // Sync SoT↔miroir GitHub : RÉSEAU (git fetch), NON-idempotent → `enabled:false`, JAMAIS auto ni greffé sur
-// `useGit` no-poll. Déclenché À LA MAIN par le RefreshButton du GitTab (`.refetch()`). `staleTime`/`gcTime`
+// `useGit` no-poll. Déclenché À LA MAIN par le RefreshButton de GitPanel (`.refetch()`). `staleTime`/`gcTime`
 // Infinity : le résultat manuel PERSISTE en cache — le rail (EntityCard) le relit en lecture seule (même
 // queryKey, `enabled:false`) pour un dot rollup, sans jamais déclencher de fetch réseau.
 export function useGitSync(project: string) {
@@ -129,7 +129,7 @@ export function useDeployments(project: string) {
 }
 
 // Reconcile LIVE des 2 déploiements (`compose ps` par branche → écrit la DB). Modelé en mutation : c'est un
-// GET mais à effet (rapproche la DB du réel) → déclenché À LA MAIN par le RefreshButton du RuntimeTab, jamais
+// GET mais à effet (rapproche la DB du réel) → déclenché À LA MAIN par le RefreshButton de RuntimeStrip, jamais
 // en poll (calque `/git/sync`). À la résolution, invalide la liste → les cartes relisent l'état réconcilié.
 export function useReconcileDeployments(project: string) {
   const qc = useQueryClient()

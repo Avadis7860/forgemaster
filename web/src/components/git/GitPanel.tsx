@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { useParams } from '@tanstack/react-router'
 import {
   Alert, Badge, Button, Card, Collapsible, EmptyState, LoadingState, RefreshButton, Segmented,
 } from '@/components/ui'
@@ -23,12 +22,11 @@ const VIEWS = [
   { value: 'diff', label: 'Diff' },
 ] as const satisfies ReadonlyArray<{ value: GitView; label: string }>
 
-/** Onglet Git : visibilité read-only sur le SoT bare du projet. En-tête compact (réfs + SHA + synchro +
- *  config repliée) surmontant un sélecteur segmenté **[Historique · Fichiers · Diff]** — une vue à la fois,
- *  pour tenir dans un écran. Aucune action mutante (le cycle git vit dans le Gate) ; une seule lecture
- *  idempotente sert toute la vue. */
-export function GitTab() {
-  const project = useParams({ strict: false }).project ?? ''
+/** Vue Git : visibilité read-only sur le SoT bare du projet. En-tête compact (réfs + SHA + synchro + config
+ *  repliée) surmontant un sélecteur segmenté **[Historique · Fichiers · Diff]** — une vue à la fois. Aucune
+ *  action mutante (le cycle git vit dans le Gate). Extrait de l'ex-onglet Git ; rendu dans le drawer Ops
+ *  (le segmented interne vit ICI, plus d'empilement sous une sous-nav Ops). */
+export function GitPanel({ project }: { project: string }) {
   const { data, isLoading, isError, error, refetch, isFetching } = useGit(project)
   // Sync miroir : RÉSEAU, manuel — jamais auto (enabled:false) ; le refresh manuel déclenche les DEUX
   // (vue read-only idempotente + fetch du miroir), pour que le badge reflète l'état après un clic.
@@ -38,10 +36,10 @@ export function GitTab() {
   const [view, setView] = useState<GitView>('historique')
   const [reconcileOpen, setReconcileOpen] = useState(false)  // panneau de réconciliation ff-only déplié
 
-  if (isLoading) return <div className="p-8"><LoadingState label="Lecture du dépôt…" /></div>
+  if (isLoading) return <div className="py-6"><LoadingState label="Lecture du dépôt…" /></div>
   if (isError || !data) {
     return (
-      <div className="space-y-3 p-8">
+      <div className="space-y-3 py-6">
         <Alert tone="danger" title="Vue Git indisponible">
           {error instanceof ApiError ? error.detail : String(error)}
         </Alert>
@@ -61,7 +59,7 @@ export function GitTab() {
   const unifiedHead = data.branches.find((b) => refs.includes(b.name))
 
   return (
-    <div className="space-y-4 p-6">
+    <div className="space-y-4">
       {/* En-tête compact : réfs + SHA de tête + état de synchro + rafraîchir. */}
       <div className="flex flex-wrap items-center gap-2">
         {data.branches.map((b) => (

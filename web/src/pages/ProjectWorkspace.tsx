@@ -11,8 +11,8 @@ export function ProjectWorkspace() {
   const { data, isError, error } = useProject(project)
 
   return (
-    <div>
-      <div className="border-b border-border px-6 pt-4">
+    <div className="flex h-full flex-col">
+      <div className="shrink-0 border-b border-border px-6 pt-4">
         {isError ? (
           <Alert tone="danger" title="Projet introuvable" className="mb-3">
             {error instanceof ApiError ? error.detail : String(error)}
@@ -26,7 +26,11 @@ export function ProjectWorkspace() {
         )}
         <WorkspaceTabs project={project} className="mt-3" />
       </div>
-      <Outlet />
+      {/* Zone onglet : `flex-1` borné → l'onglet Ops (Terminal-ancre) remplit ; les autres onglets, plus hauts
+          que le viewport, scrollent ici (min-h-0 + overflow-auto). */}
+      <div className="min-h-0 flex-1 overflow-auto">
+        <Outlet />
+      </div>
     </div>
   )
 }

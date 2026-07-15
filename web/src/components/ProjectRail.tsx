@@ -12,7 +12,7 @@ import type { Project } from '@/lib/schemas'
 /** Une entité du rail (projet ou outil) : carte sélectionnable → workspace. */
 function EntityCard({ p, active }: { p: Project; active: string | undefined }) {
   const isActive = p.slug === active
-  // Dot rollup de sync miroir : lecture SEULE du cache (même queryKey que le GitTab, enabled:false) — ne
+  // Dot rollup de sync miroir : lecture SEULE du cache (même queryKey que GitPanel, enabled:false) — ne
   // déclenche AUCUN fetch réseau. Absent tant que le projet n'a pas été vérifié ; `no_mirror` = pas de dot.
   const sync = useGitSync(p.slug)
   const syncState = sync.data?.state

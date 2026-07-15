@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // État injectable (hoisté pour les factories vi.mock). On isole les vraies requêtes : ici on teste que
-// l'onglet adresse une opération par son `entry` UNIQUE (pas son label) — le fix du masquage `cli:main`.
+// la vue adresse une opération par son `entry` UNIQUE (pas son label) — le fix du masquage `cli:main`.
 const h = vi.hoisted(() => ({
   ops: [] as Array<{ operation: string; entry: string; kind: string }>,
   op: undefined as string | undefined,
@@ -26,7 +26,6 @@ vi.mock('@/lib/queries', () => ({
 }))
 
 vi.mock('@tanstack/react-router', () => ({
-  useParams: () => ({ project: 'demo' }),
   useSearch: () => ({ op: h.op }),
   useNavigate: () => vi.fn(),
 }))
@@ -35,7 +34,7 @@ vi.mock('@/components/flow/FlowGraph', () => ({
   FlowGraph: ({ flow }: { flow: { entry?: string } }) => <div data-testid="flow-graph">{flow?.entry}</div>,
 }))
 
-const { FlowTab } = await import('./FlowTab')
+const { FlowPanel } = await import('./FlowPanel')
 
 // Deux `cli:main` de fichiers DIFFÉRENTS (le hook triait en tête et masquait le vrai) + une route.
 const OPS = [
@@ -44,11 +43,11 @@ const OPS = [
   { operation: 'GET /x', entry: 'src/app.py::handler', kind: 'route' },
 ]
 
-describe('FlowTab — identité d\'opération par entry', () => {
+describe('FlowPanel — identité d\'opération par entry', () => {
   beforeEach(() => { h.flowCalls = []; h.op = undefined; h.ops = OPS })
 
   it('deux `cli:main` → deux options à VALEUR distincte (l\'entry), affichage désambiguïsé par fichier', () => {
-    render(<FlowTab />)
+    render(<FlowPanel project="demo" />)
     const values = screen.getAllByRole('option').map((o) => (o as HTMLOptionElement).value)
     expect(values).toContain('.claude/hooks/post-edit-check.py::main')
     expect(values).toContain('src/pkg/cli.py::main')
@@ -57,13 +56,13 @@ describe('FlowTab — identité d\'opération par entry', () => {
 
   it('un ?op= vers le 2ᵉ `cli:main` n\'est PAS masqué (résolu par entry, pas par label)', () => {
     h.op = 'src/pkg/cli.py::main'
-    render(<FlowTab />)
+    render(<FlowPanel project="demo" />)
     expect(h.flowCalls.at(-1)).toBe('src/pkg/cli.py::main')        // et surtout PAS l'entry du hook
     expect(screen.getByTestId('flow-graph')).toHaveTextContent('src/pkg/cli.py::main')
   })
 
   it('défaut sans ?op= = la 1ʳᵉ route, adressée par son entry', () => {
-    render(<FlowTab />)
+    render(<FlowPanel project="demo" />)
     expect(h.flowCalls.at(-1)).toBe('src/app.py::handler')
   })
 })
