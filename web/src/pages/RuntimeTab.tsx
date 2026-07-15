@@ -88,14 +88,15 @@ function DeploymentCard({ project, dep }: { project: string; dep: Deployment }) 
           </code>
         )}
         {/* Lien health-gated : actif seulement si le service RÉPOND (running) — sinon inerte (jamais un lien
-            mort ni un faux-vert vers un service arrêté). */}
+            mort ni un faux-vert vers un service arrêté). Le nom de branche n'est PAS répété ici (axe 5 : il est
+            déjà porté par le badge) ; l'état inerte le dit explicitement plutôt que d'imiter un lien. */}
         {live && dep.url ? (
           <a href={dep.url} target="_blank" rel="noreferrer"
             className="ml-auto text-sm font-medium text-accent-400 hover:underline">
-            ouvrir {dep.branch} ↗
+            ouvrir ↗
           </a>
         ) : (
-          <span className="ml-auto text-sm text-faint" title="service non démarré">{dep.branch} ↗</span>
+          <span className="ml-auto text-sm text-faint" title="service non démarré">non démarré</span>
         )}
       </div>
 
@@ -107,6 +108,7 @@ function DeploymentCard({ project, dep }: { project: string; dep: Deployment }) 
         <Button variant="ghost" size="sm" busy={restart.isPending} disabled={!mounted || busy}
           onClick={() => restart.mutate()}>Redémarrer</Button>
         <Button variant="ghost" size="sm" onClick={() => setLogsOpen((o) => !o)} aria-expanded={logsOpen}>
+          <span aria-hidden className="text-faint">{logsOpen ? '▾' : '▸'}</span>
           {logsOpen ? 'Masquer les logs' : 'Logs'}
         </Button>
       </div>

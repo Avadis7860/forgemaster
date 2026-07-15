@@ -48,11 +48,14 @@ export function GateTab() {
     <div className="space-y-4 p-6">
       <div className="flex items-start justify-between gap-3">
         <div className="flex flex-wrap gap-1.5">
+          {/* Sélecteur de feature = toggle de sélection, PAS l'action primaire (axe 2) : l'accent plein est
+              réservé au GO. La sélection se marque par une bordure accent (pas de remplissage teal concurrent). */}
           {features.map((f) => (
             <Button
               key={f.id}
               size="sm"
-              variant={f.slug === active ? 'primary' : 'secondary'}
+              variant={f.slug === active ? 'secondary' : 'ghost'}
+              className={f.slug === active ? 'border-accent-500 text-fg' : undefined}
               onClick={() => setSelected(f.slug)}
             >
               {f.title ?? f.slug}
