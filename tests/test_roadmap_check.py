@@ -100,6 +100,50 @@ def test_bad_facet_after_bundle_drift_is_flagged(ctx):
     assert any(i.kind == "BAD_FACET" for i in check.check_roadmap(conn, "proj"))
 
 
+def test_feature_dep_healthy_is_no_issue(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj", project_type="front-ts")
+    model.add_feature(conn, project_slug="proj", slug="design", facet="backend")
+    model.add_task(conn, feature_ref="proj/design", slug="spec", acceptance="x")
+    model.add_feature(conn, project_slug="proj", slug="code", facet="backend", depends_on=["design"])
+    model.add_task(conn, feature_ref="proj/code", slug="impl", acceptance="x")
+    # dep inter-feature valide ; prérequis pas encore mergé = BLOCKED_DEPS, NORMAL, pas une issue.
+    assert check.check_roadmap(conn, "proj") == []
+
+
+def test_dangling_feature_dep_is_flagged(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj", project_type="front-ts")
+    model.add_feature(conn, project_slug="proj", slug="code", facet="backend", depends_on=["ghost"])
+    model.add_task(conn, feature_ref="proj/code", slug="impl", acceptance="x")
+    assert any(i.kind == "DANGLING_FEATURE_DEP" and i.feature == "code"
+               for i in check.check_roadmap(conn, "proj"))
+
+
+def test_feature_cycle_is_flagged(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj", project_type="front-ts")
+    model.add_feature(conn, project_slug="proj", slug="a", facet="backend", depends_on=["b"])
+    model.add_task(conn, feature_ref="proj/a", slug="ta", acceptance="x")
+    model.add_feature(conn, project_slug="proj", slug="b", facet="backend", depends_on=["a"])
+    model.add_task(conn, feature_ref="proj/b", slug="tb", acceptance="x")
+    assert "FEATURE_CYCLE" in _kinds(check.check_roadmap(conn, "proj"))
+
+
+def test_dead_feature_dep_on_cancelled_prereq_is_flagged(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj", project_type="front-ts")
+    model.add_feature(conn, project_slug="proj", slug="design", facet="backend")
+    model.add_task(conn, feature_ref="proj/design", slug="spec", acceptance="x")
+    model.add_feature(conn, project_slug="proj", slug="code", facet="backend", depends_on=["design"])
+    model.add_task(conn, feature_ref="proj/code", slug="impl", acceptance="x")
+    conn.execute("UPDATE features SET status = 'cancelled' WHERE slug = 'design'")
+    conn.commit()
+    # prérequis annulé → le dépendant ne peut jamais se débloquer : surfacé, pas de deadlock silencieux.
+    assert any(i.kind == "DEAD_FEATURE_DEP" and i.feature == "code"
+               for i in check.check_roadmap(conn, "proj"))
+
+
 def test_cli_dispatch_exit_codes(ctx, capsys):
     settings, conn = ctx
     registry.create_project(conn, settings, slug="proj", project_type="front-ts")

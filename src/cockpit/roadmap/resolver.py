@@ -94,6 +94,52 @@ def index_for_feature(conn, feature_ref: str) -> dict[str, dict]:
     return {t["slug"]: t for t in model.list_tasks(conn, feature["id"])}
 
 
+# --- DAG INTER-feature (v10) : même moteur taskmap, une couche AU-DESSUS des tasks ------------------------
+# Statuts DB feature → vocab taskmap. Le terminal-**satisfait** d'une FEATURE = `merged` (≡ `done` taskmap) :
+# une feature prérequise n'est « faite » qu'une fois mergée. Les autres passent (`planned`/`ready` → non
+# terminal donc non-satisfaisant ; `active` → ACTIVE ; `cancelled` → terminal mais ≠ done → un dépendant reste
+# BLOCKED_DEPS = deadlock, surfacé par `check` en DEAD_FEATURE_DEP). NB : l'index feature est projet-global,
+# jamais threadé dans l'index task (invariant « 1 index taskmap = 1 feature » du séquencement intra préservé).
+_FEATURE_STATUS_TO_TM = {"merged": "done"}
+
+
+def _feature_records(features: list[dict]) -> dict[str, dict]:
+    """Projette les rows feature vers la forme de record taskmap (id≡slug, statut mappé, tags:[])."""
+    out: dict[str, dict] = {}
+    for f in features:
+        status = f["status"]
+        out[f["slug"]] = {**f, "id": f["slug"], "created": f.get("created_at") or "",
+                          "status": _FEATURE_STATUS_TO_TM.get(status, status),
+                          "depends_on": f["depends_on"], "tags": []}
+    return out
+
+
+def _feature_blockers(state: str, feature: dict, records: dict[str, dict]) -> list[str]:
+    """Blockers inter-feature en vocab cockpit. ERROR → prérequis absent « (feature inconnue) » ;
+    BLOCKED_DEPS → prérequis non-mergé avec son statut (le mappé ≡ l'original hors `merged`, filtré ici)."""
+    deps = feature["depends_on"]
+    if state == "ERROR":
+        return [f"{d} (feature inconnue)" for d in deps if d not in records]
+    if state == "BLOCKED_DEPS":
+        return [f"{d} ({records[d]['status']})" for d in deps if records[d]["status"] != "done"]
+    return []
+
+
+def classify_features(conn, project: str) -> dict[str, dict]:
+    """Classe le DAG **inter-feature** d'un projet — même autorité taskmap que le DAG des tasks, une couche
+    au-dessus. Une feature est READY quand toutes ses prérequises sont `merged` ; BLOCKED_DEPS sinon ;
+    ERROR (prérequis inconnu) / CYCLE comme le DAG des tasks. Retour : `{slug: {**feature, state, blockers}}`.
+    """
+    features = model.list_features(conn, project)
+    records = _feature_records(features)
+    tm = _tm_classify(records, None, None)
+    out: dict[str, dict] = {}
+    for f in features:
+        state = tm[f["slug"]]["state"]
+        out[f["slug"]] = {**f, "state": state, "blockers": _feature_blockers(state, f, records)}
+    return out
+
+
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     """Route `cockpit task <action>` (add|next). `add` = saisie (data layer) ; `next` = résolveur DAG."""
     conn = store.open_db(settings)

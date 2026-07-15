@@ -159,6 +159,33 @@ def test_run_project_terminates_when_next_always_fails(ctx):
     assert _statuses(conn, "stuck") == {"t1": "todo", "t2": "todo"}
 
 
+# -- enforcement du DAG INTER-feature (v10) : design→code -------------------------------------------
+
+def test_run_project_blocks_feature_until_prereq_merged(ctx):
+    settings, conn = ctx
+    _new_project(conn, settings, "proj")
+    # design (aucune dep) puis code (depends_on design) — chacune une task READY d'emblée.
+    model.add_feature(conn, project_slug="proj", slug="design")
+    model.add_task(conn, feature_ref="proj/design", slug="spec", depends_on=[])
+    model.add_feature(conn, project_slug="proj", slug="code", depends_on=["design"])
+    model.add_task(conn, feature_ref="proj/code", slug="impl", depends_on=[])
+    r = _Runner()
+    summary = orchestrator.run_project(conn, settings, project="proj", git=InternalGit(), runner=r)
+    # design n'est jamais `merged` pendant un run (le merge = gate humain séparé) → code reste BLOCKED_DEPS :
+    # SEUL design se dispatche, code jamais. La boucle TERMINE quand même (pas de spin sur feature bloquée).
+    assert r.calls == ["design"] and summary["dispatched"] == 1
+    assert _statuses(conn, "design") == {"spec": "done"}
+    assert _statuses(conn, "code") == {"impl": "todo"}
+
+    # Une fois design MERGÉ (gate humain simulé), code se débloque et se dispatche au run suivant.
+    conn.execute("UPDATE features SET status = 'merged' WHERE slug = 'design'")
+    conn.commit()
+    r2 = _Runner()
+    orchestrator.run_project(conn, settings, project="proj", git=InternalGit(), runner=r2)
+    assert r2.calls == ["code"]
+    assert _statuses(conn, "code") == {"impl": "done"}
+
+
 # -- CLI `cockpit run` : rapport (smoke, sans worker) -----------------------------------------------
 
 def test_cli_dispatch_reports_empty_roadmap(ctx, capsys, monkeypatch):

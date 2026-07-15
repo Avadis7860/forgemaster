@@ -40,29 +40,33 @@ def _project_facets(project: dict) -> set[str]:
 
 
 def add_feature(conn: sqlite3.Connection, *, project_slug: str, slug: str, title: str | None = None,
-                facet: str | None = None, blueprint: str | None = None) -> dict:
+                facet: str | None = None, blueprint: str | None = None,
+                depends_on: list[str] | None = None) -> dict:
     """Ajoute une feature à un projet (branche `feature/<slug>`, statut `planned`). `facet` (optionnel) =
     la facette de dispatch qui alignera le worker ; NULL → défaut résolu du `bundle.toml` au dispatch.
     `facet` est validée contre les facettes **du bundle du projet** (registre), pas un vocab global.
-    `blueprint` (optionnel, v9) = ref STAMP (id d'un blueprint central), résolue au read du board."""
+    `blueprint` (optionnel, v9) = ref STAMP (id d'un blueprint central), résolue au read du board.
+    `depends_on` (optionnel, v10) = slugs de features prérequises (DAG **inter**-feature ; une feature reste
+    non-dispatchable tant qu'une prérequise n'est pas `merged`). Le row RENDU décode `depends_on` en liste."""
     ids.ensure_slug(slug, field="feature")
     project = get_project(conn, project_slug)
     valid = _project_facets(project)
     if facet is not None and facet not in valid:
         raise ValueError(f"facette {facet!r} hors vocab du bundle {project['project_type']!r} "
                          f"du projet {project_slug} : {sorted(valid)}")
+    deps = list(depends_on or [])
     row = {"id": ids.new_id(), "project_id": project["id"], "slug": slug, "title": title or slug,
            "branch": f"feature/{slug}", "worktree_path": None, "status": "planned", "facet": facet,
-           "blueprint": blueprint, "created_at": _now()}
+           "blueprint": blueprint, "depends_on": json.dumps(deps), "created_at": _now()}
     try:
         conn.execute(
             "INSERT INTO features (id, project_id, slug, title, branch, worktree_path, status, facet, "
-            "blueprint, created_at) VALUES (:id, :project_id, :slug, :title, :branch, :worktree_path, "
-            ":status, :facet, :blueprint, :created_at)", row)
+            "blueprint, depends_on, created_at) VALUES (:id, :project_id, :slug, :title, :branch, "
+            ":worktree_path, :status, :facet, :blueprint, :depends_on, :created_at)", row)
         conn.commit()
     except sqlite3.IntegrityError as exc:
         raise ValueError(f"feature déjà existante : {project_slug}/{slug}") from exc
-    return row
+    return {**row, "depends_on": deps}
 
 
 def resolve_feature(conn: sqlite3.Connection, ref: str) -> dict:
@@ -75,7 +79,9 @@ def resolve_feature(conn: sqlite3.Connection, ref: str) -> dict:
                      (project["id"], feature_slug)).fetchone()
     if r is None:
         raise KeyError(ref)
-    return dict(r)
+    d = dict(r)
+    d["depends_on"] = json.loads(d["depends_on"])   # v10 : DAG inter-feature décodé
+    return d
 
 
 def add_task(conn: sqlite3.Connection, *, feature_ref: str, slug: str, title: str | None = None,
@@ -103,8 +109,12 @@ def add_task(conn: sqlite3.Connection, *, feature_ref: str, slug: str, title: st
 
 def list_features(conn: sqlite3.Connection, project_slug: str) -> list[dict]:
     project = get_project(conn, project_slug)
-    return [dict(r) for r in conn.execute(
-        "SELECT * FROM features WHERE project_id = ? ORDER BY slug", (project["id"],))]
+    out = []
+    for r in conn.execute("SELECT * FROM features WHERE project_id = ? ORDER BY slug", (project["id"],)):
+        d = dict(r)
+        d["depends_on"] = json.loads(d["depends_on"])   # v10 : DAG inter-feature décodé (cf. list_tasks)
+        out.append(d)
+    return out
 
 
 def list_tasks(conn: sqlite3.Connection, feature_id: str) -> list[dict]:
@@ -125,6 +135,8 @@ def _feature_doc(f: dict) -> dict:
         doc["facet"] = f["facet"]
     if f.get("blueprint"):
         doc["blueprint"] = f["blueprint"]     # ref STAMP brute (v9) ; la résolution est runtime/board-only
+    if f.get("depends_on"):
+        doc["depends_on"] = f["depends_on"]   # DAG inter-feature (v10) — émis seulement si non-vide
     doc["tasks"] = []
     for t in f.get("tasks", []):
         task: dict = {"slug": t["slug"], "title": t["title"], "priority": t["priority"],
@@ -148,7 +160,8 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     try:
         if args.action == "add-feature":
             f = add_feature(conn, project_slug=args.project, slug=args.slug, title=args.title,
-                            facet=getattr(args, "facet", None))
+                            facet=getattr(args, "facet", None),
+                            depends_on=getattr(args, "depends_on", None) or [])
             fac = f" [{f['facet']}]" if f.get("facet") else ""
             print(f"feature créée : {args.project}/{f['slug']}{fac} — branche {f['branch']}")
         elif args.action == "show":

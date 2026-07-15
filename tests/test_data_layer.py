@@ -165,6 +165,29 @@ def test_ensure_columns_migrates_projects_v2_to_v3_in_place(tmp_path: Path):
     conn.close()
 
 
+def test_ensure_columns_migrates_features_v9_to_v10_in_place(tmp_path: Path):
+    """Une base pré-v10 (features sans depends_on) migre en place : `ensure_columns` ajoute la colonne,
+    les lignes existantes prennent le défaut littéral `'[]'` (ALTER exige un défaut littéral, NOT NULL)."""
+    import sqlite3
+
+    from cockpit.db import schema
+    conn = sqlite3.connect(tmp_path / "old.db")
+    conn.row_factory = sqlite3.Row
+    # table `features` façon v9 (facet/blueprint présents, PAS de depends_on)
+    conn.execute("CREATE TABLE features (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, slug TEXT NOT NULL, "
+                 "title TEXT NOT NULL, branch TEXT NOT NULL, worktree_path TEXT, status TEXT NOT NULL "
+                 "DEFAULT 'planned', facet TEXT, blueprint TEXT, created_at TEXT NOT NULL)")
+    conn.execute("INSERT INTO features (id, project_id, slug, title, branch, status, created_at) "
+                 "VALUES ('f1', 'p1', 'legacy', 'Legacy', 'feature/legacy', 'planned', '2026-01-01')")
+    conn.commit()
+    assert "depends_on" not in {r[1] for r in conn.execute("PRAGMA table_info(features)")}
+    schema.ensure_columns(conn)
+    assert "depends_on" in {r[1] for r in conn.execute("PRAGMA table_info(features)")}
+    row = conn.execute("SELECT depends_on FROM features WHERE slug = 'legacy'").fetchone()
+    assert row["depends_on"] == "[]"                             # défaut littéral appliqué à l'existant
+    conn.close()
+
+
 def test_credential_ref_defaults_none_and_persists_at_create(ctx):
     settings, conn = ctx
     plain = registry.create_project(conn, settings, slug="plain")
@@ -381,6 +404,30 @@ def test_roadmap_to_yaml_carries_facet_and_acceptance(ctx):
     assert ui["tasks"][0]["acceptance"] == "Le login s'affiche."         # critères émis si présents
     assert "facet" not in plain                                          # rétro-compat : absents si non posés
     assert "acceptance" not in plain["tasks"][0]
+
+
+def test_add_feature_inter_feature_depends_on_round_trip(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj", project_type="front-ts")
+    model.add_feature(conn, project_slug="proj", slug="design", facet="backend")
+    f = model.add_feature(conn, project_slug="proj", slug="code", facet="backend", depends_on=["design"])
+    assert f["depends_on"] == ["design"]                                 # row RENDU décodé (pas la string)
+    assert model.resolve_feature(conn, "proj/code")["depends_on"] == ["design"]   # relecture DB décodée
+    plain = model.add_feature(conn, project_slug="proj", slug="misc")    # aucune dep inter-feature
+    assert plain["depends_on"] == []
+
+
+def test_roadmap_to_yaml_carries_feature_depends_on(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj", project_type="front-ts")
+    model.add_feature(conn, project_slug="proj", slug="design", facet="backend")
+    model.add_feature(conn, project_slug="proj", slug="code", facet="backend", depends_on=["design"])
+    features = model.list_features(conn, "proj")
+    doc = yaml.safe_load(model.to_yaml("proj", features))
+    code = next(f for f in doc["features"] if f["slug"] == "code")
+    design = next(f for f in doc["features"] if f["slug"] == "design")
+    assert code["depends_on"] == ["design"]                              # DAG inter-feature émis si présent
+    assert "depends_on" not in design                                    # rétro-compat : absent si vide
 
 
 def test_add_feature_blueprint_round_trip_and_yaml(ctx):

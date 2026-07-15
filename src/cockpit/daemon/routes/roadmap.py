@@ -2,13 +2,15 @@
 `roadmap.model` (CRUD) et `roadmap.resolver` (DAG), le graphe reste la seule autorité de séquencement."""
 from __future__ import annotations
 
+import dataclasses
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from taskmap.context import _blueprint_verdict
 
 from cockpit.daemon.deps import Deps, get_deps
 from cockpit.mcp import blueprint_resolver
-from cockpit.roadmap import model, resolver
+from cockpit.roadmap import check, model, resolver
 
 
 class FeatureCreate(BaseModel):
@@ -16,6 +18,7 @@ class FeatureCreate(BaseModel):
     title: str | None = None
     facet: str | None = None         # facette de dispatch — validée contre le bundle du projet → 400
     blueprint: str | None = None     # ref STAMP (v9) — id d'un blueprint résolu au read du board via MCP
+    depends_on: list[str] = []       # slugs de features prérequises (DAG inter-feature, v10)
 
 
 class TaskCreate(BaseModel):
@@ -55,12 +58,24 @@ def make_roadmap_router() -> APIRouter:
         finally:
             conn.close()
 
+    @router.get("/api/projects/{project}/roadmap/check")
+    def roadmap_check(project: str, deps: Deps = Depends(get_deps)) -> dict:
+        # Gate de complétude exposé en HTTP : MÊME autorité que le CLI `cockpit roadmap check` (réutilise
+        # `check.check_roadmap`, aucune 2ᵉ logique). Projet inconnu → KeyError → 404 (handler global).
+        conn = deps.open_db()
+        try:
+            issues = check.check_roadmap(conn, project)
+            return {"project": project, "ok": not issues,
+                    "issues": [dataclasses.asdict(i) for i in issues]}
+        finally:
+            conn.close()
+
     @router.post("/api/projects/{project}/features", status_code=201)
     def add_feature(project: str, body: FeatureCreate, deps: Deps = Depends(get_deps)) -> dict:
         conn = deps.open_db()
         try:
             return model.add_feature(conn, project_slug=project, slug=body.slug, title=body.title,
-                                     facet=body.facet, blueprint=body.blueprint)
+                                     facet=body.facet, blueprint=body.blueprint, depends_on=body.depends_on)
         finally:
             conn.close()
 

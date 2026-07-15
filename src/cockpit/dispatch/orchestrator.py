@@ -13,8 +13,10 @@ Deux invariants portés du plan (cockpit-typed-bundles) :
   principal est **seul assignateur** : `in_flight` (mutex par feature) est muté **à la soumission**, jamais
   dans un thread worker → zéro double-dispatch.
 
-Hors V1 : deps **inter-features** (le cas back→front se résout par le merge vers `dev`) et merge auto (la
-boucle ne produit que des commits sur branches feature ; `cockpit merge --go` reste un gate humain séparé).
+Deps **inter-features** (v10) : une feature reste non-dispatchable tant qu'une prérequise n'est pas `merged`
+(pré-filtre `_discoverable_features` via `resolver.classify_features` — le cas design→code est enforce, plus
+« résolu à la main par l'ordre de merge »). Hors V1 : merge auto (la boucle ne produit que des commits sur
+branches feature ; `cockpit merge --go` reste un gate humain séparé).
 """
 from __future__ import annotations
 
@@ -35,17 +37,25 @@ DEFAULT_MAX_PARALLEL = 2   # 2 workers concurrents par défaut (borne prudente ;
 # Features hors-jeu pour le dispatch : déjà mergées ou annulées (plus rien à drainer).
 _INERT_FEATURE_STATUS = frozenset({"merged", "cancelled"})
 
+# États du DAG INTER-feature (v10) qui interdisent le dispatch : prérequis non-mergé (BLOCKED_DEPS) ou graphe
+# malformé (ERROR/CYCLE, déjà flagué par `check`, défensif ici). READY/ACTIVE passent (feature drainable).
+_BLOCKED_FEATURE_STATES = frozenset({"BLOCKED_DEPS", "ERROR", "CYCLE"})
+
 
 def _discoverable_features(conn: sqlite3.Connection, project: str,
                            in_flight: set[str], failed: set[str]) -> list[str]:
     """Slugs des features **dispatchables maintenant** : ni inertes (merged/cancelled), ni en vol, ni en
-    échec, et dont le résolveur DAG expose une NEXT task READY. Triées par le rang de cette NEXT (priorité
-    ↑, création ↑, slug) → les priorités hautes soumises d'abord. Read-only (connexion principale)."""
+    échec, dont le DAG **inter-feature** est débloqué (toutes les prérequises `merged`), et dont le résolveur
+    DAG intra-feature expose une NEXT task READY. Triées par le rang de cette NEXT (priorité ↑, création ↑,
+    slug) → les priorités hautes soumises d'abord. Read-only (connexion principale)."""
+    feat_states = resolver.classify_features(conn, project)   # DAG inter-feature (v10), 1× par passe
     ranked: list[tuple[tuple, str]] = []
     for f in model.list_features(conn, project):
         slug = f["slug"]
         if f["status"] in _INERT_FEATURE_STATUS or slug in in_flight or slug in failed:
             continue
+        if feat_states[slug]["state"] in _BLOCKED_FEATURE_STATES:
+            continue                                          # prérequis inter-feature non mergé → pas encore
         index = resolver.index_for_feature(conn, f"{project}/{slug}")
         if not index:
             continue

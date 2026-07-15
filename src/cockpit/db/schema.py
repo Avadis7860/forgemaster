@@ -30,12 +30,16 @@ substrat. Table neuve → créée sur base existante par `CREATE IF NOT EXISTS` 
 (board-native blueprint) = `features` gagne `blueprint` (nullable) : la **ref STAMP** (id d'un blueprint du
 capital central, ex. `deterministic-tooling-gate`) portée par une feature ; l'id est résolu **au read du
 board** via le client MCP (`GET …/roadmap` → `{blueprint:{id, resolved, reason, …}}`, honnête si MCP coupé).
+v10 (inter-feature deps) = `features` gagne `depends_on` (NOT NULL, défaut `'[]'`) : le **DAG INTER-feature**
+(liste JSON de slugs de features prérequises), symétrique de `tasks.depends_on`. Une feature reste
+non-dispatchable tant qu'une prérequise n'est pas `merged` (enforce par `orchestrator`, validé par `check` —
+spec cockpit-roadmap-inter-feature-deps).
 """
 from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 # Ordre = ordre de création (les FK pointent vers des tables déjà créées). Chaque table porte les
 # invariants durs en contraintes SQL (NOT NULL, UNIQUE, FK, CHECK sur les enums de statut).
@@ -70,6 +74,7 @@ DDL: tuple[str, ...] = (
                           CHECK (status IN ('planned', 'active', 'ready', 'merged', 'cancelled')),
         facet         TEXT,                          -- facette de dispatch (v6, nullable ; défaut bundle)
         blueprint     TEXT,                          -- ref blueprint STAMP (v9, nullable ; id résolu via MCP)
+        depends_on    TEXT NOT NULL DEFAULT '[]',    -- JSON: slugs de features (DAG INTER-feature, v10)
         created_at    TEXT NOT NULL,
         UNIQUE (project_id, slug)
     )
@@ -162,7 +167,10 @@ _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
     "projects": (("kind", "TEXT NOT NULL DEFAULT 'project'"), ("owner", "TEXT"),
                  ("credential_ref", "TEXT"), ("source_url", "TEXT"),
                  ("project_type", "TEXT NOT NULL DEFAULT 'generic'")),
-    "features": (("facet", "TEXT"), ("blueprint", "TEXT")),
+    # v10 : `features.depends_on` (NOT NULL, défaut littéral '[]' — ALTER exige un défaut littéral) = DAG
+    # INTER-feature (liste JSON de slugs de features prérequises). Symétrique de `tasks.depends_on` ;
+    # ALTER-safe (pas de CHECK). Invariant « prérequis satisfait = merged » tenu par resolver/orchestrator.
+    "features": (("facet", "TEXT"), ("blueprint", "TEXT"), ("depends_on", "TEXT NOT NULL DEFAULT '[]'")),
     "tasks": (("acceptance", "TEXT"),),
 }
 

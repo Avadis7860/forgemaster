@@ -23,7 +23,8 @@ def seed_launch_roadmap(conn: sqlite3.Connection, *, project_slug: str, project_
     features = spec.get("features", [])
     for feat in features:
         model.add_feature(conn, project_slug=project_slug, slug=feat["slug"],
-                          title=feat.get("title"), facet=feat.get("facet"))
+                          title=feat.get("title"), facet=feat.get("facet"),
+                          depends_on=feat.get("depends_on") or [])   # v10 : DAG inter-feature semable
         for task in feat.get("tasks", []):
             model.add_task(conn, feature_ref=f"{project_slug}/{feat['slug']}", slug=task["slug"],
                            title=task.get("title"), depends_on=task.get("depends_on") or [],

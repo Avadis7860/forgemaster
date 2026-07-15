@@ -23,6 +23,7 @@ from cockpit.roadmap import model, resolver
 class Issue:
     """Un défaut de complétude localisé (feature, éventuellement task) avec son motif lisible."""
     kind: str            # DANGLING_DEP | CYCLE | MISSING_ACCEPTANCE | BAD_FACET | MISSING_FACET | EMPTY
+    #                    | DANGLING_FEATURE_DEP | FEATURE_CYCLE | DEAD_FEATURE_DEP  (inter-feature, v10)
     feature: str
     task: str | None
     detail: str
@@ -60,6 +61,22 @@ def check_roadmap(conn: sqlite3.Connection, project_slug: str) -> list[Issue]:
             if not (t.get("acceptance") or "").strip():
                 issues.append(Issue("MISSING_ACCEPTANCE", fslug, slug,
                                     "task sans critère de DoD (acceptance)"))
+    # DAG INTER-feature (v10) : dangling / cycle (autorité taskmap, comme le DAG des tasks) + deadlock
+    # cancelled-dep (surfacé, jamais bloqué en silence). Une feature BLOCKED_DEPS normale (prérequis pas
+    # encore mergé) n'est PAS une issue — c'est l'ordre de lancement qui se déroule.
+    feat_states = resolver.classify_features(conn, project_slug)
+    by_status = {f["slug"]: f["status"] for f in features}
+    for fslug, fc in feat_states.items():
+        if fc["state"] == "ERROR":
+            issues.append(Issue("DANGLING_FEATURE_DEP", fslug, None,
+                                f"feature prérequise inexistante : {', '.join(fc['blockers'])}"))
+        elif fc["state"] == "CYCLE":
+            issues.append(Issue("FEATURE_CYCLE", fslug, None,
+                                "feature dans un cycle de dépendances inter-features"))
+        dead = [d for d in fc["depends_on"] if by_status.get(d) == "cancelled"]
+        if dead:
+            issues.append(Issue("DEAD_FEATURE_DEP", fslug, None,
+                                f"dépend d'une feature annulée (jamais débloquable) : {', '.join(dead)}"))
     return issues
 
 

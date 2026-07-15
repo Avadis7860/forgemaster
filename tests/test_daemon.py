@@ -170,6 +170,28 @@ def test_roadmap_blueprint_honest_when_mcp_down(client, monkeypatch):
     assert gate["blueprint"]["reason"]                                   # raison honnête, jamais inventée
 
 
+def test_roadmap_check_endpoint_exposes_completeness_gate(client):
+    """`GET .../roadmap/check` = MÊME autorité que le CLI, en HTTP. Projet neuf (socle semé) → ok ; une dep
+    inter-feature pendante → ok:false + DANGLING_FEATURE_DEP ; la dep feature round-trip sur le board."""
+    c, _ = client
+    c.post("/api/projects", json={"slug": "proj"})                       # generic → socle semé (opérationnel)
+    healthy = c.get("/api/projects/proj/roadmap/check").json()
+    assert healthy["ok"] is True and healthy["issues"] == []
+    # feature avec une dep inter-feature vers une feature INEXISTANTE (facet doc = vocab du bundle generic)
+    c.post("/api/projects/proj/features", json={"slug": "code", "facet": "doc", "depends_on": ["ghost"]})
+    c.post("/api/features/proj/code/tasks", json={"slug": "impl", "acceptance": "x"})
+    bad = c.get("/api/projects/proj/roadmap/check").json()
+    assert bad["ok"] is False
+    assert "DANGLING_FEATURE_DEP" in {i["kind"] for i in bad["issues"]}
+    code = next(f for f in c.get("/api/projects/proj/roadmap").json()["features"] if f["slug"] == "code")
+    assert code["depends_on"] == ["ghost"]                               # dep feature round-trip sur le board
+
+
+def test_roadmap_check_unknown_project_is_404(client):
+    c, _ = client
+    assert c.get("/api/projects/ghost/roadmap/check").status_code == 404
+
+
 # -- dispatch (gate no-task-no-dispatch, sans spawn) -----------------------------------------------
 
 def test_dispatch_refused_without_task_no_spawn(client, monkeypatch):

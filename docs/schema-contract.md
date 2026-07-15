@@ -99,6 +99,15 @@ blueprint du capital central) portée par une feature ; l'id est stocké brut (o
 si le MCP est coupé (`resolved:false` + raison, jamais inventé). Même patron additif que `facet` (v6). Ajout
 **non-breaking**.
 
+**Migration v9→v10** (deps inter-features) : `features` gagne `depends_on` (`TEXT NOT NULL DEFAULT '[]'`, liste
+JSON de slugs de features) via `ensure_columns` — les lignes existantes prennent `'[]'` (aucune dépendance
+inter-feature). C'est le **DAG INTER-feature**, symétrique de `tasks.depends_on` (intra) : une feature reste
+non-dispatchable (`orchestrator._discoverable_features`) tant qu'une feature prérequise n'est pas `merged`. Validé
+par `check` (`DANGLING_FEATURE_DEP` / `FEATURE_CYCLE` / `DEAD_FEATURE_DEP` si un prérequis est `cancelled` →
+deadlock surfacé). Le prédicat « prérequis satisfait = `merged` » vit dans `resolver.classify_features` (même
+moteur taskmap que le DAG des tasks, une couche au-dessus). Défaut littéral (ALTER-safe, pas de CHECK). Ajout
+**non-breaking**.
+
 ## 2. Schéma `.cockpit/roadmap.yaml` (in-repo, `roadmap/model.py`)
 
 Versionné **avec le projet** (source de vérité côté repo), synchronisé vers la DB (index). Manifeste SEC
@@ -111,6 +120,7 @@ features:
     title: <str>
     facet: backend|frontend|tool|doc               # v6, OPTIONNEL — facette de dispatch (omis si non posée)
     blueprint: <blueprint-id>                       # v9, OPTIONNEL — ref STAMP (omis si non posée)
+    depends_on: [<feature-slug>, …]                 # v10, OPTIONNEL — DAG INTER-feature (omis si vide)
     phases: [[<task-slug>, …], [<task-slug>, …]]   # étapes ORDONNÉES ; chaque étape = ids parallèles
     tasks:
       - slug: <kebab>
@@ -120,8 +130,10 @@ features:
         acceptance: <str>                           # v6, OPTIONNEL — critères de DoD injectés au prompt worker
 ```
 
-`facet:`/`acceptance:` (v6) et `blueprint:` (v9) sont **émis seulement si présents** — une roadmap sans ces
-champs reste identique au contrat v1 (rétro-compatible). `facet` tague la feature du type de travail (aligne le
+`facet:`/`acceptance:` (v6), `blueprint:` (v9) et le `depends_on:` feature-level (v10) sont **émis seulement si
+présents** — une roadmap sans ces champs reste identique au contrat v1 (rétro-compatible). Le `depends_on:` d'une
+feature est le DAG INTER-feature (non-dispatchable tant qu'une prérequise n'est pas `merged`) ; celui d'une task
+reste intra-feature. `facet` tague la feature du type de travail (aligne le
 worker au dispatch) ; `acceptance` porte les critères de succès de la task, rendus verbatim dans le prompt ;
 `blueprint` porte la ref STAMP (id brut) de la feature, résolue en verdict au read du board (`GET …/roadmap`).
 
