@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useParams, useSearch } from '@tanstack/react-router'
-import { Alert, Badge, Button, Card, EmptyState, LoadingState, RefreshButton, SectionTitle } from '@/components/ui'
+import { Alert, Badge, Button, Card, LoadingState, SectionTitle } from '@/components/ui'
 import { Transcript } from '@/components/dispatch/Transcript'
 import { ClaudeAuthBlock } from '@/components/ClaudeAuthStatus'
 import { ApiError } from '@/lib/api'
-import { useDispatch, useFeatureJobs, useJob, useOnboarding, useRoadmap } from '@/lib/queries'
+import { useDispatch, useFeatureJobs, useJob, useOnboarding } from '@/lib/queries'
 import { useDispatchStream } from '@/lib/useDispatchStream'
 import { JOB_STATUS_TONE, TASK_STATE_TONE, toneFor } from '@/lib/statusTone'
 import { jobStatusLabel, stateLabel } from '@/lib/taskLabels'
@@ -13,70 +12,10 @@ import type { FeatureWithTasks, Job, JobFrame, TranscriptEvent } from '@/lib/sch
 const RUNNING = new Set(['running', 'pending'])
 type Ev = Exclude<TranscriptEvent, JobFrame>
 
-/** Onglet Dispatch : choisit une feature, dispatche sa NEXT task (POST long bloquant), DÉCOUVRE le job en
- *  cours (le job_id n'arrive qu'à la fin du POST) et streame son transcript live via WS. */
-export function DispatchTab() {
-  const project = useParams({ strict: false }).project ?? ''
-  const { feature: deepFeature } = useSearch({ strict: false }) as { feature?: string }
-  const roadmap = useRoadmap(project)
-
-  const features = roadmap.data?.features ?? []
-  const [selected, setSelected] = useState<string | null>(null)
-  // Feature effective : sélection explicite → deep-link → 1ʳᵉ feature dispatchable → 1ʳᵉ feature.
-  const active = selected ?? deepFeature ?? features.find((f) => f.next)?.slug ?? features[0]?.slug ?? null
-  const feature = features.find((f) => f.slug === active) ?? null
-
-  if (roadmap.isLoading) return <div className="p-8"><LoadingState label="Chargement des features…" /></div>
-  if (roadmap.isError) {
-    return (
-      <div className="space-y-3 p-8">
-        <Alert tone="danger" title="Roadmap indisponible">
-          {roadmap.error instanceof ApiError ? roadmap.error.detail : String(roadmap.error)}
-        </Alert>
-        <RefreshButton onClick={() => roadmap.refetch()} busy={roadmap.isFetching} />
-      </div>
-    )
-  }
-  if (features.length === 0) {
-    return (
-      <div className="mx-auto max-w-2xl p-8">
-        <EmptyState
-          title="Aucune feature à dispatcher"
-          description="Ajoute une feature et ses tasks (CLI cockpit ou API) pour dispatcher un worker sur sa NEXT task."
-        />
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-4 p-6">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex flex-wrap gap-1.5">
-          {/* Sélecteur de feature = toggle, PAS l'action primaire (axe 2) : l'accent plein est réservé au
-              bouton « Dispatcher la NEXT task ». La sélection se marque par une bordure accent. */}
-          {features.map((f) => (
-            <Button
-              key={f.id}
-              size="sm"
-              variant={f.slug === active ? 'secondary' : 'ghost'}
-              className={f.slug === active ? 'border-accent-500 text-fg' : undefined}
-              onClick={() => setSelected(f.slug)}
-            >
-              {f.title ?? f.slug}
-              {f.next && <span className="ml-1.5 opacity-70">· prêt</span>}
-            </Button>
-          ))}
-        </div>
-        <RefreshButton onClick={() => roadmap.refetch()} busy={roadmap.isFetching} />
-      </div>
-      {feature && <DispatchPanel key={feature.id} project={project} feature={feature} />}
-    </div>
-  )
-}
-
 /** Panneau d'une feature : NEXT task, bouton de dispatch, transcript du job sélectionné, historique.
- *  Un run EN COURS est streamé en live (WS) ; un run TERMINÉ est lu at-rest par HTTP (pas de socket ouvert). */
-function DispatchPanel({ project, feature }: { project: string; feature: FeatureWithTasks }) {
+ *  Un run EN COURS est streamé en live (WS) ; un run TERMINÉ est lu at-rest par HTTP (pas de socket ouvert).
+ *  Extrait de l'ex-onglet Dispatch pour être composé dans la surface « Travail » (fusion Dispatch+Gate). */
+export function DispatchPanel({ project, feature }: { project: string; feature: FeatureWithTasks }) {
   const onboarding = useOnboarding()
   const claudeAuth = onboarding.data?.claude_auth
   // Gate visible AVANT le clic : sans auth Claude, le POST /dispatch renverrait 403 (worker jamais spawné) →
