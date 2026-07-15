@@ -17,19 +17,18 @@ vi.mock('@/lib/queries', () => ({
   useRestartDeployment: noopMut,
   useDeploymentLogs: () => ({ data: { lines: [] }, isError: false, error: null, isFetching: false, refetch: vi.fn() }),
 }))
-vi.mock('@tanstack/react-router', () => ({ useParams: () => ({ project: 'svc' }) }))
 
-const { RuntimeTab } = await import('./RuntimeTab')
+const { RuntimeStrip } = await import('./RuntimeStrip')
 
 const dep = (over: Record<string, unknown>) =>
   ({ branch: 'dev', status: 'no_deploy', port: null, url: null, last_deploy_sha: null, ...over })
 
-describe('RuntimeTab', () => {
+describe('RuntimeStrip', () => {
   beforeEach(() => { h.deployments = [] })
 
   it('déploiement running → lien health-gated ACTIF (href présent) + statut « en marche »', () => {
     h.deployments = [dep({ status: 'running', port: 5250, url: 'http://127.0.0.1:5250' })]
-    render(<RuntimeTab />)
+    render(<RuntimeStrip project="svc" />)
     expect(screen.getByText('en marche')).toBeInTheDocument()
     // Le nom de branche n'est plus répété dans le lien (axe 5 : porté par le badge) — libellé « ouvrir ↗ ».
     const link = screen.getByRole('link', { name: /ouvrir/ })
@@ -38,14 +37,14 @@ describe('RuntimeTab', () => {
 
   it('déploiement stopped → lien INERTE (aucun href) + jamais un faux-vert', () => {
     h.deployments = [dep({ status: 'stopped', port: 5250, url: 'http://127.0.0.1:5250' })]
-    render(<RuntimeTab />)
+    render(<RuntimeStrip project="svc" />)
     expect(screen.getByText('arrêté')).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /ouvrir/ })).not.toBeInTheDocument()   // pas de lien mort
   })
 
   it('jamais déployé → « jamais déployé » (vide honnête, pas une erreur)', () => {
     h.deployments = [dep({ status: 'no_deploy' })]
-    render(<RuntimeTab />)
+    render(<RuntimeStrip project="svc" />)
     expect(screen.getByText('jamais déployé')).toBeInTheDocument()
   })
 })

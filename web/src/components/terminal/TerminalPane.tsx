@@ -175,8 +175,8 @@ export function TerminalPane({ project }: { project: string }) {
 
   const st = STATUS[status]
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="flex h-full flex-col gap-2">
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
         <p className="mr-auto text-xs text-faint">
           Login shell (<span className="font-mono">bash -l</span>) — tape{' '}
           <span className="font-mono">claude</span> pour lier ton compte (1ʳᵉ fois : login).
@@ -223,7 +223,7 @@ export function TerminalPane({ project }: { project: string }) {
       </div>
       <div
         ref={hostRef}
-        className="h-[70vh] min-h-80 overflow-hidden rounded-card border border-border bg-bg p-3"
+        className="min-h-0 flex-1 overflow-hidden rounded-card border border-border bg-bg p-3"
       />
     </div>
   )
