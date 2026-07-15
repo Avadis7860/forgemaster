@@ -2,7 +2,7 @@ import { Link, useNavigate, useParams } from '@tanstack/react-router'
 import { useProjects, useGitSync } from '@/lib/queries'
 import { cn } from '@/lib/cn'
 import { syncTone, dotClasses } from '@/lib/statusTone'
-import { Alert, Badge, Card, Eyebrow, EmptyState, LoadingState } from '@/components/ui'
+import { Alert, Badge, Button, Card, Eyebrow, EmptyState, LoadingState } from '@/components/ui'
 import { NewProjectForm } from '@/components/NewProjectForm'
 import type { Project } from '@/lib/schemas'
 
@@ -32,7 +32,9 @@ function EntityCard({ p, active }: { p: Project; active: string | undefined }) {
           </span>
           <Badge tone={isActive ? 'accent' : 'neutral'}>{p.backend}</Badge>
         </div>
-        {p.name && <p className="truncate text-xs text-muted">{p.name}</p>}
+        {/* Sous-titre = le nom SEULEMENT s'il apporte une info (≠ slug) — sinon on ré-affiche le slug pour
+            rien (axe 5, anti-redondance : un organisateur unique par donnée). */}
+        {p.name && p.name !== p.slug && <p className="truncate text-xs text-muted">{p.name}</p>}
       </Link>
     </Card>
   )
@@ -60,15 +62,27 @@ function EntitySection(
 
 /** Rail de gauche = l'espace de travail : entités classées en **Projets** (travaillés) et **Outils**
  *  (génériques du framework) via `kind`, sélectionnables + création. Contexte global du shell. */
-export function ProjectRail() {
+export function ProjectRail({ open = false, onClose }: { open?: boolean; onClose?: () => void }) {
   const projects = useProjects()
   const active = useParams({ strict: false }).project
   const navigate = useNavigate()
 
   return (
-    <aside className="z-(--z-rail) flex w-72 shrink-0 flex-col border-r border-border bg-surface/40">
-      <div className="border-b border-border px-4 py-3">
+    <aside
+      className={cn(
+        'flex w-72 shrink-0 flex-col border-r border-border',
+        // Mobile : tiroir off-canvas plein-hauteur (opaque, au-dessus du scrim) — glisse selon `open`.
+        'fixed inset-y-0 left-0 z-(--z-drawer) bg-surface transition-transform duration-200',
+        open ? 'translate-x-0' : '-translate-x-full',
+        // Desktop (≥ md) : rail statique dans le flux, translucide, jamais masqué.
+        'md:static md:z-(--z-rail) md:translate-x-0 md:bg-surface/40',
+      )}
+    >
+      <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <Eyebrow>Espace de travail</Eyebrow>
+        <Button variant="ghost" size="sm" onClick={onClose} aria-label="Fermer" className="md:hidden">
+          <span aria-hidden>✕</span>
+        </Button>
       </div>
 
       <div className="min-h-0 flex-1 space-y-4 overflow-auto p-3">

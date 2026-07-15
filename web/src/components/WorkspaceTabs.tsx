@@ -16,13 +16,13 @@ const TABS: Tab[] = [
   { key: 'terminal', label: 'Terminal', to: '/$project/terminal', exact: false },
 ]
 
-const BASE = 'border-b-2 px-3 py-2 text-sm font-medium transition-colors'
+const BASE = 'shrink-0 whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors'
 
 /** Barre d'onglets du workspace (IA option A complète). Les 4 onglets sont navigables ; l'onglet actif est
  *  souligné par l'accent via `activeProps` (le routeur sait quel onglet est courant). */
 export function WorkspaceTabs({ project, className }: { project: string; className?: string }) {
   return (
-    <nav className={cn('-mb-px flex items-center gap-1', className)}>
+    <nav className={cn('-mb-px flex items-center gap-1 overflow-x-auto', className)}>
       {TABS.map((t) => (
         <Link
           key={t.key}

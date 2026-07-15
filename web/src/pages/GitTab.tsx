@@ -57,6 +57,8 @@ export function GitTab() {
   const unified = isLogUnified(data.ahead_behind, refs.length)
   const hasBranches = data.branches.length > 0
   const headSha = (data.branches.find((b) => b.name === 'dev') ?? data.branches[0])?.sha
+  // Branche représentante de la paire protégée (dev/main) pour la rangée unifiée quand dev==main.
+  const unifiedHead = data.branches.find((b) => refs.includes(b.name))
 
   return (
     <div className="space-y-4 p-6">
@@ -96,7 +98,22 @@ export function GitTab() {
             <p className="text-sm font-medium text-fg">Branches</p>
             {hasBranches ? (
               <ul className="space-y-2">
-                {data.branches.map((b) => <BranchRow key={b.name} branch={b} onSelect={setSha} />)}
+                {/* dev==main : une seule rangée pour la paire protégée (axe 5, pas deux lignes identiques) ;
+                    les autres branches (features) restent distinctes. */}
+                {unified && unifiedHead ? (
+                  <>
+                    <BranchRow
+                      branch={unifiedHead}
+                      also={refs.filter((r) => r !== unifiedHead.name)}
+                      onSelect={setSha}
+                    />
+                    {data.branches
+                      .filter((b) => !refs.includes(b.name))
+                      .map((b) => <BranchRow key={b.name} branch={b} onSelect={setSha} />)}
+                  </>
+                ) : (
+                  data.branches.map((b) => <BranchRow key={b.name} branch={b} onSelect={setSha} />)
+                )}
               </ul>
             ) : (
               <EmptyState title="Aucune branche" description="Le SoT ne porte encore aucune branche." />
@@ -248,13 +265,22 @@ function ReconcilePanel({ project, sync, onDone, onClose }: {
 }
 
 /** Une branche : nom (ton par réf) + sha court mono + sujet, cliquable pour ouvrir le détail du commit de
- *  tête (via la primitive Button, jamais un bouton HTML brut — R1). */
-function BranchRow({ branch, onSelect }: { branch: GitBranch; onSelect: (sha: string) => void }) {
+ *  tête (via la primitive Button, jamais un bouton HTML brut — R1). `also` (mode unifié dev==main) : réfs
+ *  supplémentaires pointant le MÊME commit, rendues en badges + « identiques » sur une seule rangée (axe 5). */
+function BranchRow({ branch, also, onSelect }: {
+  branch: GitBranch
+  also?: string[]
+  onSelect: (sha: string) => void
+}) {
   return (
     <li>
       <Button variant="ghost" size="sm" onClick={() => onSelect(branch.sha)}
         className="w-full justify-start gap-3">
-        <Badge tone={gitBranchTone(branch.name)}>{branch.name}</Badge>
+        <span className="flex shrink-0 items-center gap-1.5">
+          <Badge tone={gitBranchTone(branch.name)}>{branch.name}</Badge>
+          {also?.map((n) => <Badge key={n} tone={gitBranchTone(n)}>{n}</Badge>)}
+          {also && also.length > 0 && <span className="text-xs text-faint">identiques</span>}
+        </span>
         <code className="shrink-0 font-mono text-xs text-muted">{branch.sha}</code>
         <span className="truncate text-sm text-muted" title={branch.subject}>{branch.subject}</span>
       </Button>

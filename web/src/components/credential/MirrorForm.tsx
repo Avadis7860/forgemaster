@@ -26,9 +26,11 @@ export function MirrorForm({ project, mirror }: { project: string; mirror: strin
         ) : (
           <span className="text-xs text-faint">aucun miroir</span>
         )}
+        {/* Action constructive → `secondary` (bordée, visible) : elle ne doit pas être moins affordante que
+            l'action destructive `Délier` voisine (axe 6 : un élément cliquable doit paraître cliquable). */}
         <Button
           size="sm"
-          variant="ghost"
+          variant="secondary"
           onClick={() => {
             setUrl(mirror ?? '')
             setOpen(true)

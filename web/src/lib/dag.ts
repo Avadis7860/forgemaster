@@ -5,7 +5,10 @@
 import type { TaskClassified } from './schemas'
 
 // Dimensions des nœuds/colonnes (SoT unique — le composant les réutilise pour dimensionner à l'identique).
-export const NODE_W = 196
+// NODE_W élargi 196→280 (axe 4) : à 196 les titres de task tronquaient (`Documenter la bou…`) alors que la
+// largeur de carte était massivement libre ; 280 fait tenir un titre de task typique, la troncature (+ tooltip)
+// ne se déclenche plus que sur les titres réellement longs. Le graphe reste `overflow-x-auto` pour les DAG larges.
+export const NODE_W = 280
 export const NODE_H = 60
 const COL_GAP = 64
 const ROW_GAP = 18

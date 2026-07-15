@@ -47,7 +47,9 @@ export function CredentialForm({ project, backend, linked, linkedRef, compact = 
           </Badge>
         )}
         {linkedRef && <code className="font-mono text-xs text-faint">réf {linkedRef.slice(0, 8)}…</code>}
-        <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>
+        {/* Constructif `secondary` (visible) ≥ destructif `danger` voisin (axe 6 affordance + axe 2 : le
+            chemin constructif ne doit pas être moins saillant que le destructif). */}
+        <Button size="sm" variant="secondary" onClick={() => setOpen(true)}>
           Remplacer
         </Button>
         <Button size="sm" variant="danger" busy={unlink.isPending} onClick={() => unlink.mutate()}>

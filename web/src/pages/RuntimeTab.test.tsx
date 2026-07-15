@@ -31,7 +31,8 @@ describe('RuntimeTab', () => {
     h.deployments = [dep({ status: 'running', port: 5250, url: 'http://127.0.0.1:5250' })]
     render(<RuntimeTab />)
     expect(screen.getByText('en marche')).toBeInTheDocument()
-    const link = screen.getByRole('link', { name: /ouvrir dev/ })
+    // Le nom de branche n'est plus répété dans le lien (axe 5 : porté par le badge) — libellé « ouvrir ↗ ».
+    const link = screen.getByRole('link', { name: /ouvrir/ })
     expect(link).toHaveAttribute('href', 'http://127.0.0.1:5250')
   })
 
