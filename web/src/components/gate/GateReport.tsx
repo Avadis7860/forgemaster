@@ -3,7 +3,8 @@ import { GATE_SEVERITY_TONE, toneFor } from '@/lib/statusTone'
 import type { MergeDecision, ReviewStatus, VerifyStatus } from '@/lib/schemas'
 
 // Pièces présentationnelles PURES de la vue Gate (props uniquement, pas de hook) — testables isolément et
-// réutilisables. La page GateTab orchestre les données ; ces composants rendent la décision et l'évidence.
+// réutilisables. Le GatePanel (stage « Valider & merger » de la surface Travail) orchestre les données ; ces
+// composants rendent la décision et l'évidence.
 
 /** Bannière de décision : l'état de merge (hold / merge autorisé / bloqué) + les bloqueurs si rouge.
  *  Le front ne recompose JAMAIS la décision — il rend `compose_merge_decision` (source unique Python). */

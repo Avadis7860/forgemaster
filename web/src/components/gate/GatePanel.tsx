@@ -1,77 +1,14 @@
 import { useState } from 'react'
-import { useParams, useSearch } from '@tanstack/react-router'
 import { Alert, Button, Card, EmptyState, Input, LoadingState, RefreshButton } from '@/components/ui'
 import { DecisionBanner, ReviewEvidence, VerifyEvidence } from '@/components/gate/GateReport'
 import { ApiError } from '@/lib/api'
-import { useGate, useMerge, useRoadmap } from '@/lib/queries'
+import { useGate, useMerge } from '@/lib/queries'
 import type { FeatureWithTasks } from '@/lib/schemas'
 
-/** Onglet Gate : lit la vue Gate d'une feature (statut brut Tier-1/Tier-1.5 + décision composée en preview
- *  GO=false) et expose le **GO humain** de merge. Invariant fail-closed : gate vert SANS go ⇒ hold, jamais
- *  merge (le backend décide ; le front ne recompose jamais la décision). */
-export function GateTab() {
-  const project = useParams({ strict: false }).project ?? ''
-  const { feature: deepFeature } = useSearch({ strict: false }) as { feature?: string }
-  const roadmap = useRoadmap(project)
-
-  const features = roadmap.data?.features ?? []
-  const [selected, setSelected] = useState<string | null>(null)
-  // Feature effective : sélection explicite → deep-link → 1ʳᵉ non mergée → 1ʳᵉ feature.
-  const active =
-    selected ?? deepFeature ?? features.find((f) => f.status !== 'merged')?.slug ?? features[0]?.slug ?? null
-  const feature = features.find((f) => f.slug === active) ?? null
-
-  if (roadmap.isLoading)
-    return <div className="p-8"><LoadingState label="Chargement des features…" /></div>
-  if (roadmap.isError) {
-    return (
-      <div className="space-y-3 p-8">
-        <Alert tone="danger" title="Roadmap indisponible">
-          {roadmap.error instanceof ApiError ? roadmap.error.detail : String(roadmap.error)}
-        </Alert>
-        <RefreshButton onClick={() => roadmap.refetch()} busy={roadmap.isFetching} />
-      </div>
-    )
-  }
-  if (features.length === 0) {
-    return (
-      <div className="mx-auto max-w-2xl p-8">
-        <EmptyState
-          title="Aucune feature à passer au gate"
-          description="Ajoute une feature et dispatche ses tasks (CLI cockpit ou API) : le gate évalue la branche produite."
-        />
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-4 p-6">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex flex-wrap gap-1.5">
-          {/* Sélecteur de feature = toggle de sélection, PAS l'action primaire (axe 2) : l'accent plein est
-              réservé au GO. La sélection se marque par une bordure accent (pas de remplissage teal concurrent). */}
-          {features.map((f) => (
-            <Button
-              key={f.id}
-              size="sm"
-              variant={f.slug === active ? 'secondary' : 'ghost'}
-              className={f.slug === active ? 'border-accent-500 text-fg' : undefined}
-              onClick={() => setSelected(f.slug)}
-            >
-              {f.title ?? f.slug}
-              {f.status === 'merged' && <span className="ml-1.5 opacity-70">· mergée</span>}
-            </Button>
-          ))}
-        </div>
-        <RefreshButton onClick={() => roadmap.refetch()} busy={roadmap.isFetching} />
-      </div>
-      {feature && <GatePanel key={feature.id} project={project} feature={feature} />}
-    </div>
-  )
-}
-
-/** Panneau d'une feature : décision de merge (bannière), évidence Tier-1/Tier-1.5, overrides + GO humain. */
-function GatePanel({ project, feature }: { project: string; feature: FeatureWithTasks }) {
+/** Panneau d'une feature : décision de merge (bannière), évidence Tier-1/Tier-1.5, overrides + GO humain.
+ *  Invariant fail-closed : gate vert SANS go ⇒ hold, jamais merge (le backend décide ; le front ne recompose
+ *  jamais la décision). Extrait de l'ex-onglet Gate pour être composé dans la surface « Travail ». */
+export function GatePanel({ project, feature }: { project: string; feature: FeatureWithTasks }) {
   const gate = useGate(project, feature.slug)
   const merge = useMerge(project, feature.slug)
   const [t1Override, setT1Override] = useState('')

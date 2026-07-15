@@ -1,15 +1,15 @@
 import { Link } from '@tanstack/react-router'
 import { cn } from '@/lib/cn'
 
-// Onglets du workspace projet (IA option A, complète) : Roadmap + Dispatch + Gate + Terminal, tous livrés
-// (V2/V3/V4/V5). L'onglet actif est souligné par l'accent via `activeProps`.
+// Onglets du workspace projet (refonte IA v3, en cours) : Dispatch + Gate fusionnés en « Travail » (P2, une
+// boucle staged). Ops (Git+Runtime+Terminal+Flow) et Accueil (Docs fondu) suivent (P3/P4). L'onglet actif est
+// souligné par l'accent via `activeProps`.
 type Tab = { key: string; label: string; to: string; exact: boolean }
 
 const TABS: Tab[] = [
   { key: 'roadmap', label: 'Roadmap', to: '/$project', exact: true },
   { key: 'docs', label: 'Docs', to: '/$project/docs', exact: false },
-  { key: 'dispatch', label: 'Dispatch', to: '/$project/dispatch', exact: false },
-  { key: 'gate', label: 'Gate', to: '/$project/gate', exact: false },
+  { key: 'travail', label: 'Travail', to: '/$project/travail', exact: false },
   { key: 'git', label: 'Git', to: '/$project/git', exact: false },
   { key: 'runtime', label: 'Runtime', to: '/$project/runtime', exact: false },
   { key: 'flow', label: 'Flow', to: '/$project/flow', exact: false },

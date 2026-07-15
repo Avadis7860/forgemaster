@@ -15,7 +15,7 @@ export function Landing() {
             <h2 className="text-lg font-semibold text-fg">Bienvenue dans ton cockpit</h2>
             <p className="text-sm text-muted">
               Ton instance est neuve. Configure-la en quelques étapes — coffre de secrets, premier projet,
-              miroir GitHub optionnel — puis lance la forge : projet → roadmap → dispatch → gate → merge.
+              miroir GitHub optionnel — puis lance la forge : projet → roadmap → travail (dispatch → validation → merge).
             </p>
           </div>
           <Link to="/setup">
@@ -30,7 +30,7 @@ export function Landing() {
     <div className="mx-auto max-w-2xl p-8">
       <EmptyState
         title="Sélectionne un projet"
-        description="Choisis un projet dans le rail de gauche, ou crée-en un nouveau. La forge orchestre projet → roadmap → dispatch → gate → merge."
+        description="Choisis un projet dans le rail de gauche, ou crée-en un nouveau. La forge orchestre projet → roadmap → travail (dispatch → validation → merge)."
       />
     </div>
   )
