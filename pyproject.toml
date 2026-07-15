@@ -21,10 +21,11 @@ dependencies = [
   # secret store par défaut (EncryptedFileStore) : chiffrement authentifié au repos (Fernet). Import PARESSEUX
   # dans secrets/file_store.py — le socle reste stdlib-pur, la dép n'est tirée qu'à l'usage du store fichier.
   "cryptography>=42",
-  # moteur de séquencement des tasks (DAG, classification, eff_prio) : dé-fork du resolver vendoré →
-  # `roadmap/resolver.py` importe `taskmap.core`. Une seule copie vivante du moteur (SoT = repo task-map,
-  # épinglé au SHA P0). Dep runtime privée : tirée au build du wheel (token repo privé au pip-install).
-  "task-map @ git+https://github.com/Avadis7860/task-map@85bd32e",
+  # moteur de séquencement des tasks (DAG, classification, eff_prio) : `roadmap/resolver.py` importe
+  # `taskmap.core`. VENDORÉ dans le wheel (comme `codemap`) par deploy/build-wheel.sh depuis le sibling
+  # ../task-map (SoT épinglé au SHA 85bd32e) → wheel AUTO-CONTENU, plus de dép git privée à cloner au
+  # pip-install sur un hôte frais. Volontairement PAS dans project.dependencies (embarqué au build) ; en
+  # dev : `pip install -e ../task-map`.
   # client MCP runtime (`mcp/client.py`) : résout un `blueprint:` en direct via `mcp-catalogs`. Même plancher
   # que le serveur (≥3.2.0 pour CVE-2026-32871). Import PARESSEUX (tiré à l'appel, socle non alourdi).
   "fastmcp>=3.3.1",
@@ -42,12 +43,6 @@ cockpit = "cockpit.cli:main"
 
 [project.urls]
 Repository = "https://github.com/Avadis7860/cockpit"
-
-# La dép runtime `task-map` est une référence directe (git+https, repo privé épinglé au SHA). Hatchling refuse
-# une direct reference dans `project.dependencies` sans cet opt-in explicite → sans lui, `pip wheel .` échoue
-# (metadata-generation-failed). SoT-and-derive : une seule copie vivante du moteur, tirée au SHA au pip-install.
-[tool.hatch.metadata]
-allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cockpit"]

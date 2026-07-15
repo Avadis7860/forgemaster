@@ -1,6 +1,7 @@
 """hatch_build.py — hook de packaging : embarque dans le wheel les artefacts sibling que la cible
-Python-seule ne pourrait pas se procurer autrement — la **SPA** buildée (`cockpit/_web_dist`) ET le package
-**`codemap`** (l'outil code-map, `python -m codemap`).
+Python-seule ne pourrait pas se procurer autrement — la **SPA** buildée (`cockpit/_web_dist`), le package
+**`codemap`** (l'outil code-map, `python -m codemap`) ET le package **`taskmap`** (moteur de graphe importé
+par `roadmap/resolver.py` ; vendoré → wheel auto-contenu, aucune dép git privée à cloner au `pip install`).
 
 Distribution turnkey : **l'utilisateur final n'installe que Python** ; l'UI *et* code-map voyagent dans le
 wheel. Le hook est **volontairement minimal** — il *force-include* ce qui est déjà stagé, il ne build/ne
@@ -31,6 +32,10 @@ _WARN_NO_CODEMAP = (
     "[cockpit] build/vendor/codemap absent → wheel SANS code-map (Flow indisponible côté cible). "
     "Passe par `deploy/build-wheel.sh` (il stage le sibling ../code-map) pour un wheel de release."
 )
+_WARN_NO_TASKMAP = (
+    "[cockpit] build/vendor/taskmap absent → wheel SANS taskmap (moteur DAG ABSENT côté cible → "
+    "`No module named taskmap`). Passe par `deploy/build-wheel.sh` (il stage le sibling ../task-map)."
+)
 
 
 def plan_force_includes(root: Path) -> tuple[dict[str, str], list[str]]:
@@ -39,9 +44,12 @@ def plan_force_includes(root: Path) -> tuple[dict[str, str], list[str]]:
       • SPA buildée `web/dist` → `cockpit/_web_dist` (l'UI voyage dans le wheel) ;
       • package `build/vendor/codemap` (stagé par `deploy/build-wheel.sh`) → top-level `codemap`, importable
         par le venv (`sys.executable -m codemap`, cf. src/cockpit/codemap/index.py) — sans lui l'onglet Flow
-        tombe (`No module named codemap`).
+        tombe (`No module named codemap`) ;
+      • package `build/vendor/taskmap` (stagé par `deploy/build-wheel.sh`) → top-level `taskmap`, importé par
+        `roadmap/resolver.py` (`taskmap.core`) — vendoré pour que le wheel soit auto-contenu (plus de dép git
+        privée `task-map @ git+…` à cloner au `pip install`) ; sans lui le daemon tombe (`No module named taskmap`).
     Chaque artefact absent → un warning (dégradation gracieuse ; en dev/editable les stagings sont absents et
-    l'on skippe proprement : la SPA vient de `cockpit setup`, code-map est déjà éditable-installé)."""
+    l'on skippe proprement : la SPA vient de `cockpit setup`, code-map/task-map sont déjà éditable-installés)."""
     root = Path(root)
     force: dict[str, str] = {}
     warnings: list[str] = []
@@ -53,6 +61,10 @@ def plan_force_includes(root: Path) -> tuple[dict[str, str], list[str]]:
         force["build/vendor/codemap"] = "codemap"
     else:
         warnings.append(_WARN_NO_CODEMAP)
+    if (root / "build" / "vendor" / "taskmap" / "__init__.py").is_file():
+        force["build/vendor/taskmap"] = "taskmap"
+    else:
+        warnings.append(_WARN_NO_TASKMAP)
     return force, warnings
 
 

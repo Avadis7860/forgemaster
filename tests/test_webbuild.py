@@ -94,29 +94,47 @@ def test_ensure_codemap_installs_from_sibling(monkeypatch, tmp_path: Path):
     assert seen == [[sys.executable, "-m", "pip", "install", str(src)]]
 
 
-# -- hook de packaging : décision d'embarquement (SPA + code-map) dans le wheel --------------------------
+# -- hook de packaging : décision d'embarquement (SPA + code-map + taskmap) dans le wheel ----------------
 
 def _touch(p: Path) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("")
 
 
-def test_plan_force_includes_embeds_both_when_staged(tmp_path: Path):
-    _touch(tmp_path / "web" / "dist" / "index.html")
-    _touch(tmp_path / "build" / "vendor" / "codemap" / "__main__.py")
+def _stage_all(root: Path) -> None:
+    _touch(root / "web" / "dist" / "index.html")
+    _touch(root / "build" / "vendor" / "codemap" / "__main__.py")
+    _touch(root / "build" / "vendor" / "taskmap" / "__init__.py")
+
+
+def test_plan_force_includes_embeds_all_when_staged(tmp_path: Path):
+    _stage_all(tmp_path)
     force, warnings = hatch_build.plan_force_includes(tmp_path)
-    assert force == {"web/dist": "cockpit/_web_dist", "build/vendor/codemap": "codemap"}
+    assert force == {
+        "web/dist": "cockpit/_web_dist",
+        "build/vendor/codemap": "codemap",
+        "build/vendor/taskmap": "taskmap",
+    }
     assert warnings == []
 
 
 def test_plan_force_includes_warns_when_codemap_absent(tmp_path: Path):
     _touch(tmp_path / "web" / "dist" / "index.html")            # SPA présente, code-map absent
+    _touch(tmp_path / "build" / "vendor" / "taskmap" / "__init__.py")
     force, warnings = hatch_build.plan_force_includes(tmp_path)
-    assert force == {"web/dist": "cockpit/_web_dist"}           # codemap NON embarqué
+    assert "build/vendor/codemap" not in force                  # codemap NON embarqué
     assert any("code-map" in w for w in warnings)
 
 
-def test_plan_force_includes_warns_when_both_absent(tmp_path: Path):
+def test_plan_force_includes_warns_when_taskmap_absent(tmp_path: Path):
+    _touch(tmp_path / "web" / "dist" / "index.html")            # SPA + code-map présents, taskmap absent
+    _touch(tmp_path / "build" / "vendor" / "codemap" / "__main__.py")
+    force, warnings = hatch_build.plan_force_includes(tmp_path)
+    assert "build/vendor/taskmap" not in force                  # taskmap NON embarqué
+    assert any("taskmap" in w for w in warnings)
+
+
+def test_plan_force_includes_warns_when_all_absent(tmp_path: Path):
     force, warnings = hatch_build.plan_force_includes(tmp_path)
     assert force == {}
-    assert len(warnings) == 2
+    assert len(warnings) == 3                                   # SPA + code-map + taskmap
