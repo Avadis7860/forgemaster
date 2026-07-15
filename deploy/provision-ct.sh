@@ -96,6 +96,12 @@ if [ "$with_claude" = "yes" ]; then install_claude; fi
 # privées ; repos publics → clone anonyme. Node via nodeenv (rootless), sans sudo.
 echo "→ [4/8] outillage hôte-niveau (maps + Node + qualité py → $home/tools/bin)"
 if [ -n "$token_file" ]; then "$cockpit" tools install --token-file "$token_file"; else "$cockpit" tools install; fi
+# Auto-vérification (fail-loud) : les binaires que les bundles DÉCLARENT résolvent-ils vraiment sous
+# `tools_env` ? `cockpit doctor` = SONDE PURE (rc 0 = tout présent ; rc 1 = un binaire manque, il le nomme
+# + rappelle `cockpit tools install`). Sur rc 1 on ABORTE l'install ICI, au lieu de laisser le 1er worker le
+# constater absent. Sonde ≠ installe : on renvoie vers `cockpit tools install`, on ne réinstalle pas en boucle.
+echo "   auto-vérification de présence (cockpit doctor)"
+"$cockpit" doctor || { echo "✗ [4/8] outillage INCOMPLET après install (détail ci-dessus) — corrige (\`cockpit tools install\`) puis relance." >&2; exit 1; }
 
 echo "→ [5/8] unité systemd (portée $scope, host=$host port=$port)"
 "$cockpit" install-service $svc_flag --host "$host" --port "$port"
