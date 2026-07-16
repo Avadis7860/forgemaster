@@ -251,6 +251,38 @@ def test_declared_facets_have_backing_dirs(project_type):
             assert bundle[key].strip(), f"{project_type} : {key} vide"
 
 
+# Fichiers de code REPRÉSENTATIFS de la stack de chaque type (ce qu'un worker toucherait) → chaque groupe
+# toolchain qu'ils déclenchent DOIT monter dans le seed. service-api/cli-tool = Python ; front-ts/browser-game
+# = TypeScript unifié (node hors web/ → backend-node ; web/ → front).
+_TYPE_TOOLCHAIN_PROBES = {
+    "service-api": ["probe.py"],
+    "cli-tool": ["probe.py"],
+    "front-ts": ["server.mjs", "web/Probe.tsx"],
+    "browser-game": ["src/probe.ts", "web/Probe.tsx"],
+}
+
+
+@pytest.mark.parametrize("project_type", sorted(_TYPE_TOOLCHAIN_PROBES))
+def test_typed_seed_ships_mountable_toolchain(project_type: str, tmp_path: Path):
+    """**Garde-fou anti-récidive** : un bundle typé doit satisfaire sa PROPRE gate Tier-0. Pour chaque langage
+    que sa stack implique, le groupe toolchain déclenché doit **MONTER** (manifeste `pyproject.toml` /
+    `package.json`+`gate` présent dans le seed) — sinon tout worker touchant ce code tombe sur « toolchain non
+    montable » : échec par CONSTRUCTION (le trou trouvé au dogfood 2026-07-16, cher, alors qu'il était lisible
+    statiquement). Ce test le rend visible à chaque `pytest`, jamais plus à un E2E live."""
+    from cockpit.gate import toolchain
+    wt = tmp_path / project_type
+    for rel, content in load_bundle(project_type).items():
+        p = wt / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    triggered = toolchain.applicable_triggers(_TYPE_TOOLCHAIN_PROBES[project_type])
+    assert triggered, f"{project_type} : aucune probe ne déclenche de groupe (table de test à revoir)"
+    for group in triggered:
+        assert toolchain._steps_for(group, wt) is not None, (
+            f"{project_type} : le seed déclenche le groupe {group!r} mais sa toolchain n'est PAS montable "
+            f"(manifeste absent) → un worker échouerait le gate Tier-0 par construction")
+
+
 _BASE_CROSS_FACETS = ("code", "test", "infra", "review")
 
 

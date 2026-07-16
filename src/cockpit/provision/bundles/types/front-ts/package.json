@@ -1,0 +1,13 @@
+{
+  "name": "front",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "App front (TS) semée par le cockpit. Le script `gate` monte la toolchain Tier-0 (tsc types).",
+  "scripts": {
+    "gate": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "5.5.4"
+  }
+}

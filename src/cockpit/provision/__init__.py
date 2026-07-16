@@ -44,13 +44,22 @@ def discover_types() -> tuple[str, ...]:
     return ("generic", *overlays)
 
 
+# Dossiers d'artefacts/caches JAMAIS semés : sources only. Un cache d'outil (`.ruff_cache`, `.mypy_cache`,
+# `node_modules`…) porte des fichiers **binaires** qui casseraient la lecture UTF-8 du payload ET pollueraient
+# le SoT d'un projet. Ces caches peuvent apparaître dans un bundle si un outil tourne sur son manifeste
+# (ex. `ruff` descend dans un `pyproject.toml` de seed) → on les ignore à la lecture, par principe.
+_SKIP_DIRS = frozenset({
+    "__pycache__", ".ruff_cache", ".mypy_cache", ".pytest_cache", "node_modules", ".git",
+})
+
+
 def _walk_files(base: Path) -> Iterator[Path]:
     """Parcourt récursivement `base`, ordre **trié** par nom à chaque niveau (déterministe). `iterdir()`
-    inclut les dotfiles (`.docsmap.toml`, `.claude/`, `.cockpit/`) — voulu. Les artefacts de compilation
-    (`__pycache__/`, `*.pyc`) sont **exclus** : un payload semé porte des SOURCES, jamais du byte-code
+    inclut les dotfiles (`.docsmap.toml`, `.claude/`, `.cockpit/`) — voulu. Les artefacts de compilation et
+    caches d'outils (`_SKIP_DIRS`, `*.pyc`) sont **exclus** : un payload semé porte des SOURCES, jamais du
     binaire (qui casserait la lecture UTF-8 et polluerait le SoT d'un projet)."""
     for entry in sorted(base.iterdir(), key=lambda p: p.name):
-        if entry.name == "__pycache__":
+        if entry.name in _SKIP_DIRS:
             continue
         if entry.is_dir():
             yield from _walk_files(entry)

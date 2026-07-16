@@ -57,6 +57,10 @@ path = "hatch_build.py"
 line-length = 110
 target-version = "py311"
 src = ["src", "tests"]
+# Les bundles de payload sont des TEMPLATES (leur propre `pyproject.toml` + config), pas du code cockpit :
+# ruff ne doit pas y descendre (sinon il les lint sous une autre config ET y crée un `.ruff_cache` binaire
+# qui casse la lecture UTF-8 du payload). Leur qualité est prouvée par le seed lui-même + le garde-fou toolchain.
+extend-exclude = ["src/cockpit/provision/bundles"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

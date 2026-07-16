@@ -1,0 +1,13 @@
+{
+  "name": "game",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Jeu navigateur (TS unifié) semé par le cockpit. Le script `gate` monte la toolchain Tier-0 (tsc types).",
+  "scripts": {
+    "gate": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "5.5.4"
+  }
+}

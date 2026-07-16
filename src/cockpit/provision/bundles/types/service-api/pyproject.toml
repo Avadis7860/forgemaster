@@ -1,0 +1,26 @@
+# pyproject.toml — manifeste du package service (semé par le cockpit). Rend le projet **montable** par la
+# gate Tier-0 backend (`ruff` → `mypy` → `pytest`) DÈS SA CRÉATION : sans lui, tout `*.py` touché échoue
+# « toolchain non montable ». Ajoute tes dépendances (FastAPI…) sous `[project.dependencies]` au fil des
+# features. Config volontairement PRAGMATIQUE (pas `strict`) pour que du code de feature propre passe.
+[project]
+name = "service"
+version = "0.1.0"
+description = "Service backend semé par le cockpit (remplace au fil des features)."
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+check_untyped_defs = true
+warn_unused_ignores = true
+ignore_missing_imports = true   # une dép non encore installée dans le worktree ne casse pas le typage
+
+[tool.pytest.ini_options]
+addopts = "-q"
