@@ -1,14 +1,21 @@
 {
   "template": "browser-game-pve/scaffold",
-  "template_sha": "84a97459e55c2ba5e636d1ad81bb27d9d6944f72a11d4dd8463e2392808c8237",
+  "template_sha": "094b0a5cf9722c39054090d8eadd56bc83f0ae39d6d12e432170e7fec8b89114",
   "blueprint_sha": "1449935735475b86096432d8ecb0bdaa4f2f07932334b00470b264a873270a32",
-  "values_sha": "e2eb0c808453bc7c166d71e4f88c3119ce5fc0a967e9bc426e1e451aa05cce35",
+  "values_sha": "4f184d1fb548def5e2c3ff896d2f54c6e1969135c7aa52a995e55cd4d6cbedd3",
   "generator_version": "1",
   "managed_paths": [
     "CLAUDE.md",
     "package.json",
+    "server/index.ts",
     "src/index.ts",
+    "src/shared/schema.test.ts",
     "src/shared/schema.ts",
-    "tsconfig.json"
+    "tsconfig.json",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "web/App.tsx",
+    "web/index.html",
+    "web/main.tsx"
   ]
 }

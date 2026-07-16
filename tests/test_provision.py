@@ -292,6 +292,25 @@ def test_typed_seed_ships_mountable_toolchain(project_type: str, tmp_path: Path)
             f"(manifeste absent) → un worker échouerait le gate Tier-0 par construction")
 
 
+def test_browser_game_seeds_runnable_ts_mono_skeleton():
+    """DoD `cockpit-bundle-seeds-runnable-scaffold` : le seed browser-game porte un squelette TS-mono
+    **runnable né-avec** — client `web/` (Vite/React), serveur `server/` (Hono), modèle Zod partagé + son
+    test Vitest, gate `tsc → vitest`. On prouve la PRÉSENCE + la montabilité statique du squelette ; le vert
+    npm réel (`npm install && npm run dev` + `vitest`) se prouve sur env node, hors de ce gate."""
+    bundle = load_bundle("browser-game")
+    expected = ("package.json", "tsconfig.json", "vite.config.ts", "vitest.config.ts",
+                "src/shared/schema.ts", "src/shared/schema.test.ts", "server/index.ts",
+                "web/index.html", "web/main.tsx", "web/App.tsx")
+    for rel in expected:
+        assert rel in bundle and bundle[rel].strip(), f"squelette runnable : {rel} absent/vide du seed"
+    pkg = json.loads(bundle["package.json"])
+    assert "vitest" in pkg["scripts"]["gate"]                    # gate semé = tsc → vitest
+    assert "react" in pkg["dependencies"] and "hono" in pkg["dependencies"]   # univers unifié web + server
+    assert "{{game_name}}" in bundle["src/index.ts"]            # jeton de mission laissé (seed verbatim)
+    for rel in ("web/App.tsx", "web/index.html"):               # genericité : aucun slug figé côté client
+        assert "cockpit-" not in bundle[rel] and "demo" not in bundle[rel].lower()
+
+
 _BASE_CROSS_FACETS = ("code", "test", "infra", "review")
 
 

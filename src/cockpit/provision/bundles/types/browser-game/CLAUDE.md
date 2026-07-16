@@ -12,7 +12,9 @@
   **ne vit PAS ici** : il vit dans `docs/design.md` (foyer dynamique de la conception). N'inline **jamais** le
   design dans ce fichier ; ce `CLAUDE.md` reste la base structurelle (framework / comment-travailler / règles).
 - **Public cible** : les **joueurs** (client web) et les mainteneurs du service serveur-autoritatif.
-- **État actuel** : **amorçage** — repo semé, à scaffolder (framework verrouillé, aucun `package.json` encore).
+- **État actuel** : **amorçage** — repo semé avec un **squelette TS-mono runnable né-avec** (`package.json` +
+  `web/` client Vite/React + `server/` Hono + Zod partagé + test Vitest ; gate `tsc → vitest` vert sans édition).
+  La stack est en place : tu **déroules É1** (modèle de domaine), tu ne scaffoldes PAS la toolchain.
 
 ## 2. Rôle de l'IA (persona)
 

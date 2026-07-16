@@ -18,8 +18,10 @@ def test_derive_reproduces_managed_set_with_jetons():
     """`derive_type` produit le set de fichiers managés attendu ; les jetons **archétype** sont remplis
     (gate/versions), les jetons **projet** restent `{{…}}` (remplis par le worker du projet)."""
     res = derive.derive_type("browser-game")
-    assert set(res.files) == {"package.json", "tsconfig.json", "src/shared/schema.ts", "src/index.ts",
-                              "CLAUDE.md"}
+    assert set(res.files) == {"package.json", "tsconfig.json", "src/shared/schema.ts",
+                              "src/shared/schema.test.ts", "src/index.ts", "server/index.ts",
+                              "web/index.html", "web/main.tsx", "web/App.tsx", "vite.config.ts",
+                              "vitest.config.ts", "CLAUDE.md"}
     assert res.template_ref == "browser-game-pve/scaffold"
     pkg = res.files["package.json"]
     assert '"name": "game"' in pkg and '"zod"' in pkg          # archétype rempli (nom valide, dép Zod)
