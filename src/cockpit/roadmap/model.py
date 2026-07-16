@@ -30,13 +30,22 @@ def _now() -> str:
 
 
 def _project_facets(project: dict) -> set[str]:
-    """Vocabulaire de facettes **valide pour CE projet** = les facettes déclarées par son bundle (registre
-    filesystem, keyed par `project_type`) — registre-driven, jamais un enum global (`bundle_registry_source`).
-    Type retiré/cassé du registre → fallback `{'doc'}` (facette de base, toujours présente). Fail-soft."""
+    """Vocabulaire de facettes **valide pour CE projet** = les facettes de son bundle **∪ les facettes de
+    base** (registre filesystem, keyed par `project_type`) — registre-driven, jamais un enum global
+    (`bundle_registry_source`). Les facettes de base (doc + cross-cutting code/test/infra/review) sont
+    héritées par TOUT type (composition `base ⊕ overlay`) → toujours dispatchables, même si un overlay ne
+    les re-déclare pas. Type retiré/cassé → fallback `{'doc'}` (base, toujours présente). Fail-soft."""
+    own: set[str] = set()
     try:
-        return set(read_bundle_manifest(project.get("project_type") or "generic").get("facets") or [])
+        pt = project.get("project_type") or "generic"
+        own = set(read_bundle_manifest(pt).get("facets") or [])
     except BundleError:
-        return {"doc"}
+        pass
+    try:
+        base = set(read_bundle_manifest("generic").get("facets") or [])
+    except BundleError:
+        base = {"doc"}
+    return (own | base) or {"doc"}
 
 
 def add_feature(conn: sqlite3.Connection, *, project_slug: str, slug: str, title: str | None = None,

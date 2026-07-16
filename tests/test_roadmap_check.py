@@ -100,6 +100,18 @@ def test_bad_facet_after_bundle_drift_is_flagged(ctx):
     assert any(i.kind == "BAD_FACET" for i in check.check_roadmap(conn, "proj"))
 
 
+def test_base_cross_cutting_facet_valid_on_typed_project(ctx):
+    """Une facette de base (test/infra/review/code) est valide sur un projet TYPÉ : ses dossiers sont hérités
+    de base (composition base ⊕ overlay), donc dispatchables — `roadmap check` ne la flague PAS `BAD_FACET`,
+    même si l'overlay du type ne la re-déclare pas."""
+    settings, conn = ctx
+    # overlay front-ts = frontend/backend/doc ; `test` est une facette de BASE, hors de l'overlay
+    registry.create_project(conn, settings, slug="proj", project_type="front-ts")
+    model.add_feature(conn, project_slug="proj", slug="qa", facet="test")
+    model.add_task(conn, feature_ref="proj/qa", slug="cover", acceptance="x")
+    assert not any(i.kind == "BAD_FACET" for i in check.check_roadmap(conn, "proj"))
+
+
 def test_feature_dep_healthy_is_no_issue(ctx):
     settings, conn = ctx
     registry.create_project(conn, settings, slug="proj", project_type="front-ts")
