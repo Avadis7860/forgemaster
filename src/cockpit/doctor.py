@@ -11,9 +11,11 @@ Déterministe (glob local des bundles vendorés + `shutil.which`), zéro réseau
 from __future__ import annotations
 
 import argparse
+import time
 
 from cockpit.config import Settings
 from cockpit.provision import _BUNDLES_DIR
+from cockpit.provision import mcp as mcp_provision
 from cockpit.tools import HOST_TOOLS, missing_bins, required_bins, tools_bin, tools_env
 
 
@@ -47,9 +49,30 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
         detail = f"MANQUE {', '.join(miss)}" if miss else "présents"
         print(f"  {icon} {r['type']}/{r['facet']} — {detail}  [{req}]")
         all_missing.update(miss)
+    mcp_ok = _report_mcp(settings)
     if all_missing:
         print(f"🔴 outillage INCOMPLET — pose les manquants (`cockpit tools install`) : "
               f"{', '.join(sorted(all_missing))}")
         return 1
+    if not mcp_ok:
+        return 1
     print(f"✅ outillage complet — tous les binaires déclarés résolvent sous {tools_bin(settings)}")
     return 0
+
+
+def _report_mcp(settings: Settings) -> bool:
+    """Imprime l'état du cycle de vie du token MCP (P4) et retourne `False` si le câblage est cassé ou qu'un
+    worktree porte un token expiré/expirant (le faux-négatif void-runner). Non câblé = OK honnête (install
+    public sans corpus privé) → n'échoue jamais le doctor."""
+    st = mcp_provision.check_lifecycle(settings, now=int(time.time()))
+    if not st["configured"]:
+        print(f"  ℹ️ MCP — {st['reason']}")
+        return True
+    if not st["healthy"]:
+        print(f"  🔴 MCP — {st['reason']} → rafraîchis (`cockpit mcp wire <projet>` ou re-dispatch)")
+        for s in st["stale"]:
+            print(f"       ↳ {s['worktree']} (exp {s['exp']})")
+        return False
+    hours = (st["exp"] - int(time.time())) // 3600 if st["exp"] else 0
+    print(f"  ✅ MCP câblé — token servi valide (exp dans ~{hours} h ; re-minté à chaque dispatch)")
+    return True

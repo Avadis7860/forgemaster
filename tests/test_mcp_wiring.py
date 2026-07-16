@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -50,6 +51,52 @@ def test_mint_and_verify_roundtrip():
 def test_mint_rejects_short_secret():
     with pytest.raises(ValueError):
         mint_hs256("s", "trop-court", audience="vault-catalogs")
+
+
+# -- P4 : cycle de vie du token (token_exp / worktree_token / check_lifecycle) ----------------------
+
+def test_token_exp_reads_exp_and_none_on_malformed():
+    tok = mint_hs256("cockpit:x", _SECRET, audience="vault-catalogs", ttl_seconds=3600)
+    exp = mcp.token_exp(tok)
+    assert exp is not None and exp > int(time.time())
+    assert mcp.token_exp("pas-un-jwt") is None and mcp.token_exp("a.b") is None    # malformé → None
+
+
+def test_worktree_token_extracts_bearer(tmp_path: Path):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    (wt / ".mcp.json").write_text(json.dumps(mcp.render_mcp_config("TOK123")), encoding="utf-8")
+    assert mcp.worktree_token(wt) == "TOK123"
+    assert mcp.worktree_token(tmp_path / "vide") is None       # .mcp.json absent → None
+
+
+def test_check_lifecycle_unconfigured_is_honest(tmp_path: Path):
+    st = mcp.check_lifecycle(_settings(tmp_path), now=1000, secret_ref="")
+    assert st["configured"] is False and st["healthy"] is True  # install public sans corpus privé
+
+
+def test_check_lifecycle_bad_secret_is_unhealthy(tmp_path: Path):
+    st = mcp.check_lifecycle(_settings(tmp_path), now=1000, secret_ref="ref", resolver=lambda _r: "court")
+    assert st["configured"] and not st["healthy"] and "secret" in st["reason"]
+
+
+def test_check_lifecycle_healthy_when_no_stale_worktree(tmp_path: Path):
+    st = mcp.check_lifecycle(_settings(tmp_path), now=int(time.time()),
+                             secret_ref="ref", resolver=lambda _r: _SECRET)
+    assert st["configured"] and st["healthy"] and st["exp"] > int(time.time()) and st["stale"] == []
+
+
+def test_check_lifecycle_flags_expired_worktree_token(tmp_path: Path):
+    """Le faux-négatif void-runner : un worktree porte un `.mcp.json` dont le token expire avant la fin d'un
+    run → `stale`, `healthy=False` (doctor rougirait)."""
+    settings = _settings(tmp_path)
+    tok = mint_hs256("cockpit:proj", _SECRET, audience="vault-catalogs", ttl_seconds=3600)
+    wt = settings.projects_root / "proj" / "worktrees" / "feat"
+    wt.mkdir(parents=True)
+    (wt / ".mcp.json").write_text(json.dumps(mcp.render_mcp_config(tok)), encoding="utf-8")
+    future = 2_000_000_000                            # « maintenant » très futur → le token a expiré
+    st = mcp.check_lifecycle(settings, now=future, secret_ref="ref", resolver=lambda _r: _SECRET)
+    assert not st["healthy"] and len(st["stale"]) == 1 and str(wt) == st["stale"][0]["worktree"]
 
 
 # -- rendu du .mcp.json -----------------------------------------------------------------------------

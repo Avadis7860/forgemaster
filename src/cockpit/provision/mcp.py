@@ -25,7 +25,7 @@ from pathlib import Path
 
 from cockpit.config import Settings
 from cockpit.secrets import SecretNotFound, SecretUnsupported, build_store, cred_resolver
-from cockpit.secrets.jwt import mint_hs256
+from cockpit.secrets.jwt import b64url_decode, mint_hs256
 from cockpit.service import set_env_keys
 
 # Endpoint du serveur mcp-catalogs (HTTP + JWT, CT 9118). Non secret → override simple par env.
@@ -37,6 +37,10 @@ MCP_ISSUER = "vault-mcp"
 # Référence (dans le coffre du cockpit) du secret HMAC partagé qui signe les JWT du MCP. Absent → pas de MCP.
 ENV_MCP_JWT_SECRET_REF = "COCKPIT_MCP_JWT_SECRET_REF"
 _TTL_SECONDS = 86400  # 1 jour : couvre un dispatch long (≤1800s) avec marge, sans token longue-vie.
+# Décision de cycle de vie (P4) : le token est RE-MINTÉ à chaque dispatch (`inject_mcp_config` écrase le
+# `.mcp.json`) → just-in-time, jamais expiré au lancement d'un run frais. Le doctor ne signale donc un token
+# expiré/expirant que sur un worktree NON re-dispatché (le faux-négatif void-runner) — fenêtre = un run.
+_RUN_WINDOW_S = 1800.0  # fenêtre d'un dispatch (cf. worker.DISPATCH_TIMEOUT) : token qui expire avant = mort.
 
 _MCP_FILENAME = ".mcp.json"
 
@@ -76,6 +80,70 @@ def inject_mcp_config(worktree: Path, settings: Settings, *, slug: str,
     path.write_text(json.dumps(render_mcp_config(token), indent=2) + "\n", encoding="utf-8")
     path.chmod(0o600)                                      # porte le Bearer — lecture propriétaire seule
     return path
+
+
+# -- cycle de vie du token (P4 : détection d'expiration, déterministe, zéro réseau) -----------------
+
+def token_exp(token: str) -> int | None:
+    """L'`exp` (epoch) d'un JWT **sans le vérifier** — pour DÉTECTER une expiration (le doctor signale, il
+    n'authentifie pas). None si le token est malformé ou sans `exp`. PUR."""
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        claims = json.loads(b64url_decode(parts[1]))
+    except Exception:                                      # noqa: BLE001 — token malformé → pas d'exp lisible
+        return None
+    exp = claims.get("exp")
+    return int(exp) if isinstance(exp, (int, float)) else None
+
+
+def worktree_token(worktree: Path) -> str | None:
+    """Le Bearer du `.mcp.json` d'un worktree (le token réellement servi au worker), ou None (fichier absent /
+    illisible / forme inattendue). PUR."""
+    path = Path(worktree) / _MCP_FILENAME
+    if not path.is_file():
+        return None
+    try:
+        cfg = json.loads(path.read_text(encoding="utf-8"))
+        auth = cfg["mcpServers"][MCP_SERVER_LABEL]["headers"]["Authorization"]
+    except Exception:                                      # noqa: BLE001 — .mcp.json absent/malformé
+        return None
+    return auth.removeprefix("Bearer ").strip() or None
+
+
+def check_lifecycle(settings: Settings, *, now: int, window_s: float = _RUN_WINDOW_S,
+                    resolver: Callable[[str], str] | None = None,
+                    secret_ref: str | None = None) -> dict:
+    """Diagnostic **déterministe** (zéro réseau) du cycle de vie du token MCP, pour `cockpit doctor`. Retour :
+    `{configured, healthy, reason, exp, stale}`.
+
+    - **non câblé** (pas de `COCKPIT_MCP_JWT_SECRET_REF`) → `configured=False, healthy=True` (install public
+      sans corpus privé — dégradation prévue, pas une erreur) ;
+    - **ref posée mais secret illisible/court** → `configured=True, healthy=False` (câblage cassé → wire) ;
+    - **sinon** : mint un token témoin (ce qu'un dispatch minterait → prouve config + TTL) et scanne
+      les `.mcp.json` des worktrees ; un token **expiré ou expirant dans la fenêtre d'un run** = `stale` (le
+      faux-négatif void-runner : worktree non re-dispatché). `healthy` ⇔ mint OK et aucun stale."""
+    ref = secret_ref if secret_ref is not None else os.environ.get(ENV_MCP_JWT_SECRET_REF, "")
+    if not ref:
+        return {"configured": False, "healthy": True, "exp": None, "stale": [],
+                "reason": "MCP non câblé (install sans corpus privé)"}
+    resolve = resolver or cred_resolver(settings)
+    secret = resolve(ref)
+    if len(secret) < 32:
+        return {"configured": True, "healthy": False, "exp": None, "stale": [],
+                "reason": "secret MCP illisible/mal configuré (ref posée mais secret absent/trop court)"}
+    probe = mint_hs256("cockpit:doctor", secret, audience=MCP_AUDIENCE, issuer=MCP_ISSUER,
+                       ttl_seconds=_TTL_SECONDS)
+    stale: list[dict] = []
+    for wt_mcp in sorted(settings.projects_root.glob(f"*/worktrees/*/{_MCP_FILENAME}")):
+        tok = worktree_token(wt_mcp.parent)
+        exp = token_exp(tok) if tok else None
+        if exp is not None and exp <= now + window_s:      # expiré, ou expire avant la fin d'un run
+            stale.append({"worktree": str(wt_mcp.parent), "exp": exp})
+    healthy = not stale
+    reason = "" if healthy else f"{len(stale)} worktree(s) portent un token MCP expiré/expirant"
+    return {"configured": True, "healthy": healthy, "exp": token_exp(probe), "stale": stale, "reason": reason}
 
 
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
