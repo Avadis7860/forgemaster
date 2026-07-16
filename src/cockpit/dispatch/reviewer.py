@@ -28,7 +28,7 @@ from cockpit.git.internal import GitOpError, InternalGit
 from cockpit.projects.registry import sot_path_for
 from cockpit.provision import facet as facet_mod
 from cockpit.provision.mcp import inject_mcp_config
-from cockpit.roadmap import model
+from cockpit.roadmap import model, resolver
 from cockpit.tools import ToolPreflightError, preflight_tools, tools_env
 
 REVIEW_FACET = "review"
@@ -124,16 +124,29 @@ def _extract_findings(result_text: str | None) -> list[dict]:
 
 # -- readiness-gate + dispatch (cockpit-review-readiness-gate) ---------------------------------------
 
+# États taskmap **terminaux** d'une task (le worker n'a plus rien à y faire) : `DONE` (accompli) ou
+# `CANCELLED` (abandonné volontairement). Tout autre état — `READY`/`BLOCKED_DEPS`/`ACTIVE`/`BLOCKED`/
+# `ERROR`/`CYCLE` — signale du travail restant ou coincé → la review serait prématurée (faux-positifs).
+_TERMINAL_STATES = ("DONE", "CANCELLED")
+
+
 def _readiness(conn: sqlite3.Connection, feature_id: str) -> tuple[bool, str]:
     """La feature est-elle **prête pour la review** ? Gate déterministe (charte : ne pas reviewer un travail
-    inachevé → faux-positifs). Prêt ssi elle a ≥1 task ET **aucune** task `todo`/`in_progress` (le worker a
-    fini toutes ses phases). Retourne (ok, raison)."""
-    rows = conn.execute("SELECT status FROM tasks WHERE feature_id = ?", (feature_id,)).fetchall()
-    if not rows:
+    inachevé → faux-positifs). Prêt ssi elle a ≥1 task ET **toutes** ses tasks sont dans un état taskmap
+    terminal (`DONE`/`CANCELLED`). L'état vient de `resolver.classify` — la **même autorité de séquencement**
+    que le DAG (une seule source de vérité de « task faite ») : ainsi un `blocked`/`todo`-non-résolu →
+    `BLOCKED`/`READY`/`BLOCKED_DEPS`, non terminal → hold (l'ancien check `todo`/`in_progress` laissait passer
+    un `blocked`). Aucune heuristique métier : le signal de complétude générique EST la terminalité du statut,
+    l'ORDRE reste l'affaire du DAG `depends_on`. Retourne (ok, raison)."""
+    tasks = model.list_tasks(conn, feature_id)
+    if not tasks:
         return False, "aucune task dans la feature — rien à reviewer"
-    pending = [r["status"] for r in rows if r["status"] in ("todo", "in_progress")]
+    classified = resolver.classify({t["slug"]: t for t in tasks})
+    pending = {slug: c["state"] for slug, c in classified.items() if c["state"] not in _TERMINAL_STATES}
     if pending:
-        return False, f"travail inachevé — {len(pending)} task(s) non terminée(s) → hold (pas de review)"
+        detail = ", ".join(f"{slug}={state}" for slug, state in sorted(pending.items()))
+        return False, (f"travail inachevé — {len(pending)} task(s) non terminée(s) ({detail}) → hold "
+                       "(pas de review)")
     return True, "travail complet"
 
 

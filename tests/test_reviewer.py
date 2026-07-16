@@ -85,6 +85,22 @@ def test_reviewer_holds_on_empty_diff(ctx):
     assert report["reviewed"] is False and "jamais dispatchée" in report["reason"]
 
 
+def test_reviewer_holds_on_blocked_task(ctx):
+    """Une task `blocked` n'est ni `todo` ni `in_progress` mais reste **non terminale** (état taskmap
+    `BLOCKED`) → HOLD. Régression : l'ancien check `todo`/`in_progress` la laissait passer → review
+    prématurée. La readiness suit désormais la terminalité classée par le DAG (une seule autorité)."""
+    settings, conn = ctx
+    _seed(conn, settings)
+    worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=_writing_worker("x = 1\n"))
+    conn.execute("UPDATE tasks SET status = 'blocked' WHERE slug = 'impl'")   # coincée, pas terminale
+    conn.commit()
+    report = reviewer.dispatch_reviewer(conn, settings, feature_ref="proj/feat",
+                                        runner=_reviewer_runner('{"findings":[]}'))
+    assert report["reviewed"] is False
+    assert "inachevé" in report["reason"] and "BLOCKED" in report["reason"]
+    assert review.read_verdict(settings, "proj", "feat") is None            # aucun verdict prématuré
+
+
 # -- écriture du verdict + garde evidence⊂diff ------------------------------------------------------
 
 def test_reviewer_writes_clean_verdict_on_no_findings(ctx):
