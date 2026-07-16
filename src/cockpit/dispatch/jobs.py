@@ -15,8 +15,12 @@ import json
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from cockpit.core import ids
+
+if TYPE_CHECKING:
+    from cockpit.config import Settings
 
 DISPATCH_ENGINE = "worker-dispatch-v1"
 
@@ -73,6 +77,15 @@ def list_jobs(conn: sqlite3.Connection, feature_id: str) -> list[dict]:
 
 
 # -- résolution du transcript + lecture incrémentale (#5) -------------------------------------------
+
+def dispatch_log_path(settings: Settings, session_id: str) -> Path:
+    """Chemin du log **streamé** d'un dispatch : `<home>/logs/<session_id>.jsonl`. Le daemon y écrit le stdout
+    stream-json du worker au fil de l'eau (suivi live via `dispatch/stream`) → distinct du transcript de
+    session que `claude` écrit sous `~/.claude/projects/…` (jamais écrasé). Crée `logs/` au besoin."""
+    logs = settings.logs_dir
+    logs.mkdir(parents=True, exist_ok=True)
+    return logs / f"{session_id}.jsonl"
+
 
 def expected_transcript_path(session_id: str, cwd: str | Path, *, home: Path | None = None) -> Path:
     """Chemin **déterministe** attendu du transcript : `~/.claude/projects/<encode-cwd>/<session_id>.jsonl`.

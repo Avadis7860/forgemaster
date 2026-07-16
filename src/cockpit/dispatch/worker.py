@@ -56,6 +56,8 @@ def build_headless_argv(*, session_id: str, work: bool = True, model: str | None
     `mcp_config` est fourni, `--mcp-config <f>` charge le MCP de corpus injecté (non-strict : garde les autres
     configs). PUR."""
     argv = ["claude", "-p", "--output-format", output_format, "--session-id", session_id]
+    if output_format == "stream-json":
+        argv += ["--verbose"]            # `claude -p --output-format stream-json` EXIGE --verbose
     if model:
         argv += ["--model", model]
     argv += ["--allowedTools", WRITE_CODE_TOOLS if work else READONLY_TOOLS]
@@ -81,11 +83,39 @@ def _trailing_json_object(text: str) -> dict | None:
     return None
 
 
+def _result_event(text: str) -> dict | None:
+    """L'objet-résultat de `claude -p`. `--output-format json` émet **un seul** objet (runner de test aussi) ;
+    `stream-json` émet du **NDJSON** dont l'événement `{"type":"result",…}` porte le verdict final. On le
+    retrouve **par ligne** (rapide) plutôt que par un scan char-à-char O(n²) sur un gros transcript. Ordre :
+    objet unique → dernier `type==result` → dernier objet valide → fallback préambule. PUR."""
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return obj                       # objet unique (--output-format json / runner injecté)
+    except (ValueError, TypeError):
+        pass
+    result_ev: dict | None = None
+    last: dict | None = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            o = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(o, dict):
+            last = o
+            if o.get("type") == "result":
+                result_ev = o
+    return result_ev or last or _trailing_json_object(text)
+
+
 def parse_headless_result(stdout: str, returncode: int = 0) -> dict:
-    """Normalise la sortie de `claude -p --output-format json`. PUR (porté verbatim). Fail-LOUD : rc≠0,
-    sortie vide, JSON illisible, `is_error`/`api_error_status` → `ok=False` + `error` (jamais de faux-vert).
-    Tolérant au préambule (objet FINAL). Retour : {ok, is_error, result, session_id, cost_usd, num_turns,
-    error, raw}."""
+    """Normalise la sortie de `claude -p` (`--output-format json` OU `stream-json` NDJSON → event `result`).
+    PUR. Fail-LOUD : rc≠0, sortie vide, JSON illisible, `is_error`/`api_error_status` → `ok=False` + `error`
+    (jamais de faux-vert). Tolérant au préambule. Retour : {ok, is_error, result, session_id, cost_usd,
+    num_turns, error, raw}."""
     base = {"ok": False, "is_error": True, "result": None, "session_id": None,
             "cost_usd": None, "num_turns": None, "error": None, "raw": stdout}
     if returncode != 0:
@@ -94,12 +124,9 @@ def parse_headless_result(stdout: str, returncode: int = 0) -> dict:
     text = (stdout or "").strip()
     if not text:
         return {**base, "error": "sortie vide de claude -p"}
-    try:
-        obj = json.loads(text)
-    except (ValueError, TypeError):
-        obj = _trailing_json_object(text)
-        if obj is None:
-            return {**base, "error": f"sortie non-JSON : {text[:200]}"}
+    obj = _result_event(text)                # objet unique OU événement `result` du NDJSON stream-json
+    if obj is None:
+        return {**base, "error": f"sortie non-JSON : {text[:200]}"}
     if not isinstance(obj, dict):
         return {**base, "error": f"JSON inattendu (pas un objet) : {text[:120]}"}
     is_error = bool(obj.get("is_error")) or (obj.get("api_error_status") not in (None, ""))
@@ -127,9 +154,16 @@ def write_decision_doc(worktree: Path, task_slug: str, result: str | None, *,
     return doc
 
 
-def _default_runner(argv: list[str], *, cwd: object, input_text: str, timeout: float,
-                    env: Mapping[str, str] | None = None) -> run.RunResult:
-    return run.run(argv, cwd=cwd, input_text=input_text, timeout=timeout, env=env)   # type: ignore[arg-type]
+def _make_default_runner(out_path: str) -> Runner:
+    """Runner par défaut du dispatch : exécute `claude -p` en **streamant** son stdout (`stream-json`) dans
+    `out_path` au fil de l'eau → le transcript est suivable EN DIRECT (le pont `dispatch/stream` tail ce
+    fichier), au lieu de n'apparaître qu'à la fin. `out_path` (le `log_path` du job) est capturé ici → le
+    protocole `Runner` reste inchangé, les runners injectés en test ne le voient pas."""
+    def _runner(argv: list[str], *, cwd: object, input_text: str, timeout: float,
+                env: Mapping[str, str] | None = None) -> run.RunResult:
+        return run.run_streaming(argv, cwd=cwd, input_text=input_text, timeout=timeout,   # type: ignore[arg-type]
+                                 env=env, out_path=out_path)
+    return _runner
 
 
 def dispatch_next(conn: sqlite3.Connection, settings: Settings, *, feature_ref: str,
@@ -140,7 +174,6 @@ def dispatch_next(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
     task `in_progress`, spawn (runner injectable), journalise le job, révoque `in_progress`→`todo` si le run
     échoue (re-dispatchable)."""
     git = git or InternalGit()
-    runner = runner or _default_runner
     project = feature_ref.split("/", 1)[0]
 
     index = resolver.index_for_feature(conn, feature_ref)   # KeyError si feature/projet absent
@@ -157,7 +190,10 @@ def dispatch_next(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
                                  nxt, root=res["path"])
 
     session_id = ids.new_id()
-    log_path = jobs.expected_transcript_path(session_id, res["path"])
+    # log_path = le fichier où le daemon STREAME le stdout stream-json du worker (suivi live), sous
+    # `home/logs/`. Distinct du transcript de session que `claude` écrit sous `~/.claude/projects/…` (ne pas
+    # l'écraser) : notre flux stdout porte déjà tous les événements (assistant/tool_result/result).
+    log_path = jobs.dispatch_log_path(settings, session_id)
     conn.execute("UPDATE tasks SET status = 'in_progress' WHERE id = ?", (nxt["id"],))
     conn.commit()
     job_id = jobs.record_start(conn, task_id=nxt["id"], worktree=str(res["path"]),
@@ -166,7 +202,12 @@ def dispatch_next(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
     # Câble le MCP de corpus dans le worktree (JWT minté, hors-git) → le worker « connaît ses outils ».
     # No-op honnête si le secret n'est pas configuré (install sans corpus privé) : le worker tourne sans MCP.
     mcp_path = inject_mcp_config(res["path"], settings, slug=project)
-    argv = build_headless_argv(session_id=session_id, work=True, mcp_config=mcp_path)
+    # `stream-json` : le worker émet ses événements ligne-à-ligne (NDJSON) sur stdout → streamés vers log_path
+    # en direct. `--output-format json` ne les écrivait qu'à la fin (transcript live impossible). Le runner
+    # par défaut streame vers log_path ; un runner injecté (test) reçoit le même argv sans streamer.
+    argv = build_headless_argv(session_id=session_id, work=True, mcp_config=mcp_path,
+                               output_format="stream-json")
+    active_runner = runner or _make_default_runner(str(log_path))
     # PATH d'outils préfixé (`tools/bin`) → le worker RÉSOUT `codemap`/`docsmap`/`frontmap`/`node`/`ruff`…
     # que sa facette déclare (fin du `env=None` passif : le PATH systemd minimal ne les portait pas). Le MÊME
     # env sert au preflight (which) ET au spawn — cohérence garantie.
@@ -194,7 +235,7 @@ def dispatch_next(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
                 raise ToolPreflightError(
                     "claude introuvable sur le PATH du worker — installe Claude Code "
                     "(`provision-ct.sh --with-claude`, ou `claude` dans ~/.local/bin) puis relance.")
-            proc = runner(argv, cwd=res["path"], input_text=prompt, timeout=DISPATCH_TIMEOUT, env=env)
+            proc = active_runner(argv, cwd=res["path"], input_text=prompt, timeout=DISPATCH_TIMEOUT, env=env)
             parsed = parse_headless_result(proc.stdout, proc.returncode)
         except (ToolPreflightError, run.RunTimeout) as exc:
             parsed = {"ok": False, "session_id": session_id, "num_turns": None, "cost_usd": None,

@@ -3,6 +3,7 @@ no-task-no-dispatch + spawn worker (runner INJECTÉ — aucun vrai `claude`), le
 from __future__ import annotations
 
 import json
+import sys
 import threading
 from pathlib import Path
 
@@ -315,6 +316,67 @@ def test_dispatch_finalizes_job_on_unexpected_exception(ctx):
     job = conn.execute("SELECT * FROM dispatch_jobs ORDER BY started_at DESC LIMIT 1").fetchone()
     assert job["status"] == "killed"                       # finalisé, pas zombie
     assert conn.execute("SELECT status FROM tasks WHERE slug='schema'").fetchone()["status"] == "todo"
+
+
+# -- P3 : transcript live (stream-json streamé vers log_path) ---------------------------------------
+
+def test_run_streaming_writes_stdout_live_to_out_path(tmp_path: Path):
+    """`run_streaming` écrit le stdout **au fil de l'eau** dans `out_path` (le fichier tailé par le pont
+    live) ET rend le stdout complet dans le `RunResult` (relu par le parseur du résultat final)."""
+    out = tmp_path / "live.jsonl"
+    script = ('import sys\n'
+              'for i in range(3):\n'
+              '    print(\'{"type":"assistant","n":%d}\' % i); sys.stdout.flush()\n')
+    res = run.run_streaming([sys.executable, "-c", script], out_path=str(out), timeout=30)
+    assert res.returncode == 0
+    lines = out.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 3 and '"n":2' in lines[-1]           # les 3 lignes ont bien été écrites live
+    assert res.stdout.count("assistant") == 3                 # et accumulées dans le RunResult
+
+
+def test_run_streaming_honors_timeout_even_without_output():
+    """Un worker qui pend SANS produire de sortie est tué au timeout (→ RunTimeout) — la garantie
+    anti-blocage tient même quand rien n'est streamé (thread lecteur + proc.wait(timeout))."""
+    with pytest.raises(run.RunTimeout):
+        run.run_streaming([sys.executable, "-c", "import time; time.sleep(30)"], timeout=0.4)
+
+
+def test_build_headless_argv_stream_json_requires_verbose():
+    """`claude -p --output-format stream-json` EXIGE `--verbose` ; le défaut `json` ne le pose pas."""
+    argv = worker.build_headless_argv(session_id="s", output_format="stream-json")
+    assert argv[argv.index("--output-format") + 1] == "stream-json" and "--verbose" in argv
+    assert "--verbose" not in worker.build_headless_argv(session_id="s")
+
+
+def test_parse_headless_result_extracts_result_event_from_stream_json():
+    """stream-json = NDJSON : le parseur retrouve l'événement `result` (verdict final) parmi les lignes
+    system/assistant/result, sans se faire piéger par un objet intermédiaire (assistant)."""
+    ndjson = "\n".join([
+        '{"type":"system","subtype":"init","session_id":"s1"}',
+        '{"type":"assistant","message":{"content":[{"type":"text","text":"OK"}]}}',
+        '{"type":"result","subtype":"success","is_error":false,"result":"fini",'
+        '"session_id":"s1","total_cost_usd":0.03,"num_turns":4}',
+    ])
+    parsed = worker.parse_headless_result(ndjson, 0)
+    assert parsed["ok"] and parsed["result"] == "fini" and parsed["session_id"] == "s1"
+    assert parsed["num_turns"] == 4 and parsed["cost_usd"] == 0.03
+
+
+def test_parse_headless_result_stream_json_error_event_is_fail_loud():
+    nd = '{"type":"result","is_error":true,"subtype":"error_max_turns","session_id":"s"}'
+    parsed = worker.parse_headless_result(nd, 0)
+    assert not parsed["ok"] and parsed["error"]
+
+
+def test_dispatch_log_path_is_under_logs_dir_not_claude_transcript(ctx):
+    """Le `log_path` du job pointe le log STREAMÉ sous `home/logs/` (que le daemon écrit), pas le transcript
+    de session `~/.claude/projects/…` de claude (qu'on n'écrase jamais)."""
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    report = worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=_ok_runner)
+    job = jobs.get_job(conn, report["job_id"])
+    assert job["log_path"].startswith(str(settings.logs_dir))
+    assert ".claude/projects" not in job["log_path"]
 
 
 # -- P1 : récolte du minerai de décisions (worker.result → docs/decisions/) -------------------------

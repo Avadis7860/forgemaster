@@ -11,6 +11,7 @@ Contrat volontairement mince et PUR (I/O injectable en test des couches hautes) 
 from __future__ import annotations
 
 import subprocess
+import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -86,3 +87,73 @@ def run(
     if check and not result.ok:
         raise RunError(result)
     return result
+
+
+def run_streaming(
+    argv: Sequence[str],
+    *,
+    cwd: str | Path | None = None,
+    env: Mapping[str, str] | None = None,
+    timeout: float | None = None,
+    input_text: str | None = None,
+    out_path: str | Path | None = None,
+) -> RunResult:
+    """Comme `run`, mais **écrit le stdout au fil de l'eau** dans `out_path` (une ligne = un flush) au lieu de
+    ne le capturer qu'à la fin — c'est ce qui rend le transcript d'un worker `claude -p --output-format
+    stream-json` **suivable en direct** (le pont `dispatch/stream` tail ce fichier). Le stdout complet reste
+    accumulé et rendu dans le `RunResult` (le parseur du résultat final le relit). Le `timeout` est honoré
+    **même sans aucune sortie** (thread lecteur + `proc.wait(timeout)`, kill → RunTimeout) : un worker qui
+    pend ne bloque pas la forge. stdout ET stderr sont drainés en threads → pas de deadlock de pipe. argv en
+    LISTE (zéro shell)."""
+    proc = subprocess.Popen(  # noqa: S603 — argv liste sans shell
+        list(argv),
+        cwd=str(cwd) if cwd is not None else None,
+        env=dict(env) if env is not None else None,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,                         # ligne-bufferisé → le flush par ligne est effectif
+    )
+    out_chunks: list[str] = []
+    err_chunks: list[str] = []
+
+    def _pump_stdout() -> None:
+        # Ouvre out_path une fois, écrit+flush chaque ligne dès qu'elle arrive → suivable en live.
+        sink = open(out_path, "w", encoding="utf-8") if out_path is not None else None  # noqa: SIM115
+        try:
+            for line in proc.stdout:       # type: ignore[union-attr]
+                out_chunks.append(line)
+                if sink is not None:
+                    sink.write(line)
+                    sink.flush()
+        finally:
+            if sink is not None:
+                sink.close()
+
+    def _pump_stderr() -> None:
+        for line in proc.stderr:           # type: ignore[union-attr]
+            err_chunks.append(line)
+
+    t_out = threading.Thread(target=_pump_stdout, daemon=True)
+    t_err = threading.Thread(target=_pump_stderr, daemon=True)
+    t_out.start()
+    t_err.start()
+
+    if proc.stdin is not None:
+        if input_text:
+            proc.stdin.write(input_text)
+        proc.stdin.close()
+
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        proc.kill()
+        proc.wait()
+        raise RunTimeout(f"timeout {timeout}s dépassé pour {list(argv)!r}") from exc
+    finally:
+        t_out.join(timeout=5)
+        t_err.join(timeout=5)
+
+    return RunResult(argv=list(argv), returncode=proc.returncode,
+                     stdout="".join(out_chunks), stderr="".join(err_chunks))
