@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { SetupWizard } from './SetupWizard'
 
@@ -8,6 +8,7 @@ const h = vi.hoisted(() => ({
   data: undefined as unknown,
   boot: undefined as unknown,   // aperçu bootstrap injectable ; undefined → défaut « aucun manifeste »
   runMutate: vi.fn(),
+  wireMutate: vi.fn(),          // mutation de câblage MCP injectable
 }))
 
 vi.mock('@/lib/queries', () => ({
@@ -22,6 +23,7 @@ vi.mock('@/lib/queries', () => ({
     isLoading: false,
   }),
   useRunBootstrap: () => ({ mutate: h.runMutate, isPending: false, isError: false, isSuccess: false, error: null, data: undefined }),
+  useWireMcp: () => ({ mutate: h.wireMutate, isPending: false, isError: false, error: null }),
 }))
 
 vi.mock('@tanstack/react-router', () => ({
@@ -32,10 +34,12 @@ vi.mock('@tanstack/react-router', () => ({
 const STORE = { backend: 'file', ready: true, detail: 'coffre fichier chiffré' }
 const AUTHED = { authenticated: true, source: 'credentials-file' }
 const UNAUTHED = { authenticated: false, source: null }
+const MCP_UNWIRED = { wired: false, endpoint: 'http://mcp.example/mcp' }
+const MCP_WIRED = { wired: true, endpoint: 'http://mcp.example/mcp' }
 
 describe('SetupWizard', () => {
   it('instance neuve (first_run) : guide bienvenue → coffre → 1er projet, avec le formulaire de création', () => {
-    h.data = { secret_store: STORE, requirements: [], complete: true, project_count: 0, first_run: true, claude_auth: AUTHED }
+    h.data = { secret_store: STORE, requirements: [], complete: true, project_count: 0, first_run: true, claude_auth: AUTHED, mcp: MCP_UNWIRED }
     render(<SetupWizard />)
     expect(screen.getByText('Bienvenue')).toBeInTheDocument()
     expect(screen.getByText('Coffre de secrets')).toBeInTheDocument()
@@ -54,6 +58,7 @@ describe('SetupWizard', () => {
       project_count: 1,
       first_run: false,
       claude_auth: AUTHED,
+      mcp: MCP_UNWIRED,
     }
     render(<SetupWizard />)
     expect(screen.getByText('Ton cockpit est prêt')).toBeInTheDocument()
@@ -61,7 +66,7 @@ describe('SetupWizard', () => {
   })
 
   it('outils du framework : un manifeste disponible propose de ranger la boîte à outils d’un clic', () => {
-    h.data = { secret_store: STORE, requirements: [], complete: true, project_count: 0, first_run: true, claude_auth: AUTHED }
+    h.data = { secret_store: STORE, requirements: [], complete: true, project_count: 0, first_run: true, claude_auth: AUTHED, mcp: MCP_UNWIRED }
     h.boot = {
       available: true,
       total: 2,
@@ -89,6 +94,7 @@ describe('SetupWizard', () => {
       project_count: 1,
       first_run: false,
       claude_auth: AUTHED,
+      mcp: MCP_UNWIRED,
     }
     render(<SetupWizard />)
     // le wizard ne duplique plus l'affordance de liaison (retirée — elle vit dans Réglages)
@@ -99,7 +105,7 @@ describe('SetupWizard', () => {
   })
 
   it('compte Claude non connecté : l’étape affiche l’instruction `claude login` (jamais silencieux)', () => {
-    h.data = { secret_store: STORE, requirements: [], complete: true, project_count: 0, first_run: true, claude_auth: UNAUTHED }
+    h.data = { secret_store: STORE, requirements: [], complete: true, project_count: 0, first_run: true, claude_auth: UNAUTHED, mcp: MCP_UNWIRED }
     render(<SetupWizard />)
     expect(screen.getByText('Compte Claude')).toBeInTheDocument()
     expect(screen.getByText('Aucun compte Claude sur cette machine')).toBeInTheDocument()
@@ -107,9 +113,25 @@ describe('SetupWizard', () => {
   })
 
   it('compte Claude connecté : l’étape le confirme, sans instruction de login', () => {
-    h.data = { secret_store: STORE, requirements: [], complete: true, project_count: 0, first_run: true, claude_auth: AUTHED }
+    h.data = { secret_store: STORE, requirements: [], complete: true, project_count: 0, first_run: true, claude_auth: AUTHED, mcp: MCP_UNWIRED }
     render(<SetupWizard />)
     expect(screen.getByText('Compte Claude · connecté')).toBeInTheDocument()
     expect(screen.queryByText('Aucun compte Claude sur cette machine')).toBeNull()
+  })
+
+  it('corpus MCP non câblé : propose le câblage ; un secret valide (≥32c) déclenche la mutation', () => {
+    h.data = { secret_store: STORE, requirements: [], complete: true, project_count: 0, first_run: true, claude_auth: AUTHED, mcp: MCP_UNWIRED }
+    render(<SetupWizard />)
+    expect(screen.getByText('Corpus MCP (optionnel)')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('secret HMAC du corpus MCP'), { target: { value: 'x'.repeat(40) } })
+    screen.getByRole('button', { name: 'Câbler le corpus MCP' }).click()
+    expect(h.wireMutate).toHaveBeenCalled()
+  })
+
+  it('corpus MCP déjà câblé : affiche l’état câblé, sans formulaire', () => {
+    h.data = { secret_store: STORE, requirements: [], complete: true, project_count: 0, first_run: true, claude_auth: AUTHED, mcp: MCP_WIRED }
+    render(<SetupWizard />)
+    expect(screen.getByText('corpus câblé')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Câbler le corpus MCP' })).toBeNull()
   })
 })

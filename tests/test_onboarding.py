@@ -2,6 +2,7 @@
 jetables. Fil rouge non négociable : la DB ne reçoit que la **référence**, jamais le token en clair."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from cockpit import onboarding
 from cockpit.config import Settings
 from cockpit.db import store
 from cockpit.projects import registry
+from cockpit.provision import mcp
 from cockpit.secrets import SecretNotFound, SecretUnsupported
 from cockpit.secrets.file_store import EncryptedFileStore
 
@@ -22,6 +24,16 @@ def ctx(tmp_path: Path):
     conn = store.open_db(settings)
     yield settings, conn
     conn.close()
+
+
+@pytest.fixture
+def mcp_env(monkeypatch):
+    """Isole l'env MCP vivant (départ « non câblé »). monkeypatch **POSSÈDE** les clés via `setenv` → même si
+    `wire()` les écrit en dur (`live_env`), le teardown les supprime → zéro fuite vers les tests voisins (ex.
+    `doctor`). NB : `delenv` sur une clé absente n'enregistre RIEN, d'où la fuite qu'on évite ici."""
+    for key in (mcp.ENV_MCP_JWT_SECRET_REF, "COCKPIT_MCP_ENDPOINT"):
+        monkeypatch.setenv(key, "")     # "" → wire_state lit `wired=False` ; teardown supprime la clé
+    return monkeypatch
 
 
 class _FakeBws:
@@ -124,3 +136,45 @@ def test_status_incomplete_when_store_root_unreachable(ctx):
     registry.create_project(conn, settings, slug="p")                          # aucun miroir → 0 exigence
     st = onboarding.status(conn, _FakeBws({}, ready=False))
     assert st["secret_store"]["ready"] is False and st["complete"] is False    # racine injoignable → pas vert
+
+
+def test_status_reports_mcp_wire_state_default_unwired_and_injected(ctx, mcp_env):
+    settings, conn = ctx
+    fs = EncryptedFileStore(settings.secrets_dir)
+    st = onboarding.status(conn, fs)
+    assert st["mcp"]["wired"] is False                                         # install publique : non câblé
+    assert st["complete"] is True                                              # MCP optionnel → hors complete
+    st2 = onboarding.status(conn, fs, mcp_state={"wired": True, "endpoint": "http://ep/mcp"})
+    assert st2["mcp"] == {"wired": True, "endpoint": "http://ep/mcp"}          # état injectable (tests)
+
+
+def test_wire_mcp_value_stores_ref_persists_and_reflects_live_env(ctx, mcp_env):
+    settings, _ = ctx
+    secret = "x" * 40                                                          # ≥32c : HS256 l'exige
+    res = onboarding.wire_mcp(settings, secret=secret, endpoint="http://ep/mcp")
+    ref = res["credential_ref"]
+    assert res["wired"] is True and ref and secret not in ref                  # ref opaque, jamais la valeur
+    assert EncryptedFileStore(settings.secrets_dir).get(ref) == secret         # la valeur vit dans le store
+    # live_env : le daemon voit ref + endpoint SANS restart, et c'est aussi persisté dans cockpit.env
+    assert os.environ[mcp.ENV_MCP_JWT_SECRET_REF] == ref
+    assert os.environ["COCKPIT_MCP_ENDPOINT"] == "http://ep/mcp"
+    assert ref in (settings.home / "cockpit.env").read_text(encoding="utf-8")
+    with pytest.raises(ValueError):                                            # <32c → refusé (HS256)
+        onboarding.wire_mcp(settings, secret="short")
+
+
+def test_wire_mcp_requires_exactly_one_voie_and_validates_bws_ref(ctx, mcp_env):
+    settings, _ = ctx
+    bws = _FakeBws({"uuid-ok": "shared-hmac-secret"})
+    mcp_env.setattr(mcp, "build_store", lambda _s: bws)                        # force le backend BWS
+    with pytest.raises(ValueError):
+        onboarding.wire_mcp(settings)                                          # ni secret ni ref
+    with pytest.raises(ValueError):
+        onboarding.wire_mcp(settings, secret="s" * 40, ref="uuid-ok")         # les deux → mauvais usage
+    with pytest.raises(ValueError):
+        onboarding.wire_mcp(settings, secret="s" * 40)                        # BWS : pas de put d'une valeur
+    with pytest.raises(ValueError):
+        onboarding.wire_mcp(settings, ref="uuid-absent")                      # réf inconnue → validée avant
+    res = onboarding.wire_mcp(settings, ref="uuid-ok")                        # réf valide → posée telle
+    assert res["credential_ref"] == "uuid-ok"
+    assert os.environ[mcp.ENV_MCP_JWT_SECRET_REF] == "uuid-ok"

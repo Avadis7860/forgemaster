@@ -24,6 +24,7 @@ import {
   HealthSchema,
   JobDetailSchema,
   JobsListSchema,
+  McpWireResultSchema,
   MergeReportSchema,
   NextSchema,
   OnboardingStatusSchema,
@@ -34,6 +35,7 @@ import {
   type BootstrapRunInput,
   type CredentialLinkInput,
   type CreateProjectInput,
+  type McpWireInput,
   type MergeInput,
 } from './schemas'
 
@@ -239,6 +241,11 @@ export const api = {
     request(`/api/projects/${encodeURIComponent(project)}/credential`, ProjectSchema, {
       method: 'DELETE',
     }),
+
+  // Câble le corpus MCP privé (instance-level) : la réponse porte la RÉFÉRENCE opaque, jamais le secret.
+  // `live_env` côté serveur → le daemon voit la ref sans restart.
+  wireMcp: (body: McpWireInput) =>
+    request('/api/onboarding/mcp', McpWireResultSchema, { method: 'POST', body: JSON.stringify(body) }),
 
   // Amorçage des outils du framework : GET = aperçu idempotent (goto-only, aucun effet/secret) ; POST =
   // adopte les outils du manifeste (idempotent, skip existants). Le token brut ne transite jamais ici.

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Link, Outlet, useLocation, useParams } from '@tanstack/react-router'
 import { HealthDot } from '@/components/HealthDot'
 import { OnboardingBanner } from '@/components/OnboardingBanner'
@@ -15,9 +15,15 @@ export function AppShell() {
   const settingsIncomplete = onb ? !onb.complete : false
   const [railOpen, setRailOpen] = useState(false)
   // Fermer le tiroir dès qu'on navigue (clic sur une carte projet / création) — sur mobile uniquement,
-  // sur desktop il est statique et l'état est ignoré (md:translate-x-0).
+  // sur desktop il est statique et l'état est ignoré (md:translate-x-0). Ajustement d'état PENDANT le rendu
+  // au changement de route (pattern React « you might not need an effect ») : pas d'effet → pas de render
+  // en cascade (règle react-hooks/set-state-in-effect).
   const { pathname } = useLocation()
-  useEffect(() => setRailOpen(false), [pathname])
+  const [prevPath, setPrevPath] = useState(pathname)
+  if (pathname !== prevPath) {
+    setPrevPath(pathname)
+    setRailOpen(false)
+  }
 
   return (
     <div className="flex h-full flex-col">

@@ -2,7 +2,7 @@
 // V1 : projets (+ santé). Roadmap/next exposés (stables, consommés dès V2). Dispatch/gate/merge : leurs vagues.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
-import type { BootstrapRunInput, CredentialLinkInput, CreateProjectInput, MergeInput } from './schemas'
+import type { BootstrapRunInput, CredentialLinkInput, CreateProjectInput, McpWireInput, MergeInput } from './schemas'
 
 export const qk = {
   health: ['health'] as const,
@@ -330,6 +330,16 @@ export function useUnlinkCredential(project: string) {
   return useMutation({
     mutationFn: () => api.unlinkCredential(project),
     onSuccess: () => invalidateCredential(qc, project),
+  })
+}
+
+// Câble le corpus MCP privé (instance-level, hors projet). À la résolution, invalide onboarding : l'étape
+// « corpus MCP » du wizard bascule sur `wired` (le front relit la source Python, ne devine pas).
+export function useWireMcp() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: McpWireInput) => api.wireMcp(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.onboarding }),
   })
 }
 

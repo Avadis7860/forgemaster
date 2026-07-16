@@ -23,11 +23,12 @@ from cockpit import auth
 from cockpit.config import Settings
 from cockpit.db import store as db_store
 from cockpit.projects import registry
+from cockpit.provision import mcp
 from cockpit.secrets import SecretNotFound, SecretStore, SecretUnsupported, build_store
 
 
 def status(conn: sqlite3.Connection, secret_store: SecretStore,
-           *, claude_auth_state: dict | None = None) -> dict:
+           *, claude_auth_state: dict | None = None, mcp_state: dict | None = None) -> dict:
     """État d'onboarding de l'instance, SANS révéler aucun secret :
     - `secret_store` : backend actif + racine de confiance joignable (`health()`), pour le 1er démarrage ;
     - `claude_auth` : la machine est-elle authentifiée pour spawner des workers `claude` ? (`{authenticated,
@@ -35,6 +36,9 @@ def status(conn: sqlite3.Connection, secret_store: SecretStore,
       c'est le gate « peut dispatcher » — l'install ne travaille qu'après un `claude login` explicite, jamais
       en héritant en silence l'auth d'un autre. `claude_auth_state` injectable (tests) ; défaut = détection
       live de l'hôte ;
+    - `mcp` : le corpus MCP privé est-il câblé ? (`{wired, endpoint}`, présence de la ref seule, jamais le
+      secret). **Optionnel** : une install publique sans corpus privé reste valide (n'entre pas dans
+      `complete`). `mcp_state` injectable (tests) ; défaut = état vu par le daemon (`mcp.wire_state`) ;
     - `requirements` : un item par projet ; un projet avec `mirror_remote` a **besoin** d'un token pour
       pousser le miroir → `satisfied` ssi il porte un `credential_ref` (ou n'a pas de miroir) ;
     - `complete` : racine du store prête ET toutes les exigences satisfaites (pas de faux-vert) ;
@@ -56,9 +60,11 @@ def status(conn: sqlite3.Connection, secret_store: SecretStore,
             "satisfied": (not needs) or linked,
         })
     complete = ready and all(r["satisfied"] for r in requirements)
+    mcp_st = mcp_state if mcp_state is not None else mcp.wire_state()
     return {
         "secret_store": {"backend": secret_store.backend, "ready": ready, "detail": detail},
         "claude_auth": claude,
+        "mcp": mcp_st,
         "requirements": requirements,
         "complete": complete,
         "project_count": len(projects),
@@ -99,6 +105,21 @@ def unlink_credential(conn: sqlite3.Connection, project: str) -> dict:
     """Délie le credential d'un projet (`credential_ref` → NULL). Le secret reste dans le store (on ne
     pilote pas sa suppression ici — cf. `store.delete`). `KeyError` (→ 404) si le projet n'existe pas."""
     return registry.set_credential_ref(conn, project, None)
+
+
+def wire_mcp(settings: Settings, *, secret: str | None = None, ref: str | None = None,
+             endpoint: str | None = None) -> dict:
+    """Câble l'instance mcp-catalogs depuis le wizard (instance-level, hors projet) : pose la référence
+    opaque du secret HMAC + l'endpoint dans `cockpit.env` ET dans l'`os.environ` du daemon (`live_env`) → le
+    prochain dispatch injecte un `.mcp.json` valide **sans redémarrer** le service. Fournir exactement l'un de
+    `secret` (valeur brute POSSÉDÉE → stockée en ref opaque) ou `ref` (BWS/UUID validé). Ne renvoie JAMAIS le
+    secret, seulement la référence opaque posée. Lève `ValueError` (→ 400) sur mauvais usage / backend
+    incompatible / secret trop court / ref introuvable."""
+    try:
+        posed = mcp.wire(settings, secret=secret, secret_ref=ref, endpoint=endpoint, live_env=True)
+    except mcp.MCPWireError as exc:                        # → 400 : message humain réutilisé tel quel
+        raise ValueError(str(exc)) from exc
+    return {"wired": True, "credential_ref": posed, "endpoint": endpoint or mcp.MCP_ENDPOINT}
 
 
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:

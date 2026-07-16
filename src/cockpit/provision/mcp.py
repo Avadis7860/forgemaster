@@ -146,44 +146,79 @@ def check_lifecycle(settings: Settings, *, now: int, window_s: float = _RUN_WIND
     return {"configured": True, "healthy": healthy, "exp": token_exp(probe), "stale": stale, "reason": reason}
 
 
+def wire_state() -> dict:
+    """État de câblage MCP tel que VU par le daemon courant (env vivant, sans restart) : `wired` ssi une ref
+    de secret est présente, `endpoint` effectif (défaut cible si non câblé). Alimente le wizard pour
+    montrer/sauter l'étape — signal léger, orthogonal au diagnostic riche de `check_lifecycle` (doctor)."""
+    return {
+        "wired": bool(os.environ.get(ENV_MCP_JWT_SECRET_REF)),
+        "endpoint": os.environ.get("COCKPIT_MCP_ENDPOINT", MCP_ENDPOINT),
+    }
+
+
+class MCPWireError(ValueError):
+    """Câblage MCP impossible : mauvais usage, secret trop court, backend incompatible, ou ref introuvable.
+    Message humain (`str(exc)`) réutilisable tel quel par la CLI et la route onboarding."""
+
+
+def wire(settings: Settings, *, secret_ref: str | None = None, secret: str | None = None,
+         secret_file: str | None = None, endpoint: str | None = None, live_env: bool = False) -> str:
+    """Câble NOTRE instance mcp-catalogs sur cette install : valide/pose le secret HMAC partagé et écrit une
+    **référence opaque** (JAMAIS le secret en clair) + l'endpoint dans `cockpit.env`, de sorte que le prochain
+    dispatch injecte un `.mcp.json` valide (`inject_mcp_config`). Retourne la ref posée. Cœur partagé par la
+    CLI (`cockpit mcp wire`) et la route onboarding (wizard).
+
+    **Exactement une** voie parmi : `secret` (valeur brute POSSÉDÉE — le wizard POST le secret → `store.put`
+    → ref opaque), `secret_file` (même voie, depuis un fichier — la CLI), ou `secret_ref` (bring-your-own
+    UUID, VALIDÉE via `store.get`). `live_env=True` reflète aussi la ref dans `os.environ` du process courant
+    → le daemon la voit **sans restart** (wizard). Lève `MCPWireError` sur mauvais usage / backend
+    incompatible / secret trop court / ref introuvable."""
+    if sum(x is not None for x in (secret, secret_file, secret_ref)) != 1:
+        raise MCPWireError(
+            "fournir exactement l'un de : secret (valeur) | secret_file (fichier) | secret_ref (BWS/UUID).")
+    store = build_store(settings)
+    if secret_file is not None:
+        try:
+            secret = Path(secret_file).expanduser().read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise MCPWireError(f"secret-file illisible — {exc}") from exc
+    if secret is not None:                                     # voie valeur/fichier → on POSSÈDE la valeur
+        if len(secret) < 32:
+            raise MCPWireError("secret trop court (<32c) — HS256 exige un secret d'au moins 32 caractères.")
+        try:
+            ref = store.put(secret, label="mcp-jwt")          # → ref opaque générée
+        except SecretUnsupported as exc:
+            raise MCPWireError(
+                f"backend {store.backend!r} : pas de secret direct (bring-your-own) — passe une ref (UUID)."
+            ) from exc
+    else:
+        ref = str(secret_ref)
+        try:
+            store.get(ref)                                    # voie BWS → VALIDE que la ref résout
+        except SecretNotFound as exc:
+            raise MCPWireError(f"référence introuvable dans le store {store.backend!r} : {ref!r}") from exc
+    ep = endpoint or MCP_ENDPOINT
+    set_env_keys(settings.home / "cockpit.env", {ENV_MCP_JWT_SECRET_REF: ref, "COCKPIT_MCP_ENDPOINT": ep})
+    if live_env:                                              # le daemon voit la ref sans recharger l'unit
+        os.environ[ENV_MCP_JWT_SECRET_REF] = ref
+        os.environ["COCKPIT_MCP_ENDPOINT"] = ep
+    return ref
+
+
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
-    """Route `cockpit mcp wire` : câble NOTRE instance mcp-catalogs sur cette install. Pose une **référence
-    opaque** au secret HMAC partagé (JAMAIS le secret en clair) + l'endpoint dans `cockpit.env`, de sorte que
-    le prochain dispatch injecte un `.mcp.json` valide (`inject_mcp_config`). Deux voies exclusives (comme
-    `onboard link`) : `--secret-file <f>` (on POSSÈDE la valeur → `store.put` → ref opaque) ou `--secret-ref
-    <uuid>` (bring-your-own, VALIDÉE via `store.get`). Sans câblage, l'injection reste un no-op honnête."""
+    """Route `cockpit mcp wire` : câble le MCP de corpus (délègue à `wire()`). Deux voies exclusives
+    `--secret-file <f>` (on POSSÈDE la valeur) | `--secret-ref <uuid>` (bring-your-own, BWS). Sans câblage,
+    l'injection reste un no-op honnête."""
     if getattr(args, "action", None) != "wire":
         print(f"action mcp inconnue : {getattr(args, 'action', None)!r} (attendu : wire)")
         return 2
-    secret_file = getattr(args, "secret_file", None)
-    secret_ref = getattr(args, "secret_ref", None)
-    if bool(secret_file) == bool(secret_ref):
-        print("fournir exactement l'un de : --secret-file <f> (fichier) | --secret-ref <uuid> (BWS).")
-        return 2
-    store = build_store(settings)
-    ref: str
     try:
-        if secret_file:
-            secret = Path(secret_file).expanduser().read_text(encoding="utf-8").strip()
-            if len(secret) < 32:
-                print("secret trop court (<32c) — HS256 exige un secret d'au moins 32 caractères.")
-                return 1
-            ref = store.put(secret, label="mcp-jwt")          # voie fichier → ref opaque générée
-        else:
-            ref = str(secret_ref)
-            store.get(ref)                                    # voie BWS → VALIDE que la ref résout
-    except SecretUnsupported as exc:
-        print(f"backend {store.backend!r} : pas de secret direct — passe --secret-ref <uuid>. ({exc})")
-        return 1
-    except SecretNotFound as exc:
-        print(f"référence introuvable dans le store {store.backend!r} : {secret_ref!r} ({exc})")
-        return 1
-    except OSError as exc:
-        print(f"secret-file illisible — {exc}")
-        return 1
+        wire(settings, secret_ref=getattr(args, "secret_ref", None),
+             secret_file=getattr(args, "secret_file", None), endpoint=getattr(args, "endpoint", None))
+    except MCPWireError as exc:
+        print(str(exc))
+        return 2 if "exactement l'un" in str(exc) else 1
     endpoint = getattr(args, "endpoint", None) or MCP_ENDPOINT
-    set_env_keys(settings.home / "cockpit.env",
-                 {ENV_MCP_JWT_SECRET_REF: ref, "COCKPIT_MCP_ENDPOINT": endpoint})
     print(f"✅ MCP câblé → {endpoint}  (ref opaque posée dans {settings.home / 'cockpit.env'}).")
     print("   redémarre le service pour recharger l'EnvironmentFile : "
           "`systemctl restart cockpit` (ou `--user`).")

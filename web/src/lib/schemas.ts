@@ -492,6 +492,14 @@ export const ClaudeAuthSchema = z.object({
 })
 export type ClaudeAuth = z.infer<typeof ClaudeAuthSchema>
 
+// État de câblage du corpus MCP privé (`wired` = ref de secret présente, jamais le secret ; `endpoint`
+// effectif ou cible par défaut). Optionnel : une install publique sans corpus privé reste valide.
+export const McpStateSchema = z.object({
+  wired: z.boolean(),
+  endpoint: z.string(),
+})
+export type McpState = z.infer<typeof McpStateSchema>
+
 // GET /api/onboarding : état de config-requise du 1er démarrage. `complete` = racine prête ET toutes les
 // exigences satisfaites (pas de faux-vert). Sert le bandeau non bloquant + le panneau Réglages.
 export const OnboardingStatusSchema = z.object({
@@ -501,8 +509,25 @@ export const OnboardingStatusSchema = z.object({
   project_count: z.number(),
   first_run: z.boolean(),       // aucun projet encore : instance neuve → le wizard guide (ne dit pas « complet »)
   claude_auth: ClaudeAuthSchema,
+  mcp: McpStateSchema,
 })
 export type OnboardingStatus = z.infer<typeof OnboardingStatusSchema>
+
+// POST /api/onboarding/mcp : câbler le corpus MCP. `secret` = valeur brute (POSSÉDÉE → ref opaque),
+// `ref` = UUID BWS (bring-your-own validé) ; exactement l'un. `endpoint` override optionnel.
+export interface McpWireInput {
+  secret?: string
+  ref?: string
+  endpoint?: string
+}
+
+// Réponse du câblage : la RÉFÉRENCE opaque posée + l'endpoint effectif — jamais le secret.
+export const McpWireResultSchema = z.object({
+  wired: z.boolean(),
+  credential_ref: z.string(),
+  endpoint: z.string(),
+})
+export type McpWireResult = z.infer<typeof McpWireResultSchema>
 
 // POST /api/projects/{p}/credential : lier un credential. `token` = voie fichier (on stocke la valeur),
 // `ref` = voie BWS (UUID bring-your-own validé). Exactement l'un des deux ; `label` humain optionnel.

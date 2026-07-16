@@ -19,6 +19,12 @@ class CredentialLink(BaseModel):
     label: str | None = None   # libellé humain optionnel, jamais le secret
 
 
+class McpWire(BaseModel):
+    secret: str | None = None    # voie valeur : secret HMAC brut (POSSÉDÉ → ref opaque), jamais renvoyé
+    ref: str | None = None       # voie BWS : bring-your-own UUID (validé)
+    endpoint: str | None = None  # override optionnel de l'endpoint MCP (défaut = MCP_ENDPOINT)
+
+
 def make_onboarding_router() -> APIRouter:
     router = APIRouter(tags=["onboarding"])
 
@@ -42,6 +48,14 @@ def make_onboarding_router() -> APIRouter:
                                               token=body.token, ref=body.ref, label=body.label)
         finally:
             conn.close()
+
+    @router.post("/api/onboarding/mcp")
+    def wire_mcp(body: McpWire, deps: Deps = Depends(get_deps)) -> dict:
+        """Câble l'instance mcp-catalogs (wizard, instance-level, hors projet) : pose la ref opaque du secret
+        HMAC + l'endpoint → le prochain dispatch injecte un `.mcp.json` valide **sans restart**. `secret`
+        (valeur brute) OU `ref` (BWS/UUID). Mauvais usage/backend → 400. Ne renvoie JAMAIS le secret,
+        seulement la `credential_ref` opaque posée."""
+        return onboarding.wire_mcp(deps.settings, secret=body.secret, ref=body.ref, endpoint=body.endpoint)
 
     @router.delete("/api/projects/{project}/credential")
     def unlink_credential(project: str, deps: Deps = Depends(get_deps)) -> dict:
