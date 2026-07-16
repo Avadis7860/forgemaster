@@ -213,3 +213,64 @@ def test_cli_dispatch_refuses_without_claude_auth(ctx, capsys, monkeypatch):
     code = orchestrator.cli_dispatch(settings, argparse.Namespace(
         project="empty", home=None, projects_root=None))
     assert code == 2 and "claude login" in capsys.readouterr().out
+
+
+# -- Phase C : finalisation → merge-ready (Tier-0 + reviewer dispatché après le drain) ---------------
+
+def _writing_worker(rel: str = "docs/note.md", content: str = "# note\nContenu.\n"):
+    """Worker injecté qui ÉCRIT un fichier (diff **doc-only** → Tier-0 N/A) puis rend un résultat OK."""
+    def _run(argv, *, cwd, input_text, timeout, env=None):
+        p = Path(cwd) / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+        sid = argv[argv.index("--session-id") + 1]
+        out = json.dumps({"is_error": False, "result": "fait", "session_id": sid, "num_turns": 1})
+        return run.RunResult(argv=list(argv), returncode=0, stdout=out, stderr="")
+    return _run
+
+
+def _review_worker(result: str = '{"findings":[]}'):
+    """Reviewer injecté qui rend `result` (findings JSON) comme message final."""
+    def _run(argv, *, cwd, input_text, timeout, env=None):
+        sid = argv[argv.index("--session-id") + 1]
+        out = json.dumps({"is_error": False, "result": result, "session_id": sid, "num_turns": 1})
+        return run.RunResult(argv=list(argv), returncode=0, stdout=out, stderr="")
+    return _run
+
+
+def test_run_finalizes_complete_feature_to_merge_ready(ctx, monkeypatch):
+    """La boucle autonome : après le drain des tasks, une feature complète est FINALISÉE (Tier-0 déterministe
+    + **reviewer dispatché**) → **merge-ready** si le gate est vert. Diff doc-only → Tier-0 N/A ; reviewer
+    clean → Tier-1 0🔴 frais → gate vert (le merge, lui, reste le GO humain, hors boucle)."""
+    settings, conn = ctx
+    fake_home = settings.home / "fakehome"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(fake_home))              # trust_workspace n'écrit pas le vrai home
+    _new_project(conn, settings, "proj")
+    _seed(conn, settings, "proj", "feat", [("impl", [])])
+    summary = orchestrator.run_project(conn, settings, project="proj",
+                                       runner=_writing_worker(), review_runner=_review_worker())
+    assert summary["merge_ready"] == ["feat"]
+    fin = summary["finalizations"][0]
+    assert fin["merge_ready"] is True and fin["review"]["reviewed"] is True and fin["blockers"] == []
+    from cockpit.gate import review
+    v = review.read_verdict(settings, "proj", "feat")
+    assert v is not None and v["counts"]["red"] == 0     # verdict Tier-1 SHA-bound écrit, propre
+
+
+def test_run_feature_not_merge_ready_when_reviewer_flags_red(ctx, monkeypatch):
+    """Un 🔴 reviewer cité verbatim → la feature N'est PAS merge-ready (Tier-1 bloque, non-overridé)."""
+    settings, conn = ctx
+    fake_home = settings.home / "fakehome"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+    _new_project(conn, settings, "proj")
+    _seed(conn, settings, "proj", "feat", [("impl", [])])
+    red = json.dumps({"findings": [{"severity": "🔴", "category": "correctness", "file": "docs/note.md",
+                                    "line": 2, "claim": "faux", "evidence": "docs/note.md:2 — Contenu.",
+                                    "verify_note": "x"}]})
+    summary = orchestrator.run_project(conn, settings, project="proj",
+                                       runner=_writing_worker(), review_runner=_review_worker(red))
+    assert summary["merge_ready"] == []
+    fin = summary["finalizations"][0]
+    assert fin["merge_ready"] is False and any("Tier-1" in b for b in fin["blockers"])

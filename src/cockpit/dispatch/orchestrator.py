@@ -27,10 +27,17 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from cockpit import auth
 from cockpit.config import Settings
 from cockpit.db import store
-from cockpit.dispatch import worker
+from cockpit.dispatch import reviewer, worker
+from cockpit.dispatch import worktree as worktree_mod
+from cockpit.gate import merge as merge_gate
+from cockpit.gate import toolchain
 from cockpit.git.backend import GitBackend
-from cockpit.git.internal import InternalGit
+from cockpit.git.internal import GitOpError, InternalGit
+from cockpit.projects.registry import sot_path_for
 from cockpit.roadmap import model, resolver
+from cockpit.tools import tools_env
+
+_BASE_BRANCH = "dev"   # base du diff finalisé (Tier-0 + review), main-suit-dev
 
 DEFAULT_MAX_PARALLEL = 2   # 2 workers concurrents par défaut (borne prudente ; --max-parallel l'ajuste)
 
@@ -90,9 +97,54 @@ def _dispatch_one(settings: Settings, project: str, feature: str,
         conn.close()
 
 
+def _worked_complete_features(conn: sqlite3.Connection, project: str, failed: set[str]) -> list[str]:
+    """Features dont le TRAVAIL est fini (toutes tasks `done`, ≥1 task), encore `active` (ni merged ni
+    cancelled), et non en échec → prêtes à être **finalisées** (Tier-0 + review → merge-ready). Read-only."""
+    out: list[str] = []
+    for f in model.list_features(conn, project):
+        slug = f["slug"]
+        if f["status"] in _INERT_FEATURE_STATUS or slug in failed:
+            continue
+        rows = conn.execute(
+            "SELECT status FROM tasks WHERE feature_id = ?", (f["id"],)).fetchall()
+        if rows and all(r["status"] in ("done", "cancelled") for r in rows) \
+                and any(r["status"] == "done" for r in rows):
+            out.append(slug)
+    return out
+
+
+def _finalize_feature(conn: sqlite3.Connection, settings: Settings, project: str, feature: str, *,
+                      review_runner: reviewer.Runner | None) -> dict:
+    """Finalise une feature au travail fini : exécute le **Tier-0 toolchain** (déterministe, SHA-bound) PUIS
+    **dispatche le reviewer Tier-1** (charte : LLM génère / déterministe gate), et évalue le gate en *preview*
+    (`human_go=False` → on ne merge JAMAIS ici — le GO reste humain). Retourne `{feature, merge_ready,
+    blockers, review}`. Best-effort : une pièce en échec laisse le gate bloquer proprement (surfacé)."""
+    feature_ref = f"{project}/{feature}"
+    git = InternalGit()                                   # lecture git + gate (distinct du transport worker)
+    feat = model.resolve_feature(conn, feature_ref)
+    sot = sot_path_for(settings, project)
+    wt = worktree_mod.worktree_path_for(settings, project, feature)
+    try:
+        sha = git.feature_sha(sot, feat["branch"])
+        diff_files = git.diff_names(sot, base=_BASE_BRANCH, head=feat["branch"])
+    except GitOpError:
+        return {"feature": feature, "merge_ready": False, "review": None,
+                "blockers": [f"branche {feat['branch']} absente — jamais dispatchée"]}
+    if wt.is_dir():                                       # Tier-0 : la toolchain native, dans le worktree
+        results = toolchain.run_toolchain(wt, diff_files, env=tools_env(settings))
+        toolchain.write_verdict(settings, project, feature, results, sha=sha)
+    review_report = reviewer.dispatch_reviewer(conn, settings, feature_ref=feature_ref, git=git,
+                                               runner=review_runner)
+    ev = merge_gate.evaluate_gate(conn, settings, feature_ref=feature_ref, human_go=False, git=git)
+    decision = ev.get("decision") or {}
+    return {"feature": feature, "merge_ready": bool(decision.get("gate_green")),
+            "blockers": list(decision.get("blockers", [])), "review": review_report}
+
+
 def run_project(conn: sqlite3.Connection, settings: Settings, *, project: str,
                 max_parallel: int = DEFAULT_MAX_PARALLEL, git: GitBackend | None = None,
-                runner: worker.Runner | None = None) -> dict:
+                runner: worker.Runner | None = None,
+                review_runner: reviewer.Runner | None = None) -> dict:
     """Draine la roadmap de `project` : découvre les features prêtes, en dispatche jusqu'à `max_parallel` en
     parallèle, avance le DAG au fil des succès, jusqu'à épuisement. Terminaison **garantie** : chaque run
     fini fait progresser une task (`done`) OU exclut sa feature (`failed`) → l'ensemble du travail restant
@@ -122,18 +174,27 @@ def run_project(conn: sqlite3.Connection, settings: Settings, *, project: str,
                 reports.append(report)
                 if not report["ok"]:
                     failed.add(slug)                    # exclue → pas de re-dispatch en boucle infinie
-    return _summarize(project, reports, failed)
+
+    # Drain fini → FINALISE chaque feature au travail complet : Tier-0 + reviewer dispatché → merge-ready.
+    # C'est le tronçon « qualité » de la boucle autonome (le merge reste le GO humain, hors boucle).
+    finalizations = [_finalize_feature(conn, settings, project, slug, review_runner=review_runner)
+                     for slug in _worked_complete_features(conn, project, failed)]
+    return _summarize(project, reports, failed, finalizations)
 
 
-def _summarize(project: str, reports: list[dict], failed: set[str]) -> dict:
-    """Agrège les runs : combien dispatchées / ok / échouées, quelles features en échec, et si la roadmap
-    est **drainée** — c.-à-d. entièrement avancée **sans échec**. (La boucle ne s'arrête que lorsqu'il ne
-    reste rien à soumettre ; le seul reliquat possible est une feature en échec qui a laissé des tasks
-    `todo` re-dispatchables → `drained` ⟺ aucune feature en échec.)"""
+def _summarize(project: str, reports: list[dict], failed: set[str],
+               finalizations: list[dict] | None = None) -> dict:
+    """Agrège les runs + les **finalisations** (Tier-0 + review par feature complète). `drained` ⟺ aucune
+    feature en échec ; `merge_ready` = features dont le gate est vert (prêtes au GO humain). La boucle ne
+    s'arrête que lorsqu'il ne reste rien à soumettre ; une feature en échec laisse des tasks `todo`
+    re-dispatchables."""
+    fins = finalizations or []
     n_ok = sum(1 for r in reports if r["ok"])
     return {"project": project, "dispatched": len(reports), "ok": n_ok,
             "failed": len(reports) - n_ok, "failed_features": sorted(failed),
-            "drained": not failed, "runs": reports}
+            "drained": not failed, "runs": reports,
+            "finalizations": fins,
+            "merge_ready": sorted(f["feature"] for f in fins if f["merge_ready"])}
 
 
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
@@ -157,4 +218,14 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
             else f"features en échec : {', '.join(summary['failed_features'])}")
     print(f"run {args.project} : {summary['dispatched']} dispatchée(s), {summary['ok']} ok, "
           f"{summary['failed']} échouée(s) — {tail}")
+    for fin in summary["finalizations"]:
+        if fin["merge_ready"]:
+            print(f"  ✅ {fin['feature']} — MERGE-READY (Tier-0 + review OK) → `cockpit merge {args.project}"
+                  f"/{fin['feature']} --go`")
+        else:
+            why = "; ".join(fin["blockers"][:2]) or "gate incomplet"
+            print(f"  🟡 {fin['feature']} — pas encore merge-ready : {why}")
+    if summary["merge_ready"]:
+        print(f"→ {len(summary['merge_ready'])} feature(s) prête(s) au GO humain : "
+              f"{', '.join(summary['merge_ready'])}")
     return 0 if summary["drained"] else 1
