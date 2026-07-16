@@ -264,6 +264,59 @@ def test_dispatch_fail_loud_when_claude_absent(ctx, monkeypatch):
     assert task["status"] == "todo"                        # re-dispatchable
 
 
+# -- P1 : réconciliation des jobs zombies (worker mort / daemon redémarré) --------------------------
+
+def _running_job_on_task(conn, settings, *, task_slug="schema"):
+    """Pose un job `running` + sa task `in_progress` — l'état exact d'un worker fauché en plein run."""
+    task_id = conn.execute("SELECT id FROM tasks WHERE slug=?", (task_slug,)).fetchone()["id"]
+    conn.execute("UPDATE tasks SET status='in_progress' WHERE id=?", (task_id,))
+    conn.commit()
+    job_id = jobs.record_start(conn, task_id=task_id, worktree="/tmp/wt", session_id="sess-zombie")
+    return job_id, task_id
+
+
+def test_reconcile_orphans_kills_running_and_reverts_task_and_is_idempotent(ctx):
+    """Un `dispatch_jobs.status='running'` au boot est orphelin par construction → `killed`, sa task
+    `in_progress`→`todo` (re-dispatchable). Idempotent : un 2ᵉ appel ne trouve plus rien."""
+    from cockpit.dispatch import reconcile
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    job_id, _ = _running_job_on_task(conn, settings)
+    reconciled = reconcile.reconcile_orphans(conn)
+    assert reconciled == [job_id]
+    assert jobs.get_job(conn, job_id)["status"] == "killed"
+    assert conn.execute("SELECT status FROM tasks WHERE slug='schema'").fetchone()["status"] == "todo"
+    assert reconcile.reconcile_orphans(conn) == []         # idempotent : plus aucun running
+
+
+def test_reconcile_leaves_finished_job_and_its_task_untouched(ctx):
+    """La réconciliation ne touche QUE les `running` (WHERE-guard) : un job `done` et la task `in_progress`
+    qu'il a légitimement sérialisée restent intacts."""
+    from cockpit.dispatch import reconcile
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    report = worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=_ok_runner)
+    assert reconcile.reconcile_orphans(conn) == []         # aucun running → no-op
+    assert jobs.get_job(conn, report["job_id"])["status"] == "done"          # job abouti intact
+    assert conn.execute("SELECT status FROM tasks WHERE slug='schema'").fetchone()["status"] == "in_progress"
+
+
+def test_dispatch_finalizes_job_on_unexpected_exception(ctx):
+    """Une exception INATTENDUE (≠ ToolPreflightError/RunTimeout) qui échappe au spawn NE laisse PAS un job
+    zombie : la garde finalise (killed + task→todo) PUIS re-propage LOUD (jamais avalée)."""
+    settings, conn = ctx
+    _seed_project(conn, settings)
+
+    def _boom_runner(argv, *, cwd, input_text, timeout, env=None):
+        raise RuntimeError("spawn imprévu")
+
+    with pytest.raises(RuntimeError, match="spawn imprévu"):
+        worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=_boom_runner)
+    job = conn.execute("SELECT * FROM dispatch_jobs ORDER BY started_at DESC LIMIT 1").fetchone()
+    assert job["status"] == "killed"                       # finalisé, pas zombie
+    assert conn.execute("SELECT status FROM tasks WHERE slug='schema'").fetchone()["status"] == "todo"
+
+
 # -- P1 : récolte du minerai de décisions (worker.result → docs/decisions/) -------------------------
 
 def test_dispatch_harvests_decision_doc_on_success(ctx):

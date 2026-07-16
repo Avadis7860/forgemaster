@@ -26,7 +26,7 @@ from cockpit import auth
 from cockpit.config import Settings
 from cockpit.core import ids, run
 from cockpit.db import store
-from cockpit.dispatch import jobs, worktree
+from cockpit.dispatch import jobs, reconcile, worktree
 from cockpit.git.backend import GitBackend
 from cockpit.git.identity import resolve_identity
 from cockpit.git.internal import InternalGit
@@ -172,44 +172,54 @@ def dispatch_next(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
     # env sert au preflight (which) ET au spawn — cohérence garantie.
     env = tools_env(settings)
     started = time.monotonic()
+    # Garde de finalisation : le job vient d'être posé `running` (record_start). SEUL `record_finish` (ou le
+    # revert task→todo) le sort de cet état. Toute exception qui échappe à la gestion normale ci-dessous
+    # (preflight non-ToolPreflightError, trust/DB en erreur, spawn OSError, commit forge…) sauterait cette
+    # sortie → job `running` ZOMBIE, daemon pourtant vivant. On finalise alors l'orphelin (killed + task→todo,
+    # scopé au job encore `running`) PUIS on re-propage LOUD — jamais avalé, jamais laissé zombie.
     try:
-        # Preflight fail-loud : tout binaire déclaré par la facette (allowedTools) doit résoudre AVANT le
-        # spawn — sinon le worker le découvrirait absent à l'usage (échec tardif et opaque). Absent → job
-        # échoué + task re-dispatchable (comme un RunTimeout), le runner n'est jamais appelé.
-        preflight_tools(res["path"], settings, env=env)
-        # Le worker n'exécute ses outils QUE si son workspace est TRUSTED — sinon `claude -p` headless ignore
-        # les `allowedTools` de la facette (« this workspace has not been trusted »). La clé de confiance du
-        # worktree est le SoT bare du projet → on le marque trusted avant le spawn (idempotent).
-        auth.trust_workspace(sot_path_for(settings, project))
-        # `claude` (moteur du worker) doit résoudre dans l'env du worker (`tools_env` inclut `~/.local/bin`) ;
-        # absent → on échoue FAIL-LOUD (comme le preflight) au lieu d'un spawn mort-né silencieux (le PATH
-        # systemd du daemon n'a pas `~/.local/bin` sans cet env).
-        if shutil.which("claude", path=env.get("PATH")) is None:
-            raise ToolPreflightError(
-                "claude introuvable sur le PATH du worker — installe Claude Code "
-                "(`provision-ct.sh --with-claude`, ou `claude` dans ~/.local/bin) puis relance.")
-        proc = runner(argv, cwd=res["path"], input_text=prompt, timeout=DISPATCH_TIMEOUT, env=env)
-        parsed = parse_headless_result(proc.stdout, proc.returncode)
-    except (ToolPreflightError, run.RunTimeout) as exc:
-        parsed = {"ok": False, "session_id": session_id, "num_turns": None, "cost_usd": None,
-                  "error": str(exc)}
-    wall_s = time.monotonic() - started
-    jobs.record_finish(conn, job_id, parsed, wall_s=wall_s)
-    if parsed.get("ok"):
-        # Récolte le minerai AVANT le commit : le message final du worker (ses décisions) devient un
-        # `docs/decisions/<date>--<task>.md` durable, embarqué dans le même commit que le code. Dans la
-        # branche ok uniquement → un run raté (revient `todo`) ne laisse jamais de minerai orphelin.
-        write_decision_doc(res["path"], nxt["slug"], parsed.get("result"), date_str=date.today().isoformat())
-        # Le worker écrit le code mais NE fait PAS de git (mandat) → la forge committe son travail sur la
-        # branche de feature dès le run réussi, pour que le gate SHA-bound ait un HEAD à ancrer. Arbre propre
-        # (le worker n'a rien changé) → no-op propre (la feature reste alignée sur sa base).
-        git.commit_worktree(res["path"], message=f"feat({feature}): {nxt['slug']} (worker dispatch)",
-                            identity=resolve_identity(project, worktree.WORKTREE_BASE, role="worker"))
-    else:
-        conn.execute("UPDATE tasks SET status = 'todo' WHERE id = ?", (nxt["id"],))   # re-dispatchable
-        conn.commit()
-    return {"dispatched": True, "reason": "ok" if parsed.get("ok") else (parsed.get("error") or "échec"),
-            "task": nxt["slug"], "job_id": job_id, "result": parsed}
+        try:
+            # Preflight fail-loud : tout binaire déclaré par la facette (allowedTools) doit résoudre AVANT le
+            # spawn — sinon le worker le découvrirait absent à l'usage (échec tardif et opaque). Absent → job
+            # échoué + task re-dispatchable (comme un RunTimeout), le runner n'est jamais appelé.
+            preflight_tools(res["path"], settings, env=env)
+            # Le worker n'exécute ses outils QUE si son workspace est TRUSTED — sinon `claude -p` headless
+            # ignore les `allowedTools` de la facette (« this workspace has not been trusted »). La clé de
+            # confiance du worktree est le SoT bare du projet → marqué trusted avant le spawn (idempotent).
+            auth.trust_workspace(sot_path_for(settings, project))
+            # `claude` (moteur du worker) doit résoudre dans l'env du worker (`tools_env` a `~/.local/bin`) :
+            # absent → on échoue FAIL-LOUD (comme le preflight) au lieu d'un spawn mort-né silencieux (le PATH
+            # systemd du daemon n'a pas `~/.local/bin` sans cet env).
+            if shutil.which("claude", path=env.get("PATH")) is None:
+                raise ToolPreflightError(
+                    "claude introuvable sur le PATH du worker — installe Claude Code "
+                    "(`provision-ct.sh --with-claude`, ou `claude` dans ~/.local/bin) puis relance.")
+            proc = runner(argv, cwd=res["path"], input_text=prompt, timeout=DISPATCH_TIMEOUT, env=env)
+            parsed = parse_headless_result(proc.stdout, proc.returncode)
+        except (ToolPreflightError, run.RunTimeout) as exc:
+            parsed = {"ok": False, "session_id": session_id, "num_turns": None, "cost_usd": None,
+                      "error": str(exc)}
+        wall_s = time.monotonic() - started
+        jobs.record_finish(conn, job_id, parsed, wall_s=wall_s)
+        if parsed.get("ok"):
+            # Récolte le minerai AVANT le commit : le message final du worker (ses décisions) devient un
+            # `docs/decisions/<date>--<task>.md` durable, embarqué dans le même commit que le code. Dans la
+            # branche ok uniquement → un run raté (revient `todo`) ne laisse jamais de minerai orphelin.
+            write_decision_doc(res["path"], nxt["slug"], parsed.get("result"),
+                               date_str=date.today().isoformat())
+            # Le worker écrit le code mais NE fait PAS de git (mandat) → la forge committe son travail sur la
+            # branche de feature dès le run réussi, pour que le gate SHA-bound ait un HEAD à ancrer. Arbre net
+            # (le worker n'a rien changé) → no-op propre (la feature reste alignée sur sa base).
+            git.commit_worktree(res["path"], message=f"feat({feature}): {nxt['slug']} (worker dispatch)",
+                                identity=resolve_identity(project, worktree.WORKTREE_BASE, role="worker"))
+        else:
+            conn.execute("UPDATE tasks SET status = 'todo' WHERE id = ?", (nxt["id"],))   # re-dispatchable
+            conn.commit()
+        return {"dispatched": True, "reason": "ok" if parsed.get("ok") else (parsed.get("error") or "échec"),
+                "task": nxt["slug"], "job_id": job_id, "result": parsed}
+    except BaseException:
+        reconcile.mark_job_orphan(conn, job_id)   # jamais de zombie ; no-op si le job est déjà finalisé
+        raise
 
 
 def _counts(classified: dict[str, dict]) -> str:

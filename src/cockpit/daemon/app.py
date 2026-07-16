@@ -10,6 +10,7 @@ garder les routers fins.
 """
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -38,7 +39,10 @@ def web_dist_dir() -> Path:
 
 def build_app(settings: Settings) -> FastAPI:
     """Construit l'app FastAPI avec DI explicite : `Deps(settings)` posé sur `app.state`, routers de domaine
-    montés. Import fastapi paresseux (le module s'importe sans le serveur)."""
+    montés. Import fastapi paresseux (le module s'importe sans le serveur). Le `lifespan` réconcilie au boot
+    les jobs de dispatch orphelins (worker mort/daemon redémarré ⇒ job `running` zombie)."""
+    from contextlib import asynccontextmanager
+
     from fastapi import FastAPI, Request
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import JSONResponse
@@ -60,7 +64,26 @@ def build_app(settings: Settings) -> FastAPI:
         types,
     )
 
-    app = FastAPI(title="cockpit", version=__version__)
+    @asynccontextmanager
+    async def _lifespan(_app: FastAPI):  # type: ignore[no-untyped-def]
+        # Réconciliation au démarrage : le dispatch est synchrone in-process → aucun thread de worker ne
+        # survit un restart, donc tout `dispatch_jobs.status='running'` observé ici est orphelin par
+        # construction (worker tué, daemon redémarré en plein run). On le finalise (killed) + task→todo.
+        from cockpit.db import store
+        from cockpit.dispatch import reconcile
+
+        conn = store.open_db(settings)
+        try:
+            orphans = reconcile.reconcile_orphans(conn)
+            if orphans:
+                logging.getLogger("cockpit").warning(
+                    "réconcilié %d job(s) de dispatch orphelin(s) au boot (running→killed, task→todo) : %s",
+                    len(orphans), orphans)
+        finally:
+            conn.close()
+        yield
+
+    app = FastAPI(title="cockpit", version=__version__, lifespan=_lifespan)
     app.state.deps = Deps(settings)                      # conteneur DI unique, lu par get_deps
 
     # CORS pour le dev Vite (:5173 → daemon :8700). Outil strictement local : origines localhost only,

@@ -242,6 +242,26 @@ def test_feature_jobs_listing_for_discovery(client):
     assert c.get("/api/dispatch/proj/nope/jobs").status_code == 404   # feature absente → 404
 
 
+def test_lifespan_reconciles_orphan_running_jobs_at_boot(tmp_path):
+    """Au démarrage du daemon (lifespan), tout job resté `running` (worker tué / daemon redémarré en plein
+    run — dispatch synchrone in-process, aucun thread ne survit) est réconcilié : `killed` + sa task
+    `in_progress`→`todo`, la feature redevient dispatchable. Sans quoi le job reste zombie indéfiniment."""
+    settings = Settings.resolve(home=tmp_path / "home", projects_root=tmp_path / "projects")
+    job_id = _seed_job(settings, "/tmp/none.jsonl")          # job `running` + projet/feature/task
+    conn = store.open_db(settings)
+    conn.execute("UPDATE tasks SET status='in_progress' WHERE slug='schema'")   # task figée (worker mort)
+    conn.commit()
+    conn.close()
+    with TestClient(app_mod.build_app(settings)):            # __enter__ déclenche le lifespan → reconcile
+        pass
+    conn = store.open_db(settings)
+    try:
+        assert jobs.get_job(conn, job_id)["status"] == "killed"
+        assert conn.execute("SELECT status FROM tasks WHERE slug='schema'").fetchone()["status"] == "todo"
+    finally:
+        conn.close()
+
+
 def test_dispatch_ws_streams_normalized_transcript_then_terminal_frame(client, tmp_path):
     c, settings = client
     log = tmp_path / "transcript.jsonl"                  # transcript JETABLE (jamais un vrai `claude`)
