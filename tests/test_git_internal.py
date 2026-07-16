@@ -75,6 +75,24 @@ def test_init_sot_seeds_payload_tree_on_dev_and_main(tmp_path: Path):
     assert "OTHER.md" not in again and "CLAUDE.md" in again
 
 
+def test_init_sot_points_head_at_main_so_clone_checks_out_seed(tmp_path: Path):
+    """Non-régression : le HEAD du bare doit résoudre `refs/heads/main` (pas le `master` par défaut d'un
+    `git init --bare`, jamais créé par la forge) — sinon `git clone` du SoT sort « remote HEAD refers to
+    nonexistent ref » et ne matérialise AUCUN fichier (le client tombe sur un arbre vide)."""
+    git = InternalGit()
+    sot = tmp_path / "bare"
+    git.init_sot(sot, payload={"README.md": "# seed\n"})
+    # 1. le HEAD du bare pointe main (la branche promue), pas master
+    head = run.run(["git", "-C", str(sot), "symbolic-ref", "HEAD"]).stdout.strip()
+    assert head == "refs/heads/main"
+    # 2. un `git clone` matérialise l'arbre du seed, sans warning HEAD-inexistant
+    wt = tmp_path / "clone"
+    cloned = run.run(["git", "clone", str(sot), str(wt)])
+    assert cloned.ok, cloned.stderr
+    assert "nonexistent ref" not in cloned.stderr
+    assert (wt / "README.md").read_text(encoding="utf-8") == "# seed\n"
+
+
 def test_worktree_lifecycle_and_branch(tmp_path: Path):
     git = InternalGit()
     sot = _seed_bare(tmp_path)

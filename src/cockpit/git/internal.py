@@ -240,6 +240,7 @@ class InternalGit:
         if not (probe.ok and probe.stdout.strip() == "true"):
             _checked(sot, "init", "--bare")
         self._seed_base(sot, payload)
+        self._point_head_at_default(sot)
 
     def clone_sot(self, sot: Path, url: str, *, creds_env: Mapping[str, str] | None = None) -> None:
         """Adopte un SoT bare depuis une **URL distante** (`git clone --bare`) — au lieu de semer un arbre
@@ -258,6 +259,7 @@ class InternalGit:
         if not r.ok:
             raise GitOpError(f"git clone --bare {url}: {r.stderr.strip()[:200]}")
         self._normalize_forge_branches(sot)
+        self._point_head_at_default(sot)
 
     def _normalize_forge_branches(self, sot: Path) -> None:
         """Garantit l'invariant forge **`dev`+`main`** sur un SoT fraîchement cloné, en **dérivant** des
@@ -290,6 +292,14 @@ class InternalGit:
         sha = commit.stdout.strip()
         for base in ("dev", "main"):
             _checked(sot, "update-ref", f"refs/heads/{base}", sha)
+
+    def _point_head_at_default(self, sot: Path) -> None:
+        """Pointe le HEAD du bare sur `refs/heads/main` (la branche promue/stable de la forge). Un
+        `git init --bare` laisse HEAD sur `refs/heads/master` — jamais créé ici (branches réelles
+        `dev`+`main`) → un `git clone` du SoT sort « remote HEAD refers to nonexistent ref » et ne
+        matérialise AUCUN fichier (le client tombe sur un arbre vide). `symbolic-ref` est idempotent et
+        n'exige pas que la cible existe déjà → normalise aussi un bare hérité de l'ancien init."""
+        _checked(sot, "symbolic-ref", "HEAD", "refs/heads/main")
 
     def _seed_tree_with_payload(
         self, sot: Path, files: Mapping[str, str], env: Mapping[str, str],
