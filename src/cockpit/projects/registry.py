@@ -33,18 +33,24 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _render_provenance(bundle: str, version: str, created_at: str) -> str:
+def _render_provenance(bundle: str, version: str, created_at: str,
+                       template: str | None = None, template_sha: str | None = None) -> str:
     """Le tampon de provenance semé dans le SoT (`.cockpit/provenance.toml`) : de quel `bundle@version` ce
     projet a été **dérivé**, et quand. Ajouté à l'INSTANCIATION (jamais vendoré dans un overlay) → la
     provenance est **par-projet**, pas par-bundle, et garde `bundle.toml` dans son rôle de descripteur.
-    Socle du SoT-and-derive : dérive détectable, re-sync opt-in (outillé en P5+). TOML minimal rendu à la
-    main (3 clés, valeurs contrôlées : slug kebab validé, version de manifeste, `created_at` ISO-8601)."""
-    return (
+    Socle du SoT-and-derive : dérive détectable, re-sync opt-in (outillé en P5+). Si le bundle est lui-même
+    **projeté d'un template corpus** (SoT-and-derive amont, cf. `provision.derive`), on trace aussi
+    `template@sha` — de quel template le seed a été dérivé au build. TOML minimal rendu à la main (valeurs
+    contrôlées : version de manifeste, `created_at` ISO-8601, ref+sha de template)."""
+    out = (
         "[provenance]\n"
         f'bundle = "{bundle}"\n'
         f'version = "{version}"\n'
         f'created_at = "{created_at}"\n'
     )
+    if template and template_sha:
+        out += f'template = "{template}"\ntemplate_sha = "{template_sha}"\n'
+    return out
 
 
 def sot_path_for(settings: Settings, slug: str) -> Path:
@@ -114,7 +120,10 @@ def create_project(conn: sqlite3.Connection, settings: Settings, *,
     if not source_url:
         payload = load_bundle(project_type)                    # SEED : bundle du type (base ⊕ overlay)
         version = read_bundle_manifest(project_type)["version"]   # non-vide (garanti par validate_bundle)
-        payload[_PROVENANCE_PATH] = _render_provenance(project_type, version, created_at)
+        from cockpit.provision.derive import template_provenance  # import paresseux : lecteur de manifeste
+        prov = template_provenance(project_type)   # lecture fichier offline (jamais une re-dérivation)
+        tmpl, tmpl_sha = prov if prov else (None, None)
+        payload[_PROVENANCE_PATH] = _render_provenance(project_type, version, created_at, tmpl, tmpl_sha)
         git.init_sot(sot, payload=payload)                     # + tampon de provenance bundle@version
         if mirror_remote:
             git.set_remote(sot, "mirror", mirror_remote)       # matérialise le miroir dans git (P1)

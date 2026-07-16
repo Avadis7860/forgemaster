@@ -103,7 +103,36 @@ def _version(args: argparse.Namespace) -> int:
     return 0
 
 
-_ACTIONS = {"list": _list, "validate": _validate, "show": _show, "version": _version}
+def _derive(args: argparse.Namespace) -> int:
+    """Régénère (ou vérifie, `--check`) le seed **dérivé** d'un type depuis son template corpus vendoré
+    (`provision.derive`, build-time). Sans `--type` : tous les dérivables. `--check` n'écrit rien et
+    **retourne 1 dès qu'un overlay a dérivé** de son template (gate/CI). Import paresseux : `bundle list`
+    et consorts n'ont pas à charger le générateur."""
+    from cockpit.provision import derive
+    targets = [args.type] if getattr(args, "type", None) else list(derive.derivable_types())
+    if not targets:
+        print("aucun type dérivable (aucun derive/<type>/)")
+        return 0
+    rc = 0
+    for t in targets:
+        try:
+            if args.check:
+                drift = derive.check_drift(t)
+                if drift:
+                    print(f"✗ {t} : overlay dérivé du template — {', '.join(drift)}")
+                    rc = 1
+                else:
+                    print(f"✓ {t} : en phase avec le template")
+            else:
+                written = derive.apply_derivation(t)
+                print(f"✓ {t} : {len(written)} chemin(s) régénéré(s) — {', '.join(written)}")
+        except derive.DeriveError as exc:
+            print(f"✗ {t} : {exc}")
+            rc = 1
+    return rc
+
+
+_ACTIONS = {"list": _list, "validate": _validate, "show": _show, "version": _version, "derive": _derive}
 
 
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:

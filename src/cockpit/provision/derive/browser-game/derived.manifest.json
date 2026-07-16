@@ -1,0 +1,14 @@
+{
+  "template": "browser-game-pve/scaffold",
+  "template_sha": "84a97459e55c2ba5e636d1ad81bb27d9d6944f72a11d4dd8463e2392808c8237",
+  "blueprint_sha": "1449935735475b86096432d8ecb0bdaa4f2f07932334b00470b264a873270a32",
+  "values_sha": "e2eb0c808453bc7c166d71e4f88c3119ce5fc0a967e9bc426e1e451aa05cce35",
+  "generator_version": "1",
+  "managed_paths": [
+    "CLAUDE.md",
+    "package.json",
+    "src/index.ts",
+    "src/shared/schema.ts",
+    "tsconfig.json"
+  ]
+}

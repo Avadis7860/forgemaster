@@ -3,9 +3,12 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Jeu navigateur (TS unifié) semé par le cockpit. Le script `gate` monte la toolchain Tier-0 (tsc types).",
+  "description": "Jeu navigateur (univers TypeScript unifié) semé par le cockpit — thème : {{theme}}. Le script `gate` monte la toolchain Tier-0.",
   "scripts": {
     "gate": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "typescript": "5.5.4"

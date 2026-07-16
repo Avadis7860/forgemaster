@@ -68,7 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # -- bundle -------------------------------------------------------------------------------------
     p_bundle = sub.add_parser("bundle", parents=[common],
-                              help="gestion des bundles (registre vendoré) : list|validate|show|version")
+                              help="gestion des bundles : list|validate|show|version|derive")
     p_bundle_sub = p_bundle.add_subparsers(dest="action", required=True, metavar="<action>")
     p_bundle_sub.add_parser("list", parents=[common], help="lister les types du registre + validité")
     blv = p_bundle_sub.add_parser("validate", parents=[common],
@@ -78,6 +78,11 @@ def build_parser() -> argparse.ArgumentParser:
     bsh.add_argument("type")
     bvr = p_bundle_sub.add_parser("version", parents=[common], help="version d'un bundle (ou de tous)")
     bvr.add_argument("type", nargs="?", help="type ; défaut = tous")
+    bdv = p_bundle_sub.add_parser("derive", parents=[common],
+                                  help="régénérer le seed dérivé d'un type depuis son template corpus")
+    bdv.add_argument("--type", help="type à dériver ; défaut = tous les dérivables")
+    bdv.add_argument("--check", action="store_true",
+                     help="ne rien écrire : exit 1 si l'overlay a dérivé de son template (drift)")
 
     # -- roadmap ------------------------------------------------------------------------------------
     p_roadmap = sub.add_parser("roadmap", parents=[common], help="roadmap in-repo (features + tasks)")

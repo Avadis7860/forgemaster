@@ -51,8 +51,9 @@ Univers **TypeScript unique** :
 
 ## 6. Workflows et processus
 
-- **Blueprint d'abord** : applique le patron d'étapes (modèle Zod → boucle de tick serveur → commandes → IA
-  bots → combat → UI → persistance) et les décisions verrouillées (serveur-autoritatif, déterminisme).
+<!-- derived:blueprint-pattern:start -->
+- **Blueprint d'abord** : applique le patron d'étapes (É1 Modèle de domaine → É2 Boucle de tick serveur → É3 Commandes + API → É4 IA des bots → É5 Combat / résolution → É6 UI de gestion → É7 Persistance & sessions) et les décisions verrouillées (serveur-autoritatif, déterminisme). *(Dérivé du blueprint `browser-game-pve` — ne pas éditer à la main ; `cockpit bundle derive`.)*
+<!-- derived:blueprint-pattern:end -->
 - **Boucle** : `roadmap-decompose` (intention → features[facette] → tasks) → `work-loop` (feature depuis `dev`,
   gate vert, ff-only vers `dev`, `main` promu depuis un `dev` vert) → `docs-authoring`. Tout acte irréversible =
   **GO humain** (fail-closed).

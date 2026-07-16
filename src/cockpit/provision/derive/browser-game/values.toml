@@ -1,0 +1,20 @@
+# values.toml — instanciation build-time du template scaffold pour le type de bundle `browser-game`.
+# Consommé par `cockpit bundle derive` (provision/derive.py) ; JAMAIS lu au seed d'un projet.
+
+[template]
+# Provenance : quel template corpus (mcp-catalogs-data) a produit ce seed. `scaffold.md` + `blueprint.md`
+# vendorés dans ce dossier en sont des copies épinglées (sha tracé dans derived.manifest.json).
+ref = "browser-game-pve/scaffold"
+
+[archetype]
+# Jetons CONSTANTS pour tout le type → remplis au build, gravés dans l'overlay vendoré.
+pkg_name = "game"
+gate_cmd = "tsc --noEmit"
+ts_version = "5.5.4"
+zod_version = "^3.23.8"
+
+[project]
+# Jetons de MISSION → laissés `{{…}}` dans l'overlay commité ; ils voyagent verbatim dans le seed et sont
+# remplis par le worker du projet (contrat runnable-out-of-the-box). Toute occurrence hors de cette allowlist
+# est une erreur de dérivation (jeton archétype oublié).
+allow = ["game_name", "theme"]
