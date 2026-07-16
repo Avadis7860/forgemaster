@@ -1,6 +1,7 @@
 """Tests de provision — les bundles vendorés (base ⊕ overlay) chargés en mapping chemin→contenu."""
 from __future__ import annotations
 
+import json
 import tomllib
 from pathlib import Path
 
@@ -265,6 +266,22 @@ def test_generic_exposes_cross_cutting_facets_not_just_doc():
             key = f".claude/facets/{fac}/{leaf}"
             assert key in bundle and bundle[key].strip(), f"generic : {key} absent/vide"
     validate_bundle("generic")                    # ne lève pas : default_facet ∈ facets, dossiers présents
+
+
+def test_orchestrator_role_facet_carries_loop_verbs_not_write():
+    """Le rôle **orchestrateur** (boucle `claude -p` dispatch→gate→merge) est semé dans base : allow-list
+    scopée aux VERBES DU LOOP (`cockpit dispatch/gate/merge/run`), SANS Write/Edit (il pilote, les workers
+    écrivent). Rôle, pas facette worker → **non déclaré** au vocab du bundle (pas dispatchable comme feature).
+    Ne widen PAS le terminal humain (`.claude/settings.json`, qui n'a jamais les verbes cockpit)."""
+    bundle = load_bundle("generic")
+    allow = json.loads(bundle[".claude/facets/orchestrator/settings.local.json"])["permissions"]["allow"]
+    assert any("cockpit dispatch" in a for a in allow) and any("cockpit merge" in a for a in allow)
+    assert any("cockpit gate" in a for a in allow)
+    assert "Write" not in allow and "Edit" not in allow           # pilote, ne code pas
+    manifest = tomllib.loads(bundle[".cockpit/bundle.toml"])["bundle"]
+    assert "orchestrator" not in manifest["facets"]               # rôle, pas facette worker déclarée
+    human = json.loads(bundle[".claude/settings.json"])["permissions"]["allow"]
+    assert not any("cockpit dispatch" in a for a in human)        # terminal humain NON élargi
 
 
 def test_generic_project_can_resolve_and_activate_code_facet(tmp_path: Path):

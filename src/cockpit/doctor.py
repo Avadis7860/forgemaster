@@ -50,14 +50,28 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
         print(f"  {icon} {r['type']}/{r['facet']} — {detail}  [{req}]")
         all_missing.update(miss)
     mcp_ok = _report_mcp(settings)
+    runtime_ok = _report_runtime(settings)
     if all_missing:
         print(f"🔴 outillage INCOMPLET — pose les manquants (`cockpit tools install`) : "
               f"{', '.join(sorted(all_missing))}")
         return 1
-    if not mcp_ok:
+    if not (mcp_ok and runtime_ok):
         return 1
     print(f"✅ outillage complet — tous les binaires déclarés résolvent sous {tools_bin(settings)}")
     return 0
+
+
+def _report_runtime(settings: Settings) -> bool:
+    """Le moteur de run conteneur (podman/docker) est requis pour `cockpit deploy` (P2). Absent → 🔴
+    **bloquant** (le deploy crasherait) avec l'action ; présent → ✅."""
+    from cockpit.runtime.backend import runtime_available
+    cmd = settings.compose_cmd
+    if runtime_available(cmd):
+        print(f"  ✅ runtime conteneur — `{cmd[0]}` présent (deploy P2 disponible)")
+        return True
+    print(f"  🔴 runtime conteneur — `{cmd[0]}` absent → `cockpit deploy` échouerait ; installe podman "
+          "(rootless, via `provision-ct.sh`) ou configure COCKPIT_COMPOSE_CMD=docker compose")
+    return False
 
 
 def _report_mcp(settings: Settings) -> bool:

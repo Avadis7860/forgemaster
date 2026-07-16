@@ -169,6 +169,23 @@ def test_logs_reads_both_stdout_and_stderr(tmp_path: Path):
     assert lines == ["sortie 1", "acces stderr"]             # stdout PUIS stderr, aucune perte
 
 
+def test_runtime_available_resolves_engine_binary():
+    """Sonde de présence du moteur (podman/docker) — `sh` résout, un binaire bidon non."""
+    assert backend_mod.runtime_available(["sh"]) is True
+    assert backend_mod.runtime_available(["cockpit-no-such-engine-zzz"]) is False
+    assert backend_mod.runtime_available([]) is False
+
+
+def test_missing_engine_raises_compose_error_not_filenotfound(tmp_path: Path):
+    """Moteur absent (binaire introuvable) → `ComposeError` **actionnable** (précondition), PAS un
+    `FileNotFoundError` brut : le runner par défaut sonde le PATH avant le sous-process. C'est ce qui rend
+    `deploy status` gracieux (l'engine catch `ComposeError` → `unhealthy`, jamais une stacktrace)."""
+    # runner par DÉFAUT (which réel), binaire de moteur introuvable
+    engine_cli = PodmanCompose(cmd=("cockpit-no-such-engine-zzz", "compose"))
+    with pytest.raises(backend_mod.ComposeError, match="runtime conteneur absent"):
+        engine_cli.ps("cockpit-x-dev", tmp_path)
+
+
 def test_ps_queries_container_engine_directly_by_compose_label(tmp_path: Path):
     """`ps()` interroge le MOTEUR directement (`<engine> ps --format json --filter label=…`), PAS `compose ps`
     (podman-compose 1.0.6 ne supporte ni `--format json` ni `-a`, et re-parse le compose). Filtre par

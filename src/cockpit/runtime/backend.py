@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -74,8 +75,22 @@ class ComposeBackend(Protocol):
         ...
 
 
+def runtime_available(cmd: Sequence[str], *, path: str | None = None) -> bool:
+    """True si le binaire du moteur compose (`cmd[0]`, podman/docker) **résout** sur le PATH — sonde pour
+    `doctor` / preflight. Sans effet de bord (pas de sous-process). PUR (which)."""
+    return bool(cmd) and shutil.which(cmd[0], path=path) is not None
+
+
 def _default_runner(argv: Sequence[str], *, cwd: object, env: Mapping[str, str],
                     timeout: float) -> run.RunResult:
+    # Preflight fail-GRACIEUX : le moteur (`podman`/`docker`) doit résoudre AVANT le sous-process, sinon
+    # `subprocess` lève un `FileNotFoundError` **brut** (stacktrace) — on le convertit en `ComposeError`
+    # actionnable, que les couches hautes dégradent proprement (status → unhealthy ; deploy → précondition
+    # 400/CLI). On sonde le MÊME PATH que le run (env scellé), pas celui d'`os.environ`.
+    if not runtime_available(argv, path=env.get("PATH")):
+        raise ComposeError(
+            f"runtime conteneur absent : `{argv[0]}` introuvable sur le PATH — installe podman (rootless, "
+            "via `provision-ct.sh`) ou configure COCKPIT_COMPOSE_CMD=docker compose")
     return run.run(list(argv), cwd=cwd, env=env, timeout=timeout)   # type: ignore[arg-type]
 
 

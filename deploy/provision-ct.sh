@@ -79,6 +79,22 @@ install_claude() {
   echo "   ✓ Claude OK : $(claude --version 2>/dev/null || echo installé) — tape \`claude\` dans le terminal pour te connecter"
 }
 
+# Podman = le moteur de run conteneur pour `cockpit deploy` (P2). Le wheel n'apporte QUE `cockpit`, jamais le
+# runtime → sans podman, `cockpit deploy` échouerait (le `doctor` ci-dessous le rougit comme bloquant, cf.
+# provisioning-loop-gaps). Idempotent (skip si présent), fail-loud, imprime. apt exige root → `sudo` sinon.
+install_podman() {
+  if command -v podman >/dev/null 2>&1; then
+    echo "   déjà présent : $(podman --version 2>/dev/null || echo podman)"; return 0
+  fi
+  local APT=apt-get
+  [ "$(id -u)" -eq 0 ] || APT="sudo apt-get"
+  echo "   installe podman (rootless : + uidmap/slirp4netns/fuse-overlayfs) via $APT…"
+  $APT update -qq && $APT install -y -qq podman uidmap slirp4netns fuse-overlayfs \
+    || { echo "✗ install podman échouée (apt indisponible ?) — installe podman à la main puis relance" >&2; return 1; }
+  command -v podman >/dev/null 2>&1 || { echo "✗ podman absent après install" >&2; return 1; }
+  echo "   ✓ podman OK : $(podman --version 2>/dev/null || echo installé)"
+}
+
 echo "→ [1/8] venv Python : $venv"
 python3 -m venv "$venv"
 
@@ -96,6 +112,8 @@ if [ "$with_claude" = "yes" ]; then install_claude; fi
 # privées ; repos publics → clone anonyme. Node via nodeenv (rootless), sans sudo.
 echo "→ [4/8] outillage hôte-niveau (maps + Node + qualité py → $home/tools/bin)"
 if [ -n "$token_file" ]; then "$cockpit" tools install --token-file "$token_file"; else "$cockpit" tools install; fi
+echo "   runtime conteneur (podman) pour \`cockpit deploy\` (P2)"
+install_podman
 # Auto-vérification (fail-loud) : les binaires que les bundles DÉCLARENT résolvent-ils vraiment sous
 # `tools_env` ? `cockpit doctor` = SONDE PURE (rc 0 = tout présent ; rc 1 = un binaire manque, il le nomme
 # + rappelle `cockpit tools install`). Sur rc 1 on ABORTE l'install ICI, au lieu de laisser le 1er worker le
