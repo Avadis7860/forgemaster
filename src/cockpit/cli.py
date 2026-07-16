@@ -137,8 +137,11 @@ def build_parser() -> argparse.ArgumentParser:
     # -- gate ---------------------------------------------------------------------------------------
     p_gate = sub.add_parser("gate", parents=[common], help="gate de review / vérification")
     p_gate_sub = p_gate.add_subparsers(dest="action", required=True, metavar="<action>")
-    gr = p_gate_sub.add_parser("review", parents=[common], help="verdict Tier-1 lié au SHA")
+    gr = p_gate_sub.add_parser("review", parents=[common], help="ingère un verdict Tier-1 (JSON stdin)")
     gr.add_argument("feature")
+    grd = p_gate_sub.add_parser("review-dispatch", parents=[common],
+                                help="DISPATCHE le review-worker Tier-1 (produit le verdict SHA-bound)")
+    grd.add_argument("feature")
     gv = p_gate_sub.add_parser("verify", parents=[common], help="gate feature-verified e2e")
     gv.add_argument("feature")
     gt = p_gate_sub.add_parser("toolchain", parents=[common],
@@ -282,8 +285,11 @@ def _h_deploy(settings: Settings, args: argparse.Namespace) -> int:
 
 
 def _h_gate(settings: Settings, args: argparse.Namespace) -> int:
+    from cockpit.dispatch import reviewer
     from cockpit.gate import review, toolchain, verify
-    mod = {"review": review, "verify": verify, "toolchain": toolchain}[args.action]
+    # `review` INGÈRE un verdict (JSON stdin) ; `review-dispatch` le PRODUIT (dispatch du review-worker).
+    mod = {"review": review, "review-dispatch": reviewer,
+           "verify": verify, "toolchain": toolchain}[args.action]
     return mod.cli_dispatch(settings, args)
 
 

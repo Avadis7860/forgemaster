@@ -7,9 +7,11 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
+from cockpit import auth
 from cockpit.daemon.deps import Deps, get_deps
-from cockpit.dispatch import worktree
+from cockpit.dispatch import reviewer, worktree
 from cockpit.gate import merge, review, toolchain
 from cockpit.git.internal import GitOpError, InternalGit
 from cockpit.projects.registry import get_project
@@ -75,6 +77,23 @@ def make_gate_router() -> APIRouter:
             raise HTTPException(status_code=422, detail=f"branche/diff introuvable : {exc}") from exc
         results = toolchain.run_toolchain(wt, diff_files)
         return toolchain.write_verdict(deps.settings, project, feature, results, sha=sha)
+
+    @router.post("/api/gate/{project}/{feature}/review-dispatch", status_code=201)
+    async def dispatch_review(project: str, feature: str, deps: Deps = Depends(get_deps)) -> dict:
+        """**DISPATCHE** le review-worker Tier-1 (`claude -p` read-only) sur la feature complète → écrit le
+        verdict SHA-bound. C'est le bouton « lancer une review » : il **produit** le verdict que le gate de
+        merge attend (le POST …/review, lui, *ingère* un verdict tout fait). Readiness-gate + idempotent dans
+        `reviewer.dispatch_reviewer`. Spawn long → threadpool. Gate d'auth (jamais de spawn silencieux)."""
+        if not auth.claude_auth_status()["authenticated"]:
+            raise HTTPException(status_code=403, detail=auth.AUTH_HINT)
+
+        def _run() -> dict:
+            conn = deps.open_db()
+            try:
+                return reviewer.dispatch_reviewer(conn, deps.settings, feature_ref=f"{project}/{feature}")
+            finally:
+                conn.close()
+        return await run_in_threadpool(_run)
 
     @router.get("/api/gate/{project}/{feature}")
     def gate_status(project: str, feature: str, deps: Deps = Depends(get_deps)) -> dict:
