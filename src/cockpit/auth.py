@@ -12,10 +12,12 @@ partage et n'injecte aucun credential — il utilise l'auth **officielle** du CL
 donc que chaque hôte fasse `claude login` avec **son** compte (cf. `AUTH_HINT`)."""
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
 _CREDENTIALS_REL = ".claude/.credentials.json"
+_CLAUDE_JSON_REL = ".claude.json"
 
 # Message actionnable UNIQUE (CLI + API + onboarding) — pointe vers la voie officielle, dans LE terminal.
 AUTH_HINT = (
@@ -39,3 +41,31 @@ def claude_auth_status(home: Path | None = None, env: dict[str, str] | None = No
     if environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
         return {"authenticated": True, "source": "env-oauth"}
     return {"authenticated": False, "source": None}
+
+
+def trust_workspace(workspace: Path, *, home: Path | None = None) -> Path:
+    """Marque `workspace` **trusted** dans `<home>/.claude.json` : upsert
+    `projects[<workspace>].hasTrustDialogAccepted=true`. Sans ça, `claude -p` **headless** IGNORE les
+    `allowedTools` d'un workspace non-trusted (« this workspace has not been trusted ») → le worker ne peut
+    PAS exécuter les outils de sa facette. `workspace` = le **SoT bare** du projet (clé de confiance du
+    worktree). Préserve les autres clés, crée le fichier si absent, écriture atomique (tmp + `os.replace`).
+    Idempotent. `home` injectable (tests). Retourne le chemin écrit."""
+    home_dir = Path.home() if home is None else home
+    path = home_dir / _CLAUDE_JSON_REL
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    except (ValueError, OSError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    projects = data.get("projects")
+    if not isinstance(projects, dict):
+        projects = data["projects"] = {}
+    entry = projects.get(str(workspace))
+    if not isinstance(entry, dict):
+        entry = projects[str(workspace)] = {}
+    entry["hasTrustDialogAccepted"] = True
+    tmp = path.parent / (path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+    return path

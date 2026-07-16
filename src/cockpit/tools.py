@@ -87,13 +87,16 @@ def tools_bin(settings: Settings) -> Path:
 
 
 def tools_env(settings: Settings, *, base: Mapping[str, str] | None = None) -> dict[str, str]:
-    """Compose un env dont le PATH est préfixé par `tools/bin` — à passer au subprocess worker et au gate
-    natif (dont `core.run` **remplace** l'env, l'appelant compose donc depuis `os.environ`). Ne mute pas
-    `base`/`os.environ`. PUR."""
+    """Compose un env dont le PATH est préfixé par `tools/bin` PUIS `$HOME/.local/bin` — passé au subprocess
+    worker et au gate natif (dont `core.run` **remplace** l'env, l'appelant compose donc depuis `os.environ`).
+    `~/.local/bin` porte `claude` (le moteur du worker, posé par `--with-claude`) : le PATH systemd minimal du
+    daemon ne source pas `~/.profile`, sans cet ajout un dispatch daemon-triggered ne résout pas `claude`
+    (worker mort-né). Ne mute pas `base`/`os.environ`. PUR."""
     env = dict(base if base is not None else os.environ)
     tb = str(tools_bin(settings))
+    local_bin = str(Path(env.get("HOME", str(Path.home()))) / ".local" / "bin")
     path = env.get("PATH", "")
-    env["PATH"] = f"{tb}{os.pathsep}{path}" if path else tb
+    env["PATH"] = os.pathsep.join([tb, local_bin, *([path] if path else [])])
     return env
 
 

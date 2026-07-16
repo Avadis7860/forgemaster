@@ -19,10 +19,15 @@ from cockpit.roadmap import model, prompt
 
 
 @pytest.fixture
-def ctx(tmp_path: Path, fake_tools):
+def ctx(tmp_path: Path, fake_tools, monkeypatch):
+    # HOME isolé : le dispatch marque le workspace trusted dans `$HOME/.claude.json` — on ne touche pas le
+    # vrai home, et `tools_env` compose `$HOME/.local/bin` depuis ce home isolé.
+    fake_home = tmp_path / "fakehome"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
     settings = Settings.resolve(home=tmp_path / "home", projects_root=tmp_path / "projects")
     conn = store.open_db(settings)
-    fake_tools(settings)                    # hôte provisionné → le preflight de dispatch passe
+    fake_tools(settings)                    # hôte provisionné → preflight + résolution de `claude` passent
     yield settings, conn
     conn.close()
 
@@ -223,6 +228,40 @@ def test_dispatch_injects_tools_bin_on_worker_path(ctx):
     worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=capturing_runner)
     assert captured["env"] is not None                                   # env explicite (plus None)
     assert captured["env"]["PATH"].split(":")[0] == str(tools_bin(settings))   # tools/bin EN TÊTE
+
+
+def test_dispatch_marks_workspace_trusted(ctx):
+    """Avant le spawn, le dispatch marque le SoT du projet trusted dans `$HOME/.claude.json` — sinon
+    `claude -p` headless ignorerait les `allowedTools` de la facette (workspace non-trusted)."""
+    from cockpit.projects.registry import sot_path_for
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=_ok_runner)
+    data = json.loads((Path.home() / ".claude.json").read_text(encoding="utf-8"))
+    sot = str(sot_path_for(settings, "proj"))
+    assert data["projects"][sot]["hasTrustDialogAccepted"] is True
+
+
+def test_dispatch_fail_loud_when_claude_absent(ctx, monkeypatch):
+    """`claude` (moteur du worker) absent du PATH → dispatch FAIL-LOUD avant le spawn (runner jamais appelé,
+    task re-dispatchable), au lieu d'un worker mort-né silencieux (le zombie observé en E2E)."""
+    from cockpit.tools import tools_bin
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    (tools_bin(settings) / "claude").unlink()              # hôte sans Claude Code
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")            # aucun claude hors tools_bin / ~/.local/bin
+    calls: list = []
+
+    def spy_runner(argv, *, cwd, input_text, timeout, env=None):
+        calls.append(argv)
+        return run.RunResult(argv=list(argv), returncode=0, stdout="{}", stderr="")
+
+    report = worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=spy_runner)
+    assert report["dispatched"] is True and not report["result"]["ok"]
+    assert "claude" in report["result"]["error"]
+    assert calls == []                                     # runner JAMAIS appelé
+    task = conn.execute("SELECT status FROM tasks WHERE slug='schema'").fetchone()
+    assert task["status"] == "todo"                        # re-dispatchable
 
 
 # -- P1 : récolte du minerai de décisions (worker.result → docs/decisions/) -------------------------

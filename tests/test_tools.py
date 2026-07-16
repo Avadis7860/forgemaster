@@ -28,17 +28,18 @@ def test_path_layout_under_cockpit_home(settings):
     assert tools.tools_bin(settings) == settings.home / "tools" / "bin"
 
 
-def test_tools_env_prepends_bin_and_is_pure(settings):
-    base = {"PATH": "/usr/bin:/bin", "FOO": "bar"}
+def test_tools_env_prepends_bin_then_local_bin_and_is_pure(settings):
+    base = {"PATH": "/usr/bin:/bin", "HOME": "/home/x", "FOO": "bar"}
     env = tools.tools_env(settings, base=base)
-    assert env["PATH"] == f"{tools.tools_bin(settings)}:/usr/bin:/bin"   # tools/bin EN TÊTE
+    # tools/bin EN TÊTE, puis $HOME/.local/bin (où `--with-claude` pose `claude`), puis le PATH de base.
+    assert env["PATH"] == f"{tools.tools_bin(settings)}:/home/x/.local/bin:/usr/bin:/bin"
     assert env["FOO"] == "bar"                       # reste de l'env préservé
     assert base["PATH"] == "/usr/bin:/bin"           # base NON mutée (pur)
 
 
 def test_tools_env_empty_path(settings):
-    env = tools.tools_env(settings, base={})
-    assert env["PATH"] == str(tools.tools_bin(settings))                # pas de ':' pendant
+    env = tools.tools_env(settings, base={"HOME": "/home/x"})
+    assert env["PATH"] == f"{tools.tools_bin(settings)}:/home/x/.local/bin"   # bin + local/bin
 
 
 def test_install_plan_covers_maps_quality_and_node(settings):

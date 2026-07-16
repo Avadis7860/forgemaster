@@ -4,6 +4,7 @@ compte hérité)."""
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from cockpit import auth, onboarding
@@ -31,6 +32,43 @@ def test_auth_detects_env_keys(tmp_path: Path):
 
 def test_auth_absent_when_no_file_no_env(tmp_path: Path):
     assert auth.claude_auth_status(home=tmp_path, env={}) == {"authenticated": False, "source": None}
+
+
+# -- trust workspace (le dispatch marque le SoT trusted → claude honore les allowedTools) -------------
+
+def test_trust_workspace_creates_and_upserts(tmp_path: Path):
+    home = tmp_path / "home"
+    home.mkdir()
+    ws = tmp_path / "proj" / "sot.git"
+    p = auth.trust_workspace(ws, home=home)
+    assert p == home / ".claude.json"
+    data = json.loads(p.read_text(encoding="utf-8"))
+    assert data["projects"][str(ws)]["hasTrustDialogAccepted"] is True
+
+
+def test_trust_workspace_preserves_keys_and_idempotent(tmp_path: Path):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".claude.json").write_text(
+        json.dumps({"userID": "u", "projects": {"/other": {"hasTrustDialogAccepted": True}}}),
+        encoding="utf-8")
+    ws = tmp_path / "proj" / "sot.git"
+    auth.trust_workspace(ws, home=home)
+    auth.trust_workspace(ws, home=home)                                   # idempotent
+    data = json.loads((home / ".claude.json").read_text(encoding="utf-8"))
+    assert data["userID"] == "u"                                          # clés préexistantes préservées
+    assert data["projects"]["/other"]["hasTrustDialogAccepted"] is True   # autre projet intact
+    assert data["projects"][str(ws)]["hasTrustDialogAccepted"] is True
+
+
+def test_trust_workspace_tolerates_corrupt_json(tmp_path: Path):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".claude.json").write_text("{ pas du json", encoding="utf-8")
+    ws = tmp_path / "proj" / "sot.git"
+    auth.trust_workspace(ws, home=home)                          # ne lève pas : repart d'un dict vide
+    data = json.loads((home / ".claude.json").read_text(encoding="utf-8"))
+    assert data["projects"][str(ws)]["hasTrustDialogAccepted"] is True
 
 
 # -- surface onboarding (axe orthogonal à `complete`) -----------------------------------------------

@@ -20,7 +20,7 @@ def fake_tools() -> Callable[[Settings], None]:
     def _seed(settings: Settings) -> None:
         bindir = tools_bin(settings)
         bindir.mkdir(parents=True, exist_ok=True)
-        for name in (*_VENV_BINS, *_NODE_BINS):
+        for name in (*_VENV_BINS, *_NODE_BINS, "claude"):   # `claude` = moteur du worker (résolu au dispatch)
             exe = bindir / name
             exe.write_text("#!/bin/sh\n:\n")
             exe.chmod(0o755)

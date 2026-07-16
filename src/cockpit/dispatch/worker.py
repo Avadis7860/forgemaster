@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sqlite3
 import time
 from collections.abc import Callable, Mapping
@@ -29,7 +30,7 @@ from cockpit.dispatch import jobs, worktree
 from cockpit.git.backend import GitBackend
 from cockpit.git.identity import resolve_identity
 from cockpit.git.internal import InternalGit
-from cockpit.projects.registry import get_project
+from cockpit.projects.registry import get_project, sot_path_for
 from cockpit.provision.mcp import inject_mcp_config
 from cockpit.roadmap import model, resolver
 from cockpit.roadmap.prompt import build_worker_prompt
@@ -176,6 +177,17 @@ def dispatch_next(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
         # spawn — sinon le worker le découvrirait absent à l'usage (échec tardif et opaque). Absent → job
         # échoué + task re-dispatchable (comme un RunTimeout), le runner n'est jamais appelé.
         preflight_tools(res["path"], settings, env=env)
+        # Le worker n'exécute ses outils QUE si son workspace est TRUSTED — sinon `claude -p` headless ignore
+        # les `allowedTools` de la facette (« this workspace has not been trusted »). La clé de confiance du
+        # worktree est le SoT bare du projet → on le marque trusted avant le spawn (idempotent).
+        auth.trust_workspace(sot_path_for(settings, project))
+        # `claude` (moteur du worker) doit résoudre dans l'env du worker (`tools_env` inclut `~/.local/bin`) ;
+        # absent → on échoue FAIL-LOUD (comme le preflight) au lieu d'un spawn mort-né silencieux (le PATH
+        # systemd du daemon n'a pas `~/.local/bin` sans cet env).
+        if shutil.which("claude", path=env.get("PATH")) is None:
+            raise ToolPreflightError(
+                "claude introuvable sur le PATH du worker — installe Claude Code "
+                "(`provision-ct.sh --with-claude`, ou `claude` dans ~/.local/bin) puis relance.")
         proc = runner(argv, cwd=res["path"], input_text=prompt, timeout=DISPATCH_TIMEOUT, env=env)
         parsed = parse_headless_result(proc.stdout, proc.returncode)
     except (ToolPreflightError, run.RunTimeout) as exc:
