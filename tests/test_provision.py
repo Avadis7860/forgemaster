@@ -250,6 +250,37 @@ def test_declared_facets_have_backing_dirs(project_type):
             assert bundle[key].strip(), f"{project_type} : {key} vide"
 
 
+_BASE_CROSS_FACETS = ("code", "test", "infra", "review")
+
+
+def test_generic_exposes_cross_cutting_facets_not_just_doc():
+    """Un projet `generic` (base seule) porte les facettes cross-cutting code/test/infra/review — pas
+    seulement `doc` : déclarées au bundle.toml, dossiers backing complets, bundle valide. → un generic peut
+    dispatcher du code (ou test/infra/review), plus une persona « Doc » pour tout travail."""
+    bundle = load_bundle("generic")
+    manifest = tomllib.loads(bundle[".cockpit/bundle.toml"])["bundle"]
+    for fac in ("doc", *_BASE_CROSS_FACETS):
+        assert fac in manifest["facets"], f"generic ne déclare pas la facette {fac!r}"
+        for leaf in ("PERSONA.md", "METHOD.md", "settings.local.json"):
+            key = f".claude/facets/{fac}/{leaf}"
+            assert key in bundle and bundle[key].strip(), f"generic : {key} absent/vide"
+    validate_bundle("generic")                    # ne lève pas : default_facet ∈ facets, dossiers présents
+
+
+def test_generic_project_can_resolve_and_activate_code_facet(tmp_path: Path):
+    """Preuve DoD : une feature de projet `generic` pose `facet='code'` → résolue + activée (le dossier de
+    facette est hérité de base). Le worker « code » n'est donc pas réservé aux overlays de type."""
+    key = ".claude/facets/code/settings.local.json"
+    settings = load_bundle("generic")[key]
+    dst = tmp_path / key
+    dst.parent.mkdir(parents=True)
+    dst.write_text(settings, encoding="utf-8")
+    assert facet.resolve_facet(tmp_path, "code") == "code"        # facette explicite l'emporte
+    written = facet.activate_facet(tmp_path, "code")              # copie settings.local.json dans la worktree
+    assert written is not None
+    assert Path(written).read_text(encoding="utf-8") == settings
+
+
 # Grille canonique d'un CLAUDE.md (structure de référence, cf. brief bosse 2026-07-03) : 6 sections fixes.
 _CLAUDE_SECTIONS = (
     "## 1. Contexte et objectifs",

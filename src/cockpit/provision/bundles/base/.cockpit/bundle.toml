@@ -1,8 +1,12 @@
 # bundle.toml — manifeste du bundle semé (base ⊕ overlay). Committé, voyage avec le repo.
 # Lu au dispatch pour résoudre la facette d'une feature quand `features.facet` est NULL (→ default_facet).
 # Un overlay de type SURCHARGE ce fichier (whole-file) pour déclarer ses propres facettes.
+# Les facettes de base (doc + code/test/infra/review) sont cross-cutting : leurs dossiers sont hérités par
+# TOUT type (composition base ⊕ overlay), donc un projet `generic` peut dispatcher du code/test/infra/review,
+# pas seulement de la doc. `default_facet` reste `doc` (défaut conservateur : une feature de code pose
+# explicitement `facet = "code"`).
 [bundle]
 version = "1"
 project_type = "generic"
-facets = ["doc"]
+facets = ["doc", "code", "test", "infra", "review"]
 default_facet = "doc"
