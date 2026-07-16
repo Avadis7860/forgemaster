@@ -32,7 +32,16 @@ _EXPECTED = (
     ".claude/skills/quality-gate/SKILL.md",
     ".claude/skills/roadmap-decompose/SKILL.md",
     ".claude/skills/docs-authoring/SKILL.md",
+    # Ancrage doc par-dossier (base → tout type) : un README racine + un par dossier structurant.
+    "README.md",
+    "docs/README.md",
+    ".claude/README.md",
 )
+
+# READMEs universels (dans la base → présents dans TOUT type) : racine + dossiers structurants de base.
+_BASE_READMES = ("README.md", "docs/README.md", ".claude/README.md")
+# READMEs par-dossier propres à un overlay : `src/` n'existe que chez les types qui portent une arbo source.
+_SRC_README_TYPES = ("browser-game", "front-ts")
 
 # Skills de méthodo (Phase 6) : ce qui rend un projet semé auto-travaillable — planifier + mémoriser,
 # au-delà de la seule boucle git (work-loop/quality-gate). Présents dans la base → dans TOUT type.
@@ -373,6 +382,35 @@ def test_type_architecture_is_non_stub(project_type):
     assert "Comment ce projet se travaille" in arch
     assert arch != load_bundle("generic")["docs/architecture.md"]      # bien une surcharge de type
     assert arch.count("À renseigner") <= 1                             # au plus l'Intention reste un gabarit
+
+
+@pytest.mark.parametrize("project_type", discover_types())
+def test_bundle_seeds_per_directory_readmes(project_type: str, tmp_path: Path):
+    """Un projet naît avec un ancrage doc par-dossier : un `README.md` racine + un par dossier structurant
+    (`docs/`, `.claude/`, via la base → tout type), matérialisés VERBATIM dans l'arbre semé. Générique :
+    aucun slug de projet en dur (le seed est réutilisable à l'identique). Le squelette RUNNABLE reste une
+    autre task ; ici = ancrage doc uniquement."""
+    bundle = load_bundle(project_type)
+    wt = tmp_path / project_type
+    for rel, content in bundle.items():             # matérialise le seed → prouve que les README atterrissent
+        p = wt / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    for rel in _BASE_READMES:
+        assert (wt / rel).is_file(), f"{project_type} : README par-dossier absent de l'arbre semé : {rel}"
+        body = (wt / rel).read_text(encoding="utf-8")
+        assert body.strip(), f"{project_type} : {rel} vide"
+        assert "cockpit-" not in body and "demo" not in body.lower(), (
+            f"{project_type} : {rel} porte un slug/exemple figé (le seed doit rester générique)")
+
+
+@pytest.mark.parametrize("project_type", _SRC_README_TYPES)
+def test_src_bearing_types_seed_src_readme(project_type: str):
+    """Les types qui portent une arbo `src/` (browser-game, front-ts) sèment aussi `src/README.md` — l'entrée
+    du code est ancrée comme les autres dossiers structurants."""
+    bundle = load_bundle(project_type)
+    assert "src/README.md" in bundle, f"{project_type} : src/README.md non semé"
+    assert bundle["src/README.md"].strip(), f"{project_type} : src/README.md vide"
 
 
 def test_facet_settings_local_are_seeded_files_not_ignored():
