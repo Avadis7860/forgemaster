@@ -2,6 +2,16 @@
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "outputStyle": "Tool Builder",
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/refresh-maps.py\" || true"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Write|Edit",
@@ -9,6 +19,10 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-check.py\" || true"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/refresh-maps.py\" || true"
           }
         ]
       }
