@@ -16,7 +16,7 @@ from cockpit.config import Settings
 from cockpit.core import run
 from cockpit.daemon import app as app_mod
 from cockpit.db import store
-from cockpit.dispatch import jobs, worktree
+from cockpit.dispatch import jobs, worker, worktree
 from cockpit.gate import toolchain
 from cockpit.git.identity import resolve_identity
 from cockpit.git.internal import InternalGit, writeback_env
@@ -247,6 +247,50 @@ def test_web_dispatch_drains_and_produces_review(client, monkeypatch, fake_tools
     st = c.get("/api/gate/proj/feat").json()
     assert st["review"]["present"] is True and st["review"]["fresh"] is True   # LE bug : était False
     assert st["decision"] is not None and st["decision"]["gate_green"] is True
+
+
+def test_toolchain_gate_route_injects_tools_env(client, monkeypatch, fake_tools):
+    """La route `POST …/toolchain` passe `env=tools_env(settings)` à `run_toolchain`, ALIGNÉE sur la CLI
+    (`gate/toolchain.py`) et l'orchestrator. Sans lui, sur un hôte au PATH minimal, la route rendrait un
+    verdict DIFFÉRENT de la CLI (faux-rouge d'un veto Tier-0 natif NON-overridable, sans échappatoire).
+    Régression : l'ancien appel `run_toolchain(wt, diff_files)` laissait `env=None`."""
+    from cockpit import tools
+    c, settings = client
+    fake_tools(settings)                                    # hôte provisionné (preflight worker + tools_bin)
+    fake_home = settings.home / "fakehome"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+
+    def _py_worker(argv, *, cwd, input_text, timeout, env=None):
+        (Path(cwd) / "feature.py").write_text("def f() -> int:\n    return 1\n", encoding="utf-8")
+        sid = argv[argv.index("--session-id") + 1]
+        out = json.dumps({"is_error": False, "result": "fait", "session_id": sid, "num_turns": 1})
+        return run.RunResult(argv=list(argv), returncode=0, stdout=out, stderr="")
+
+    conn = store.open_db(settings)          # worktree + branche + diff réels (worker écrit un .py)
+    registry.create_project(conn, settings, slug="proj")
+    model.add_feature(conn, project_slug="proj", slug="feat")
+    model.add_task(conn, feature_ref="proj/feat", slug="impl")
+    conn.commit()
+    worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=_py_worker)
+    conn.execute("UPDATE tasks SET status='done' WHERE slug='impl'")
+    conn.commit()
+    conn.close()
+
+    captured: dict = {}
+
+    def _spy_run_toolchain(wt, diff_files, *, timeout_s=toolchain.DEFAULT_TIMEOUT_S, env=None):
+        captured["env"] = env
+        return []
+
+    monkeypatch.setattr(toolchain, "run_toolchain", _spy_run_toolchain)
+
+    r = c.post("/api/gate/proj/feat/toolchain")
+    assert r.status_code == 201
+    # La route passe EXACTEMENT ce que la CLI et l'orchestrator passent (PATH préfixé de tools_bin) →
+    # verdict identique sur un PATH appauvri. L'ancien `env=None` (le bug) divergeait.
+    assert captured["env"] is not None
+    assert captured["env"] == tools.tools_env(settings)
 
 
 def test_dispatch_refused_without_claude_auth(client, monkeypatch):

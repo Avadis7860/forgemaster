@@ -16,6 +16,7 @@ from cockpit.gate import merge, review, toolchain
 from cockpit.git.internal import GitOpError, InternalGit
 from cockpit.projects.registry import get_project
 from cockpit.roadmap.model import resolve_feature
+from cockpit.tools import tools_env
 
 
 class ReviewBody(BaseModel):
@@ -75,7 +76,8 @@ def make_gate_router() -> APIRouter:
             diff_files = git.diff_names(sot, base="dev", head=branch)
         except GitOpError as exc:
             raise HTTPException(status_code=422, detail=f"branche/diff introuvable : {exc}") from exc
-        results = toolchain.run_toolchain(wt, diff_files)
+        # env=tools_env : PATH natif (ruff/mypy/npm) — ALIGNÉ sur la CLI et l'orchestrator
+        results = toolchain.run_toolchain(wt, diff_files, env=tools_env(deps.settings))
         return toolchain.write_verdict(deps.settings, project, feature, results, sha=sha)
 
     @router.post("/api/gate/{project}/{feature}/review-dispatch", status_code=201)
