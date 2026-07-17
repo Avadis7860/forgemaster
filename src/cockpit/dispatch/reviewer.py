@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import shutil
 import sqlite3
 import time
 from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
 
 from cockpit import auth
 from cockpit.config import Settings
@@ -150,6 +152,27 @@ def _readiness(conn: sqlite3.Connection, feature_id: str) -> tuple[bool, str]:
     return True, "travail complet"
 
 
+def _now_iso() -> str:
+    """Horodatage ISO-UTC LOCAL au reviewer (pas le `_now` de `jobs`) : le puits de non-run reçoit son `ts` en
+    argument (injectable en test), pas rejoué par une horloge interne à l'INSERT (`dispatch-jobs-journal`)."""
+    return datetime.now(UTC).isoformat()
+
+
+def _journal_non_run(conn: sqlite3.Connection, feature_ref: str, reason: str, *,
+                     created_at: str | None = None) -> None:
+    """Trace best-effort d'un run reviewer qui **n'a pas eu lieu** (journal PUR `non_runs`, `kind='review'`).
+    **Best-effort, non négociable** : une trace ratée ne masque ni ne casse le résultat métier → `try/except`
+    + warning (cf. `dispatch-jobs-journal`). `created_at` **injecté** (défaut = maintenant). Jamais lu par une
+    garde — c'est un journal de mesure, pas un verrou d'idempotence."""
+    try:
+        conn.execute("INSERT INTO non_runs (id, feature_ref, kind, reason, created_at) "
+                     "VALUES (?, ?, 'review', ?, ?)",
+                     (ids.new_id(), feature_ref, reason, created_at or _now_iso()))
+        conn.commit()
+    except sqlite3.Error as exc:                             # best-effort : une trace ratée ne casse rien
+        logging.getLogger("cockpit").warning("non_run non journalisé (%s) : %s", feature_ref, exc)
+
+
 def dispatch_reviewer(conn: sqlite3.Connection, settings: Settings, *, feature_ref: str,
                       git: InternalGit | None = None, runner: Runner | None = None) -> dict:
     """Dispatche le reviewer Tier-1 sur `feature_ref` (`"projet/feature"`) **si le travail est complet** +
@@ -161,24 +184,28 @@ def dispatch_reviewer(conn: sqlite3.Connection, settings: Settings, *, feature_r
     project, feature = feature_ref.split("/", 1)
     feat = model.resolve_feature(conn, feature_ref)          # KeyError/ValueError si absent
 
+    def _skip(reason: str) -> dict:                          # NON-RUN : trace best-effort + retour honnête
+        _journal_non_run(conn, feature_ref, reason)
+        return {"reviewed": False, "reason": reason}
+
     ok, reason = _readiness(conn, feat["id"])
     if not ok:
-        return {"reviewed": False, "reason": reason}
+        return _skip(reason)
 
     sot = sot_path_for(settings, project)
     try:
         head_sha = git.feature_sha(sot, feat["branch"])
         diff_text = git.diff_text(sot, base=REVIEW_BASE, head=feat["branch"])
     except GitOpError:
-        return {"reviewed": False, "reason": f"branche {feat['branch']} absente — feature jamais dispatchée"}
+        return _skip(f"branche {feat['branch']} absente — feature jamais dispatchée")
     if not diff_text.strip():
-        return {"reviewed": False, "reason": "diff vide — rien à reviewer"}
+        return _skip("diff vide — rien à reviewer")
     if review.status(settings, project, feature, current_sha=head_sha)["fresh"]:
-        return {"reviewed": False, "reason": "verdict Tier-1 déjà frais sur ce HEAD (idempotent)"}
+        return _skip("verdict Tier-1 déjà frais sur ce HEAD (idempotent)")
 
     wt = worktree_mod.worktree_path_for(settings, project, feature)
     if not wt.is_dir():
-        return {"reviewed": False, "reason": f"worktree absent : {wt} — la feature doit être vivante"}
+        return _skip(f"worktree absent : {wt} — la feature doit être vivante")
 
     tasks = list(conn.execute("SELECT slug, acceptance FROM tasks WHERE feature_id = ? ORDER BY slug",
                               (feat["id"],)))
@@ -194,17 +221,33 @@ def dispatch_reviewer(conn: sqlite3.Connection, settings: Settings, *, feature_r
     # TRAVAIL (Write/Edit) resterait active → le reviewer pourrait coder (viole l'invariant génère/gate). Le
     # preflight ci-dessous lit cette settings.local.json → outils du reviewer, pas de l'ouvrier.
     facet_mod.activate_facet(wt, REVIEW_FACET)
-    started = time.monotonic()
-    try:
+    try:                                       # preflight = PRÉ-run → un échec ici est un non-run
         preflight_tools(wt, settings, env=env)
         auth.trust_workspace(sot_path_for(settings, project))
         if shutil.which("claude", path=env.get("PATH")) is None:
             raise ToolPreflightError("claude introuvable sur le PATH du reviewer — installe Claude Code.")
-        proc = runner(argv, cwd=wt, input_text=prompt, timeout=REVIEW_TIMEOUT, env=env)
     except (ToolPreflightError, run.RunTimeout) as exc:
+        return _skip(f"reviewer non lançable : {exc}")
+
+    # Dé-squat : le run reviewer se journalise `kind='review'` (identité HONNÊTE, distincte de l'ouvrier),
+    # ancré sur une task RÉELLE de la feature (FK requise ; `_readiness` garantit ≥1 task → jamais de drop
+    # silencieux), et `record_start` est appelé AVANT le run pour que `started_at` soit le début réel : avant,
+    # le code le posait APRÈS le run → 6 ms d'écart menteur, prouvé live sur 9123.
+    anchor = conn.execute("SELECT id FROM tasks WHERE feature_id = ? ORDER BY slug LIMIT 1",
+                          (feat["id"],)).fetchone()
+    if anchor is None:                         # défensif (inatteignable après readiness) — jamais muet
+        return _skip("feature sans task d'ancrage — run reviewer non journalisable comme job")
+    job_id = jobs.record_start(conn, task_id=anchor["id"], worktree="(review)", session_id=session_id,
+                               log_path=str(log_path), engine="reviewer-tier1", kind="review")
+    started = time.monotonic()
+    try:
+        proc = runner(argv, cwd=wt, input_text=prompt, timeout=REVIEW_TIMEOUT, env=env)
+    except run.RunTimeout as exc:              # le run a DÉMARRÉ puis timeout → job `failed`, pas non-run
+        jobs.record_finish(conn, job_id, {"ok": False, "error": f"timeout {REVIEW_TIMEOUT:.0f}s : {exc}"},
+                           wall_s=time.monotonic() - started, status="failed")
         return {"reviewed": False, "reason": f"reviewer non lançable : {exc}"}
     parsed = worker.parse_headless_result(proc.stdout, proc.returncode)
-    _record_job(conn, feat["id"], session_id, str(log_path), parsed, time.monotonic() - started)
+    jobs.record_finish(conn, job_id, parsed, wall_s=time.monotonic() - started)
     if not parsed.get("ok"):
         return {"reviewed": False, "reason": f"reviewer échoué : {parsed.get('error') or 'sortie illisible'}"}
 
@@ -213,19 +256,6 @@ def dispatch_reviewer(conn: sqlite3.Connection, settings: Settings, *, feature_r
                                    sha=head_sha, diff_text=diff_text)
     return {"reviewed": True, "reason": "verdict Tier-1 écrit", "verdict": verdict,
             "counts": verdict["counts"], "rejected": len(verdict["rejected"])}
-
-
-def _record_job(conn: sqlite3.Connection, task_id_holder: str, session_id: str, log_path: str,
-                parsed: dict, wall_s: float) -> None:
-    """Journalise le run reviewer dans `dispatch_jobs` (traçabilité + coût), sans toucher au statut des tasks
-    (le reviewer ne fait pas avancer le DAG). `task_id_holder` = un id de task de la feature (FK requise)."""
-    row = conn.execute("SELECT id FROM tasks WHERE feature_id = ? LIMIT 1", (task_id_holder,)).fetchone()
-    if row is None:
-        return
-    job_id = jobs.record_start(conn, task_id=row["id"], worktree="(review)", session_id=session_id,
-                               log_path=log_path, engine="reviewer-tier1")
-    jobs.record_finish(conn, job_id, parsed, wall_s=wall_s,
-                       status="done" if parsed.get("ok") else "failed")
 
 
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:

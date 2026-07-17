@@ -554,3 +554,17 @@ def test_build_worker_prompt_carries_real_vendored_game_design_persona(tmp_path:
         project, {"slug": "api", "branch": "feature/api", "facet": "backend"}, task, root=root)
     assert "le serveur fait autorité" in be                     # persona backend, casquette distincte
     assert "game-designer" not in be and gd != be               # chaque facette porte SA casquette
+
+
+def test_record_finish_persists_error_on_failure(ctx):
+    """`record_finish` écrit `error` (v11) : le snippet calculé par `parse_headless_result` atterrit en base
+    au lieu de mourir dans le retour HTTP → un job `failed` n'est plus muet. Le job porte `kind='task'` (le
+    défaut de `record_start` — l'ouvrier ne le passe pas explicitement)."""
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    task_id = conn.execute("SELECT id FROM tasks WHERE slug='schema'").fetchone()["id"]
+    job_id = jobs.record_start(conn, task_id=task_id, worktree="/tmp/wt", session_id="s1")
+    jobs.record_finish(conn, job_id, {"ok": False, "error": "claude -p rc=1 : boom", "num_turns": 2})
+    row = jobs.get_job(conn, job_id)
+    assert row["status"] == "failed" and row["error"] == "claude -p rc=1 : boom"
+    assert row["kind"] == "task"

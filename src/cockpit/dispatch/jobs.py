@@ -33,14 +33,15 @@ def _now() -> str:
 
 def record_start(conn: sqlite3.Connection, *, task_id: str, worktree: str, session_id: str,
                  port: int | None = None, pid: int | None = None, log_path: str | None = None,
-                 engine: str = DISPATCH_ENGINE) -> str:
+                 engine: str = DISPATCH_ENGINE, kind: str = "task") -> str:
     """Insère un `dispatch_job` en statut `running`, retourne son id. `session_id` = le handle de suivi
-    live (le chemin du transcript en dérive)."""
+    live (le chemin du transcript en dérive). `kind` (v11) = identité du run (`task` ouvrier par défaut ;
+    le reviewer pose `review`) — à appeler AVANT le run pour que `started_at` soit le début réel."""
     job_id = ids.new_id()
     conn.execute(
-        "INSERT INTO dispatch_jobs (id, task_id, worktree_path, port, pid, status, log_path, "
-        "session_id, engine, started_at) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)",
-        (job_id, task_id, worktree, port, pid, log_path, session_id, engine, _now()))
+        "INSERT INTO dispatch_jobs (id, task_id, worktree_path, port, pid, status, kind, log_path, "
+        "session_id, engine, started_at) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)",
+        (job_id, task_id, worktree, port, pid, kind, log_path, session_id, engine, _now()))
     conn.commit()
     return job_id
 
@@ -48,13 +49,15 @@ def record_start(conn: sqlite3.Connection, *, task_id: str, worktree: str, sessi
 def record_finish(conn: sqlite3.Connection, job_id: str, parsed: dict, *,
                   wall_s: float | None = None, status: str | None = None) -> None:
     """Clôt un job : statut `done` si `parsed.ok`, sinon `failed` (un échec se journalise aussi) ; un
-    `status` explicite l'emporte (`killed`/`cancelled`). Renseigne les métriques du run (num_turns, coût)."""
+    `status` explicite l'emporte (`killed`/`cancelled`). Renseigne les métriques du run (num_turns, coût) et
+    la raison d'échec `error` (v11 : le snippet calculé par `parse_headless_result`, persisté au lieu d'être
+    jeté dans le retour HTTP)."""
     final = status or ("done" if parsed.get("ok") else "failed")
     conn.execute(
         "UPDATE dispatch_jobs SET status = ?, num_turns = ?, cost_usd = ?, wall_s = ?, "
-        "session_id = COALESCE(?, session_id), ended_at = ? WHERE id = ?",
+        "session_id = COALESCE(?, session_id), error = ?, ended_at = ? WHERE id = ?",
         (final, parsed.get("num_turns"), parsed.get("cost_usd"), wall_s,
-         parsed.get("session_id"), _now(), job_id))
+         parsed.get("session_id"), parsed.get("error"), _now(), job_id))
     conn.commit()
 
 

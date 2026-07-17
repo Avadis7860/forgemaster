@@ -187,3 +187,58 @@ def test_build_review_prompt_carries_mandate_diff_and_dod(ctx):
     prompt = reviewer.build_review_prompt(wt, feat, tasks, diff)
     assert "commission-only" in prompt and "ne modifies RIEN" in prompt
     assert "return 1" in prompt and "Le module expose f()." in prompt      # diff + DoD en cadrage
+
+
+# -- trace des runs reviewer (dé-squat + non-runs, F2 du programme trace) ----------------------------
+
+def test_reviewer_run_recorded_as_review_with_true_started_at(ctx):
+    """Dé-squat : le run reviewer est journalisé `kind='review'` (engine reviewer-tier1) et son `started_at`
+    PRÉCÈDE `ended_at` d'un delta ≥ la durée réelle du run → la régression des 6 ms (started_at posé APRÈS le
+    run) ne peut pas revenir. Le worker de task, lui, porte `kind='task'` (défaut)."""
+    import time
+    from datetime import datetime
+    settings, conn = ctx
+    _seed(conn, settings)
+    _dispatch_worker_and_complete(conn, settings, content="def f():\n    return 1\n")
+
+    def _slow_reviewer(argv, *, cwd, input_text, timeout, env=None):
+        time.sleep(0.05)                                    # run réel, non instantané
+        sid = argv[argv.index("--session-id") + 1]
+        out = json.dumps({"is_error": False, "result": '{"findings":[]}', "session_id": sid, "num_turns": 1})
+        return run.RunResult(argv=list(argv), returncode=0, stdout=out, stderr="")
+
+    report = reviewer.dispatch_reviewer(conn, settings, feature_ref="proj/feat", runner=_slow_reviewer)
+    assert report["reviewed"] is True
+    rev = conn.execute(
+        "SELECT engine, started_at, ended_at FROM dispatch_jobs WHERE kind='review'").fetchone()
+    assert rev is not None and rev["engine"] == "reviewer-tier1"           # run reviewer JOURNALISÉ
+    delta = (datetime.fromisoformat(rev["ended_at"])
+             - datetime.fromisoformat(rev["started_at"])).total_seconds()
+    assert delta >= 0.04                            # started_at AVANT le run de 50 ms (plus le 6 ms menteur)
+    assert conn.execute("SELECT 1 FROM dispatch_jobs WHERE kind='task'").fetchone() is not None
+
+
+def test_reviewer_journals_non_run_on_hold(ctx):
+    """Un run qui N'A PAS lieu laisse une ligne : readiness hold (task inachevée) → une entrée `non_runs`
+    (kind='review', feature_ref, raison verbatim). Le mapping des raisons existait ; il manquait le puits."""
+    settings, conn = ctx
+    _seed(conn, settings)                                   # task 'impl' todo → readiness hold
+    report = reviewer.dispatch_reviewer(conn, settings, feature_ref="proj/feat",
+                                        runner=_reviewer_runner('{"findings":[]}'))
+    assert report["reviewed"] is False
+    rows = conn.execute("SELECT feature_ref, kind, reason FROM non_runs").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["feature_ref"] == "proj/feat" and rows[0]["kind"] == "review"
+    assert "inachevé" in rows[0]["reason"]                  # la raison verbatim du hold est journalisée
+
+
+def test_non_run_journal_is_best_effort(ctx):
+    """Best-effort, non négociable : un puits de trace cassé (table absente) ne fait JAMAIS échouer l'appel.
+    Le skip retourne normalement sa raison ; l'INSERT raté est avalé (warning), pas propagé."""
+    settings, conn = ctx
+    _seed(conn, settings)
+    conn.execute("DROP TABLE non_runs")                    # puits cassé
+    conn.commit()
+    report = reviewer.dispatch_reviewer(conn, settings, feature_ref="proj/feat",
+                                        runner=_reviewer_runner('{"findings":[]}'))
+    assert report["reviewed"] is False and "inachevé" in report["reason"]   # le résultat métier survit
