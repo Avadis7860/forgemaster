@@ -11,6 +11,7 @@ features:
       - slug: cadrage
         title: "Cadrage : renseigner l'Intention du projet"
         priority: P0
+        mode: interactive
         depends_on: []
         acceptance: "docs/architecture.md § « Intention » ne porte plus « À renseigner » : ce que le projet fait, pour qui, et le critère binaire de « fini » du premier jalon sont écrits."
       - slug: decompose

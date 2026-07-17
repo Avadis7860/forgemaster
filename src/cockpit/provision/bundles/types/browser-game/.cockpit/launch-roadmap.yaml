@@ -12,6 +12,7 @@ features:
       - slug: interview
         title: "Interview de conception (première session)"
         priority: P0
+        mode: interactive
         depends_on: []
         acceptance: "docs/design.md § « Concept & périmètre jouable » renseigné : le pitch en une phrase + la définition binaire de « jouable » du premier jalon ; plus aucun « (à renseigner) » dans cette section."
       - slug: boucle-eco
