@@ -127,6 +127,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--max-parallel", type=int, default=2,
                        help="nombre max de workers concurrents (features en parallèle ; défaut 2)")
 
+    # -- interview ----------------------------------------------------------------------------------
+    p_interview = sub.add_parser("interview", parents=[common],
+                                 help="mener l'interview terminale interactive du socle (1ʳᵉ session)")
+    p_interview.add_argument("project")
+
     # -- deploy -------------------------------------------------------------------------------------
     p_deploy = sub.add_parser("deploy", parents=[common],
                               help="cycle de vie du service d'un projet (backend compose, P2 runtime)")
@@ -284,6 +289,11 @@ def _h_run(settings: Settings, args: argparse.Namespace) -> int:
     return orchestrator.cli_dispatch(settings, args)
 
 
+def _h_interview(settings: Settings, args: argparse.Namespace) -> int:
+    from cockpit import interview
+    return interview.cli_dispatch(settings, args)
+
+
 def _h_deploy(settings: Settings, args: argparse.Namespace) -> int:
     from cockpit.runtime import engine
     return engine.cli_dispatch(settings, args)
@@ -364,6 +374,7 @@ _HANDLERS = {
     "task": _h_task,
     "dispatch": _h_dispatch,
     "run": _h_run,
+    "interview": _h_interview,
     "deploy": _h_deploy,
     "gate": _h_gate,
     "merge": _h_merge,
