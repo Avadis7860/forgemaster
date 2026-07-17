@@ -185,6 +185,30 @@ def test_dispatch_refused_when_feature_has_no_task(ctx):
     assert report["dispatched"] is False and "aucune task" in report["reason"]
 
 
+def test_dispatch_interactive_task_routes_to_terminal_without_spawn(ctx):
+    """v12 : une next task `mode=interactive` (interview/cadrage) N'EST PAS spawnée en headless — le dispatch
+    refuse AVANT tout reserve, surface `needs_terminal`, et laisse la task `todo` (jamais `in_progress` ni
+    faux-`done`). Le runner n'est JAMAIS appelé (aucun `claude -p`)."""
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj")
+    model.add_feature(conn, project_slug="proj", slug="feat", facet="doc")
+    model.add_task(conn, feature_ref="proj/feat", slug="cadrage",
+                   acceptance="Intention renseignée.", mode="interactive")
+    calls: list = []
+
+    def spy_runner(argv, *, cwd, input_text, timeout, env=None):
+        calls.append(argv)
+        return run.RunResult(argv=list(argv), returncode=0, stdout="{}", stderr="")
+
+    report = worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=spy_runner)
+    assert report["dispatched"] is False and report["needs_terminal"] is True
+    assert report["reason"] == "interactive" and report["task"] == "cadrage"
+    assert calls == []                                          # runner JAMAIS appelé — aucun spawn headless
+    task = conn.execute("SELECT status FROM tasks WHERE slug='cadrage'").fetchone()
+    assert task["status"] == "todo"                            # ni in_progress ni faux-done
+    assert ports.list_reservations(conn) == []                # aucun worktree/port réservé
+
+
 def test_dispatch_happy_path_records_job_and_worktree(ctx):
     settings, conn = ctx
     _seed_project(conn, settings)

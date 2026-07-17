@@ -92,7 +92,8 @@ def _dispatch_one(settings: Settings, project: str, feature: str,
                          (feat["id"], report["task"]))
             conn.commit()
         return {"feature": feature, "task": report.get("task"), "ok": ok,
-                "reason": report.get("reason", "?")}
+                "reason": report.get("reason", "?"),
+                "needs_terminal": bool(report.get("needs_terminal"))}   # v12 : task interactive → interview
     finally:
         conn.close()
 
@@ -154,12 +155,15 @@ def run_project(conn: sqlite3.Connection, settings: Settings, *, project: str,
     max_parallel = max(1, max_parallel)
     in_flight: set[str] = set()   # features en vol — MUTÉ À LA SOUMISSION (mutex, seul le principal assigne)
     failed: set[str] = set()      # features dont un run a échoué → exclues du reste du run (borne le run)
+    needs_interview: set[str] = set()   # v12 : next task interactive → tenue pour le terminal (pas un échec)
     reports: list[dict] = []
     pending: dict[Future, str] = {}
 
     with ThreadPoolExecutor(max_workers=max_parallel) as pool:
         while True:
-            for slug in _discoverable_features(conn, project, in_flight, failed):
+            # `failed | needs_interview` = les features à NE PLUS soumettre (échec OU tenue au terminal) :
+            # sans les exclure, les interactives resteraient READY et la boucle spinnerait à l'infini.
+            for slug in _discoverable_features(conn, project, in_flight, failed | needs_interview):
                 if len(in_flight) >= max_parallel:
                     break
                 in_flight.add(slug)                     # réservé AVANT submit → jamais deux fois la feature
@@ -172,14 +176,16 @@ def run_project(conn: sqlite3.Connection, settings: Settings, *, project: str,
                 in_flight.discard(slug)
                 report = fut.result()                   # _dispatch_one ne lève jamais
                 reports.append(report)
-                if not report["ok"]:
+                if report.get("needs_terminal"):
+                    needs_interview.add(slug)           # tenue pour `cockpit interview` — pas un échec
+                elif not report["ok"]:
                     failed.add(slug)                    # exclue → pas de re-dispatch en boucle infinie
 
     # Drain fini → FINALISE chaque feature au travail complet : Tier-0 + reviewer dispatché → merge-ready.
     # C'est le tronçon « qualité » de la boucle autonome (le merge reste le GO humain, hors boucle).
     finalizations = [_finalize_feature(conn, settings, project, slug, review_runner=review_runner)
-                     for slug in _worked_complete_features(conn, project, failed)]
-    return _summarize(project, reports, failed, finalizations)
+                     for slug in _worked_complete_features(conn, project, failed | needs_interview)]
+    return _summarize(project, reports, failed, finalizations, needs_interview=needs_interview)
 
 
 def run_feature(conn: sqlite3.Connection, settings: Settings, *, project: str, feature: str,
@@ -205,24 +211,33 @@ def run_feature(conn: sqlite3.Connection, settings: Settings, *, project: str, f
         report = _dispatch_one(settings, project, feature, git, runner)
         reports.append(report)
         if not report["ok"]:
-            break                                               # échec : task revenue `todo` → NE PAS spinner
-    failed: set[str] = {feature} if (reports and not reports[-1]["ok"]) else set()
+            break                                               # échec OU interactive : ne PAS spinner
+    last_held = bool(reports and reports[-1].get("needs_terminal"))   # v12 : tenue pour l'interview terminale
+    needs_interview: set[str] = {feature} if last_held else set()
+    failed: set[str] = {feature} if (reports and not reports[-1]["ok"] and not last_held) else set()
     finalizations = ([_finalize_feature(conn, settings, project, feature, review_runner=review_runner)]
-                     if feature in _worked_complete_features(conn, project, failed) else [])
-    return _summarize(project, reports, failed, finalizations)
+                     if feature in _worked_complete_features(conn, project, failed | needs_interview) else [])
+    return _summarize(project, reports, failed, finalizations, needs_interview=needs_interview)
 
 
 def _summarize(project: str, reports: list[dict], failed: set[str],
-               finalizations: list[dict] | None = None) -> dict:
+               finalizations: list[dict] | None = None, *,
+               needs_interview: set[str] | None = None) -> dict:
     """Agrège les runs + les **finalisations** (Tier-0 + review par feature complète). `drained` ⟺ aucune
-    feature en échec ; `merge_ready` = features dont le gate est vert (prêtes au GO humain). La boucle ne
-    s'arrête que lorsqu'il ne reste rien à soumettre ; une feature en échec laisse des tasks `todo`
-    re-dispatchables."""
+    feature en échec ; `merge_ready` = features dont le gate est vert (prêtes au GO humain). `needs_interview`
+    (v12) = features dont la next task est `interactive` : tenues pour `cockpit interview` (surfacées, pas
+    comptées en échec). La boucle ne s'arrête que lorsqu'il ne reste rien à soumettre ; une feature en échec
+    laisse des tasks `todo` re-dispatchables."""
     fins = finalizations or []
+    held = needs_interview or set()
+    # Une run interactive apparaît dans `reports` avec ok=False (aucun worker lancé) mais N'EST PAS un échec :
+    # on ne la compte ni dans `ok` ni dans `failed`, elle vit dans `needs_interview`.
     n_ok = sum(1 for r in reports if r["ok"])
+    n_held = sum(1 for r in reports if r.get("needs_terminal"))
     return {"project": project, "dispatched": len(reports), "ok": n_ok,
-            "failed": len(reports) - n_ok, "failed_features": sorted(failed),
+            "failed": len(reports) - n_ok - n_held, "failed_features": sorted(failed),
             "drained": not failed, "runs": reports,
+            "needs_interview": sorted(held),
             "finalizations": fins,
             "merge_ready": sorted(f["feature"] for f in fins if f["merge_ready"])}
 
@@ -248,6 +263,9 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
             else f"features en échec : {', '.join(summary['failed_features'])}")
     print(f"run {args.project} : {summary['dispatched']} dispatchée(s), {summary['ok']} ok, "
           f"{summary['failed']} échouée(s) — {tail}")
+    for feat in summary.get("needs_interview", []):
+        print(f"  🖐 {feat} — interview terminale requise (task interactive, non dispatchable en headless) : "
+              f"lance `cockpit interview {args.project}` dans un terminal.")
     for fin in summary["finalizations"]:
         if fin["merge_ready"]:
             print(f"  ✅ {fin['feature']} — MERGE-READY (Tier-0 + review OK) → `cockpit merge {args.project}"

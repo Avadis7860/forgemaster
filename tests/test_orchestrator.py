@@ -101,6 +101,33 @@ def test_run_project_drains_intra_feature_dag_in_order(ctx):
     assert [run_["task"] for run_ in summary["runs"]] == ["t1", "t2", "t3"]   # ordre DAG respecté
 
 
+def test_run_project_surfaces_interactive_task_as_needs_interview(ctx):
+    """v12 : une feature dont la next task est `interactive` est TENUE pour le terminal — elle apparaît dans
+    `needs_interview`, PAS dans `failed`, aucun worker n'est spawné (runner jamais appelé), et la boucle NE
+    spinne PAS (la feature interactive est exclue du re-dispatch). Les features headless du run drainent."""
+    settings, conn = ctx
+    _new_project(conn, settings, "proj")
+    _seed(conn, settings, "proj", "work", [("t", [])])                  # feature headless normale
+    model.add_feature(conn, project_slug="proj", slug="socle", facet="doc")
+    model.add_task(conn, feature_ref="proj/socle", slug="cadrage",
+                   acceptance="Intention renseignée.", mode="interactive")
+    calls: list = []
+
+    class _SpyRunner:
+        def __call__(self, argv, *, cwd, input_text, timeout, env=None):
+            calls.append(argv)
+            sid = argv[argv.index("--session-id") + 1]
+            out = json.dumps({"is_error": False, "result": "ok", "session_id": sid, "num_turns": 1})
+            return run.RunResult(argv=list(argv), returncode=0, stdout=out, stderr="")
+
+    summary = orchestrator.run_project(conn, settings, project="proj", git=InternalGit(), runner=_SpyRunner())
+    assert summary["needs_interview"] == ["socle"]                      # surfacée, tenue pour l'interview
+    assert "socle" not in summary["failed_features"] and summary["failed"] == 0
+    assert summary["ok"] == 1                                           # la feature headless a drainé
+    assert all("socle" not in c for c in (str(x) for x in calls))       # aucun spawn sur la feature socle
+    assert _statuses(conn, "socle") == {"cadrage": "todo"}             # jamais in_progress/faux-done
+
+
 # -- parallélisme borné inter-features --------------------------------------------------------------
 
 def test_run_project_parallelizes_independent_features_up_to_max(ctx):

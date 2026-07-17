@@ -184,6 +184,14 @@ def dispatch_next(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
         counts = _counts(resolver.classify(index))
         return {"dispatched": False, "reason": f"aucune task READY ({counts}) — pas de dispatch"}
 
+    # Fork headless↔interactif (v12) : une task `interactive` (interview/cadrage) NE peut PAS se mener en
+    # `claude -p` (un headless n'interviewe personne). Le branchement appartient au DISPATCH, pas au worker :
+    # on refuse le spawn AVANT tout reserve, la task reste `todo` (jamais `in_progress` ni faux-`done`), et on
+    # SURFACE `needs_terminal` → l'humain la mène via `cockpit interview <projet>` (terminal interactif).
+    if nxt.get("mode") == "interactive":
+        return {"dispatched": False, "reason": "interactive", "needs_terminal": True,
+                "task": nxt["slug"], "feature_ref": feature_ref}
+
     feature = feature_ref.split("/", 1)[1]
     res = worktree.reserve(conn, settings, git, project=project, feature=feature)
     prompt = build_worker_prompt(get_project(conn, project), model.resolve_feature(conn, feature_ref),
@@ -285,6 +293,11 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
         return 1
     finally:
         conn.close()
+    if report.get("needs_terminal"):
+        project = args.feature.split("/", 1)[0]
+        print(f"🖐 {args.feature}/{report['task']} — interview terminale requise (task interactive) : "
+              f"lance `cockpit interview {project}` dans un terminal.")
+        return 0                                    # état tenu (pas un échec) : attend l'humain au terminal
     if not report["dispatched"]:
         print(report["reason"])
         return 1
