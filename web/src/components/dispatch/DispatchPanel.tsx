@@ -98,25 +98,33 @@ export function DispatchPanel({ project, feature }: { project: string; feature: 
         </Alert>
       )}
 
-      {activeJobId && (
-        <TranscriptPanel
-          jobId={activeJobId}
-          kind={selectedJob?.kind}
-          events={
-            running ? stream.events : (detail.data?.events ?? []).filter((e): e is Ev => e.type !== 'job')
-          }
-          live={running && (stream.status === 'open' || stream.status === 'connecting')}
-          loading={!running && detail.isLoading}
-          status={running ? (stream.terminal?.status ?? selectedJob?.status ?? 'running') : (selectedJob?.status ?? 'done')}
-          finished={running ? Boolean(stream.terminal) : true}
-          numTurns={running ? stream.terminal?.num_turns : detail.data?.job.num_turns}
-          costUsd={running ? stream.terminal?.cost_usd : detail.data?.job.cost_usd}
-          error={running ? undefined : (detail.data?.job.error ?? selectedJob?.error)}
-        />
-      )}
-
+      {/* Transcript (gauche, resserré) + historique (colonne droite) côte à côte sur large ; empilés sur
+          étroit (grid-cols-1 par défaut). `min-w-0` : sans quoi une ligne de transcript longue force la
+          colonne à déborder au lieu de scroller (min-width:auto par défaut d'un enfant de grille). */}
       {jobList.length > 0 && (
-        <JobHistory jobs={jobList} activeJobId={activeJobId} onSelect={setActiveJobId} />
+        <div className="grid gap-5 lg:grid-cols-3">
+          <div className="min-w-0 lg:col-span-2">
+            {activeJobId && (
+              <TranscriptPanel
+                jobId={activeJobId}
+                kind={selectedJob?.kind}
+                events={
+                  running ? stream.events : (detail.data?.events ?? []).filter((e): e is Ev => e.type !== 'job')
+                }
+                live={running && (stream.status === 'open' || stream.status === 'connecting')}
+                loading={!running && detail.isLoading}
+                status={running ? (stream.terminal?.status ?? selectedJob?.status ?? 'running') : (selectedJob?.status ?? 'done')}
+                finished={running ? Boolean(stream.terminal) : true}
+                numTurns={running ? stream.terminal?.num_turns : detail.data?.job.num_turns}
+                costUsd={running ? stream.terminal?.cost_usd : detail.data?.job.cost_usd}
+                error={running ? undefined : (detail.data?.job.error ?? selectedJob?.error)}
+              />
+            )}
+          </div>
+          <div className="min-w-0 lg:col-span-1">
+            <JobHistory jobs={jobList} activeJobId={activeJobId} onSelect={setActiveJobId} />
+          </div>
+        </div>
       )}
     </Card>
   )
