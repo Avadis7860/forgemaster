@@ -34,18 +34,39 @@ def _exempt(rel: str) -> bool:
         or rel.endswith((".test.tsx", ".test.ts", ".d.ts"))
 
 
+def _scan_lines(rel: str, lines: list[str]) -> list[str]:
+    """Applique les règles ligne à ligne en IGNORANT les commentaires (bloc `/* */`, ligne `//`, JSDoc `*`) :
+    la doctrine cible le CODE JSX, pas la prose. Un commentaire qui cite « <button> » pour expliquer qu'on
+    utilise `<Link>` n'est pas une entorse (faux-positif R1 corrigé 2026-07-17)."""
+    out: list[str] = []
+    in_block = False
+    for i, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if in_block:                          # dans un bloc /* … */ ouvert plus haut
+            if "*/" in line:
+                in_block = False
+            continue
+        if stripped.startswith("/*"):         # ouverture de bloc (mono- ou multi-ligne)
+            if "*/" not in line:
+                in_block = True
+            continue
+        if stripped.startswith(("//", "*")):  # ligne // ou continuation JSDoc *
+            continue
+        if ALLOW in line:
+            continue
+        for rid, rx, msg in RULES:
+            if rx.search(line):
+                out.append(f"{rel}:{i}  [{rid}] {msg}")
+    return out
+
+
 def scan() -> list[str]:
     violations: list[str] = []
     for path in sorted(SRC.rglob("*.ts*")):
         rel = str(path.relative_to(SRC.parent))
         if _exempt(rel):
             continue
-        for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if ALLOW in line:
-                continue
-            for rid, rx, msg in RULES:
-                if rx.search(line):
-                    violations.append(f"{rel}:{i}  [{rid}] {msg}")
+        violations.extend(_scan_lines(rel, path.read_text(encoding="utf-8").splitlines()))
     return violations
 
 

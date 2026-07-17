@@ -5,8 +5,8 @@ import { ClaudeAuthBlock } from '@/components/ClaudeAuthStatus'
 import { ApiError } from '@/lib/api'
 import { useDispatch, useFeatureJobs, useJob, useOnboarding } from '@/lib/queries'
 import { useDispatchStream } from '@/lib/useDispatchStream'
-import { JOB_STATUS_TONE, TASK_STATE_TONE, toneFor } from '@/lib/statusTone'
-import { jobStatusLabel, stateLabel } from '@/lib/taskLabels'
+import { JOB_KIND_TONE, JOB_STATUS_TONE, TASK_STATE_TONE, toneFor } from '@/lib/statusTone'
+import { jobKindLabel, jobStatusLabel, stateLabel } from '@/lib/taskLabels'
 import type { FeatureWithTasks, Job, JobFrame, TranscriptEvent } from '@/lib/schemas'
 
 const RUNNING = new Set(['running', 'pending'])
@@ -101,6 +101,7 @@ export function DispatchPanel({ project, feature }: { project: string; feature: 
       {activeJobId && (
         <TranscriptPanel
           jobId={activeJobId}
+          kind={selectedJob?.kind}
           events={
             running ? stream.events : (detail.data?.events ?? []).filter((e): e is Ev => e.type !== 'job')
           }
@@ -110,6 +111,7 @@ export function DispatchPanel({ project, feature }: { project: string; feature: 
           finished={running ? Boolean(stream.terminal) : true}
           numTurns={running ? stream.terminal?.num_turns : detail.data?.job.num_turns}
           costUsd={running ? stream.terminal?.cost_usd : detail.data?.job.cost_usd}
+          error={running ? undefined : (detail.data?.job.error ?? selectedJob?.error)}
         />
       )}
 
@@ -124,6 +126,7 @@ export function DispatchPanel({ project, feature }: { project: string; feature: 
  *  le contrat d'événement est unique (jobs.normalize_line), seule la SOURCE diffère selon que le run tourne. */
 function TranscriptPanel({
   jobId,
+  kind,
   events,
   live,
   loading,
@@ -131,8 +134,10 @@ function TranscriptPanel({
   finished,
   numTurns,
   costUsd,
+  error,
 }: {
   jobId: string
+  kind?: string | null
   events: Ev[]
   live: boolean
   loading: boolean
@@ -140,11 +145,15 @@ function TranscriptPanel({
   finished: boolean
   numTurns?: number | null
   costUsd?: number | null
+  error?: string | null
 }) {
+  // Eyebrow honnête : un run non-task (review/toolchain/fix) est nommé par son GENRE, pas « job », pour
+  // qu'on sache CE qu'on lit (le reviewer-de-gate n'est pas la task qu'il ancre).
+  const label = kind && kind !== 'task' ? jobKindLabel(kind) : 'job'
   return (
     <div className="space-y-3 border-t border-border pt-4">
       <div className="flex items-center justify-between gap-3">
-        <SectionTitle eyebrow={`job ${jobId.slice(0, 8)}`} title="Transcript" />
+        <SectionTitle eyebrow={`${label} ${jobId.slice(0, 8)}`} title="Transcript" />
         <Badge tone={live ? 'info' : toneFor(JOB_STATUS_TONE, status)} dot>
           {live ? 'live' : jobStatusLabel(status)}
         </Badge>
@@ -164,6 +173,11 @@ function TranscriptPanel({
           {numTurns != null && ` · ${numTurns} tours`}
           {costUsd != null && ` · $${costUsd.toFixed(4)}`}
         </p>
+      )}
+      {error && (
+        <Alert tone="danger" title="Raison de l'échec">
+          <span className="font-mono text-xs">{error}</span>
+        </Alert>
       )}
     </div>
   )
@@ -192,7 +206,11 @@ function JobHistory({
             >
               <span className="font-mono text-xs">{j.id.slice(0, 8)}</span>
               <span className="flex items-center gap-2">
-                {j.task_slug && <span className="text-muted">{j.task_slug}</span>}
+                {j.kind && j.kind !== 'task' ? (
+                  <Badge tone={toneFor(JOB_KIND_TONE, j.kind)}>{jobKindLabel(j.kind)}</Badge>
+                ) : (
+                  j.task_slug && <span className="text-muted">{j.task_slug}</span>
+                )}
                 <Badge tone={toneFor(JOB_STATUS_TONE, j.status)} dot>
                   {jobStatusLabel(j.status)}
                 </Badge>

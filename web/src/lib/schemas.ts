@@ -102,7 +102,9 @@ export interface CreateProjectInput {
 export const JobSchema = z.object({
   id: z.string(),
   task_slug: z.string().nullish(),
+  kind: z.string().nullish(),       // 'task' (défaut) | 'review' | 'toolchain' | 'fix' — identité honnête du run
   status: z.string(),
+  error: z.string().nullish(),      // snippet d'échec persisté (dispatch_jobs.error) — null si le run n'a pas échoué
   num_turns: z.number().nullish(),
   cost_usd: z.number().nullish(),
   wall_s: z.number().nullish(),

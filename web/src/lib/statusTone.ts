@@ -63,6 +63,16 @@ export const JOB_STATUS_TONE: Record<string, Tone> = {
   killed: 'danger',
 }
 
+/** Genre d'un run de dispatch (colonne dispatch_jobs.kind). La task est neutre (le cas courant) ; le
+ *  reviewer-de-gate ressort en `accent` (distinct, jamais confondu avec la task qu'il ancre), toolchain
+ *  en info, fix en warn. */
+export const JOB_KIND_TONE: Record<string, Tone> = {
+  task: 'neutral',
+  review: 'accent',
+  toolchain: 'info',
+  fix: 'warn',
+}
+
 /** Sévérité d'un finding de gate (🔴 rouge / 🟡 jaune / 🟣 violet). */
 export const GATE_SEVERITY_TONE: Record<'red' | 'yellow' | 'purple', Tone> = {
   red: 'danger',

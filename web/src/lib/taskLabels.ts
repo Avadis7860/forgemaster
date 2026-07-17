@@ -26,3 +26,16 @@ export const JOB_STATUS_LABEL: Record<string, string> = {
 export function jobStatusLabel(status: string): string {
   return JOB_STATUS_LABEL[status] ?? status
 }
+
+// Libellés FR du GENRE d'un run (colonne dispatch_jobs.kind) : distingue le worker-de-task du
+// reviewer-de-gate et des runs toolchain/fix — sans quoi un run review s'affiche sous le slug de la task.
+export const JOB_KIND_LABEL: Record<string, string> = {
+  task: 'task',
+  review: 'review',
+  toolchain: 'toolchain',
+  fix: 'fix',
+}
+
+export function jobKindLabel(kind: string): string {
+  return JOB_KIND_LABEL[kind] ?? kind
+}

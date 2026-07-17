@@ -147,6 +147,19 @@ _DEMO_TRANSCRIPT = [
         "usage": {"output_tokens": 1840}}},
 ]
 
+# Transcript d'un run REVIEWER Tier-1 (kind='review') — rend VOYANT que le reviewer-de-gate laisse une trace
+# consultable, même sur un pass 0-finding (« vert sans transcript » = zéro confiance qu'il a vraiment revu).
+_DEMO_REVIEW_TRANSCRIPT = [
+    {"type": "assistant", "message": {"content": [
+        {"type": "text", "text": "Je revois le diff de la feature (correctness, sécurité, conventions)."},
+        {"type": "tool_use", "name": "Read", "input": {"file_path": "src/ingest/schema.py"}}]}},
+    {"type": "user", "message": {"content": [
+        {"type": "tool_result", "content": "diff lu : 1 fichier, +42/-3", "is_error": False}]}},
+    {"type": "assistant", "message": {"content": [
+        {"type": "text", "text": "Aucun finding bloquant. Le contrat couvre la ligne partielle."}],
+        "usage": {"output_tokens": 620}}},
+]
+
 
 def _seed(port: int, slugs: list[str], *, home: Path) -> None:
     """Crée les projets démo + une roadmap dans le premier (graphe), et un JOB terminé avec transcript pour
@@ -171,7 +184,9 @@ def _seed(port: int, slugs: list[str], *, home: Path) -> None:
 
 
 def _seed_dispatch_job(home: Path, proj: str) -> None:
-    """Insère un job `done` + son transcript dans la DB du daemon (import local des couches cockpit)."""
+    """Insère 3 runs + leurs transcripts dans la DB du daemon (import local des couches cockpit) pour rendre
+    l'historique VOYANT : un run task `done`, un run **reviewer** `review` `done` (badge de genre + transcript
+    consultable sur un pass 0-finding), un run task `failed` (pied « raison de l'échec »)."""
     try:
         from cockpit.config import Settings
         from cockpit.db import store
@@ -179,21 +194,35 @@ def _seed_dispatch_job(home: Path, proj: str) -> None:
     except ImportError:
         return  # cockpit non importable (build-only) → on saute le seed du run, sans casser le screenshot
     settings = Settings.resolve(home=home / "home", projects_root=home / "projects")
-    transcript = home / "demo-transcript.jsonl"
-    transcript.write_text("".join(json.dumps(o) + "\n" for o in _DEMO_TRANSCRIPT), encoding="utf-8")
+
+    def _write(name: str, events: list[dict]) -> str:
+        path = home / name
+        path.write_text("".join(json.dumps(o) + "\n" for o in events), encoding="utf-8")
+        return str(path)
+
     conn = store.open_db(settings)
     try:
-        # 1ʳᵉ task de la 1ʳᵉ feature (ordre list_tasks) — un run terminé y est rattaché.
+        # 1ʳᵉ task de la 1ʳᵉ feature (ordre list_tasks) — les runs y sont ancrés (le reviewer de même).
         row = conn.execute(
             "SELECT t.id FROM tasks t JOIN features f ON t.feature_id = f.id "
             "JOIN projects p ON f.project_id = p.id WHERE p.slug = ? ORDER BY f.slug, t.slug LIMIT 1",
             (proj,)).fetchone()
         if row is None:
             return
-        job_id = jobs.record_start(conn, task_id=row[0], worktree=str(home / "wt"),
-                                   session_id="demo-sess", log_path=str(transcript))
+        task_id = row[0]
+        done = jobs.record_start(conn, task_id=task_id, worktree=str(home / "wt"), session_id="demo-sess",
+                                 log_path=_write("demo-transcript.jsonl", _DEMO_TRANSCRIPT))
         conn.execute("UPDATE dispatch_jobs SET status = 'done', num_turns = 5, cost_usd = 0.1421 "
-                     "WHERE id = ?", (job_id,))
+                     "WHERE id = ?", (done,))
+        review = jobs.record_start(conn, task_id=task_id, worktree="(review)", kind="review",
+                                   session_id="demo-review",
+                                   log_path=_write("demo-review.jsonl", _DEMO_REVIEW_TRANSCRIPT))
+        conn.execute("UPDATE dispatch_jobs SET status = 'done', num_turns = 3, cost_usd = 0.0209 "
+                     "WHERE id = ?", (review,))
+        failed = jobs.record_start(conn, task_id=task_id, worktree=str(home / "wt"), session_id="demo-fail",
+                                   log_path=_write("demo-fail.jsonl", _DEMO_TRANSCRIPT))
+        conn.execute("UPDATE dispatch_jobs SET status = 'failed', error = ? WHERE id = ?",
+                     ("claude -p rc=1 : ToolPreflightError — `ruff` introuvable sur le PATH", failed))
         conn.commit()
     finally:
         conn.close()
