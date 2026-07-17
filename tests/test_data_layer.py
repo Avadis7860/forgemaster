@@ -443,6 +443,28 @@ def test_roadmap_to_yaml_carries_facet_and_acceptance(ctx):
     assert "acceptance" not in plain["tasks"][0]
 
 
+def test_task_mode_round_trip_and_validation(ctx):
+    """v12 : `mode` (headless|interactive) est porté par la row et émis au yaml SEULEMENT si interactif
+    (rétro-compat : une task headless reste identique au contrat v1). Un mode hors vocab lève ValueError."""
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj")
+    model.add_feature(conn, project_slug="proj", slug="cadrage-feat", facet="doc")
+    t = model.add_task(conn, feature_ref="proj/cadrage-feat", slug="cadrage",
+                       acceptance="Intention renseignée.", mode="interactive")
+    assert t["mode"] == "interactive"                                    # row rendue porte le mode
+    model.add_task(conn, feature_ref="proj/cadrage-feat", slug="build", acceptance="Code posé.")  # headless
+    with pytest.raises(ValueError):
+        model.add_task(conn, feature_ref="proj/cadrage-feat", slug="bad", mode="daemon")  # mode hors vocab
+    features = model.list_features(conn, "proj")
+    for f in features:
+        f["tasks"] = model.list_tasks(conn, f["id"])
+    doc = yaml.safe_load(model.to_yaml("proj", features))
+    feat = next(f for f in doc["features"] if f["slug"] == "cadrage-feat")
+    tasks = {t["slug"]: t for t in feat["tasks"]}
+    assert tasks["cadrage"]["mode"] == "interactive"                     # interactif → émis
+    assert "mode" not in tasks["build"]                                  # headless (défaut) → omis
+
+
 def test_add_feature_inter_feature_depends_on_round_trip(ctx):
     settings, conn = ctx
     registry.create_project(conn, settings, slug="proj", project_type="front-ts")
@@ -620,7 +642,7 @@ def test_ensure_columns_migrates_v10_to_v11_in_place(tmp_path: Path):
 
 def test_migration_v10_to_v11_creates_trace_tables_in_place(tmp_path: Path):
     """Une base v10 (sans `non_runs`/`gate_verdicts`) migre en place : `store.migrate` (via `create_schema` +
-    `CREATE IF NOT EXISTS`) crée les tables neuves et pose `SCHEMA_VERSION=11` (sans `ensure_columns`)."""
+    `CREATE IF NOT EXISTS`) crée les tables neuves et pose la `SCHEMA_VERSION` courante (sans colonnes)."""
     from cockpit.db import schema
     conn = store.connect(tmp_path / "v10.db")
     conn.execute("CREATE TABLE projects (id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, name TEXT NOT "
@@ -631,8 +653,33 @@ def test_migration_v10_to_v11_creates_trace_tables_in_place(tmp_path: Path):
     before = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert "non_runs" not in before and "gate_verdicts" not in before
 
-    assert store.migrate(conn) == schema.SCHEMA_VERSION          # migre → v11
+    assert store.migrate(conn) == schema.SCHEMA_VERSION          # migre → version courante
     after = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"non_runs", "gate_verdicts"} <= after
-    assert schema.schema_version(conn) == 11
+    assert schema.schema_version(conn) == schema.SCHEMA_VERSION
+    conn.close()
+
+
+def test_ensure_columns_migrates_v11_to_v12_adds_task_mode_in_place(tmp_path: Path):
+    """Une base v11 (tasks sans `mode`) migre en place : `ensure_columns` ajoute `mode` (NOT NULL DEFAULT
+    'headless' → les tasks existantes, toutes des runs headless, prennent 'headless'). Additif, idempotent."""
+    import sqlite3
+
+    from cockpit.db import schema
+    conn = sqlite3.connect(tmp_path / "v11.db")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, feature_id TEXT NOT NULL, slug TEXT NOT NULL, "
+                 "title TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'todo', depends_on TEXT NOT NULL "
+                 "DEFAULT '[]', priority TEXT NOT NULL DEFAULT 'P1', acceptance TEXT, "
+                 "created_at TEXT NOT NULL)")
+    conn.execute("INSERT INTO tasks (id, feature_id, slug, title, created_at) "
+                 "VALUES ('t1', 'f1', 'cadrage', 'Cadrage', '2026-07-18')")
+    conn.commit()
+    assert "mode" not in {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
+    schema.ensure_columns(conn)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
+    assert "mode" in cols
+    assert conn.execute("SELECT mode FROM tasks WHERE id='t1'").fetchone()["mode"] == "headless"  # défaut
+    schema.ensure_columns(conn)                                            # 2ᵉ appel : no-op (ALTER gardé)
+    assert conn.execute("SELECT mode FROM tasks WHERE id='t1'").fetchone()["mode"] == "headless"
     conn.close()

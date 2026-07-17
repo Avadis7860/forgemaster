@@ -28,5 +28,6 @@ def seed_launch_roadmap(conn: sqlite3.Connection, *, project_slug: str, project_
         for task in feat.get("tasks", []):
             model.add_task(conn, feature_ref=f"{project_slug}/{feat['slug']}", slug=task["slug"],
                            title=task.get("title"), depends_on=task.get("depends_on") or [],
-                           priority=task.get("priority", "P1"), acceptance=task.get("acceptance"))
+                           priority=task.get("priority", "P1"), acceptance=task.get("acceptance"),
+                           mode=task.get("mode", "headless"))   # v12 : le hint interactif naît de la graine
     return len(features)

@@ -132,6 +132,16 @@ existante par `CREATE TABLE IF NOT EXISTS` (même chemin que `deployments` en v7
 cf. la politique de versionnage). Ce commit pose les **contenants** ; les puits d'écriture sont câblés par les
 filles `cockpit-trace-job-sinks` / `cockpit-gate-verdict-history`.
 
+**Migration v11→v12** (interview de 1ʳᵉ session) : `tasks` gagne `mode` (`TEXT NOT NULL DEFAULT 'headless'` —
+défaut littéral requis par `ALTER` ; les tasks existantes sont toutes des runs headless → `'headless'` est exact),
+via `ensure_columns`. Enum `headless|interactive` : une task `interactive` est **routée vers un terminal
+interactif** (`cockpit interview`) par le dispatch au lieu d'un worker `claude -p` headless (une interview / un
+cadrage ne se mène pas en headless). Le `CHECK (mode IN …)` vit dans le `DDL` (base neuve) ; un `ALTER` SQLite ne
+re-porte pas le CHECK → l'invariant `mode∈{headless,interactive}` est tenu par le code qui écrit
+(`model.add_task`). Le hint naît de la **graine** (le socle semé marque `cadrage`/`interview` `interactive`), lu
+par le **dispatch générique** — zéro heuristique métier dans le moteur. Ajout **non-breaking** (le bump déclenche
+la migration).
+
 ## 2. Schéma `.cockpit/roadmap.yaml` (in-repo, `roadmap/model.py`)
 
 Versionné **avec le projet** (source de vérité côté repo), synchronisé vers la DB (index). Manifeste SEC
@@ -152,10 +162,12 @@ features:
         priority: P0|P1|P2|P3
         depends_on: [<task-slug>, …]                # intra-feature explicite (union avec phases:)
         acceptance: <str>                           # v6, OPTIONNEL — critères de DoD injectés au prompt worker
+        mode: headless|interactive                  # v12, OPTIONNEL — routage dispatch (omis si `headless`)
 ```
 
-`facet:`/`acceptance:` (v6), `blueprint:` (v9) et le `depends_on:` feature-level (v10) sont **émis seulement si
-présents** — une roadmap sans ces champs reste identique au contrat v1 (rétro-compatible). Le `depends_on:` d'une
+`facet:`/`acceptance:` (v6), `blueprint:` (v9), le `depends_on:` feature-level (v10) et `mode:` (v12) sont **émis
+seulement si présents/non-défaut** — une roadmap sans ces champs reste identique au contrat v1 (rétro-compatible).
+`mode: interactive` route la task vers le terminal interactif (`cockpit interview`) au lieu d'un worker headless. Le `depends_on:` d'une
 feature est le DAG INTER-feature (non-dispatchable tant qu'une prérequise n'est pas `merged`) ; celui d'une task
 reste intra-feature. `facet` tague la feature du type de travail (aligne le
 worker au dispatch) ; `acceptance` porte les critères de succès de la task, rendus verbatim dans le prompt ;

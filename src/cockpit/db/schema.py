@@ -40,13 +40,20 @@ neuves : `non_runs` (journal PUR des runs jamais lancés — un skip a une raiso
 jamais lu par une garde) et `gate_verdicts` (historique des verdicts PAR SHA — `review`/`toolchain`/`merge`,
 là où `write_verdict` écrasait). Ce commit pose les CONTENANTS ; les puits qui écrivent (dé-squat du reviewer,
 `record_finish` qui garde `error`, historisation au `write_verdict`/`run_merge`) sont câblés par les filles
-`cockpit-trace-job-sinks` / `cockpit-gate-verdict-history`.
+`cockpit-trace-job-sinks` / `cockpit-gate-verdict-history`. v12 (first-session-interview) = `tasks` gagne
+`mode` (identité de dispatch d'une task — enum `headless|interactive`, défaut `headless`) : une task
+`interactive` est routée vers un **terminal interactif** (`cockpit interview`) au lieu d'un worker `claude -p`
+headless (une interview / un cadrage ne se mène pas en headless — cf. task cockpit-first-session-interview).
+Le hint est posé par la GRAINE (le socle semé marque ses tasks `cadrage`/`interview`), lu par le dispatch
+générique — zéro heuristique métier dans le moteur. CHECK côté DDL (base neuve) ; l'invariant
+`mode∈{headless,interactive}` est tenu par le code qui écrit (SQLite n'ALTER pas un CHECK). Les tasks pré-v12
+sont toutes des runs headless → `'headless'` est exact pour l'existant.
 """
 from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 # Ordre = ordre de création (les FK pointent vers des tables déjà créées). Chaque table porte les
 # invariants durs en contraintes SQL (NOT NULL, UNIQUE, FK, CHECK sur les enums de statut).
@@ -98,6 +105,8 @@ DDL: tuple[str, ...] = (
         priority    TEXT NOT NULL DEFAULT 'P1'
                         CHECK (priority IN ('P0', 'P1', 'P2', 'P3')),
         acceptance  TEXT,                            -- critères de DoD (v6, nullable) → prompt worker
+        mode        TEXT NOT NULL DEFAULT 'headless'  -- dispatch (v12) : headless vs terminal interactif
+                        CHECK (mode IN ('headless', 'interactive')),
         created_at  TEXT NOT NULL,
         UNIQUE (feature_id, slug)
     )
@@ -208,7 +217,10 @@ _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
     # INTER-feature (liste JSON de slugs de features prérequises). Symétrique de `tasks.depends_on` ;
     # ALTER-safe (pas de CHECK). Invariant « prérequis satisfait = merged » tenu par resolver/orchestrator.
     "features": (("facet", "TEXT"), ("blueprint", "TEXT"), ("depends_on", "TEXT NOT NULL DEFAULT '[]'")),
-    "tasks": (("acceptance", "TEXT"),),
+    # v12 : `tasks.mode` (NOT NULL, défaut littéral 'headless' — ALTER exige un défaut littéral). Le CHECK
+    # `mode∈{headless,interactive}` n'est PAS re-portable par ALTER en SQLite → tenu côté DDL (base neuve) ET
+    # par le code qui écrit (`model.add_task`). Les tasks pré-v12 sont toutes des runs headless → exact.
+    "tasks": (("acceptance", "TEXT"), ("mode", "TEXT NOT NULL DEFAULT 'headless'")),
 }
 
 # Index de service (accès par clé étrangère / statut — les chemins chauds du résolveur et du dispatch).

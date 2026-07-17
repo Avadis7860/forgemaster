@@ -93,23 +93,30 @@ def resolve_feature(conn: sqlite3.Connection, ref: str) -> dict:
     return d
 
 
+TASK_MODES = ("headless", "interactive")
+
+
 def add_task(conn: sqlite3.Connection, *, feature_ref: str, slug: str, title: str | None = None,
              depends_on: list[str] | None = None, priority: str = "P1",
-             acceptance: str | None = None) -> dict:
+             acceptance: str | None = None, mode: str = "headless") -> dict:
     """Ajoute une task à une feature. `depends_on` = slugs de tasks prérequises (dans la même feature).
-    `acceptance` (optionnel, TEXT libre) = critères de DoD injectés dans le prompt du worker au dispatch."""
+    `acceptance` (optionnel, TEXT libre) = critères de DoD injectés dans le prompt du worker au dispatch.
+    `mode` (v12, `headless`|`interactive`, défaut `headless`) = identité de dispatch : une task `interactive`
+    est routée vers un terminal interactif (`cockpit interview`) au lieu d'un worker `claude -p` headless."""
     ids.ensure_slug(slug, field="task")
     if priority not in ("P0", "P1", "P2", "P3"):
         raise ValueError(f"priorité hors vocab P0-P3 : {priority!r}")
+    if mode not in TASK_MODES:
+        raise ValueError(f"mode hors vocab {TASK_MODES} : {mode!r}")
     feature = resolve_feature(conn, feature_ref)
     row = {"id": ids.new_id(), "feature_id": feature["id"], "slug": slug, "title": title or slug,
            "status": "todo", "depends_on": json.dumps(depends_on or []), "priority": priority,
-           "acceptance": acceptance, "created_at": _now()}
+           "acceptance": acceptance, "mode": mode, "created_at": _now()}
     try:
         conn.execute(
             "INSERT INTO tasks (id, feature_id, slug, title, status, depends_on, priority, acceptance, "
-            "created_at) VALUES (:id, :feature_id, :slug, :title, :status, :depends_on, :priority, "
-            ":acceptance, :created_at)", row)
+            "mode, created_at) VALUES (:id, :feature_id, :slug, :title, :status, :depends_on, :priority, "
+            ":acceptance, :mode, :created_at)", row)
         conn.commit()
     except sqlite3.IntegrityError as exc:
         raise ValueError(f"task déjà existante : {feature_ref}/{slug}") from exc
@@ -152,6 +159,8 @@ def _feature_doc(f: dict) -> dict:
                       "depends_on": t["depends_on"]}
         if t.get("acceptance"):
             task["acceptance"] = t["acceptance"]
+        if t.get("mode") and t["mode"] != "headless":
+            task["mode"] = t["mode"]              # émis seulement si interactif (contrat rétro-compat v1)
         doc["tasks"].append(task)
     return doc
 
