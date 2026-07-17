@@ -12,7 +12,7 @@ from starlette.concurrency import run_in_threadpool
 from cockpit import auth
 from cockpit.daemon.deps import Deps, get_deps
 from cockpit.dispatch import reviewer, worktree
-from cockpit.gate import merge, review, toolchain
+from cockpit.gate import history, merge, review, toolchain
 from cockpit.git.internal import GitOpError, InternalGit
 from cockpit.projects.registry import get_project
 from cockpit.roadmap.model import resolve_feature
@@ -119,7 +119,26 @@ def make_gate_router() -> APIRouter:
         finally:
             conn.close()
         return {"head_sha": ev["head_sha"], "ui_touched": ev["ui_touched"],
-                "review": ev["tier1_status"], "verify": ev["t15_status"], "decision": ev["decision"]}
+                "review": ev["tier1_status"], "verify": ev["t15_status"],
+                "toolchain": ev["native_status"], "decision": ev["decision"]}
+
+    @router.get("/api/gate/{project}/{feature}/verdicts")
+    def gate_verdicts_detail(project: str, feature: str, deps: Deps = Depends(get_deps)) -> dict:
+        """Vue de LECTURE détaillée — distincte de l'entrée-de-gate `review.status` (ne pas élargir ce que le
+        gate VOIT). Le verdict Tier-1 COMPLET (findings : claim, evidence, `file:line`) + le verdict Tier-0
+        natif (steps) lus depuis les fichiers courants. Répond « pourquoi ? » sans ouvrir la DB à la main."""
+        return {"review": review.read_verdict(deps.settings, project, feature),
+                "toolchain": toolchain.read_verdict(deps.settings, project, feature)}
+
+    @router.get("/api/gate/{project}/{feature}/history")
+    def gate_verdict_history(project: str, feature: str, deps: Deps = Depends(get_deps)) -> dict:
+        """Historique des verdicts PAR SHA (table `gate_verdicts`) : ce qui a été rouge le reste (un rouge à
+        SHA-A et un vert à SHA-B coexistent) + le fait-de-merge daté. Répond « qu'est-ce qui a échoué ? »."""
+        conn = deps.open_db()
+        try:
+            return {"verdicts": history.list_verdicts(conn, project, feature)}
+        finally:
+            conn.close()
 
     @router.post("/api/merge/{project}/{feature}")
     def do_merge(project: str, feature: str, body: MergeBody,

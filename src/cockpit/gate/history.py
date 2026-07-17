@@ -48,6 +48,23 @@ def record_verdict(conn: sqlite3.Connection, project: str, feature: str, gate: s
         logging.getLogger("cockpit").warning("verdict non historisé (%s/%s) : %s", project, feature, exc)
 
 
+def list_verdicts(conn: sqlite3.Connection, project: str, feature: str, *,
+                  limit: int = VERDICT_HISTORY_KEEP) -> list[dict]:
+    """Historique des verdicts d'une feature (plus récent d'abord), `verdict` JSON re-parsé. Lecture PURE —
+    sert la route d'historique (« qu'est-ce qui a échoué et quand ? » sans ouvrir la DB à la main)."""
+    rows = conn.execute(
+        "SELECT gate, sha, verdict, created_at FROM gate_verdicts WHERE project = ? AND feature = ? "
+        "ORDER BY created_at DESC, id DESC LIMIT ?", (project, feature, limit)).fetchall()
+    out: list[dict] = []
+    for r in rows:
+        try:
+            verdict = json.loads(r["verdict"])
+        except (ValueError, TypeError):
+            verdict = None
+        out.append({"gate": r["gate"], "sha": r["sha"], "verdict": verdict, "created_at": r["created_at"]})
+    return out
+
+
 def prune_verdicts(conn: sqlite3.Connection, project: str, feature: str, *,
                    keep: int = VERDICT_HISTORY_KEEP) -> None:
     """Borne l'historique d'une feature à ses `keep` derniers verdicts (appelé AU MERGE, pas à la source) —

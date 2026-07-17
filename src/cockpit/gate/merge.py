@@ -177,6 +177,7 @@ def evaluate_gate(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
     t15_status = verify.status(settings, project_slug, feature_slug, current_sha=head_sha)
     ui_touched = False
     decision: dict | None = None
+    native_status: dict | None = None                         # Tier-0 natif (toolchain) — surfacé au GET gate
     if head_sha is not None:
         diff_files = git.diff_names(sot, base=BASE_BRANCH, head=branch)   # unique appel — sert UI + natif
         ui_touched = verify.has_ui(diff_files)
@@ -190,7 +191,8 @@ def evaluate_gate(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
             t15_override=t15_override, native_status=native_status, t1_override=t1_override)
     return {"feature": feature, "project_slug": project_slug, "feature_slug": feature_slug,
             "branch": branch, "sot": sot, "head_sha": head_sha, "ui_touched": ui_touched,
-            "tier1_status": tier1_status, "t15_status": t15_status, "decision": decision}
+            "tier1_status": tier1_status, "t15_status": t15_status, "native_status": native_status,
+            "decision": decision}
 
 
 def run_merge(conn: sqlite3.Connection, settings: Settings, *, feature_ref: str, human_go: bool,

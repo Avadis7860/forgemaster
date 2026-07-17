@@ -199,10 +199,18 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   `{slug, title?}` · `POST /api/features/{p}/{f}/tasks` `{slug, title?, depends_on?, priority?}` ·
   `GET /api/features/{p}/{f}/next` (résolveur DAG → `{next, n_tasks}`).
 - **dispatch** — `POST /api/dispatch/{p}/{f}` (spawn worker en threadpool ; gate no-task-no-dispatch) ·
-  `GET /api/jobs/{id}` (job + `tail` d'événements normalisés).
+  `GET /api/dispatch/{p}/{f}/jobs` (historique des runs de la feature, join `tasks`) ·
+  `GET /api/jobs/{id}` (job + `tail` d'événements normalisés) · `WS /ws/dispatch/{job}` (streaming live du
+  transcript — **porté** ; le `tail` par pull en repli).
 - **gate** — `POST /api/gate/{p}/{f}/review` `{findings, base?}` (verdict Tier-1 SHA-bound ; **422** si
-  branche/diff absent ou diff vide — fail-closed) · `GET /api/gate/{p}/{f}` (statut review + verify,
-  ancré HEAD) · `POST /api/merge/{p}/{f}` `{go, t1_override?, t15_override?}` (`run_merge` sous GO humain).
+  branche/diff absent ou diff vide — fail-closed) · `POST /api/gate/{p}/{f}/toolchain` (exécute le Tier-0
+  natif dans le worktree, verdict SHA-bound ; **422** worktree/branche absents) ·
+  `POST /api/gate/{p}/{f}/review-dispatch` (dispatche le review-worker Tier-1 ; **403** sans auth `claude`) ·
+  `GET /api/gate/{p}/{f}` (statut **review + toolchain + verify** + décision composée en preview, ancré HEAD) ·
+  `GET /api/gate/{p}/{f}/verdicts` (vue de lecture read-only : verdict Tier-1 COMPLET (findings) + Tier-0 natif
+  (steps)) · `GET /api/gate/{p}/{f}/history` (historique des verdicts **par SHA** depuis `gate_verdicts` : ce
+  qui a été rouge le reste + fait-de-merge) · `POST /api/merge/{p}/{f}` `{go, t1_override?, t15_override?}`
+  (`run_merge` sous GO humain).
 - **git** — `GET /api/projects/{p}/git` (vue **read-only** du SoT bare : `branches` `[{name, sha, subject}]`,
   `ahead_behind` `{base, head, ahead, behind}` de `main` vs `dev` — `ahead` = ce que main doit rattraper,
   `null` si dev/main pas tous deux présents — et `logs` `{ref: [{sha, subject}]}` par réf protégée). Aucune
@@ -266,7 +274,9 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
 - **terminal** — `WS /ws/terminal/{project}` (PTY **local** `bash -l`, workdir borné).
 
 Un endpoint qui borne/tronque le **signale** dans sa réponse. `WS /ws/dispatch/{job}` (streaming live du
-transcript) reste **différé P5** (le `tail` par pull couvre l'observabilité V1).
+transcript) est **porté** (déclaré dans le routeur `dispatch`, cf. ci-dessus) ; le `tail` par pull reste le
+repli d'observabilité (aucune dépendance dure au WS). *(Correction : ce contrat le disait « différé P5 » —
+il tourne.)*
 
 ## Politique de versionnage
 

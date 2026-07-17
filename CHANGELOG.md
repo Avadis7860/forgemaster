@@ -5,6 +5,19 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Gate/API — surface de LECTURE de la trace (findings, toolchain, historique) — pas de bump
+- `GET /api/gate` porte désormais **`toolchain`** (Tier-0 natif, miroir de `review`/`verify`) : `evaluate_gate`
+  surface le `native_status` **déjà calculé** (aucune double-lecture).
+- `GET /api/gate/{p}/{f}/verdicts` : vue de lecture **read-only** — verdict Tier-1 COMPLET (findings : claim,
+  evidence, `file:line`) + Tier-0 natif (steps). Findings au niveau **ROUTE**, jamais versés dans
+  `review.status` (l'entrée-de-gate consommée par `compose_merge_decision` reste inchangée).
+- `GET /api/gate/{p}/{f}/history` : historique des verdicts **par SHA** (`gate_verdicts`) — la trace se lit
+  dans l'UI, plus besoin d'ouvrir `~/.cockpit/cockpit.db` à la main.
+- **Doc soldée** : 3 routes non documentées (`GET …/dispatch/{p}/{f}/jobs`, `POST …/toolchain`, `POST …/review
+  -dispatch`) inscrites ; `WS /ws/dispatch/{job}` re-marqué **porté** (le contrat le disait « différé P5 » à
+  tort — il tourne). **Pas de WS neuf** (tail borné à la demande). **Pas de bump** : une route n'a pas de
+  déclencheur de migration (contrairement à une colonne).
+
 ### Gate — historique des verdicts PAR SHA + capture du GO humain (`gate/history.py`)
 - `write_verdict(conn=…)` (review + toolchain) **archive** chaque verdict dans `gate_verdicts` (v11) par SHA :
   un rouge à SHA-A **survit** à un vert à SHA-B (l'ancien `write_text` écrasait → T1 perdu). Le fichier

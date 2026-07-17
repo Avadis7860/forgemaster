@@ -249,6 +249,29 @@ def test_web_dispatch_drains_and_produces_review(client, monkeypatch, fake_tools
     assert st["decision"] is not None and st["decision"]["gate_green"] is True
 
 
+def test_gate_read_surface_exposes_toolchain_verdicts_and_history(client):
+    """F4 : la trace se LIT dans l'UI. `GET /api/gate` porte `toolchain` (miroir review/verify) ; `verdicts`
+    est la vue de lecture (review + toolchain, findings au niveau route) ; `.../history` rend l'historique
+    par SHA → un rouge à SHA-A et un vert à SHA-B coexistent, sans ouvrir la DB à la main."""
+    from cockpit.gate import history
+    c, settings = client
+    conn = store.open_db(settings)
+    registry.create_project(conn, settings, slug="proj")
+    model.add_feature(conn, project_slug="proj", slug="feat")
+    conn.commit()
+    history.record_verdict(conn, "proj", "feat", "review", {"reviewed_sha": "A", "counts": {"red": 1}})
+    history.record_verdict(conn, "proj", "feat", "review", {"reviewed_sha": "B", "counts": {"red": 0}})
+    conn.close()
+
+    st = c.get("/api/gate/proj/feat").json()
+    assert "toolchain" in st                                # Tier-0 natif surfacé (miroir review/verify)
+    detail = c.get("/api/gate/proj/feat/verdicts").json()
+    assert "review" in detail and "toolchain" in detail    # vue de lecture (findings au niveau route)
+    hist = c.get("/api/gate/proj/feat/history").json()
+    shas = [v["sha"] for v in hist["verdicts"]]
+    assert "A" in shas and "B" in shas                     # les DEUX passages sont retrouvables
+
+
 def test_toolchain_gate_route_injects_tools_env(client, monkeypatch, fake_tools):
     """La route `POST …/toolchain` passe `env=tools_env(settings)` à `run_toolchain`, ALIGNÉE sur la CLI
     (`gate/toolchain.py`) et l'orchestrator. Sans lui, sur un hôte au PATH minimal, la route rendrait un
