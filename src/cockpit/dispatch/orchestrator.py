@@ -132,7 +132,7 @@ def _finalize_feature(conn: sqlite3.Connection, settings: Settings, project: str
                 "blockers": [f"branche {feat['branch']} absente — jamais dispatchée"]}
     if wt.is_dir():                                       # Tier-0 : la toolchain native, dans le worktree
         results = toolchain.run_toolchain(wt, diff_files, env=tools_env(settings))
-        toolchain.write_verdict(settings, project, feature, results, sha=sha)
+        toolchain.write_verdict(settings, project, feature, results, sha=sha, conn=conn)
     review_report = reviewer.dispatch_reviewer(conn, settings, feature_ref=feature_ref, git=git,
                                                runner=review_runner)
     ev = merge_gate.evaluate_gate(conn, settings, feature_ref=feature_ref, human_go=False, git=git)

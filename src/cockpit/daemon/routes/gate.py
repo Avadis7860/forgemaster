@@ -57,9 +57,13 @@ def make_gate_router() -> APIRouter:
             raise HTTPException(status_code=422, detail=f"branche/diff introuvable : {exc}") from exc
         if not diff_text.strip():
             raise HTTPException(status_code=422, detail=f"diff {body.base}...{branch} vide — rien à valider")
-        return review.write_verdict(deps.settings, project, feature,
-                                    {"findings": body.findings, "base": body.base},
-                                    sha=sha, diff_text=diff_text)
+        conn = deps.open_db()                                # conn ⇒ verdict archivé par SHA (best-effort)
+        try:
+            return review.write_verdict(deps.settings, project, feature,
+                                        {"findings": body.findings, "base": body.base},
+                                        sha=sha, diff_text=diff_text, conn=conn)
+        finally:
+            conn.close()
 
     @router.post("/api/gate/{project}/{feature}/toolchain", status_code=201)
     def run_toolchain_gate(project: str, feature: str, deps: Deps = Depends(get_deps)) -> dict:
@@ -78,7 +82,11 @@ def make_gate_router() -> APIRouter:
             raise HTTPException(status_code=422, detail=f"branche/diff introuvable : {exc}") from exc
         # env=tools_env : PATH natif (ruff/mypy/npm) — ALIGNÉ sur la CLI et l'orchestrator
         results = toolchain.run_toolchain(wt, diff_files, env=tools_env(deps.settings))
-        return toolchain.write_verdict(deps.settings, project, feature, results, sha=sha)
+        conn = deps.open_db()                                # conn ⇒ verdict archivé par SHA (best-effort)
+        try:
+            return toolchain.write_verdict(deps.settings, project, feature, results, sha=sha, conn=conn)
+        finally:
+            conn.close()
 
     @router.post("/api/gate/{project}/{feature}/review-dispatch", status_code=201)
     async def dispatch_review(project: str, feature: str, deps: Deps = Depends(get_deps)) -> dict:

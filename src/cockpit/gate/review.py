@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
 from cockpit.config import Settings
+from cockpit.gate import history
 
 CONTRACT_VERSION = "review-gate-v2"
 SEVERITIES = ("🔴", "🟡", "🟣")
@@ -141,16 +143,21 @@ def build_verdict(payload: dict, *, sha: str | None, ts: str, diff_text: str | N
 
 
 def write_verdict(settings: Settings, project: str, feature: str, payload: dict, *,
-                  sha: str | None, ts: str | None = None, diff_text: str | None = None) -> dict:
+                  sha: str | None, ts: str | None = None, diff_text: str | None = None,
+                  conn: sqlite3.Connection | None = None) -> dict:
     """Persiste le verdict Tier-1 sous `state_path(settings, project, feature)`. `sha` injecté (le SHA de la
     branche de feature, résolu par l'appelant) ; `ts` défaut = horodatage UTC. Délègue la construction (pure)
-    à `build_verdict`. `diff_text` fourni ⇒ garde `evidence ⊂ diff` appliquée."""
+    à `build_verdict`. `diff_text` fourni ⇒ garde `evidence ⊂ diff` appliquée. `conn` fourni ⇒ le verdict est
+    aussi **archivé par SHA** dans `gate_verdicts` (best-effort) : le fichier reste le courant, la table
+    l'historique (un rouge à SHA-A survit à un vert à SHA-B)."""
     verdict = build_verdict(
         payload, sha=sha,
         ts=ts or datetime.now(UTC).isoformat(timespec="seconds"), diff_text=diff_text)
     sp = state_path(settings, project, feature)
     sp.parent.mkdir(parents=True, exist_ok=True)
     sp.write_text(json.dumps(verdict, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if conn is not None:
+        history.record_verdict(conn, project, feature, "review", verdict)
     return verdict
 
 

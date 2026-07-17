@@ -221,6 +221,9 @@ def test_run_merge_holds_without_go_then_merges_and_cleans_up(ctx):
     feat = conn.execute("SELECT status FROM features WHERE slug = 'feat'").fetchone()
     task = conn.execute("SELECT status FROM tasks WHERE slug = 'schema'").fetchone()
     assert feat["status"] == "merged" and task["status"] == "done" and done["closed_tasks"] == ["schema"]
+    # le GO humain est capturé comme fait daté dans l'historique des verdicts (gate='merge', ancré au SHA)
+    merge_row = conn.execute("SELECT sha FROM gate_verdicts WHERE gate = 'merge'").fetchone()
+    assert merge_row is not None and merge_row["sha"] == head_sha
 
 
 def test_run_merge_passes_project_credential_ref_to_writeback(ctx):

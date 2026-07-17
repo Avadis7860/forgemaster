@@ -253,7 +253,7 @@ def dispatch_reviewer(conn: sqlite3.Connection, settings: Settings, *, feature_r
 
     findings = _extract_findings(parsed.get("result"))
     verdict = review.write_verdict(settings, project, feature, {"findings": findings, "base": REVIEW_BASE},
-                                   sha=head_sha, diff_text=diff_text)
+                                   sha=head_sha, diff_text=diff_text, conn=conn)
     return {"reviewed": True, "reason": "verdict Tier-1 écrit", "verdict": verdict,
             "counts": verdict["counts"], "rejected": len(verdict["rejected"])}
 

@@ -27,7 +27,7 @@ from pathlib import Path
 
 from cockpit.config import Settings
 from cockpit.dispatch import worktree
-from cockpit.gate import review, toolchain, verify
+from cockpit.gate import history, review, toolchain, verify
 from cockpit.git.identity import resolve_identity
 from cockpit.git.internal import GitOpError, InternalGit
 from cockpit.projects.registry import get_project
@@ -210,6 +210,9 @@ def run_merge(conn: sqlite3.Connection, settings: Settings, *, feature_ref: str,
                        tier0=tier0, native=native, t1_override=t1_override, t15_override=t15_override)
     feature, feature_slug = ev["feature"], ev["feature_slug"]
     project_slug, branch, sot, head_sha = ev["project_slug"], ev["branch"], ev["sot"], ev["head_sha"]
+    # `decision` est composée par `compose_merge_decision` — PURE. On ne la persiste PAS : fonction pure +
+    # entrées (verdicts) historisées = décision REJOUABLE. La persister dupliquerait une sortie déterministe.
+    # Ce qui mérite capture, c'est le GO humain (fait daté, non-rejouable) → historisé au succès du merge.
     decision = ev["decision"]
 
     # Une feature planifiée mais jamais dispatchée n'a pas encore de branche git (créée au 1ᵉʳ worktree) →
@@ -239,6 +242,11 @@ def run_merge(conn: sqlite3.Connection, settings: Settings, *, feature_ref: str,
     # le port ; delete_branch supprime ensuite la branche (libérée de son worktree).
     worktree.release(conn, settings, git, project=project_slug, feature=feature_slug)
     git.delete_branch(sot, branch)
+    # (3b) trace : capture le GO humain (fait daté, non-rejouable) puis BORNE l'historique de la feature — au
+    # même point que `delete_branch`, qui sinon orpheline les verdicts. Best-effort (jamais un merge raté).
+    history.record_verdict(conn, project_slug, feature_slug, "merge",
+                           {"reviewed_sha": head_sha, "human_go": human_go, "reason": "merge"})
+    history.prune_verdicts(conn, project_slug, feature_slug)
     # (4) clôture DB : feature merged, tasks landées done.
     report["closed_tasks"] = _close_feature_tasks(conn, feature["id"])
     report["pending_tasks"] = [r["slug"] for r in conn.execute(

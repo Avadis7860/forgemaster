@@ -5,6 +5,16 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Gate — historique des verdicts PAR SHA + capture du GO humain (`gate/history.py`)
+- `write_verdict(conn=…)` (review + toolchain) **archive** chaque verdict dans `gate_verdicts` (v11) par SHA :
+  un rouge à SHA-A **survit** à un vert à SHA-B (l'ancien `write_text` écrasait → T1 perdu). Le fichier
+  `gate/<p>/<f>/*.json` reste le **courant** (fraîcheur en un `read_text`) ; la table est l'**historique**.
+- `run_merge` capture le **GO humain** (fait daté, non-rejouable, `gate='merge'`, ancré au SHA) et **borne**
+  l'historique de la feature (tail-N) au même point que `delete_branch` — qui sinon orpheline les verdicts.
+- La `decision` composée n'est **pas** persistée : `compose_merge_decision` est PURE → rejouable depuis les
+  verdicts historisés (persister une sortie déterministe serait de la duplication).
+- **Best-effort** : un historique en échec ne fait JAMAIS échouer un merge autorisé ni un verdict écrit.
+
 ### Build — `allow-direct-references` pour la dép git privée `task-map`
 - `pyproject.toml` : `[tool.hatch.metadata] allow-direct-references = true`. La dép runtime `task-map` est une
   référence directe (`git+https`, repo privé épinglé au SHA) ; sans cet opt-in, `pip wheel .` échoue en

@@ -28,12 +28,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
 from cockpit.config import Settings
 from cockpit.core.run import RunTimeout, run
+from cockpit.gate import history
 
 CONTRACT_VERSION = "toolchain-gate-v1"
 DEFAULT_TIMEOUT_S = 900          # npm ci + build (ou pytest) peut être long — borné pour ne pas pendre
@@ -205,13 +207,17 @@ def build_verdict(step_results: list[dict], *, sha: str | None, ts: str) -> dict
 
 
 def write_verdict(settings: Settings, project: str, feature: str, step_results: list[dict], *,
-                  sha: str | None, ts: str | None = None) -> dict:
-    """Persiste le verdict Tier-0-natif sous `state_path`. `sha` injecté (SHA de la branche de feature)."""
+                  sha: str | None, ts: str | None = None, conn: sqlite3.Connection | None = None) -> dict:
+    """Persiste le verdict Tier-0-natif sous `state_path`. `sha` injecté (SHA de la branche de feature).
+    `conn` fourni ⇒ le verdict est aussi **archivé par SHA** dans `gate_verdicts` (best-effort) : le fichier
+    reste le courant, la table l'historique."""
     verdict = build_verdict(step_results, sha=sha,
                             ts=ts or datetime.now(UTC).isoformat(timespec="seconds"))
     sp = state_path(settings, project, feature)
     sp.parent.mkdir(parents=True, exist_ok=True)
     sp.write_text(json.dumps(verdict, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if conn is not None:
+        history.record_verdict(conn, project, feature, "toolchain", verdict)
     return verdict
 
 
