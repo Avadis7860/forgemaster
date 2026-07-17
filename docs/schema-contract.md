@@ -4,7 +4,7 @@ Trois schémas sont un **contrat** : une couche produit, une autre consomme. On 
 librement ; changer un **schéma** exige une entrée CHANGELOG + un bump. Un schéma partiel qui se dit complet
 est un bug (jamais de cap silencieux).
 
-## 1. Schéma SQLite (`db/schema.py`, `SCHEMA_VERSION` = **9**)
+## 1. Schéma SQLite (`db/schema.py`, `SCHEMA_VERSION` = **10**)
 
 Base unique sous `settings.db_path` (`$COCKPIT_HOME/cockpit.db`). Modèle **feature-groupe-des-tasks**.
 
@@ -246,7 +246,19 @@ transcript) reste **différé P5** (le `tail` par pull couvre l'observabilité V
 
 ## Politique de versionnage
 
-- **Non-breaking** (ajout de colonne nullable, nouvelle route, nouveau champ optionnel) → pas de bump, note
+**SQLite — tout changement de schéma exige un bump `SCHEMA_VERSION`, y compris un ajout de colonne nullable.**
+Raison mécanique, non négociable : `db/store.py` n'appelle `create_schema` (donc `ensure_columns`) **que si**
+`schema.schema_version(conn) < schema.SCHEMA_VERSION` — **le bump EST le déclencheur de migration**. Sans bump,
+une base existante à v`N` ne re-rentre jamais dans `create_schema`, la colonne n'est **jamais** posée sur
+l'existant, et tout `SELECT` qui la lit casse. La distinction breaking/non-breaking ne porte donc que sur le
+**chemin de migration**, jamais sur la nécessité du bump :
+
+- **Additif** (colonne nullable ou défaultée, ALTER-safe) → **bump** + `ensure_columns` (ALTER idempotent) +
+  entrée CHANGELOG. (Pratique : v3, v4, v5, v6, v9 sont toutes des ajouts nullables — toutes ont bumpé.)
+- **Breaking** (renommage/suppression de colonne, changement d'enum sous `CHECK`, resémantisation) → **bump** +
+  **rebuild de table** (SQLite n'`ALTER` pas un `CHECK` : cf. `_migrate_v8_drop_project_type_check`) + entrée
   CHANGELOG.
-- **Breaking** (renommage/suppression de colonne, changement d'enum, changement de sémantique d'un champ) →
-  bump `SCHEMA_VERSION` (SQLite) / `version` (roadmap.yaml) + entrée CHANGELOG + chemin de migration.
+
+**API HTTP / `roadmap.yaml`** — une nouvelle route ou un champ optionnel de payload n'a **pas** de déclencheur
+de migration SQLite : entrée CHANGELOG, **pas** de bump `SCHEMA_VERSION` (le `roadmap.yaml` porte son propre
+`version`, bumpé selon la même règle que ci-dessus s'il gagne un champ structurel).

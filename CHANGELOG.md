@@ -10,6 +10,17 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
   référence directe (`git+https`, repo privé épinglé au SHA) ; sans cet opt-in, `pip wheel .` échoue en
   `metadata-generation-failed`. Fix build-time pur, aucun changement de comportement.
 
+### Schéma DB v10 — DAG inter-features : `features.depends_on` (bump `SCHEMA_VERSION` 9→10)
+- **Additif non-breaking** → bump `SCHEMA_VERSION = 10` + migration `ensure_columns` (ALTER idempotent). `features`
+  gagne `depends_on` (`TEXT NOT NULL DEFAULT '[]'`, liste JSON de slugs de features) : le **DAG INTER-feature**,
+  symétrique de `tasks.depends_on` (intra-feature). Défaut littéral `'[]'` (ALTER-safe, aucun `CHECK`) → les
+  lignes existantes prennent « aucune dépendance ».
+- **Sémantique** : une feature reste non-dispatchable (`orchestrator._discoverable_features`) tant qu'une feature
+  prérequise n'est pas `merged` ; prédicat « prérequis satisfait = `merged` » dans `resolver.classify_features`
+  (même moteur taskmap que le DAG des tasks, une couche au-dessus).
+- **Validation** `check` : `DANGLING_FEATURE_DEP` / `FEATURE_CYCLE` / `DEAD_FEATURE_DEP` (prérequis `cancelled` →
+  deadlock surfacé, jamais silencieux).
+
 ### Schéma DB v9 — board-native blueprint : `features.blueprint` (bump `SCHEMA_VERSION` 8→9)
 - **Additif non-breaking** → bump `SCHEMA_VERSION = 9` + migration `ensure_columns` (ALTER idempotent). `features`
   gagne `blueprint` (nullable `TEXT`, aucun défaut → `NULL` pour l'existant) : la **ref STAMP** (id d'un blueprint
