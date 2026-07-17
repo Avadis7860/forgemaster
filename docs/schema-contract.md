@@ -4,7 +4,7 @@ Trois schémas sont un **contrat** : une couche produit, une autre consomme. On 
 librement ; changer un **schéma** exige une entrée CHANGELOG + un bump. Un schéma partiel qui se dit complet
 est un bug (jamais de cap silencieux).
 
-## 1. Schéma SQLite (`db/schema.py`, `SCHEMA_VERSION` = **10**)
+## 1. Schéma SQLite (`db/schema.py`, `SCHEMA_VERSION` = **11**)
 
 Base unique sous `settings.db_path` (`$COCKPIT_HOME/cockpit.db`). Modèle **feature-groupe-des-tasks**.
 
@@ -28,9 +28,12 @@ Base unique sous `settings.db_path` (`$COCKPIT_HOME/cockpit.db`). Modèle **feat
   intra-feature), `priority` (`P0`..`P3`), `acceptance` (nullable TEXT, **v6** — critères de DoD injectés
   dans le prompt du worker au dispatch), `created_at` ; unique `(feature_id, slug)`.
 - **`dispatch_jobs`** — `id`, `task_id`→tasks (cascade), `worktree_path`, `port` (couplé au worktree,
-  nullable), `pid`, `status` (`pending`|`running`|`done`|`failed`|`killed`), `log_path` (transcript JSONL
-  local dérivé de `session_id`), `session_id` (session `claude -p` = **handle de suivi live**, v2),
-  `num_turns`/`cost_usd`/`wall_s`/`engine` (métriques du run, v2), `started_at`, `ended_at`.
+  nullable), `pid`, `status` (`pending`|`running`|`done`|`failed`|`killed`), `kind` (**v11** —
+  `task`|`review`|`toolchain`|`fix`, défaut `task` ; **enum encodé en plein dès v11**, SQLite ne sait pas
+  `ALTER` un `CHECK`), `log_path` (transcript JSONL local dérivé de `session_id`), `session_id` (session
+  `claude -p` = **handle de suivi live**, v2), `num_turns`/`cost_usd`/`wall_s`/`engine` (métriques du run, v2),
+  `error` (**v11** — raison d'échec courte, nullable ; le `raw` complet reste sur `log_path`, jamais recopié),
+  `started_at`, `ended_at`.
 - **`port_reservations`** (v2) — `id`, `project`, `purpose` (ex. `worktree:<feature>`), `port` (**unique
   global** : mono-hôte WSL), `created_at` ; unique `(project, purpose)`. Broker de ports déterministe :
   1 port stable/épinglé par worktree, relâché au teardown (spec worktree-cleanup).
@@ -42,6 +45,16 @@ Base unique sous `settings.db_path` (`$COCKPIT_HOME/cockpit.db`). Modèle **feat
   nullable), `compose_ref` (réf du compose-project = unité d'isolation, nullable), `last_deploy_sha` (nullable),
   `created_at`, `updated_at` ; unique `(project_id, branch)`. Substrat conteneur (compose) en lightweight ; le
   modèle d'identité est agnostique du substrat.
+- **`non_runs`** (**v11** — trace des runs jamais lancés) — `id`, `feature_ref` (`"projet/feature"`, **pas de
+  FK** : journal découplé du cycle de vie de la feature), `kind` (ce qui AURAIT couru,
+  `task`|`review`|`toolchain`|`fix`), `reason` (raison de non-lancement verbatim — readiness/hold du reviewer),
+  `created_at` (**ts injecté** par l'appelant). **Journal PUR** : un skip a une raison, pas un pid/port/session —
+  ce n'est pas un job, et cette table n'est **jamais lue par une garde d'idempotence**.
+- **`gate_verdicts`** (**v11** — historique des verdicts PAR SHA) — `id`, `project`, `feature`, `gate`
+  (`review`|`toolchain`|`merge`), `sha` (HEAD ancré), `verdict` (**JSON** — payload tel qu'écrit sur disque),
+  `created_at`. Là où `write_verdict` faisait un `write_text` qui **écrasait** (un rouge à T1 puis vert à T2
+  perdait T1) ; l'historique par SHA préserve chaque passage. `merge` (fait-de-merge, GO humain daté) posé dans
+  l'enum dès maintenant.
 
 Invariants durs portés par le SQL : FK + `ON DELETE CASCADE`, `CHECK` sur chaque enum de statut, `UNIQUE`
 sur les slugs scopés. `PRAGMA foreign_keys=ON`, `journal_mode=WAL` (concurrence CLI↔daemon).
@@ -107,6 +120,17 @@ par `check` (`DANGLING_FEATURE_DEP` / `FEATURE_CYCLE` / `DEAD_FEATURE_DEP` si un
 deadlock surfacé). Le prédicat « prérequis satisfait = `merged` » vit dans `resolver.classify_features` (même
 moteur taskmap que le DAG des tasks, une couche au-dessus). Défaut littéral (ALTER-safe, pas de CHECK). Ajout
 **non-breaking**.
+
+**Migration v10→v11** (trace durable des échecs) : `dispatch_jobs` gagne `kind` (`TEXT NOT NULL DEFAULT 'task'`
+— défaut littéral requis par `ALTER` ; les jobs existants sont tous des runs d'ouvrier → `'task'` est exact) et
+`error` (`TEXT`, nullable, aucun défaut → `NULL` pour l'existant), via `ensure_columns`. Le `CHECK (kind IN …)`
+vit dans le `DDL` (base neuve) ; un `ALTER` SQLite ne re-porte pas le CHECK → l'enum **complet**
+(`task|review|toolchain|fix`) est posé dès maintenant pour éviter un rebuild ultérieur (précédent v8), l'invariant
+étant tenu par le code qui écrit. **Deux tables neuves** — `non_runs` et `gate_verdicts` — créées sur une base
+existante par `CREATE TABLE IF NOT EXISTS` (même chemin que `deployments` en v7), donc **aucune entrée
+`ensure_columns`**. Ajout **non-breaking** (le bump reste obligatoire : c'est lui qui déclenche la migration —
+cf. la politique de versionnage). Ce commit pose les **contenants** ; les puits d'écriture sont câblés par les
+filles `cockpit-trace-job-sinks` / `cockpit-gate-verdict-history`.
 
 ## 2. Schéma `.cockpit/roadmap.yaml` (in-repo, `roadmap/model.py`)
 

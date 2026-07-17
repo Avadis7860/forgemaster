@@ -589,3 +589,50 @@ def test_ensure_columns_migrates_v8_to_v9_in_place(tmp_path: Path):
     schema.ensure_columns(conn)                                            # 2ᵉ appel : no-op (ALTER gardé)
     assert "blueprint" in {r[1] for r in conn.execute("PRAGMA table_info(features)")}
     conn.close()
+
+
+def test_ensure_columns_migrates_v10_to_v11_in_place(tmp_path: Path):
+    """Une base v10 (dispatch_jobs sans kind/error) migre en place : `ensure_columns` ajoute `kind` (NOT NULL
+    DEFAULT 'task' → les jobs existants, tous des runs d'ouvrier, prennent 'task') et `error` (nullable → NULL
+    pour l'existant). Additif, idempotent (2ᵉ appel no-op)."""
+    import sqlite3
+
+    from cockpit.db import schema
+    conn = sqlite3.connect(tmp_path / "v10.db")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE dispatch_jobs (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, worktree_path "
+                 "TEXT NOT NULL, port INTEGER, pid INTEGER, status TEXT NOT NULL DEFAULT 'pending', "
+                 "log_path TEXT, session_id TEXT, num_turns INTEGER, cost_usd REAL, wall_s REAL, engine "
+                 "TEXT, started_at TEXT, ended_at TEXT)")
+    conn.execute("INSERT INTO dispatch_jobs (id, task_id, worktree_path, status) "
+                 "VALUES ('j1', 't1', '/wt', 'done')")
+    conn.commit()
+    assert "kind" not in {r[1] for r in conn.execute("PRAGMA table_info(dispatch_jobs)")}
+    schema.ensure_columns(conn)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(dispatch_jobs)")}
+    assert "kind" in cols and "error" in cols
+    row = conn.execute("SELECT kind, error FROM dispatch_jobs WHERE id='j1'").fetchone()
+    assert row["kind"] == "task" and row["error"] is None                  # défaut littéral + nullable
+    schema.ensure_columns(conn)                                            # 2ᵉ appel : no-op (ALTER gardé)
+    assert conn.execute("SELECT kind FROM dispatch_jobs WHERE id='j1'").fetchone()["kind"] == "task"
+    conn.close()
+
+
+def test_migration_v10_to_v11_creates_trace_tables_in_place(tmp_path: Path):
+    """Une base v10 (sans `non_runs`/`gate_verdicts`) migre en place : `store.migrate` (via `create_schema` +
+    `CREATE IF NOT EXISTS`) crée les tables neuves et pose `SCHEMA_VERSION=11` (sans `ensure_columns`)."""
+    from cockpit.db import schema
+    conn = store.connect(tmp_path / "v10.db")
+    conn.execute("CREATE TABLE projects (id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, name TEXT NOT "
+                 "NULL, sot_path TEXT NOT NULL, backend TEXT NOT NULL DEFAULT 'internal', "
+                 "created_at TEXT NOT NULL)")
+    conn.execute("PRAGMA user_version = 10")
+    conn.commit()
+    before = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "non_runs" not in before and "gate_verdicts" not in before
+
+    assert store.migrate(conn) == schema.SCHEMA_VERSION          # migre → v11
+    after = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {"non_runs", "gate_verdicts"} <= after
+    assert schema.schema_version(conn) == 11
+    conn.close()

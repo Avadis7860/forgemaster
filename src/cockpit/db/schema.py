@@ -33,13 +33,20 @@ board** via le client MCP (`GET …/roadmap` → `{blueprint:{id, resolved, reas
 v10 (inter-feature deps) = `features` gagne `depends_on` (NOT NULL, défaut `'[]'`) : le **DAG INTER-feature**
 (liste JSON de slugs de features prérequises), symétrique de `tasks.depends_on`. Une feature reste
 non-dispatchable tant qu'une prérequise n'est pas `merged` (enforce par `orchestrator`, validé par `check` —
-spec cockpit-roadmap-inter-feature-deps).
+spec cockpit-roadmap-inter-feature-deps). v11 (trace durable des échecs) = `dispatch_jobs` gagne `kind`
+(identité du run — enum COMPLET `task|review|toolchain|fix` posé dès maintenant, SQLite n'ALTER pas un CHECK)
+et `error` (raison d'échec courte, nullable ; le `raw` reste sur `log_path`, jamais recopié) ; deux tables
+neuves : `non_runs` (journal PUR des runs jamais lancés — un skip a une raison, pas de pid/port/session ;
+jamais lu par une garde) et `gate_verdicts` (historique des verdicts PAR SHA — `review`/`toolchain`/`merge`,
+là où `write_verdict` écrasait). Ce commit pose les CONTENANTS ; les puits qui écrivent (dé-squat du reviewer,
+`record_finish` qui garde `error`, historisation au `write_verdict`/`run_merge`) sont câblés par les filles
+`cockpit-trace-job-sinks` / `cockpit-gate-verdict-history`.
 """
 from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 # Ordre = ordre de création (les FK pointent vers des tables déjà créées). Chaque table porte les
 # invariants durs en contraintes SQL (NOT NULL, UNIQUE, FK, CHECK sur les enums de statut).
@@ -104,12 +111,15 @@ DDL: tuple[str, ...] = (
         pid           INTEGER,
         status        TEXT NOT NULL DEFAULT 'pending'
                           CHECK (status IN ('pending', 'running', 'done', 'failed', 'killed')),
+        kind          TEXT NOT NULL DEFAULT 'task'   -- identité du run (v11) : ouvrier de task vs reviewer/…
+                          CHECK (kind IN ('task', 'review', 'toolchain', 'fix')),
         log_path      TEXT,                          -- transcript JSONL local (dérivé de session_id)
         session_id    TEXT,                          -- session `claude -p` = LE handle de suivi live (v2)
         num_turns     INTEGER,                       -- métriques du run (v2)
         cost_usd      REAL,
         wall_s        REAL,
         engine        TEXT,
+        error         TEXT,                          -- raison d'échec courte (v11 ; raw sur log_path)
         started_at    TEXT,
         ended_at      TEXT
     )
@@ -144,14 +154,41 @@ DDL: tuple[str, ...] = (
         UNIQUE (project_id, branch)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS non_runs (
+        id          TEXT PRIMARY KEY,
+        feature_ref TEXT NOT NULL,                 -- "projet/feature" — scope (journal pur, pas de FK)
+        kind        TEXT NOT NULL                  -- ce qui AURAIT couru (enum aligné sur dispatch_jobs.kind)
+                        CHECK (kind IN ('task', 'review', 'toolchain', 'fix')),
+        reason      TEXT NOT NULL,                 -- raison de non-lancement verbatim (readiness/hold)
+        created_at  TEXT NOT NULL                  -- ts INJECTÉ par l'appelant (jamais un _now() interne)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS gate_verdicts (
+        id          TEXT PRIMARY KEY,
+        project     TEXT NOT NULL,
+        feature     TEXT NOT NULL,
+        gate        TEXT NOT NULL                  -- review (Tier-1) / toolchain (Tier-0) / merge (GO humain)
+                        CHECK (gate IN ('review', 'toolchain', 'merge')),
+        sha         TEXT NOT NULL,                 -- SHA de HEAD ancré (historisé PAR SHA, pas d'écrasement)
+        verdict     TEXT NOT NULL,                 -- payload JSON du verdict (tel qu'écrit sur disque)
+        created_at  TEXT NOT NULL
+    )
+    """,
 )
 
 # Colonnes ajoutées à une table pré-existante après sa v1 (chemin ALTER idempotent — cf. `ensure_columns`).
 # Une base neuve reçoit déjà tout par `DDL` ; ceci ne sert qu'à faire évoluer une base v1 en place.
 _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
+    # v11 : `kind` (NOT NULL, défaut littéral 'task' — ALTER exige un défaut littéral ; le CHECK n'est PAS
+    # re-portable par ALTER en SQLite → l'invariant `kind∈{task,review,toolchain,fix}` est tenu côté DDL (base
+    # neuve) ET par le code qui écrit — jamais un kind hors-enum inséré). Les jobs pré-v11 sont tous des runs
+    # d'ouvrier → 'task' est exact pour l'existant. `error` (nullable, aucun défaut → NULL pour l'existant).
     "dispatch_jobs": (
         ("session_id", "TEXT"), ("num_turns", "INTEGER"), ("cost_usd", "REAL"),
         ("wall_s", "REAL"), ("engine", "TEXT"),
+        ("kind", "TEXT NOT NULL DEFAULT 'task'"), ("error", "TEXT"),
     ),
     # v3 : ALTER exige un défaut LITTÉRAL pour une colonne NOT NULL (d'où 'project'). La contrainte CHECK
     # n'est pas re-portable par ALTER en SQLite → l'invariant `kind∈{project,tool}` est tenu côté DDL (base
@@ -180,6 +217,8 @@ INDEXES: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS ix_tasks_feature ON tasks(feature_id)",
     "CREATE INDEX IF NOT EXISTS ix_jobs_task ON dispatch_jobs(task_id)",
     "CREATE INDEX IF NOT EXISTS ix_deployments_project ON deployments(project_id)",
+    "CREATE INDEX IF NOT EXISTS ix_non_runs_feature ON non_runs(feature_ref)",
+    "CREATE INDEX IF NOT EXISTS ix_gate_verdicts_feature ON gate_verdicts(project, feature)",
 )
 
 

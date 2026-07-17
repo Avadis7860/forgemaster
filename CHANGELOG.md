@@ -10,6 +10,25 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
   référence directe (`git+https`, repo privé épinglé au SHA) ; sans cet opt-in, `pip wheel .` échoue en
   `metadata-generation-failed`. Fix build-time pur, aucun changement de comportement.
 
+### Schéma DB v11 — trace durable des échecs : `dispatch_jobs.kind`/`.error` + tables `non_runs`/`gate_verdicts` (bump `SCHEMA_VERSION` 10→11)
+- **Additif non-breaking** → bump `SCHEMA_VERSION = 11` + migration `ensure_columns` (ALTER idempotent) pour les
+  colonnes + `CREATE IF NOT EXISTS` pour les tables neuves. Le bump est le déclencheur de migration (cf. la
+  politique de versionnage du contrat) — un ajout de colonne SANS bump ne migrerait jamais une base existante.
+- **`dispatch_jobs.kind`** (`TEXT NOT NULL DEFAULT 'task'`) : identité du run. Enum **complet posé dès maintenant**
+  (`task|review|toolchain|fix`) — SQLite ne sait pas ALTER un CHECK, l'élargir coûterait un rebuild (précédent
+  v8). Les jobs pré-v11 sont tous des runs d'ouvrier → `'task'` est exact pour l'existant. `fix` anticipe le
+  dispatch de re-fix sur gate rouge.
+- **`dispatch_jobs.error`** (nullable `TEXT`) : raison d'échec **courte** (snippet). Le `raw` complet n'est PAS
+  recopié — il vit déjà sur `log_path` (transcript JSONL local, durable).
+- **Table `non_runs`** : journal **PUR** des runs jamais lancés (un skip a une `reason`, un `feature_ref`, un
+  `kind` attendu et un `created_at` **injecté** — jamais un pid/port/session ; ce n'est pas un job). Pas de FK :
+  découplé du cycle de vie de la feature, jamais lu par une garde d'idempotence.
+- **Table `gate_verdicts`** : historique des verdicts **par SHA** (`gate ∈ review|toolchain|merge`, `sha`,
+  `verdict` JSON, `created_at`) — là où `write_verdict` faisait un `write_text` qui **écrasait** (un rouge à T1
+  puis vert à T2 perdait T1). `merge` (le fait-de-merge, GO humain daté) posé dans l'enum dès maintenant.
+- **Schéma SEUL** : ce commit pose les contenants. Les puits qui écrivent (`record_finish` gardant `error`,
+  dé-squat du reviewer, historisation au `write_verdict`/`run_merge`) sont câblés par les filles suivantes.
+
 ### Schéma DB v10 — DAG inter-features : `features.depends_on` (bump `SCHEMA_VERSION` 9→10)
 - **Additif non-breaking** → bump `SCHEMA_VERSION = 10` + migration `ensure_columns` (ALTER idempotent). `features`
   gagne `depends_on` (`TEXT NOT NULL DEFAULT '[]'`, liste JSON de slugs de features) : le **DAG INTER-feature**,
