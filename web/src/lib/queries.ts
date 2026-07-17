@@ -264,8 +264,9 @@ export function useJob(jobId: string | null) {
   })
 }
 
-// Déclenche le dispatch de la NEXT task d'une feature (POST long bloquant). À la résolution, invalide la
-// roadmap (la task passe in_progress→done|todo) et la liste des jobs (le run est journalisé).
+// Déclenche le dispatch d'une feature (POST long bloquant : draine le DAG PUIS finalise → review produite).
+// À la résolution, invalide la roadmap (tasks done|todo), les jobs (runs journalisés) ET le gate (le verdict
+// Tier-1 vient d'être produit → `review.present`, GO potentiellement activable sans re-clic).
 export function useDispatch(project: string, feature: string) {
   const qc = useQueryClient()
   return useMutation({
@@ -273,6 +274,19 @@ export function useDispatch(project: string, feature: string) {
     onSettled: () => {
       qc.invalidateQueries({ queryKey: qk.roadmap(project) })
       qc.invalidateQueries({ queryKey: qk.jobs(project, feature) })
+      qc.invalidateQueries({ queryKey: qk.gate(project, feature) })
+    },
+  })
+}
+
+// Re-lance la review Tier-1 (filet anti-dead-end quand elle est absente/périmée). À la résolution, invalide
+// le gate (le verdict ré-ancré est relu → `review.present`/`fresh`).
+export function useReviewDispatch(project: string, feature: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.reviewDispatch(project, feature),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: qk.gate(project, feature) })
     },
   })
 }

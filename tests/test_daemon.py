@@ -201,9 +201,52 @@ def test_dispatch_refused_without_task_no_spawn(client, monkeypatch):
                         lambda *a, **k: {"authenticated": True, "source": "test"})
     c.post("/api/projects", json={"slug": "proj"})
     c.post("/api/projects/proj/features", json={"slug": "empty"})
-    r = c.post("/api/dispatch/proj/empty").json()        # feature sans task → refus AVANT tout spawn
-    assert r["dispatched"] is False and "aucune task" in r["reason"]
+    r = c.post("/api/dispatch/proj/empty").json()        # feature sans task → rien à drainer, aucun spawn
+    # nouvelle forme (rapport agrégé `run_feature`, identique au CLI) : rien dispatché, feature drainée à vide
+    assert r["dispatched"] == 0 and r["runs"] == [] and r["drained"] is True
     assert c.get("/api/jobs/inexistant").status_code == 404
+
+
+def test_web_dispatch_drains_and_produces_review(client, monkeypatch, fake_tools):
+    """Non-régression du dead-end « attend review » : un `POST /api/dispatch` (chemin WEB) DRAINE la feature
+    puis la FINALISE (Tier-0 + reviewer) → `GET /api/gate` porte `review.present` (était `False` = le bug),
+    gate vert, GO activable. Fakes injectés à la place des runners `claude -p` par défaut (zéro spawn)."""
+    c, settings = client
+    fake_tools(settings)                                    # hôte provisionné → preflight de dispatch passe
+    fake_home = settings.home / "fakehome"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(fake_home))              # trust_workspace n'écrit pas le vrai home
+    monkeypatch.setattr("cockpit.auth.claude_auth_status",
+                        lambda *a, **k: {"authenticated": True, "source": "test"})
+
+    def _worker(argv, *, cwd, input_text, timeout, env=None):
+        p = Path(cwd) / "docs" / "note.md"                  # diff doc-only → Tier-0 N/A
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("# note\nContenu.\n", encoding="utf-8")
+        sid = argv[argv.index("--session-id") + 1]
+        out = json.dumps({"is_error": False, "result": "fait", "session_id": sid, "num_turns": 1})
+        return run.RunResult(argv=list(argv), returncode=0, stdout=out, stderr="")
+
+    def _reviewer(argv, *, cwd, input_text, timeout, env=None):
+        sid = argv[argv.index("--session-id") + 1]
+        out = json.dumps({"is_error": False, "result": '{"findings":[]}', "session_id": sid, "num_turns": 1})
+        return run.RunResult(argv=list(argv), returncode=0, stdout=out, stderr="")
+
+    monkeypatch.setattr("cockpit.dispatch.worker._make_default_runner", lambda out_path: _worker)
+    monkeypatch.setattr("cockpit.dispatch.reviewer._default_runner", _reviewer)
+
+    conn = store.open_db(settings)                          # seed projet/feature/task (todo) en direct
+    registry.create_project(conn, settings, slug="proj")
+    model.add_feature(conn, project_slug="proj", slug="feat")
+    model.add_task(conn, feature_ref="proj/feat", slug="impl")
+    conn.commit()
+    conn.close()
+
+    r = c.post("/api/dispatch/proj/feat").json()            # draine + finalise (rapport agrégé)
+    assert r["merge_ready"] == ["feat"]                     # feature finalisée, gate vert
+    st = c.get("/api/gate/proj/feat").json()
+    assert st["review"]["present"] is True and st["review"]["fresh"] is True   # LE bug : était False
+    assert st["decision"] is not None and st["decision"]["gate_green"] is True
 
 
 def test_dispatch_refused_without_claude_auth(client, monkeypatch):

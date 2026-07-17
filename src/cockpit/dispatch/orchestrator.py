@@ -182,6 +182,36 @@ def run_project(conn: sqlite3.Connection, settings: Settings, *, project: str,
     return _summarize(project, reports, failed, finalizations)
 
 
+def run_feature(conn: sqlite3.Connection, settings: Settings, *, project: str, feature: str,
+                git: GitBackend | None = None, runner: worker.Runner | None = None,
+                review_runner: reviewer.Runner | None = None) -> dict:
+    """Draine le DAG intra-feature d'UNE feature (worker → eager-`done`, SÉQUENTIEL : feature = mutex, 1
+    worker à la fois) PUIS la FINALISE (Tier-0 toolchain + reviewer dispatché → gate en preview GO=false).
+    Symétrise le chemin WEB (`POST /api/dispatch`) sur le chemin CLI (`run_project`) SANS dupliquer la
+    sémantique : réutilise `_dispatch_one` (qui possède la transition `done` — cf. docstring de module),
+    `_worked_complete_features` et `_finalize_feature`. `conn` = lectures roadmap + finalisation (thread
+    appelant) ; chaque worker ouvre la SIENNE (thread-local). Terminaison garantie : chaque run réussi avance
+    une task (`done`) ⇒ le READY décroît ; un échec rompt la boucle (task revenue `todo` par `dispatch_next`,
+    jamais re-dispatchée en spin). Retourne le rapport agrégé de `_summarize` (même forme que `run_project`,
+    donc l'UI et le CLI lisent un rapport identique). `KeyError`/`ValueError` (projet/feature absent)
+    remontent au handler global (→ 404)."""
+    git = git or InternalGit()
+    feature_ref = f"{project}/{feature}"
+    reports: list[dict] = []
+    while True:
+        index = resolver.index_for_feature(conn, feature_ref)   # KeyError si projet/feature absent
+        if not index or resolver.resolve_next(index) is None:
+            break                                               # plus de task READY → feature drainée
+        report = _dispatch_one(settings, project, feature, git, runner)
+        reports.append(report)
+        if not report["ok"]:
+            break                                               # échec : task revenue `todo` → NE PAS spinner
+    failed: set[str] = {feature} if (reports and not reports[-1]["ok"]) else set()
+    finalizations = ([_finalize_feature(conn, settings, project, feature, review_runner=review_runner)]
+                     if feature in _worked_complete_features(conn, project, failed) else [])
+    return _summarize(project, reports, failed, finalizations)
+
+
 def _summarize(project: str, reports: list[dict], failed: set[str],
                finalizations: list[dict] | None = None) -> dict:
     """Agrège les runs + les **finalisations** (Tier-0 + review par feature complète). `drained` ⟺ aucune

@@ -245,6 +245,24 @@ def _seed_gate_states(home: Path, proj: str) -> None:
                           "evidence": "core.py:1 — value = 1"}] if red else [])
             review.write_verdict(settings, proj, slug, {"findings": findings},
                                  sha=head_sha, diff_text=diff_text)
+        # + un état review-ABSENTE : branche committée + Tier-0 vert mais AUCUN verdict Tier-1 → rend le
+        #   nouveau bloc « Re-lancer la review Tier-1 » du GatePanel (le dead-end « attend review » refermé).
+        from cockpit.gate import toolchain
+        slug = "gate-review-absent-demo"
+        model.add_feature(conn, project_slug=proj, slug=slug, title="Gate — review à produire")
+        model.add_task(conn, feature_ref=f"{proj}/{slug}", slug="impl", title="Implémentation")
+        conn.execute("UPDATE tasks SET status = 'in_progress' WHERE slug = 'impl' AND feature_id = "
+                     "(SELECT f.id FROM features f JOIN projects p ON f.project_id = p.id "
+                     "WHERE f.slug = ? AND p.slug = ?)", (slug, proj))
+        conn.commit()
+        res = worktree.reserve(conn, settings, git, project=proj, feature=slug, probe=None)
+        (res["path"] / "core.py").write_text("value = 2\n", encoding="utf-8")
+        git.commit_worktree(res["path"], message="feat: work",
+                            identity=resolve_identity(proj, "dev", role="worker"))
+        head_sha = git.feature_sha(sot, f"feature/{slug}")
+        toolchain.write_verdict(settings, proj, slug,
+                                [{"group": "backend", "name": "ruff", "cmd": "ruff check .",
+                                  "exit_code": 0, "ok": True}], sha=head_sha)   # Tier-0 vert, review absente
     finally:
         conn.close()
 

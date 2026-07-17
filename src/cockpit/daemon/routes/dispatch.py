@@ -13,7 +13,7 @@ from starlette.concurrency import run_in_threadpool
 
 from cockpit import auth
 from cockpit.daemon.deps import Deps, get_deps
-from cockpit.dispatch import jobs, stream, worker
+from cockpit.dispatch import jobs, orchestrator, stream
 from cockpit.roadmap import model
 
 
@@ -22,12 +22,17 @@ def make_dispatch_router() -> APIRouter:
 
     @router.post("/api/dispatch/{project}/{feature}")
     async def dispatch(project: str, feature: str, deps: Deps = Depends(get_deps)) -> dict:
+        """**Draine** la feature (DAG intra-feature, séquentiel) PUIS la **finalise** (Tier-0 + review Tier-1
+        → gate preview) — symétrique du CLI (`cockpit run`), via `orchestrator.run_feature`. La review est
+        donc produite SANS clic (le POST bloque jusqu'au bout ; suivi live par `GET …/jobs` + WS). Spawn(s)
+        `claude -p` longs → threadpool. Gate d'auth (jamais de spawn silencieux). Retour = rapport agrégé
+        (même forme que le CLI)."""
         if not auth.claude_auth_status()["authenticated"]:
             raise HTTPException(status_code=403, detail=auth.AUTH_HINT)   # jamais de spawn silencieux
         def _run() -> dict:
             conn = deps.open_db()
             try:
-                return worker.dispatch_next(conn, deps.settings, feature_ref=f"{project}/{feature}")
+                return orchestrator.run_feature(conn, deps.settings, project=project, feature=feature)
             finally:
                 conn.close()
         return await run_in_threadpool(_run)

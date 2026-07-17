@@ -78,7 +78,7 @@ export function DispatchPanel({ project, feature }: { project: string; feature: 
           busy={dispatch.isPending}
           disabled={!feature.next || authBlocked}
         >
-          {dispatch.isPending ? 'Dispatch en cours…' : 'Dispatcher la NEXT task'}
+          {dispatch.isPending ? 'Dispatch en cours…' : 'Dispatcher la feature'}
         </Button>
       </div>
 
@@ -89,8 +89,13 @@ export function DispatchPanel({ project, feature }: { project: string; feature: 
           {dispatch.error instanceof ApiError ? dispatch.error.detail : String(dispatch.error)}
         </Alert>
       )}
-      {dispatch.data && !dispatch.data.dispatched && (
-        <Alert tone="warn" title="Dispatch refusé">{dispatch.data.reason}</Alert>
+      {dispatch.data && dispatch.data.dispatched === 0 && dispatch.data.finalizations.length === 0 && (
+        <Alert tone="warn" title="Rien à drainer">Aucune task READY dans cette feature.</Alert>
+      )}
+      {dispatch.data && dispatch.data.failed > 0 && (
+        <Alert tone="danger" title="Dispatch en échec">
+          {dispatch.data.runs.find((r) => !r.ok)?.reason ?? 'un run a échoué'}
+        </Alert>
       )}
 
       {activeJobId && (

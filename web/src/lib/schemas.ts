@@ -113,14 +113,33 @@ export type Job = z.infer<typeof JobSchema>
 
 export const JobsListSchema = z.object({ jobs: z.array(JobSchema) })
 
-// Rapport du POST dispatch (worker.dispatch_next) : bloquant, rendu à la FIN du run.
-export const DispatchReportSchema = z.object({
-  dispatched: z.boolean(),
-  reason: z.string(),
+// Rapport agrégé du POST dispatch (orchestrator.run_feature) : DRAINE la feature (DAG intra-feature) PUIS
+// la FINALISE (Tier-0 + review Tier-1) — bloquant, rendu à la FIN. Même forme que le rapport CLI (`cockpit
+// run`) : `dispatched`/`ok`/`failed` = COMPTEURS de runs, `finalizations` = review produite par feature.
+const FeatureRunSchema = z.object({
+  feature: z.string(),
   task: z.string().nullish(),
-  job_id: z.string().nullish(),
+  ok: z.boolean(),
+  reason: z.string(),
 })
-export type DispatchReport = z.infer<typeof DispatchReportSchema>
+const FeatureFinalizationSchema = z.object({
+  feature: z.string(),
+  merge_ready: z.boolean(),
+  blockers: z.array(z.string()),
+  review: z.record(z.unknown()).nullish(),
+})
+export const FeatureRunReportSchema = z.object({
+  project: z.string(),
+  dispatched: z.number(),
+  ok: z.number(),
+  failed: z.number(),
+  failed_features: z.array(z.string()),
+  drained: z.boolean(),
+  runs: z.array(FeatureRunSchema),
+  finalizations: z.array(FeatureFinalizationSchema),
+  merge_ready: z.array(z.string()),
+})
+export type FeatureRunReport = z.infer<typeof FeatureRunReportSchema>
 
 // Événement de transcript normalisé (jobs.normalize_line) poussé par le WS. `job` = frame terminale
 // synthétique (fin de run) émise par stream.stream_job. Le front ne fabrique jamais ces formes.
@@ -162,6 +181,16 @@ export type JobDetail = z.infer<typeof JobDetailSchema>
 
 // Counts de sévérité reviewer (🔴 red / 🟡 yellow / 🟣 purple) — null si aucun verdict.
 export const GateCountsSchema = z.object({ red: z.number(), yellow: z.number(), purple: z.number() })
+
+// Rapport du POST review-dispatch (reviewer.dispatch_reviewer) : (re)produit le verdict Tier-1 SHA-bound.
+// `reviewed:false` = readiness-gate/idempotent/best-effort (voir `reason`), pas une erreur.
+export const ReviewerDispatchReportSchema = z.object({
+  reviewed: z.boolean(),
+  reason: z.string(),
+  verdict: z.record(z.unknown()).nullish(),
+  counts: GateCountsSchema.nullish(),
+})
+export type ReviewerDispatchReport = z.infer<typeof ReviewerDispatchReportSchema>
 
 // Statut du verdict Tier-1 (review.status) : présent / frais (reviewed_sha == HEAD) / bloquant (≥1 🔴).
 export const ReviewStatusSchema = z.object({

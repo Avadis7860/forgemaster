@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Alert, Button, Card, EmptyState, Input, LoadingState, RefreshButton } from '@/components/ui'
 import { DecisionBanner, ReviewEvidence, VerifyEvidence } from '@/components/gate/GateReport'
 import { ApiError } from '@/lib/api'
-import { useGate, useMerge } from '@/lib/queries'
+import { useGate, useMerge, useReviewDispatch } from '@/lib/queries'
 import type { FeatureWithTasks } from '@/lib/schemas'
 
 /** Panneau d'une feature : décision de merge (bannière), évidence Tier-1/Tier-1.5, overrides + GO humain.
@@ -11,6 +11,7 @@ import type { FeatureWithTasks } from '@/lib/schemas'
 export function GatePanel({ project, feature }: { project: string; feature: FeatureWithTasks }) {
   const gate = useGate(project, feature.slug)
   const merge = useMerge(project, feature.slug)
+  const reviewDispatch = useReviewDispatch(project, feature.slug)
   const [t1Override, setT1Override] = useState('')
   const [t15Override, setT15Override] = useState('')
 
@@ -72,6 +73,34 @@ export function GatePanel({ project, feature }: { project: string; feature: Feat
         <ReviewEvidence review={data.review} />
         <VerifyEvidence verify={data.verify} uiTouched={data.ui_touched} />
       </div>
+
+      {(!data.review.present || !data.review.fresh) && (
+        <div className="space-y-3 rounded-card border border-border px-4 py-3">
+          <p className="text-sm text-fg">
+            {!data.review.present
+              ? 'Aucune revue Tier-1 sur ce HEAD — le merge reste bloqué tant qu’elle n’est pas produite (elle est normalement produite au dispatch).'
+              : 'Revue Tier-1 périmée (le HEAD a bougé depuis) — re-lancer pour ré-ancrer le verdict sur le HEAD courant.'}
+          </p>
+          <Button
+            variant="secondary"
+            onClick={() => reviewDispatch.mutate()}
+            busy={reviewDispatch.isPending}
+            disabled={reviewDispatch.isPending}
+          >
+            {reviewDispatch.isPending ? 'Review en cours…' : 'Re-lancer la review Tier-1'}
+          </Button>
+          {reviewDispatch.isError && (
+            <Alert tone="danger" title="Échec de la review">
+              {reviewDispatch.error instanceof ApiError
+                ? reviewDispatch.error.detail
+                : String(reviewDispatch.error)}
+            </Alert>
+          )}
+          {reviewDispatch.data && !reviewDispatch.data.reviewed && (
+            <Alert tone="warn" title="Review non produite">{reviewDispatch.data.reason}</Alert>
+          )}
+        </div>
+      )}
 
       {decision.reasons.length > 0 && (
         <details className="rounded-card border border-border px-4 py-3">

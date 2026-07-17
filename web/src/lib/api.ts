@@ -8,7 +8,8 @@ import {
   DeploymentActionSchema,
   DeploymentLogsSchema,
   DeploymentsSchema,
-  DispatchReportSchema,
+  FeatureRunReportSchema,
+  ReviewerDispatchReportSchema,
   DocsSchema,
   GateStatusSchema,
   GitBlobSchema,
@@ -205,11 +206,12 @@ export const api = {
     ).then((r) => r.jobs),
   // Détail + transcript AT-REST d'un job (run terminé) — pas de socket ouvert pour un run fini.
   getJob: (jobId: string) => request(`/api/jobs/${encodeURIComponent(jobId)}`, JobDetailSchema),
-  // POST dispatch = LONG bloquant (spawn `claude -p`, ≤30 min) : rendu à la fin du run (rapport + job_id).
+  // POST dispatch = LONG bloquant : DRAINE la feature (DAG) PUIS la FINALISE (Tier-0 + review Tier-1),
+  // symétrique du CLI. Rendu à la fin (rapport agrégé). La review est produite SANS clic.
   dispatch: (project: string, feature: string) =>
     request(
       `/api/dispatch/${encodeURIComponent(project)}/${encodeURIComponent(feature)}`,
-      DispatchReportSchema,
+      FeatureRunReportSchema,
       { method: 'POST', body: '{}' },
     ),
 
@@ -220,6 +222,15 @@ export const api = {
       `/api/gate/${encodeURIComponent(project)}/${encodeURIComponent(feature)}`,
       GateStatusSchema,
     ),
+  // POST review-dispatch — (re)produit le verdict Tier-1 (reviewer `claude -p` read-only). Filet quand la
+  // review est absente/périmée (auto-produite au dispatch, mais best-effort/SHA-bound). 403 si pas d'auth.
+  reviewDispatch: (project: string, feature: string) =>
+    request(
+      `/api/gate/${encodeURIComponent(project)}/${encodeURIComponent(feature)}/review-dispatch`,
+      ReviewerDispatchReportSchema,
+      { method: 'POST', body: '{}' },
+    ),
+
   // POST merge SOUS GO HUMAIN — la SEULE mutation. `go:false` ne merge jamais (fail-closed) ; overrides
   // t1/t15 explicites tracés (lèvent un 🔴 reviewer / un Tier-1.5, JAMAIS un Tier-0/natif déterministe).
   merge: (project: string, feature: string, body: MergeInput) =>

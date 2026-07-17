@@ -274,3 +274,68 @@ def test_run_feature_not_merge_ready_when_reviewer_flags_red(ctx, monkeypatch):
     assert summary["merge_ready"] == []
     fin = summary["finalizations"][0]
     assert fin["merge_ready"] is False and any("Tier-1" in b for b in fin["blockers"])
+
+
+# -- run_feature : le chemin WEB (draine UNE feature puis finalise → review produite sans clic) ------
+
+def _distinct_writing_worker():
+    """Worker injecté écrivant un fichier DISTINCT à chaque appel (compteur de closure) → chaque commit a un
+    diff non-vide, y compris au 2ᵉ task d'une feature multi-task (sinon commit vide au 2ᵉ tour)."""
+    calls = {"n": 0}
+    def _run(argv, *, cwd, input_text, timeout, env=None):
+        calls["n"] += 1
+        p = Path(cwd) / "docs" / f"note-{calls['n']}.md"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(f"# note {calls['n']}\n", encoding="utf-8")
+        sid = argv[argv.index("--session-id") + 1]
+        out = json.dumps({"is_error": False, "result": "fait", "session_id": sid, "num_turns": 1})
+        return run.RunResult(argv=list(argv), returncode=0, stdout=out, stderr="")
+    return _run
+
+
+def test_run_feature_drains_single_task_and_reviews(ctx, monkeypatch):
+    """Le chemin WEB symétrisé : `run_feature` draine la task PUIS finalise (Tier-0 + reviewer) → verdict
+    Tier-1 produit SANS clic (le défaut : le web ne finalisait jamais → dead-end « attend review »)."""
+    settings, conn = ctx
+    fake_home = settings.home / "fakehome"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+    _new_project(conn, settings, "proj")
+    _seed(conn, settings, "proj", "feat", [("impl", [])])
+    summary = orchestrator.run_feature(conn, settings, project="proj", feature="feat",
+                                       runner=_writing_worker(), review_runner=_review_worker())
+    assert summary["merge_ready"] == ["feat"]
+    assert _statuses(conn, "feat") == {"impl": "done"}
+    from cockpit.gate import review
+    v = review.read_verdict(settings, "proj", "feat")
+    assert v is not None and v["counts"]["red"] == 0     # verdict Tier-1 SHA-bound écrit, propre
+
+
+def test_run_feature_advances_multitask_dag_then_reviews(ctx, monkeypatch):
+    """Preuve LOAD-BEARING de l'eager-`done` : une feature `[t1, t2 dep t1]` avance sur les DEUX tasks depuis
+    le chemin `run_feature` (t2 ne se débloque que si t1 est `done`, cf. resolver) puis produit la review."""
+    settings, conn = ctx
+    fake_home = settings.home / "fakehome"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+    _new_project(conn, settings, "proj")
+    _seed(conn, settings, "proj", "feat", [("t1", []), ("t2", ["t1"])])
+    summary = orchestrator.run_feature(conn, settings, project="proj", feature="feat",
+                                       runner=_distinct_writing_worker(), review_runner=_review_worker())
+    assert [r["task"] for r in summary["runs"]] == ["t1", "t2"]       # DAG avancé via eager-`done`
+    assert _statuses(conn, "feat") == {"t1": "done", "t2": "done"}
+    assert summary["merge_ready"] == ["feat"]
+
+
+def test_run_feature_stops_and_not_ready_on_worker_failure(ctx):
+    """Un worker qui échoue rompt la boucle (task revenue `todo`, pas de spin) → feature NON drainée, non
+    finalisée (aucune review sur un travail incomplet), rien de merge-ready."""
+    settings, conn = ctx
+    _new_project(conn, settings, "proj")
+    _seed(conn, settings, "proj", "feat", [("t1", []), ("t2", ["t1"])])
+    r = _Runner(fail=("feat",))                          # `fail` clé sur le nom du worktree = slug feature
+    summary = orchestrator.run_feature(conn, settings, project="proj", feature="feat", runner=r)
+    assert summary["dispatched"] == 1 and summary["failed"] == 1 and summary["drained"] is False
+    assert r.calls == ["feat"]                           # exactement UNE tentative — pas de re-dispatch
+    assert _statuses(conn, "feat") == {"t1": "todo", "t2": "todo"}
+    assert summary["merge_ready"] == []
