@@ -193,6 +193,27 @@ def test_verify_target_fails_closed_without_runner(ctx):
     assert res["ok"] is False and "runner absent" in res["error"]
 
 
+def _write_markers(workdir: Path, raw: str) -> None:
+    (workdir / ".cockpit").mkdir(parents=True, exist_ok=True)
+    (workdir / verify.MARKERS_FILE).write_text(raw, encoding="utf-8")
+
+
+def test_verify_read_declared_markers(tmp_path):
+    # absent → [] (dégrade honnête, reste fail-closed en aval).
+    assert verify.read_declared_markers(tmp_path) == []
+    # présent bien formé → liste, entrées vides/non-str filtrées, trim appliqué.
+    _write_markers(tmp_path, '{"markers": ["  Accueil  ", "", "Score", 42, null, "  "]}')
+    assert verify.read_declared_markers(tmp_path) == ["Accueil", "Score"]
+    # JSON cassé → [] (ne lève jamais).
+    _write_markers(tmp_path, "{pas du json")
+    assert verify.read_declared_markers(tmp_path) == []
+    # `markers` absent / pas une liste → [].
+    _write_markers(tmp_path, '{"markers": "Accueil"}')
+    assert verify.read_declared_markers(tmp_path) == []
+    _write_markers(tmp_path, "[]")                       # racine pas un objet
+    assert verify.read_declared_markers(tmp_path) == []
+
+
 # -- identité writeback (PUR) -----------------------------------------------------------------------
 
 def test_resolve_identity():

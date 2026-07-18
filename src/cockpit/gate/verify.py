@@ -112,6 +112,29 @@ def runner_path(settings: Settings) -> Path:
     return Path(override) if override else settings.home / "runners" / "render_check.js"
 
 
+MARKERS_FILE = ".cockpit/verify-markers.json"
+
+
+def read_declared_markers(workdir: Path) -> list[str]:
+    """Markers de rendu **déclarés par le worker** dans `<workdir>/.cockpit/verify-markers.json`
+    (`{"markers": ["<chaîne FR rendue>", ...]}`). Source autonome des cibles Tier-1.5 : le worker déclare
+    ce que SON UI rend, `verify_target` prouve qu'ils sont vraiment dans le DOM (il ne peut pas mentir).
+
+    PUR, ne lève JAMAIS. Absent / JSON invalide / forme inattendue → `[]` (dégrade honnête = smoke-render ;
+    `[]` reste fail-closed en aval, cf. `build_verdict` — jamais blanchi par absence de marker). Ne garde que
+    les chaînes non vides (`.strip()`), robuste aux entrées sales."""
+    path = workdir / MARKERS_FILE
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return []
+    if not isinstance(data, dict) or not isinstance(data.get("markers"), list):
+        return []
+    return [s.strip() for s in data["markers"] if isinstance(s, str) and s.strip()]
+
+
 # -- runner (PUR sauf le subprocess node) -----------------------------------------------------------
 
 def build_payload(url: str, markers: list[str], *, timeout_ms: int = DEFAULT_TIMEOUT_MS,
