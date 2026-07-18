@@ -36,6 +36,10 @@ _WARN_NO_TASKMAP = (
     "[cockpit] build/vendor/taskmap absent → wheel SANS taskmap (moteur DAG ABSENT côté cible → "
     "`No module named taskmap`). Passe par `deploy/build-wheel.sh` (il stage le sibling ../task-map)."
 )
+_WARN_NO_RUNNER = (
+    "[cockpit] build/vendor/verify-runner absent → wheel SANS runner Tier-1.5 (`cockpit gate verify` "
+    "fail-close côté cible). Passe par `deploy/build-wheel.sh` (il stage deploy/runners)."
+)
 
 
 def plan_force_includes(root: Path) -> tuple[dict[str, str], list[str]]:
@@ -65,6 +69,12 @@ def plan_force_includes(root: Path) -> tuple[dict[str, str], list[str]]:
         force["build/vendor/taskmap"] = "taskmap"
     else:
         warnings.append(_WARN_NO_TASKMAP)
+    # runner Playwright du gate Tier-1.5 (`deploy/runners`, vit DANS le repo) → `cockpit/_verify_runner` :
+    # provision-ct.sh le tire du package installé (wheel = artefact unique, provision-ct.sh voyage seul).
+    if (root / "build" / "vendor" / "verify-runner" / "render_check.js").is_file():
+        force["build/vendor/verify-runner"] = "cockpit/_verify_runner"
+    else:
+        warnings.append(_WARN_NO_RUNNER)
     return force, warnings
 
 

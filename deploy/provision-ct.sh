@@ -119,12 +119,13 @@ install_compose_provider() {
 # sous `~/.cache/ms-playwright` de l'utilisateur du service ; sous --system root = /root = le HOME du service).
 # Node vient de `cockpit tools install` (tools/bin). Idempotent (install browser skip si déjà au bon SHA).
 seed_verify_runner() {
-  local script_dir rdir src pw
-  script_dir="$(cd "$(dirname "$0")" && pwd)"
-  src="$script_dir/runners"
+  local rdir src pw
+  # Le runner est EMBARQUÉ dans le wheel (`cockpit/_verify_runner`) → on le tire du PACKAGE installé, jamais
+  # d'un fichier voisin (provision-ct.sh voyage seul sur l'hôte). Le wheel est l'artefact unique auto-contenu.
+  src="$("$venv/bin/python" -c 'import cockpit, pathlib; print(pathlib.Path(cockpit.__file__).parent / "_verify_runner")' 2>/dev/null)"
   rdir="$home/runners"
-  [ -f "$src/render_check.js" ] && [ -f "$src/package.json" ] \
-    || { echo "✗ runner vendoré introuvable ($src/render_check.js) — repo incomplet ?" >&2; return 1; }
+  [ -n "$src" ] && [ -f "$src/render_check.js" ] && [ -f "$src/package.json" ] \
+    || { echo "✗ runner absent du wheel installé ($src) — wheel sans cockpit/_verify_runner ? (rebuild build-wheel.sh)" >&2; return 1; }
   command -v node >/dev/null 2>&1 || export PATH="$home/tools/bin:$PATH"
   command -v node >/dev/null 2>&1 \
     || { echo "✗ node introuvable (tools/bin) — le runner exige Node ; relance \`cockpit tools install\`" >&2; return 1; }

@@ -39,6 +39,10 @@ test -f "$tm_src/src/taskmap/__init__.py" || {
 rm -rf build/vendor/taskmap
 cp -a "$tm_src/src/taskmap" build/vendor/taskmap
 ( cd "$tm_src" && git rev-parse HEAD 2>/dev/null ) > build/vendor/taskmap/_vendored_from.txt || true
+# verify-runner (gate Tier-1.5) — vit DANS le repo (deploy/runners) ; stagé pour n'embarquer qu'en release
+# (l'editable saute, comme codemap/taskmap). → cockpit/_verify_runner, tiré du wheel par provision-ct.sh.
+rm -rf build/vendor/verify-runner
+cp -a "$root/deploy/runners" build/vendor/verify-runner
 
 echo "→ [3/4] build du wheel (le hook hatch embarque web/dist → cockpit/_web_dist, codemap → codemap, taskmap → taskmap)"
 rm -f dist/cockpit-*-py3-none-any.whl
@@ -56,6 +60,8 @@ assert "codemap/__main__.py" in names and "codemap/cli.py" in names, \
     f"code-map absent du wheel {whl} — build/vendor/codemap non embarqué (Flow serait mort côté cible)"
 assert "taskmap/__init__.py" in names and "taskmap/core/__init__.py" in names, \
     f"taskmap absent du wheel {whl} — build/vendor/taskmap non embarqué (daemon mort : No module named taskmap)"
+assert "cockpit/_verify_runner/render_check.js" in names, \
+    f"runner verify absent du wheel {whl} — build/vendor/verify-runner non embarqué (gate verify mort côté cible)"
 PY
 
 echo "✓ wheel prêt : $whl  (UI + code-map + taskmap embarqués)"

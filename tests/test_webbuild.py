@@ -105,6 +105,7 @@ def _stage_all(root: Path) -> None:
     _touch(root / "web" / "dist" / "index.html")
     _touch(root / "build" / "vendor" / "codemap" / "__main__.py")
     _touch(root / "build" / "vendor" / "taskmap" / "__init__.py")
+    _touch(root / "build" / "vendor" / "verify-runner" / "render_check.js")
 
 
 def test_plan_force_includes_embeds_all_when_staged(tmp_path: Path):
@@ -114,8 +115,18 @@ def test_plan_force_includes_embeds_all_when_staged(tmp_path: Path):
         "web/dist": "cockpit/_web_dist",
         "build/vendor/codemap": "codemap",
         "build/vendor/taskmap": "taskmap",
+        "build/vendor/verify-runner": "cockpit/_verify_runner",
     }
     assert warnings == []
+
+
+def test_plan_force_includes_warns_when_runner_absent(tmp_path: Path):
+    _touch(tmp_path / "web" / "dist" / "index.html")
+    _touch(tmp_path / "build" / "vendor" / "codemap" / "__main__.py")
+    _touch(tmp_path / "build" / "vendor" / "taskmap" / "__init__.py")   # tout sauf le runner
+    force, warnings = hatch_build.plan_force_includes(tmp_path)
+    assert "build/vendor/verify-runner" not in force                    # runner NON embarqué
+    assert any("verify-runner" in w or "Tier-1.5" in w for w in warnings)
 
 
 def test_plan_force_includes_warns_when_codemap_absent(tmp_path: Path):
@@ -137,4 +148,4 @@ def test_plan_force_includes_warns_when_taskmap_absent(tmp_path: Path):
 def test_plan_force_includes_warns_when_all_absent(tmp_path: Path):
     force, warnings = hatch_build.plan_force_includes(tmp_path)
     assert force == {}
-    assert len(warnings) == 3                                   # SPA + code-map + taskmap
+    assert len(warnings) == 4                                   # SPA + code-map + taskmap + runner
