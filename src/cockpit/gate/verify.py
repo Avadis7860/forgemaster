@@ -37,8 +37,67 @@ UI_SUFFIXES = (".tsx", ".jsx", ".vue", ".svelte")
 
 
 def has_ui(files: list[str]) -> bool:
-    """True ssi au moins un fichier du diff a une surface UI (suffixe front ou chemin de page/composant)."""
+    """True ssi au moins un fichier du diff a une surface front (suffixe front ou chemin de page/composant),
+    par NOM seul. Prédicat coarse — le trigger du gate est `has_visual_change` (hybride nom + contenu), qui
+    distingue un VRAI changement visuel d'un `.tsx` de câblage/type/contrat. Conservé (référence + tests)."""
     return any(f.endswith(UI_SUFFIXES) or any(h in f for h in UI_PATH_HINTS) for f in files)
+
+
+# Trigger hybride (spec feature-verified rule 2, raffinée) : STYLE et dossiers RENDUS sont visuels par NOM
+# (couvre aussi les suppressions) ; un fichier front AILLEURS (App.tsx root, lib/) n'est visuel que si ses
+# lignes AJOUTÉES introduisent du MARKUP — un câblage/type/contrat (aucun markup) n'exige PAS de preuve.
+STYLE_SUFFIXES = (".css", ".scss", ".sass", ".less")
+RENDERED_DIR_HINTS = ("/pages/", "/components/", "/routes/", "/layouts/", "/views/")
+# Marqueurs de markup CONSERVATEURS : présents dans du JSX/HTML rendu, absents des génériques TS
+# (`useState<Foo>()`, `Map<string, X>`) → pas de faux-positif « visuel » sur du câblage typé.
+MARKUP_MARKERS = ("</", "/>", "className=", "class=")
+
+
+def _is_front_file(f: str) -> bool:
+    return f.endswith(UI_SUFFIXES)
+
+
+def _in_rendered_dir(f: str) -> bool:
+    return any(h in f for h in RENDERED_DIR_HINTS)
+
+
+def _looks_like_markup(line: str) -> bool:
+    return any(m in line for m in MARKUP_MARKERS)
+
+
+def _added_lines_by_file(diff_text: str) -> dict[str, list[str]]:
+    """Lignes AJOUTÉES (`+`, hors en-têtes `+++`) d'un diff unifié multi-fichiers, par fichier de destination
+    (`+++ b/<path>`). Corpus du volet CONTENU du trigger (lignes introduites, jamais le pré-existant). PUR."""
+    out: dict[str, list[str]] = {}
+    cur: str | None = None
+    for line in diff_text.splitlines():
+        if line.startswith("+++ "):
+            path = line[4:].strip()
+            path = path[2:] if path.startswith("b/") else path
+            cur = None if path == "/dev/null" else path
+            continue
+        if cur is not None and line.startswith("+") and not line.startswith("+++"):
+            out.setdefault(cur, []).append(line[1:])
+    return out
+
+
+def has_visual_change(files: list[str], diff_text: str) -> bool:
+    """Trigger Tier-1.5 (feature-verified) — hybride NOM + CONTENU. True ssi le diff porte un **vrai
+    changement visuel** : (1) STYLE touché (par nom) ; (2) fichier front sous un dossier RENDU
+    (`pages/`/`components/`/`routes/`/`layouts/`/`views/`, par nom — couvre aussi les suppressions) ;
+    (3) fichier front AILLEURS (App.tsx root, `lib/`) qui INTRODUIT du markup (`</`, `/>`, `className=`).
+    Un `.tsx` de câblage/type/contrat (aucun markup ajouté) → NON visuel → Tier-1.5 N/A (review Tier-1 le
+    couvre). N/A-safe : aucun front/style touché → False. Déterministe, scope lignes introduites (rule 2)."""
+    for f in files:
+        if f.endswith(STYLE_SUFFIXES):
+            return True
+        if _is_front_file(f) and _in_rendered_dir(f):
+            return True
+    for path, lines in _added_lines_by_file(diff_text).items():
+        markup = any(_looks_like_markup(ln) for ln in lines)
+        if markup and _is_front_file(path) and not _in_rendered_dir(path):
+            return True
+    return False
 
 
 def state_path(settings: Settings, project: str, feature: str) -> Path:

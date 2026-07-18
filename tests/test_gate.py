@@ -152,6 +152,24 @@ def test_verify_has_ui():
     assert not verify.has_ui(["lib/core.py", "README.md"])
 
 
+def test_verify_has_visual_change_hybrid():
+    # (a) style touché → visuel (par nom, sans contenu).
+    assert verify.has_visual_change(["web/src/theme.css"], "")
+    # (b) fichier front sous un dossier rendu → visuel par nom, même sans markup dans le diff.
+    assert verify.has_visual_change(["web/src/components/Card.tsx"], "")
+    assert verify.has_visual_change(["web/src/pages/Home.tsx"], "")
+    # (c) front AILLEURS (App.tsx root) : câblage/type/contrat (aucun markup ajouté) → NON visuel.
+    wiring = "+++ b/web/App.tsx\n+import { Schema } from './shared/schema'\n+const [s] = useState<Foo>()\n"
+    assert not verify.has_visual_change(["web/App.tsx"], wiring)          # LE cas schemas-partages
+    # (c) front ailleurs AVEC markup ajouté → visuel.
+    markup = "+++ b/web/App.tsx\n+  return <Banner className=\"hero\" />\n"
+    assert verify.has_visual_change(["web/App.tsx"], markup)
+    # contrat/type non-front + diff non-front → jamais visuel (N/A-safe).
+    schema_diff = "+++ b/src/shared/schema.ts\n+export type T = {}\n"
+    assert not verify.has_visual_change(["src/shared/schema.ts"], schema_diff)
+    assert not verify.has_visual_change(["lib/core.py"], "")
+
+
 def test_toolchain_is_docs_only():
     # Prose seule → docs-only ; toute source/config/script → non (fail-safe : review requise) ; vide → non.
     assert toolchain.is_docs_only(["docs/design.md"]) and toolchain.is_docs_only(["a.md", "b/c.rst"])

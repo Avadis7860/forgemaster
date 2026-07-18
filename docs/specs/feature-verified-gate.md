@@ -13,7 +13,13 @@ Faux-vert récurrent, leçon jamais distillée en artefact exécutable.
 
 1. La porte dure est **déterministe** ; **le LLM ne juge ni ne fixe le seuil** (le rendu se **prouve**).
 2. Scoper aux **cibles déclarées du diff** (lignes introduites), **jamais le pré-existant** ; périmètre
-   déclenché par `has_ui()` (suffixes `.tsx/.jsx/.vue/.svelte`, chemins `/web/src/`, `/src/pages|components/`).
+   déclenché par un trigger **hybride** `has_visual_change(files, diff_text)` — un **vrai** changement visuel,
+   pas tout fichier front : (a) STYLE touché (`.css/.scss/…`, par nom) → visuel ; (b) fichier front sous un
+   dossier RENDU (`pages/`/`components/`/`routes/`/`layouts/`/`views/`, par nom) → visuel ; (c) fichier front
+   ailleurs (App.tsx root, `lib/`) → visuel **seulement si ses lignes ajoutées introduisent du markup** (`</`,
+   `/>`, `className=` — marqueurs conservateurs, robustes aux génériques TS). Un `.tsx` de câblage/type/contrat
+   (aucun markup) est **non-visuel** → Tier-1.5 N/A, couvert par la review Tier-1. (`has_ui()` name-only reste
+   le prédicat coarse de surface front ; le trigger du gate est `has_visual_change`.)
 3. **Fail-CLOSED** pour l'irréversible : UI touchée + preuve absente/périmée/rouge → merge **bloqué**. Un
    acte outward (merge/destroy/deploy) exige un **feu vert humain**, jamais autonome.
 4. Un override **Tier-1.5 (🟡)** peut lever du 🟡 ; **jamais** un 🔴 Tier-0 (conflit/secret/syntaxe).
