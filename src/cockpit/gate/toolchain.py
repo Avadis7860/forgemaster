@@ -118,6 +118,18 @@ def applicable_triggers(diff_files: list[str]) -> list[str]:
     return trig
 
 
+# Suffixes de PROSE pure (docs). Un diff qui ne touche QUE ceux-là n'a aucune source à reviewer.
+DOC_SUFFIXES = (".md", ".mdx", ".rst", ".txt")
+
+
+def is_docs_only(files: list[str]) -> bool:
+    """True ssi le diff ne touche QUE de la prose (suffixe doc) — aucune **source exécutable** → une review de
+    CODE Tier-1 est N/A (comme Tier-0 natif l'est via `applicable_triggers`, Tier-1.5 via `verify.has_ui`).
+    **Positif / fail-safe** : tout fichier non-prose (code, config, script, asset) rend `False` → review
+    requise. Diff vide → `False` (rien à déclarer docs-only ; le gate reste fail-closed). PUR."""
+    return bool(files) and all(f.endswith(DOC_SUFFIXES) for f in files)
+
+
 def _steps_for(group: str, worktree: Path) -> list[dict] | None:
     """Steps ordonnés d'un groupe : `{name, argv, cwd}`, ou **None** si le groupe est DÉCLENCHÉ par le diff
     mais **non couvert** par une unité de gate présente (→ fail-closed dans `run_toolchain`). Node

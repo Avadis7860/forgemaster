@@ -43,7 +43,7 @@ MAIN_BRANCH = "main"    # branche promue (ff depuis dev — main-suit-dev)
 def compose_merge_decision(tier0_decision: dict, tier1_status: dict, *, human_go: bool,
                            t15_status: dict | None = None, ui_touched: bool = False,
                            t15_override: str = "", native_status: dict | None = None,
-                           t1_override: str = "") -> dict:
+                           t1_override: str = "", code_touched: bool = True) -> dict:
     """Décision de merge : fusionne le filet **Tier-0** déterministe, la **toolchain native** du repo, le
     verdict **Tier-1** (review SHA-bound), le **Tier-1.5** (feature-verified, si UI touchée), et le **GO
     humain**. PUR.
@@ -52,9 +52,11 @@ def compose_merge_decision(tier0_decision: dict, tier1_status: dict, *, human_go
       - **Tier-0 propre** (0 🔴 déterministe) — NON-overridable (filet dur). Les 🟡 surfacés, non bloquants.
       - **Tier-0 natif propre** (si le repo a une toolchain native : `native_status['applicable']`) — exit 0.
         NON-overridable (déterministe : un veto bloquant est un fait, pas un avis). Repo sans toolchain → N/A.
-      - **Tier-1 présent + FRAIS + PASS** (reviewed_sha == HEAD feature, 0 🔴). Garde de PROCESS
-        (non-overridable) : une revue doit avoir eu lieu sur le HEAD mergé. Un 🔴 reviewer BLOQUE — levable
-        par override humain explicite (`t1_override`, raison non vide, tracé), JAMAIS le Tier-0/natif.
+      - **Tier-1 présent + FRAIS + PASS** (reviewed_sha == HEAD feature, 0 🔴) — **seulement si le diff porte
+        de la source exécutable** (`code_touched`). Garde de PROCESS (non-overridable) : une revue doit avoir
+        eu lieu sur le HEAD mergé. Un 🔴 reviewer BLOQUE — levable par override humain explicite
+        (`t1_override`, raison non vide, tracé), JAMAIS le Tier-0/natif. Un livrable **docs-only** (prose
+        seule) → Tier-1 **N/A** (rien à reviewer), non bloquant — symétrique au Tier-1.5 hors UI.
       - **Tier-1.5 (si `ui_touched`)** présent + FRAIS + rendu prouvé. Hors UI → N/A. Levable par override
         humain explicite (`t15_override`) — jamais automatique.
       - **human_go is True** — le LLM ne merge JAMAIS seul.
@@ -78,19 +80,22 @@ def compose_merge_decision(tier0_decision: dict, tier1_status: dict, *, human_go
                         f"(exit {nat.get('exit_code')}{step}) → corriger avant merge (NON-overridable)")
     # Tier-1 (review dispatchée) : garde de process (non-overridable) — une revue FRAÎCHE doit exister sur le
     # HEAD ; absente/périmée ⇒ blocage. Un 🔴 reviewer BLOQUE — levable par override humain explicite tracé.
+    # EXIGÉE seulement si le diff porte de la source exécutable (`code_touched`) : un livrable docs-only
+    # (prose) n'a pas de code à reviewer → Tier-1 N/A (comme Tier-1.5 hors UI, Tier-0 natif sans toolchain).
     t1c = tier1_status.get("counts") or {}
-    red1 = t1c.get("red", 0)
-    if not tier1_status.get("present"):
-        blockers.append("Tier-1 : aucune revue sur le HEAD → dispatcher le reviewer (garde de processus)")
-    elif not tier1_status.get("fresh"):
-        blockers.append("Tier-1 : revue périmée (reviewed_sha ≠ HEAD) → re-dispatcher (garde de processus)")
-    elif red1:
-        if t1_override:
-            t1_overridden = True
-            overrides.append(f"Tier-1 : {red1} 🔴 reviewer — OVERRIDE humain : {t1_override}")
-        else:
-            blockers.append(f"Tier-1 : {red1} 🔴 reviewer (le rapport bloque le merge) → corriger, "
-                            f"ou override humain explicite avec raison")
+    red1 = t1c.get("red", 0) if code_touched else 0
+    if code_touched:
+        if not tier1_status.get("present"):
+            blockers.append("Tier-1 : aucune revue sur le HEAD → dispatcher le reviewer (garde de processus)")
+        elif not tier1_status.get("fresh"):
+            blockers.append("Tier-1 : revue périmée (reviewed_sha ≠ HEAD) → re-dispatcher (garde processus)")
+        elif red1:
+            if t1_override:
+                t1_overridden = True
+                overrides.append(f"Tier-1 : {red1} 🔴 reviewer — OVERRIDE humain : {t1_override}")
+            else:
+                blockers.append(f"Tier-1 : {red1} 🔴 reviewer (le rapport bloque le merge) → corriger, "
+                                f"ou override humain explicite avec raison")
 
     # Tier-1.5 : exigé SEULEMENT si la feature touche une surface UI.
     if ui_touched:
@@ -113,7 +118,9 @@ def compose_merge_decision(tier0_decision: dict, tier1_status: dict, *, human_go
 
     gate_green = not blockers
     reasons = list(blockers) + overrides
-    if tier1_status.get("present") and tier1_status.get("fresh") and not red1:
+    if not code_touched:
+        reasons.append("Tier-1 : N/A (aucune source exécutable — livrable docs-only)")
+    elif tier1_status.get("present") and tier1_status.get("fresh") and not red1:
         yel1, pur1 = t1c.get("yellow", 0), t1c.get("purple", 0)
         if yel1 or pur1:
             reasons.append(f"Tier-1 : {yel1} 🟡 · {pur1} 🟣 reviewer (consultatif) — voir findings")
@@ -179,8 +186,9 @@ def evaluate_gate(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
     decision: dict | None = None
     native_status: dict | None = None                         # Tier-0 natif (toolchain) — surfacé au GET gate
     if head_sha is not None:
-        diff_files = git.diff_names(sot, base=BASE_BRANCH, head=branch)   # unique appel — sert UI + natif
+        diff_files = git.diff_names(sot, base=BASE_BRANCH, head=branch)   # unique appel — UI + natif + N/A
         ui_touched = verify.has_ui(diff_files)
+        code_touched = not toolchain.is_docs_only(diff_files)   # docs-only → Tier-1 review de code N/A
         # Tier-0 natif : injecté (tests) sinon LU depuis le verdict toolchain SHA-bound (jamais exécuté ici —
         # evaluate_gate est appelé par le GET gate poll-é ; l'exécution est un step séparé, cf. toolchain).
         native_status = native if native is not None else toolchain.status(
@@ -188,7 +196,8 @@ def evaluate_gate(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
         decision = compose_merge_decision(
             tier0 or {"red": 0, "yellow": 0}, tier1_status, human_go=human_go,
             t15_status=t15_status if ui_touched else None, ui_touched=ui_touched,
-            t15_override=t15_override, native_status=native_status, t1_override=t1_override)
+            t15_override=t15_override, native_status=native_status, t1_override=t1_override,
+            code_touched=code_touched)
     return {"feature": feature, "project_slug": project_slug, "feature_slug": feature_slug,
             "branch": branch, "sot": sot, "head_sha": head_sha, "ui_touched": ui_touched,
             "tier1_status": tier1_status, "t15_status": t15_status, "native_status": native_status,

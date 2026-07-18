@@ -264,8 +264,10 @@ def test_cli_dispatch_refuses_without_claude_auth(ctx, capsys, monkeypatch):
 
 # -- Phase C : finalisation → merge-ready (Tier-0 + reviewer dispatché après le drain) ---------------
 
-def _writing_worker(rel: str = "docs/note.md", content: str = "# note\nContenu.\n"):
-    """Worker injecté qui ÉCRIT un fichier (diff **doc-only** → Tier-0 N/A) puis rend un résultat OK."""
+def _writing_worker(rel: str = "src/note.sh", content: str = "#!/bin/sh\necho ok\n"):
+    """Worker injecté qui ÉCRIT un fichier **code-bearing mais Tier-0 N/A** (`.sh` : aucune toolchain native
+    ne le couvre, mais ce N'EST PAS du docs-only → le reviewer Tier-1 est bien exigé/dispatché) puis rend OK.
+    Le type isole le chemin **reviewer** ; passer `rel="docs/x.md"` pour tester le skip docs-only."""
     def _run(argv, *, cwd, input_text, timeout, env=None):
         p = Path(cwd) / rel
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -305,6 +307,30 @@ def test_run_finalizes_complete_feature_to_merge_ready(ctx, monkeypatch):
     assert v is not None and v["counts"]["red"] == 0     # verdict Tier-1 SHA-bound écrit, propre
 
 
+def test_run_finalizes_docs_only_skips_reviewer(ctx, monkeypatch):
+    """Un livrable **docs-only** (prose seule) est finalisé SANS dispatcher de reviewer de code (pas de
+    gaspillage de worker — alternative rejetée du finding) et reste **merge-ready** : le gate traite Tier-1
+    N/A. Régression du socle-design non-mergeable « Aucune revue Tier-1 » (live 2026-07-18)."""
+    settings, conn = ctx
+    fake_home = settings.home / "fakehome"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+    _new_project(conn, settings, "proj")
+    _seed(conn, settings, "proj", "feat", [("impl", [])])
+
+    def _must_not_review(argv, *, cwd, input_text, timeout, env=None):
+        raise AssertionError("docs-only ne doit PAS dispatcher de reviewer de code")
+
+    summary = orchestrator.run_project(
+        conn, settings, project="proj",
+        runner=_writing_worker(rel="docs/design.md", content="# Design\nConcept.\n"),
+        review_runner=_must_not_review)
+    assert summary["merge_ready"] == ["feat"]                       # merge-ready sans review de code
+    fin = summary["finalizations"][0]
+    assert fin["merge_ready"] is True and fin["review"]["reviewed"] is False
+    assert not any("revue" in b for b in fin["blockers"])           # jamais « aucune revue Tier-1 »
+
+
 def test_run_feature_not_merge_ready_when_reviewer_flags_red(ctx, monkeypatch):
     """Un 🔴 reviewer cité verbatim → la feature N'est PAS merge-ready (Tier-1 bloque, non-overridé)."""
     settings, conn = ctx
@@ -313,8 +339,8 @@ def test_run_feature_not_merge_ready_when_reviewer_flags_red(ctx, monkeypatch):
     monkeypatch.setenv("HOME", str(fake_home))
     _new_project(conn, settings, "proj")
     _seed(conn, settings, "proj", "feat", [("impl", [])])
-    red = json.dumps({"findings": [{"severity": "🔴", "category": "correctness", "file": "docs/note.md",
-                                    "line": 2, "claim": "faux", "evidence": "docs/note.md:2 — Contenu.",
+    red = json.dumps({"findings": [{"severity": "🔴", "category": "correctness", "file": "src/note.sh",
+                                    "line": 2, "claim": "faux", "evidence": "src/note.sh:2 — echo ok",
                                     "verify_note": "x"}]})
     summary = orchestrator.run_project(conn, settings, project="proj",
                                        runner=_writing_worker(), review_runner=_review_worker(red))
@@ -331,9 +357,9 @@ def _distinct_writing_worker():
     calls = {"n": 0}
     def _run(argv, *, cwd, input_text, timeout, env=None):
         calls["n"] += 1
-        p = Path(cwd) / "docs" / f"note-{calls['n']}.md"
+        p = Path(cwd) / "src" / f"note-{calls['n']}.sh"
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(f"# note {calls['n']}\n", encoding="utf-8")
+        p.write_text(f"#!/bin/sh\necho note {calls['n']}\n", encoding="utf-8")
         sid = argv[argv.index("--session-id") + 1]
         out = json.dumps({"is_error": False, "result": "fait", "session_id": sid, "num_turns": 1})
         return run.RunResult(argv=list(argv), returncode=0, stdout=out, stderr="")

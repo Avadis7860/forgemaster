@@ -52,6 +52,20 @@ def test_compose_tier1_absent_blocks():
     assert d["gate_green"] is False and any("aucune revue" in b for b in d["blockers"])
 
 
+def test_compose_tier1_na_when_docs_only():
+    # Livrable docs-only (aucune source exécutable) : Tier-1 review de code N/A → aucune revue exigée, pas de
+    # blocker « aucune revue », gate vert (hold sans GO). Régression du socle-design non-mergeable 2026-07-18.
+    hold = merge.compose_merge_decision({"red": 0}, {"present": False}, human_go=False, code_touched=False)
+    assert hold["gate_green"] is True and hold["allow"] is False           # vert mais attend le GO humain
+    assert not any("revue" in b for b in hold["blockers"])                 # jamais « aucune revue Tier-1 »
+    assert any("N/A" in r and "docs-only" in r for r in hold["reasons"])
+    # Sous GO humain → merge autorisé, toujours sans review de code.
+    go = merge.compose_merge_decision({"red": 0}, {"present": False}, human_go=True, code_touched=False)
+    assert go["allow"] is True
+    # Non-régression : DÉFAUT `code_touched=True` → un diff de code sans revue bloque toujours
+    # (couvert par test_compose_tier1_absent_blocks).
+
+
 def test_compose_tier1_stale_blocks():
     stale = {"present": True, "fresh": False, "counts": {"red": 0}}
     d = merge.compose_merge_decision({"red": 0}, stale, human_go=True)
@@ -136,6 +150,14 @@ def test_review_write_read_fresh_status(ctx):
 def test_verify_has_ui():
     assert verify.has_ui(["web/src/App.tsx"]) and verify.has_ui(["x/src/pages/home.js"])
     assert not verify.has_ui(["lib/core.py", "README.md"])
+
+
+def test_toolchain_is_docs_only():
+    # Prose seule → docs-only ; toute source/config/script → non (fail-safe : review requise) ; vide → non.
+    assert toolchain.is_docs_only(["docs/design.md"]) and toolchain.is_docs_only(["a.md", "b/c.rst"])
+    assert not toolchain.is_docs_only(["docs/design.md", "src/x.py"])      # code mêlé → review requise
+    assert not toolchain.is_docs_only(["web/App.tsx"]) and not toolchain.is_docs_only(["deploy/x.sh"])
+    assert not toolchain.is_docs_only([])                                  # diff vide → jamais docs-only
 
 
 def test_verify_build_verdict_never_blanched_on_empty():

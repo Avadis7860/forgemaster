@@ -220,9 +220,9 @@ def test_web_dispatch_drains_and_produces_review(client, monkeypatch, fake_tools
                         lambda *a, **k: {"authenticated": True, "source": "test"})
 
     def _worker(argv, *, cwd, input_text, timeout, env=None):
-        p = Path(cwd) / "docs" / "note.md"                  # diff doc-only → Tier-0 N/A
+        p = Path(cwd) / "src" / "note.sh"                   # code-bearing mais Tier-0 N/A → reviewer exigé
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text("# note\nContenu.\n", encoding="utf-8")
+        p.write_text("#!/bin/sh\necho ok\n", encoding="utf-8")
         sid = argv[argv.index("--session-id") + 1]
         out = json.dumps({"is_error": False, "result": "fait", "session_id": sid, "num_turns": 1})
         return run.RunResult(argv=list(argv), returncode=0, stdout=out, stderr="")

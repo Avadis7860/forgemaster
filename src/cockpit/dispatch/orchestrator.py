@@ -134,8 +134,13 @@ def _finalize_feature(conn: sqlite3.Connection, settings: Settings, project: str
     if wt.is_dir():                                       # Tier-0 : la toolchain native, dans le worktree
         results = toolchain.run_toolchain(wt, diff_files, env=tools_env(settings))
         toolchain.write_verdict(settings, project, feature, results, sha=sha, conn=conn)
-    review_report = reviewer.dispatch_reviewer(conn, settings, feature_ref=feature_ref, git=git,
-                                               runner=review_runner)
+    # Un livrable docs-only (prose seule, ex. socle-design) n'a pas de code à reviewer : ne PAS gaspiller un
+    # worker de review (le gate traite Tier-1 N/A côté `evaluate_gate` — même prédicat `is_docs_only`).
+    if toolchain.is_docs_only(diff_files):
+        review_report: dict = {"reviewed": False, "reason": "docs-only — review de code N/A"}
+    else:
+        review_report = reviewer.dispatch_reviewer(conn, settings, feature_ref=feature_ref, git=git,
+                                                   runner=review_runner)
     ev = merge_gate.evaluate_gate(conn, settings, feature_ref=feature_ref, human_go=False, git=git)
     decision = ev.get("decision") or {}
     return {"feature": feature, "merge_ready": bool(decision.get("gate_green")),
