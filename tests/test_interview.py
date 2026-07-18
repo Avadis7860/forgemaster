@@ -64,6 +64,45 @@ def test_interview_resolves_launches_interactive_and_completes(ctx):
     assert statuses == {"cadrage": "done"}                                        # socle clôturé (verified)
 
 
+def test_interview_reconcile_only_after_interruption(ctx):
+    """Interview interrompue AVANT sa clôture (PTY tué : SIGHUP navigation d'onglet, Ctrl-C, crash) : le
+    travail EST produit (feature authorée) mais `verify_and_complete` ne tourne jamais → socle resté ouvert.
+    Un 2ᵉ `cockpit interview` RÉCONCILIE sans relancer claude : socle `done`, `reason=reconcile-only`, le
+    launcher n'est JAMAIS rappelé. Régression du bug live 2026-07-18."""
+    settings, conn = ctx
+    _socle_project(conn, settings)
+
+    def crashing_launcher(argv, *, cwd, env=None):
+        # L'humain authore une feature de travail (check-verte)… puis le PTY est tué avant la réconciliation.
+        model.add_feature(conn, project_slug="proj", slug="build", facet="code")
+        model.add_task(conn, feature_ref="proj/build", slug="impl", acceptance="Code posé et testé.")
+        raise RuntimeError("PTY tué avant verify_and_complete")
+
+    with pytest.raises(RuntimeError):
+        interview.run_interview(conn, settings, project="proj", git=InternalGit(), launcher=crashing_launcher)
+    assert conn.execute(                                   # clôture jamais tournée → socle ouvert
+        "SELECT status FROM tasks WHERE slug='cadrage'").fetchone()["status"] == "todo"
+
+    def must_not_launch(argv, *, cwd, env=None):
+        raise AssertionError("reconcile-only ne doit PAS relancer claude")
+
+    report = interview.run_interview(conn, settings, project="proj", git=InternalGit(),
+                                     launcher=must_not_launch)
+    assert report["ran"] is True and report["completed"] is True
+    assert report["reason"] == "reconcile-only" and report["reconciled"] is True
+    assert conn.execute(                                   # socle clôturé sans 2ᵉ interview
+        "SELECT status FROM tasks WHERE slug='cadrage'").fetchone()["status"] == "done"
+
+
+def test_reconcile_socle_noop_when_not_worked(ctx):
+    """`reconcile_socle` est un no-op honnête quand rien n'a été produit : socle neuf (aucune feature de
+    travail) → rend `None`, ne clôt rien, ne relance rien."""
+    settings, conn = ctx
+    _socle_project(conn, settings)
+    assert interview.reconcile_socle(conn, settings, project="proj", git=InternalGit()) is None
+    assert conn.execute("SELECT status FROM tasks WHERE slug='cadrage'").fetchone()["status"] == "todo"
+
+
 def test_interview_incomplete_leaves_socle_open(ctx):
     """Si la session ne produit AUCUNE feature de travail, la vérification échoue (pas de ≥1 feature) → le
     socle reste `todo`, `completed=False`, rien n'est faux-clôturé."""

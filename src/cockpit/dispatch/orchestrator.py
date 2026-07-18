@@ -24,7 +24,7 @@ import argparse
 import sqlite3
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 
-from cockpit import auth
+from cockpit import auth, interview
 from cockpit.config import Settings
 from cockpit.db import store
 from cockpit.dispatch import reviewer, worker
@@ -152,6 +152,9 @@ def run_project(conn: sqlite3.Connection, settings: Settings, *, project: str,
     décroît strictement. `conn` = connexion principale (lecture roadmap + assignation) ; les workers ouvrent
     la leur. Retourne un rapport agrégé (cf. `_summarize`)."""
     git = git or InternalGit()
+    # Auto-heal : clôt un socle DÉJÀ travaillé dont l'interview a été interrompue avant sa clôture (PTY tué) —
+    # sinon il resterait tenu en `needs_interview` et bloquerait l'aval. No-op si rien à réconcilier.
+    interview.reconcile_socle(conn, settings, project=project, git=git)
     max_parallel = max(1, max_parallel)
     in_flight: set[str] = set()   # features en vol — MUTÉ À LA SOUMISSION (mutex, seul le principal assigne)
     failed: set[str] = set()      # features dont un run a échoué → exclues du reste du run (borne le run)
@@ -202,6 +205,8 @@ def run_feature(conn: sqlite3.Connection, settings: Settings, *, project: str, f
     donc l'UI et le CLI lisent un rapport identique). `KeyError`/`ValueError` (projet/feature absent)
     remontent au handler global (→ 404)."""
     git = git or InternalGit()
+    # Auto-heal : clôt un socle DÉJÀ travaillé dont l'interview a été interrompue avant sa clôture (PTY tué).
+    interview.reconcile_socle(conn, settings, project=project, git=git)
     feature_ref = f"{project}/{feature}"
     reports: list[dict] = []
     while True:

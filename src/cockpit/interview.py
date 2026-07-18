@@ -106,6 +106,42 @@ def verify_and_complete(conn, project: str, feature: dict) -> dict:
             "work_feature": work}
 
 
+def _socle_worked(conn, project: str, feature: dict) -> bool:
+    """Le socle est-il DÉJÀ objectivement travaillé (l'interview a produit) — même critère que la clôture de
+    `verify_and_complete` (`roadmap check` vert ET ≥1 feature de travail), mais SANS muter. Prédicat de la
+    réconciliation idempotente : vrai → on peut clore sans (re)lancer l'interview."""
+    return _has_work_feature(conn, project, feature["slug"]) and not check.check_roadmap(conn, project)
+
+
+def _commit_design(git: GitBackend, project: str, feature: dict, wt_path) -> None:
+    """Rend la doc de design éditée durable sur la branche du socle (arbre net → no-op propre)."""
+    git.commit_worktree(wt_path, message=f"docs({feature['slug']}): interview de 1ʳᵉ session",
+                        identity=resolve_identity(project, worktree.WORKTREE_BASE, role="worker"))
+
+
+def reconcile_socle(conn, settings: Settings, *, project: str, git: GitBackend | None = None) -> dict | None:
+    """Clôt le socle d'un projet SANS session interactive, quand une interview a DÉJÀ produit (design rempli +
+    roadmap authorée : `roadmap check` vert + ≥1 feature de travail) mais que sa clôture a été perdue — le PTY
+    tué AVANT `verify_and_complete` (SIGHUP navigation d'onglet, Ctrl-C, crash) : le travail survit
+    (worktree/DB), seule la clôture manque. Réserve le worktree (idempotent), VÉRIFIE et clôt (tasks socle
+    `done`), commit le design.md. **Idempotent / re-jouable** : no-op propre s'il n'y a aucun socle interactif
+    en attente, si le socle n'est pas encore travaillé, ou s'il est déjà clos. Retourne l'outcome de
+    `verify_and_complete`, ou `None` s'il n'y a rien à réconcilier. Réutilisé par `run_interview` (reconcile-
+    only avant lancement) ET l'orchestrateur (`cockpit run` auto-heal — clôt hors survie du PTY)."""
+    git = git or InternalGit()
+    resolved = resolve_interview(conn, project)
+    if resolved is None:
+        return None                              # aucun socle interactif READY (déjà clos, ou pas de socle)
+    feature, _task = resolved
+    if not _socle_worked(conn, project, feature):
+        return None                              # pas encore objectivement travaillé → rien à clore
+    res = worktree.reserve(conn, settings, git, project=project, feature=feature["slug"])
+    outcome = verify_and_complete(conn, project, feature)
+    if outcome["completed"]:
+        _commit_design(git, project, feature, res["path"])
+    return outcome
+
+
 def interview_env(settings: Settings) -> dict[str, str]:
     """Env de la session d'interview = `tools.cli_env` (tools_env + bin du venv cockpit). La session AUTHORE
     la roadmap dans la DB via `cockpit roadmap add-feature` (prescrit par `roadmap-decompose`) et lance
@@ -125,14 +161,24 @@ def run_interview(conn, settings: Settings, *, project: str, git: GitBackend | N
                   launcher: Launcher | None = None) -> dict:
     """Mène le cycle interview d'UN projet : résout la task interactive du socle, réserve son worktree, lance
     `claude` interactif seedé du prompt préparé, puis VÉRIFIE et clôt le socle. Retourne un rapport
-    `{ran, reason, feature?, task?, completed?, issues?}`. **Gate no-interactive-no-launch** : `ran=False`
-    (sans lancement) s'il n'y a aucune task interactive en attente. Le worktree du socle est committé (la doc
-    de design éditée) si l'interview a produit (feature de travail)."""
+    `{ran, reason, feature?, task?, completed?, issues?, reconciled?}`. **Gate no-interactive-no-launch** :
+    `ran=False` (sans lancement) s'il n'y a aucune task interactive en attente. **Reconcile-only** : si le
+    socle est DÉJÀ travaillé (interview antérieure interrompue avant clôture), clôt SANS relancer claude
+    (`reason="reconcile-only"`). Sinon, chemin normal : lance l'interview puis vérifie/clôt à la sortie ; le
+    worktree du socle est committé (la doc de design éditée) si l'interview a produit (feature de travail)."""
     git = git or InternalGit()
     resolved = resolve_interview(conn, project)
     if resolved is None:
         return {"ran": False, "reason": "aucune interview en attente (pas de task interactive READY)"}
     feature, task = resolved
+    # Reconcile-only : une interview antérieure a produit mais sa clôture a été perdue (PTY tué) → clôt SANS
+    # relancer claude (idempotent). Sinon la re-run relancerait l'interview sur un socle déjà travaillé.
+    reconciled = reconcile_socle(conn, settings, project=project, git=git)
+    if reconciled is not None:
+        return {"ran": True, "reason": "reconcile-only", "feature": feature["slug"], "task": task["slug"],
+                "completed": reconciled["completed"], "issues": reconciled["issues"],
+                "work_feature": reconciled["work_feature"], "reconciled": True}
+    # Chemin normal : socle neuf/incomplet → session interactive, puis clôture vérifiée à la sortie.
     # Confiance du workspace : le SoT bare du projet (comme le worker) — sinon `claude` ignore les allowed*.
     auth.trust_workspace(sot_path_for(settings, project))
     res = worktree.reserve(conn, settings, git, project=project, feature=feature["slug"])
@@ -143,12 +189,10 @@ def run_interview(conn, settings: Settings, *, project: str, git: GitBackend | N
     # Réconciliation / vérification à la sortie : la doc éditée + la roadmap authorée sont dans worktree/DB.
     outcome = verify_and_complete(conn, project, feature)
     if outcome["completed"]:
-        # La doc de design éditée devient durable sur la branche du socle (arbre net → no-op propre).
-        git.commit_worktree(res["path"], message=f"docs({feature['slug']}): interview de 1ʳᵉ session",
-                            identity=resolve_identity(project, worktree.WORKTREE_BASE, role="worker"))
+        _commit_design(git, project, feature, res["path"])
     return {"ran": True, "reason": "ok", "feature": feature["slug"], "task": task["slug"],
             "completed": outcome["completed"], "issues": outcome["issues"],
-            "work_feature": outcome["work_feature"]}
+            "work_feature": outcome["work_feature"], "reconciled": False}
 
 
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:

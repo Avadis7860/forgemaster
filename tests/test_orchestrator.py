@@ -128,6 +128,26 @@ def test_run_project_surfaces_interactive_task_as_needs_interview(ctx):
     assert _statuses(conn, "socle") == {"cadrage": "todo"}             # jamais in_progress/faux-done
 
 
+def test_run_project_auto_reconciles_worked_socle_without_interview(ctx, monkeypatch):
+    """Auto-heal (bullet 2) : un socle DÉJÀ travaillé (interview a authoré une feature de travail check-verte)
+    mais resté OUVERT — sa clôture perdue (PTY tué) — est RÉCONCILIÉ par la pré-passe de `cockpit run`, SANS
+    session interactive : socle `done`, jamais tenu en `needs_interview`. Régression live 2026-07-18."""
+    settings, conn = ctx
+    fake_home = settings.home / "fakehome"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(fake_home))              # trust_workspace / commit isolés
+    _new_project(conn, settings, "proj")
+    model.add_feature(conn, project_slug="proj", slug="socle", facet="doc")
+    model.add_task(conn, feature_ref="proj/socle", slug="cadrage",
+                   acceptance="Intention renseignée.", mode="interactive")
+    model.add_feature(conn, project_slug="proj", slug="build", facet="code")   # facet valide → check vert
+    model.add_task(conn, feature_ref="proj/build", slug="impl", acceptance="Code posé.")
+    summary = orchestrator.run_project(conn, settings, project="proj",
+                                       runner=_writing_worker(), review_runner=_review_worker())
+    assert _statuses(conn, "socle") == {"cadrage": "done"}   # réconcilié sans 2ᵉ interview
+    assert "socle" not in summary["needs_interview"]         # jamais tenu au terminal
+
+
 # -- parallélisme borné inter-features --------------------------------------------------------------
 
 def test_run_project_parallelizes_independent_features_up_to_max(ctx):

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useBlocker } from '@tanstack/react-router'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
@@ -7,6 +8,7 @@ import '@xterm/xterm/css/xterm.css'
 import { Badge, Button, Input } from '@/components/ui'
 import { wsUrl } from '@/lib/ws'
 import { buildTheme } from './theme'
+import { LeaveTerminalConfirm } from './LeaveTerminalConfirm'
 
 export type TermStatus = 'connecting' | 'connected' | 'closed' | 'error'
 
@@ -168,6 +170,14 @@ export function TerminalPane({ project, initialCommand }: { project: string; ini
   }, [fontSize])
 
   const connected = status === 'connected'
+  // Garde de départ : quitter la vue Ops démonterait ce pane → `ws.close()` → le daemon tue le login shell
+  // (SIGHUP) et toute commande en cours (ex. `cockpit interview`). Tant que la session est connectée, on
+  // bloque la navigation SPA (confirmation) ET la fermeture d'onglet navigateur (`enableBeforeUnload` natif).
+  const leaveBlocker = useBlocker({
+    shouldBlockFn: () => connected,
+    enableBeforeUnload: () => connected,
+    withResolver: true,
+  })
   const bumpFont = (delta: number) =>
     setFontSize((n) => Math.min(FONT_MAX, Math.max(FONT_MIN, n + delta)))
   const runSearch = (q: string) => {
@@ -234,6 +244,7 @@ export function TerminalPane({ project, initialCommand }: { project: string; ini
         ref={hostRef}
         className="min-h-0 flex-1 overflow-hidden rounded-card border border-border bg-bg p-3"
       />
+      <LeaveTerminalConfirm blocker={leaveBlocker} />
     </div>
   )
 }
