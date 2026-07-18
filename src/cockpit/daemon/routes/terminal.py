@@ -20,6 +20,7 @@ def make_terminal_router() -> APIRouter:
             await websocket.close(code=1008)                        # chemin hors racine → refus policy
             return
         await websocket.accept()
-        await pty.pty_bridge(websocket, pty.local_shell_argv(), cwd=workdir, env=pty.shell_env())
+        await pty.pty_bridge(websocket, pty.local_shell_argv(), cwd=workdir,
+                             env=pty.shell_env(deps.settings))
 
     return router

@@ -100,6 +100,18 @@ def tools_env(settings: Settings, *, base: Mapping[str, str] | None = None) -> d
     return env
 
 
+def cli_env(settings: Settings, *, base: Mapping[str, str] | None = None) -> dict[str, str]:
+    """`tools_env` PRÉFIXÉ du bin du venv COURANT (là où vit le script `cockpit`). Pour les surfaces où un
+    humain / `claude` invoque `cockpit …` DIRECTEMENT — l'interview (`interview.interview_env`) et le
+    **terminal web** (`pty.shell_env`) : `cockpit` n'est PAS dans `tools/bin` (le worker et le gate n'en ont
+    pas besoin, eux). Sans ce préfixe, la surface hérite d'un PATH (shell de login / systemd minimal) sans
+    `cockpit` → `cockpit interview`/`cockpit roadmap …` en `command not found`. PUR."""
+    env = tools_env(settings, base=base)
+    cockpit_bin = str(Path(sys.executable).parent)          # /…/venv/bin — porte le script `cockpit`
+    env["PATH"] = os.pathsep.join([cockpit_bin, env["PATH"]])
+    return env
+
+
 # -- preflight de présence (P1 : ce que la facette DÉCLARE doit résoudre) -----------------------------
 
 def required_bins(settings_local: Path) -> set[str]:

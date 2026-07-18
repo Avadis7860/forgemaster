@@ -26,6 +26,7 @@ import termios
 
 from cockpit.config import Settings
 from cockpit.core import fs
+from cockpit.tools import cli_env
 
 READ_SIZE = 65536
 
@@ -36,13 +37,14 @@ def local_shell_argv(shell: str = "/bin/bash") -> list[str]:
     return [shell, "-l"]
 
 
-def shell_env() -> dict[str, str]:
-    """Environnement du shell PTY : hérite du process **et force un terminal COULEUR**. Un service systemd
-    n'a pas de `TERM` dans son env → sans ça, le PTY lance `bash` avec `TERM` vide et bash/ls/git/less
-    **désactivent la couleur** (prompt et sorties monochromes). xterm.js EST un terminal `xterm-256color` :
-    on l'annonce. `COLORTERM=truecolor` débloque la 24-bit des outils modernes. (Le login shell charge
-    ensuite le profil de l'utilisateur pour les alias/`PS1`.)"""
-    return {**os.environ, "TERM": "xterm-256color", "COLORTERM": "truecolor"}
+def shell_env(settings: Settings) -> dict[str, str]:
+    """Environnement du shell PTY = `tools.cli_env` (cockpit + maps + Node + `~/.local/bin` sur le PATH → le
+    terminal web est un VRAI shell cockpit : `cockpit interview`, `codemap`, `node` résolvent — sans quoi le
+    login shell n'a qu'un PATH systemd minimal + `~/.local/bin` et `cockpit` serait `command not
+    found`) **et force un terminal COULEUR**. Un service systemd n'a pas de `TERM` → sans ça
+    bash/ls/git/less seraient monochromes ; xterm.js EST un `xterm-256color`, `COLORTERM=truecolor` débloque
+    la 24-bit. (Le login shell charge ensuite le profil de l'utilisateur pour alias/`PS1`.)"""
+    return {**cli_env(settings), "TERM": "xterm-256color", "COLORTERM": "truecolor"}
 
 
 def resolve_workdir(settings: Settings, project: str, subpath: str | None = None) -> str:
