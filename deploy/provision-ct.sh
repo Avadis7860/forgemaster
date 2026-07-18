@@ -95,6 +95,26 @@ install_podman() {
   echo "   ✓ podman OK : $(podman --version 2>/dev/null || echo installé)"
 }
 
+# PATH du LOGIN shell (le terminal web est un `bash -l`). `/etc/profile` RÉINITIALISE `PATH` (root → défaut
+# Debian), écrasant tout PATH hérité/injecté → sans ça `cockpit`/`codemap`/`node` sont `command not found`
+# dans le terminal (et le handoff « auto-run `cockpit interview` » casse). On ré-ajoute le toolchain APRÈS ce
+# reset : via `/etc/profile.d` (root, système) ou `~/.profile`+`~/.bashrc` (portée user), tous deux sourcés
+# après `/etc/profile`. Idempotent (overwrite / guard). Le venv cockpit + `tools/bin` d'abord.
+install_login_path() {
+  local line="export PATH=\"$venv/bin:$home/tools/bin:\$PATH\""
+  if [ "$(id -u)" -eq 0 ]; then
+    printf '# cockpit — toolchain sur le PATH du login shell (terminal web), APRÈS le reset de /etc/profile.\n%s\n' \
+      "$line" > /etc/profile.d/cockpit-path.sh
+    echo "   PATH login shell → /etc/profile.d/cockpit-path.sh ($venv/bin + $home/tools/bin)"
+  else
+    for rc in "$HOME/.profile" "$HOME/.bashrc"; do
+      grep -qs 'cockpit toolchain PATH' "$rc" 2>/dev/null \
+        || printf '# cockpit toolchain PATH\n%s\n' "$line" >> "$rc"
+    done
+    echo "   PATH login shell → $HOME/.profile + ~/.bashrc ($venv/bin + $home/tools/bin)"
+  fi
+}
+
 echo "→ [1/8] venv Python : $venv"
 python3 -m venv "$venv"
 
@@ -120,6 +140,8 @@ install_podman
 # constater absent. Sonde ≠ installe : on renvoie vers `cockpit tools install`, on ne réinstalle pas en boucle.
 echo "   auto-vérification de présence (cockpit doctor)"
 "$cockpit" doctor || { echo "✗ [4/8] outillage INCOMPLET après install (détail ci-dessus) — corrige (\`cockpit tools install\`) puis relance." >&2; exit 1; }
+echo "   PATH du login shell (terminal web = bash -l) : ré-ajoute le toolchain après le reset /etc/profile"
+install_login_path
 
 echo "→ [5/8] unité systemd (portée $scope, host=$host port=$port)"
 "$cockpit" install-service $svc_flag --host "$host" --port "$port"
