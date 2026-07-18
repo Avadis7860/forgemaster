@@ -26,6 +26,13 @@ la séquence de phases ne vivait qu'en **prose** (checklist/`next:`) jamais pars
 - **Triggers** = grammaire fermée vérifiable (`glob_count`/`task_done`/`path_exists`/`date_after`/`manual`,
   composition 1 niveau `any_of`/`all_of`), **date injectée** (déterminisme). **Fail-soft** : non
   vérifiable → `DEFERRED` + warning, jamais READY ni crash. Moteur **read-only, déterministe, zéro LLM**.
+- **Socle = prérequis implicite de toute feature de travail** (enforcement **orchestrateur**, pas dérivé du
+  manifeste). Le socle = la feature portant une task `mode=interactive` (marqueur durable). Tant qu'il n'est
+  pas **`merged`** dans `dev`, `run_project`/`run_feature` ne draine **aucune** feature de travail (elles
+  branchent depuis `dev` `WORKTREE_BASE` et ont besoin du design du socle — sinon desync sur squelette). Le
+  socle reste dispatchable (sa task interactive est tenue pour `cockpit interview`). Fail-closed : le merge
+  du socle reste **GO humain, jamais auto** ; les features tenues sortent en `held_for_socle` (surfacé), pas
+  en échec. Projet sans socle interactif (mûr / control-plane) → pas de gate.
 
 ## Invariants de test (à encoder dans cockpit)
 
@@ -35,3 +42,5 @@ la séquence de phases ne vivait qu'en **prose** (checklist/`next:`) jamais pars
 - Priorité hors vocab `P0-P3` → warning fail-soft, jamais crash.
 - Un P2 qui débloque un P1 doit **remonter** (`eff_prio` ; ne pas régresser vers un tri-priorité plat).
 - Trigger en prose legacy / glob non scopé (`..`/absolu) / `when` hors-enum → `DEFERRED`, jamais READY.
+- **Gate socle** : socle worked+non-`merged` → `run_project` dispatche 0 feature de travail, `held_for_socle`
+  peuplé ; socle `merged` → drain normal (non-régression) ; projet sans socle → drain normal.

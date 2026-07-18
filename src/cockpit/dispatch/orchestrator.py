@@ -160,6 +160,15 @@ def run_project(conn: sqlite3.Connection, settings: Settings, *, project: str,
     # Auto-heal : clôt un socle DÉJÀ travaillé dont l'interview a été interrompue avant sa clôture (PTY tué) —
     # sinon il resterait tenu en `needs_interview` et bloquerait l'aval. No-op si rien à réconcilier.
     interview.reconcile_socle(conn, settings, project=project, git=git)
+    # Gate socle : les features de travail branchent depuis `dev` (WORKTREE_BASE) et ont besoin du design du
+    # socle. Tant que le socle n'est pas MERGÉ dans `dev` (GO humain, fail-closed — jamais auto), NE PAS
+    # drainer l'aval : un worker sur un `dev` sans design coderait contre le squelette (desync). Le socle
+    # lui-même reste dispatchable (sa task interactive est tenue pour `cockpit interview`). C'est
+    # l'enforcement inter-feature (le socle est le prérequis implicite de toute feature de travail).
+    socle = interview.socle_feature(conn, project)
+    socle_slug = socle["slug"] if socle else None
+    socle_blocking = socle is not None and socle["status"] != "merged"
+    held_for_socle: set[str] = set()   # features de travail tenues jusqu'au merge du socle (pas un échec)
     max_parallel = max(1, max_parallel)
     in_flight: set[str] = set()   # features en vol — MUTÉ À LA SOUMISSION (mutex, seul le principal assigne)
     failed: set[str] = set()      # features dont un run a échoué → exclues du reste du run (borne le run)
@@ -169,9 +178,14 @@ def run_project(conn: sqlite3.Connection, settings: Settings, *, project: str,
 
     with ThreadPoolExecutor(max_workers=max_parallel) as pool:
         while True:
-            # `failed | needs_interview` = les features à NE PLUS soumettre (échec OU tenue au terminal) :
-            # sans les exclure, les interactives resteraient READY et la boucle spinnerait à l'infini.
-            for slug in _discoverable_features(conn, project, in_flight, failed | needs_interview):
+            # `failed | needs_interview | held_for_socle` = les features à NE PLUS soumettre (échec, tenue au
+            # terminal, ou tenue jusqu'au merge du socle) : sans les exclure, elles resteraient READY et la
+            # boucle spinnerait à l'infini.
+            for slug in _discoverable_features(conn, project, in_flight,
+                                               failed | needs_interview | held_for_socle):
+                if socle_blocking and slug != socle_slug:
+                    held_for_socle.add(slug)            # feature de travail : attend le merge du socle
+                    continue
                 if len(in_flight) >= max_parallel:
                     break
                 in_flight.add(slug)                     # réservé AVANT submit → jamais deux fois la feature
@@ -192,8 +206,10 @@ def run_project(conn: sqlite3.Connection, settings: Settings, *, project: str,
     # Drain fini → FINALISE chaque feature au travail complet : Tier-0 + reviewer dispatché → merge-ready.
     # C'est le tronçon « qualité » de la boucle autonome (le merge reste le GO humain, hors boucle).
     finalizations = [_finalize_feature(conn, settings, project, slug, review_runner=review_runner)
-                     for slug in _worked_complete_features(conn, project, failed | needs_interview)]
-    return _summarize(project, reports, failed, finalizations, needs_interview=needs_interview)
+                     for slug in _worked_complete_features(conn, project,
+                                                           failed | needs_interview | held_for_socle)]
+    return _summarize(project, reports, failed, finalizations, needs_interview=needs_interview,
+                      held_for_socle=held_for_socle)
 
 
 def run_feature(conn: sqlite3.Connection, settings: Settings, *, project: str, feature: str,
@@ -212,6 +228,12 @@ def run_feature(conn: sqlite3.Connection, settings: Settings, *, project: str, f
     git = git or InternalGit()
     # Auto-heal : clôt un socle DÉJÀ travaillé dont l'interview a été interrompue avant sa clôture (PTY tué).
     interview.reconcile_socle(conn, settings, project=project, git=git)
+    # Gate socle (symétrique de run_project) : une feature de travail ne se draine pas tant que le socle du
+    # projet n'est pas MERGÉ dans `dev` — sinon elle branche depuis un `dev` sans design (desync). Le socle
+    # lui-même n'est pas gaté (il doit pouvoir être drainé/tenu pour l'interview).
+    socle = interview.socle_feature(conn, project)
+    if socle is not None and socle["status"] != "merged" and feature != socle["slug"]:
+        return _summarize(project, [], set(), [], held_for_socle={feature})
     feature_ref = f"{project}/{feature}"
     reports: list[dict] = []
     while True:
@@ -232,14 +254,18 @@ def run_feature(conn: sqlite3.Connection, settings: Settings, *, project: str, f
 
 def _summarize(project: str, reports: list[dict], failed: set[str],
                finalizations: list[dict] | None = None, *,
-               needs_interview: set[str] | None = None) -> dict:
+               needs_interview: set[str] | None = None,
+               held_for_socle: set[str] | None = None) -> dict:
     """Agrège les runs + les **finalisations** (Tier-0 + review par feature complète). `drained` ⟺ aucune
     feature en échec ; `merge_ready` = features dont le gate est vert (prêtes au GO humain). `needs_interview`
     (v12) = features dont la next task est `interactive` : tenues pour `cockpit interview` (surfacées, pas
-    comptées en échec). La boucle ne s'arrête que lorsqu'il ne reste rien à soumettre ; une feature en échec
-    laisse des tasks `todo` re-dispatchables."""
+    comptées en échec). `held_for_socle` = features de travail NON dispatchées parce que le socle du projet
+    n'est pas encore mergé dans `dev` (elles branchent depuis `dev` et ont besoin du design du socle) : elles
+    attendent le GO humain `cockpit merge <projet>/<socle> --go`. La boucle ne s'arrête que lorsqu'il ne
+    reste rien à soumettre ; une feature en échec laisse des tasks `todo` re-dispatchables."""
     fins = finalizations or []
     held = needs_interview or set()
+    socle_held = held_for_socle or set()
     # Une run interactive apparaît dans `reports` avec ok=False (aucun worker lancé) mais N'EST PAS un échec :
     # on ne la compte ni dans `ok` ni dans `failed`, elle vit dans `needs_interview`.
     n_ok = sum(1 for r in reports if r["ok"])
@@ -248,6 +274,7 @@ def _summarize(project: str, reports: list[dict], failed: set[str],
             "failed": len(reports) - n_ok - n_held, "failed_features": sorted(failed),
             "drained": not failed, "runs": reports,
             "needs_interview": sorted(held),
+            "held_for_socle": sorted(socle_held),
             "finalizations": fins,
             "merge_ready": sorted(f["feature"] for f in fins if f["merge_ready"])}
 
@@ -276,6 +303,12 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     for feat in summary.get("needs_interview", []):
         print(f"  🖐 {feat} — interview terminale requise (task interactive, non dispatchable en headless) : "
               f"lance `cockpit interview {args.project}` dans un terminal.")
+    held_for_socle = summary.get("held_for_socle", [])
+    if held_for_socle:
+        print(f"  ⏸ {len(held_for_socle)} feature(s) de travail en attente du merge du socle "
+              f"(elles branchent depuis dev et ont besoin du design) : {', '.join(held_for_socle)}.")
+        print(f"    → merge d'abord le socle (GO humain) : `cockpit merge {args.project}/<socle> --go`, "
+              f"puis relance `cockpit run {args.project}`.")
     for fin in summary["finalizations"]:
         if fin["merge_ready"]:
             print(f"  ✅ {fin['feature']} — MERGE-READY (Tier-0 + review OK) → `cockpit merge {args.project}"

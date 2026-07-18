@@ -237,6 +237,8 @@ def test_web_dispatch_drains_and_produces_review(client, monkeypatch, fake_tools
 
     conn = store.open_db(settings)                          # seed projet/feature/task (todo) en direct
     registry.create_project(conn, settings, slug="proj")
+    conn.execute("DELETE FROM tasks")                       # board CONTRÔLÉ : retire le socle d'amorçage
+    conn.execute("DELETE FROM features")                    # (sinon le gate socle tiendrait `feat`)
     model.add_feature(conn, project_slug="proj", slug="feat")
     model.add_task(conn, feature_ref="proj/feat", slug="impl")
     conn.commit()

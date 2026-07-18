@@ -104,7 +104,8 @@ def test_run_project_drains_intra_feature_dag_in_order(ctx):
 def test_run_project_surfaces_interactive_task_as_needs_interview(ctx):
     """v12 : une feature dont la next task est `interactive` est TENUE pour le terminal — elle apparaît dans
     `needs_interview`, PAS dans `failed`, aucun worker n'est spawné (runner jamais appelé), et la boucle NE
-    spinne PAS (la feature interactive est exclue du re-dispatch). Les features headless du run drainent."""
+    spinne PAS. Gate socle (2026-07-18) : tant que le socle n'est pas mergé, la feature de travail headless
+    est TENUE (`held_for_socle`), PAS dispatchée — elle branche depuis dev et a besoin du design du socle."""
     settings, conn = ctx
     _new_project(conn, settings, "proj")
     _seed(conn, settings, "proj", "work", [("t", [])])                  # feature headless normale
@@ -121,11 +122,13 @@ def test_run_project_surfaces_interactive_task_as_needs_interview(ctx):
             return run.RunResult(argv=list(argv), returncode=0, stdout=out, stderr="")
 
     summary = orchestrator.run_project(conn, settings, project="proj", git=InternalGit(), runner=_SpyRunner())
-    assert summary["needs_interview"] == ["socle"]                      # surfacée, tenue pour l'interview
+    assert summary["needs_interview"] == ["socle"]           # surfacée, tenue pour l'interview
+    assert summary["held_for_socle"] == ["work"]             # gate socle : work tenu (socle non-mergé)
     assert "socle" not in summary["failed_features"] and summary["failed"] == 0
-    assert summary["ok"] == 1                                           # la feature headless a drainé
-    assert all("socle" not in c for c in (str(x) for x in calls))       # aucun spawn sur la feature socle
+    assert summary["ok"] == 0                                # work NON drainé (socle non-mergé)
+    assert calls == []                                       # aucun spawn (socle interactif + work tenu)
     assert _statuses(conn, "socle") == {"cadrage": "todo"}             # jamais in_progress/faux-done
+    assert _statuses(conn, "work") == {"t": "todo"}                    # work jamais dispatché
 
 
 def test_run_project_auto_reconciles_worked_socle_without_interview(ctx, monkeypatch):
@@ -146,6 +149,74 @@ def test_run_project_auto_reconciles_worked_socle_without_interview(ctx, monkeyp
                                        runner=_writing_worker(), review_runner=_review_worker())
     assert _statuses(conn, "socle") == {"cadrage": "done"}   # réconcilié sans 2ᵉ interview
     assert "socle" not in summary["needs_interview"]         # jamais tenu au terminal
+    assert summary["held_for_socle"] == ["build"]            # gate socle : feature de travail tenue
+
+
+# -- gate socle : le socle non-mergé est prérequis implicite de toute feature de travail -------------
+
+def _mk_socle(conn, project: str, *, merged: bool, worked: bool = True) -> None:
+    """Pose un socle (feature portant une task `interactive`) + statut. `worked` → task `done` (socle clos,
+    prêt à merger) ; `merged` → feature `merged` (design sur dev)."""
+    model.add_feature(conn, project_slug=project, slug="socle", facet="doc")
+    model.add_task(conn, feature_ref=f"{project}/socle", slug="cadrage",
+                   acceptance="Intention renseignée.", mode="interactive")
+    if worked:
+        conn.execute("UPDATE tasks SET status='done' WHERE slug='cadrage'")
+    if merged:
+        conn.execute("UPDATE features SET status='merged' WHERE slug='socle'")
+    conn.commit()
+
+
+def test_socle_gate_holds_work_until_socle_merged(ctx):
+    """Le bug live 2026-07-18 : un socle clos mais NON-mergé laissait le drain partir → les features de
+    travail branchaient depuis un `dev` sans design (squelette). Le gate les TIENT (`held_for_socle`), aucun
+    spawn, aucun échec — jusqu'au GO humain qui merge le socle."""
+    settings, conn = ctx
+    _new_project(conn, settings, "proj")
+    _mk_socle(conn, "proj", merged=False)                    # socle clos, pas encore mergé
+    _seed(conn, settings, "proj", "work", [("t", [])])       # feature de travail headless
+    r = _Runner()
+    summary = orchestrator.run_project(conn, settings, project="proj", git=InternalGit(), runner=r)
+    assert summary["held_for_socle"] == ["work"]             # tenue jusqu'au merge du socle
+    assert summary["dispatched"] == 0 and summary["ok"] == 0 and summary["failed"] == 0
+    assert "work" not in summary["failed_features"]          # tenue, pas en échec
+    assert _statuses(conn, "work") == {"t": "todo"}          # jamais dispatchée
+
+
+def test_socle_gate_drains_work_once_socle_merged(ctx):
+    """Non-régression : socle MERGÉ (design sur dev) → le gate laisse passer, la feature de travail draine
+    normalement. Le socle mergé est inerte (exclu du drain)."""
+    settings, conn = ctx
+    _new_project(conn, settings, "proj")
+    _mk_socle(conn, "proj", merged=True)
+    _seed(conn, settings, "proj", "work", [("t", [])])
+    r = _Runner()
+    summary = orchestrator.run_project(conn, settings, project="proj", git=InternalGit(), runner=r)
+    assert summary["held_for_socle"] == []                   # rien tenu : socle mergé
+    assert summary["ok"] == 1 and summary["drained"] is True
+    assert _statuses(conn, "work") == {"t": "done"}          # drainée normalement
+
+
+def test_no_socle_project_drains_normally(ctx):
+    """Un projet SANS socle interactif (mûr / control-plane) n'a pas de gate : drain normal."""
+    settings, conn = ctx
+    _new_project(conn, settings, "proj")
+    _seed(conn, settings, "proj", "feat", [("t", [])])       # aucune task interactive → pas de socle
+    summary = orchestrator.run_project(conn, settings, project="proj", git=InternalGit(), runner=_Runner())
+    assert summary["held_for_socle"] == [] and summary["ok"] == 1 and summary["drained"] is True
+
+
+def test_run_feature_holds_work_until_socle_merged(ctx):
+    """Gate socle symétrique sur le chemin WEB (`run_feature`) : une feature de travail ciblée sous un socle
+    non-mergé est tenue (`held_for_socle`), aucun dispatch."""
+    settings, conn = ctx
+    _new_project(conn, settings, "proj")
+    _mk_socle(conn, "proj", merged=False)
+    _seed(conn, settings, "proj", "work", [("t", [])])
+    summary = orchestrator.run_feature(conn, settings, project="proj", feature="work",
+                                       git=InternalGit(), runner=_Runner())
+    assert summary["held_for_socle"] == ["work"] and summary["dispatched"] == 0
+    assert _statuses(conn, "work") == {"t": "todo"}
 
 
 # -- parallélisme borné inter-features --------------------------------------------------------------

@@ -103,6 +103,33 @@ def test_reconcile_socle_noop_when_not_worked(ctx):
     assert conn.execute("SELECT status FROM tasks WHERE slug='cadrage'").fetchone()["status"] == "todo"
 
 
+def test_socle_feature_identifies_socle_durably(ctx):
+    """`socle_feature` identifie le socle par sa task `interactive` — marqueur DURABLE, contrairement à
+    `resolve_interview` : il tient MÊME quand le socle est clos (task `done`, plus aucune task READY)."""
+    settings, conn = ctx
+    _socle_project(conn, settings)
+    model.add_feature(conn, project_slug="proj", slug="work", facet="code")   # feature de travail (headless)
+    model.add_task(conn, feature_ref="proj/work", slug="t", acceptance="X.")
+    s = interview.socle_feature(conn, "proj")
+    assert s is not None and s["slug"] == "socle"                             # trouvé par la task interactive
+    conn.execute("UPDATE tasks SET status='done' WHERE slug='cadrage'")       # socle clos
+    conn.commit()
+    assert interview.resolve_interview(conn, "proj") is None                  # plus de task READY → None
+    assert interview.socle_feature(conn, "proj")["slug"] == "socle"           # mais socle_feature tient
+
+
+def test_socle_feature_none_when_no_interactive_task(ctx):
+    """Projet sans socle interactif (mûr / control-plane) → `socle_feature` rend `None` (rien à gater)."""
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj")
+    conn.execute("DELETE FROM tasks")
+    conn.execute("DELETE FROM features")
+    conn.commit()
+    model.add_feature(conn, project_slug="proj", slug="work", facet="code")
+    model.add_task(conn, feature_ref="proj/work", slug="t", acceptance="X.")  # headless (défaut)
+    assert interview.socle_feature(conn, "proj") is None
+
+
 def test_interview_incomplete_leaves_socle_open(ctx):
     """Si la session ne produit AUCUNE feature de travail, la vérification échoue (pas de ≥1 feature) → le
     socle reste `todo`, `completed=False`, rien n'est faux-clôturé."""

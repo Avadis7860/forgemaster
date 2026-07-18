@@ -5,7 +5,11 @@ Sur un projet neuf **browser-game** (seed réel, pas un board contrôlé), la bo
      la task interactive reste `todo` (jamais faux-`done`).
   2. `cockpit interview` → lance `claude` **INTERACTIF** (argv sans `-p`) ; l'humain (launcher injecté)
      remplit `docs/design.md` et author ≥1 feature de travail → tout le socle passe `done` (verified).
-  3. `cockpit run` de nouveau → **draine** la feature de travail en HEADLESS (le runner EST appelé).
+  3. `cockpit run` AVANT le merge du socle → la feature de travail est **TENUE** (`held_for_socle`), pas
+     drainée : elle branche depuis `dev` et a besoin du design du socle (gate socle 2026-07-18).
+  4. **GO humain** : `cockpit merge <socle> --go` → le design (docs-only) atterrit sur `dev`.
+  5. `cockpit run` de nouveau → la feature de travail **draine** en HEADLESS depuis un `dev` porteur du
+     design (le runner EST appelé).
 
 Launcher/runner injectés : aucun vrai `claude` lancé. Prouve le plumbing déterministe de la boucle ;
 le handoff TTY réel (l'humain qui tape dans le terminal) reste un smoke manuel.
@@ -99,8 +103,21 @@ def test_launch_loop_closes_via_first_session_interview(ctx):
     assert "backend-scaffold" in _features(conn)                    # ≥1 feature de travail authorée
     assert all(status == "done" for status, _ in _socle(conn).values())          # socle clôturé (verified)
 
-    # 3 — cockpit run de nouveau : plus de needs_interview, la feature de travail draine en HEADLESS.
+    # 3 — cockpit run AVANT le merge du socle : la feature de travail est TENUE (gate socle), pas de drain.
     r3 = _Runner()
     rep3 = orchestrator.run_project(conn, settings, project=PROJECT, git=InternalGit(), runner=r3)
-    assert not rep3.get("needs_interview")
-    assert "backend-scaffold" in r3.calls                           # drain headless repris
+    assert not rep3.get("needs_interview")                          # socle réconcilié, plus d'interview
+    assert rep3.get("held_for_socle") == ["backend-scaffold"]       # tenue : socle pas encore mergé
+    assert r3.calls == []                                           # aucun drain aval (dev sans design)
+
+    # 4 — GO humain : merge le socle docs-only → le design atterrit sur dev (fail-closed levé délibérément).
+    from cockpit.gate import merge
+    done = merge.run_merge(conn, settings, feature_ref=f"{PROJECT}/socle-design", human_go=True,
+                           git=InternalGit())
+    assert done["merged"] is True                                   # design (docs-only) sur dev
+
+    # 5 — cockpit run de nouveau : socle mergé → la feature de travail draine en HEADLESS depuis dev+design.
+    r5 = _Runner()
+    rep5 = orchestrator.run_project(conn, settings, project=PROJECT, git=InternalGit(), runner=r5)
+    assert not rep5.get("needs_interview") and not rep5.get("held_for_socle")
+    assert "backend-scaffold" in r5.calls                          # drain headless repris, socle sur dev

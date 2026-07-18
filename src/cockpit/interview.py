@@ -85,6 +85,18 @@ def resolve_interview(conn, project: str) -> tuple[dict, dict] | None:
     return None
 
 
+def socle_feature(conn, project: str) -> dict | None:
+    """La feature SOCLE d'un projet = celle qui porte une task `mode=='interactive'` — marqueur DURABLE,
+    indépendant du statut des tasks. À la différence de `resolve_interview` (qui exige une NEXT task READY et
+    rend donc `None` dès que le socle est clos), ce prédicat identifie le socle **même clôturé** : il sert au
+    gate de drain aval (le socle non-mergé bloque les features de travail). `None` si le projet n'a pas de
+    socle interactif (projet mûr / control-plane) → rien à gater. Ordre stable (features triées par slug)."""
+    for feat in model.list_features(conn, project):
+        if any(t.get("mode") == "interactive" for t in model.list_tasks(conn, feat["id"])):
+            return feat
+    return None
+
+
 def _has_work_feature(conn, project: str, socle_slug: str) -> bool:
     """≥1 feature de travail existe = au moins une feature AUTRE que le socle (un projet neuf n'a que le socle
     semé ; `roadmap-decompose` en ajoute). C'est le critère binaire objectif de « l'interview a produit »."""
