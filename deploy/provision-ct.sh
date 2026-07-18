@@ -95,6 +95,56 @@ install_podman() {
   echo "   ✓ podman OK : $(podman --version 2>/dev/null || echo installé)"
 }
 
+# Provider compose : `cockpit deploy` lance `podman compose` (défaut config), un wrapper qui DÉLÈGUE à un
+# provider externe — `podman` seul NE suffit PAS (sans provider, `deploy up` échoue au build). Debian 12
+# package `podman-compose` en apt (le provider contre lequel le backend est écrit, cf. runtime/backend.py).
+# Idempotent (skip si `podman compose` délègue déjà), fail-loud. apt exige root → `sudo` sinon.
+install_compose_provider() {
+  if podman compose version >/dev/null 2>&1; then
+    echo "   déjà présent : provider compose (\`podman compose\` délègue)"; return 0
+  fi
+  local APT=apt-get
+  [ "$(id -u)" -eq 0 ] || APT="sudo apt-get"
+  echo "   installe podman-compose (provider de \`podman compose\`) via $APT…"
+  $APT update -qq && $APT install -y -qq podman-compose \
+    || { echo "✗ install podman-compose échouée — installe-le à la main ou COCKPIT_COMPOSE_CMD=docker compose" >&2; return 1; }
+  podman compose version >/dev/null 2>&1 \
+    || { echo "✗ \`podman compose\` ne délègue toujours pas après podman-compose (provider ko)" >&2; return 1; }
+  echo "   ✓ provider compose OK"
+}
+
+# Runner de vérification visuelle (gate Tier-1.5 `cockpit gate verify`) : Playwright headless. `verify.py` le
+# résout au défaut `$COCKPIT_HOME/runners/render_check.js` (aucun env à câbler). On sème le .js vendoré
+# (deploy/runners/) + son unique dep `playwright-core` (pinné, package.json) + le browser Chromium (peuplé
+# sous `~/.cache/ms-playwright` de l'utilisateur du service ; sous --system root = /root = le HOME du service).
+# Node vient de `cockpit tools install` (tools/bin). Idempotent (install browser skip si déjà au bon SHA).
+seed_verify_runner() {
+  local script_dir rdir src pw
+  script_dir="$(cd "$(dirname "$0")" && pwd)"
+  src="$script_dir/runners"
+  rdir="$home/runners"
+  [ -f "$src/render_check.js" ] && [ -f "$src/package.json" ] \
+    || { echo "✗ runner vendoré introuvable ($src/render_check.js) — repo incomplet ?" >&2; return 1; }
+  command -v node >/dev/null 2>&1 || export PATH="$home/tools/bin:$PATH"
+  command -v node >/dev/null 2>&1 \
+    || { echo "✗ node introuvable (tools/bin) — le runner exige Node ; relance \`cockpit tools install\`" >&2; return 1; }
+  mkdir -p "$rdir"
+  install -m 0644 "$src/render_check.js" "$rdir/render_check.js"
+  install -m 0644 "$src/package.json"    "$rdir/package.json"
+  echo "   runner posé : $rdir/render_check.js (+ playwright-core pinné)"
+  ( cd "$rdir" && npm install --no-audit --no-fund --loglevel=error ) \
+    || { echo "✗ npm install du runner échoué" >&2; return 1; }
+  pw="$rdir/node_modules/playwright-core/cli.js"
+  if [ "$(id -u)" -eq 0 ]; then
+    node "$pw" install-deps chromium || echo "   (install-deps chromium : libs peut-être déjà là — verify tranchera)"
+  else
+    echo "   (non-root : libs système Chromium non posées — \`sudo node $pw install-deps chromium\` si verify échoue)"
+  fi
+  node "$pw" install chromium \
+    || { echo "✗ install du browser chromium échouée (réseau ? cdn.playwright.dev)" >&2; return 1; }
+  echo "   ✓ runner verify prêt (playwright-core + chromium sous ~/.cache/ms-playwright)"
+}
+
 # PATH du LOGIN shell (le terminal web est un `bash -l`). `/etc/profile` RÉINITIALISE `PATH` (root → défaut
 # Debian), écrasant tout PATH hérité/injecté → sans ça `cockpit`/`codemap`/`node` sont `command not found`
 # dans le terminal (et le handoff « auto-run `cockpit interview` » casse). On ré-ajoute le toolchain APRÈS ce
@@ -134,6 +184,10 @@ echo "→ [4/8] outillage hôte-niveau (maps + Node + qualité py → $home/tool
 if [ -n "$token_file" ]; then "$cockpit" tools install --token-file "$token_file"; else "$cockpit" tools install; fi
 echo "   runtime conteneur (podman) pour \`cockpit deploy\` (P2)"
 install_podman
+echo "   provider compose (podman-compose) — \`podman compose\` DÉLÈGUE, podman seul ne suffit pas"
+install_compose_provider
+echo "   runner de vérification visuelle (gate Tier-1.5) + Chromium sous \$COCKPIT_HOME/runners"
+seed_verify_runner
 # Auto-vérification (fail-loud) : les binaires que les bundles DÉCLARENT résolvent-ils vraiment sous
 # `tools_env` ? `cockpit doctor` = SONDE PURE (rc 0 = tout présent ; rc 1 = un binaire manque, il le nomme
 # + rappelle `cockpit tools install`). Sur rc 1 on ABORTE l'install ICI, au lieu de laisser le 1er worker le

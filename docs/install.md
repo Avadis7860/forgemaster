@@ -9,6 +9,12 @@ Node requis) ou **depuis les sources** (clone + build du front).
 - **Python ≥ 3.11** (toujours).
 - **Node ≥ 18** — **uniquement** pour installer *depuis les sources* (le wheel packagé embarque déjà l'UI).
 - Git (le cockpit orchestre des dépôts).
+- **Pour `cockpit deploy` sur un CT LXC** — le service tourne en `--system` (root), donc `podman compose`
+  s'exécute en *rootful-in-container*. Un CT LXC **non-privilégié** doit être créé avec les features Proxmox
+  **`nesting=1,keyctl=1`** (`pct create … --features nesting=1,keyctl=1`, ou `pct set <id> --features …`) :
+  sans elles, le namespace/overlay imbriqué de podman échoue au `build`/`up`. `provision-ct.sh` installe podman +
+  le provider compose + fuse-overlayfs, mais **ne peut pas** poser les features (elles se règlent à la création
+  du CT, hors du conteneur). CT privilégié = fallback si le non-privilégié ne passe pas.
 
 ## Installer
 

@@ -51,11 +51,13 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
         all_missing.update(miss)
     mcp_ok = _report_mcp(settings)
     runtime_ok = _report_runtime(settings)
+    provider_ok = _report_compose_provider(settings)
+    runner_ok = _report_runner(settings)
     if all_missing:
         print(f"🔴 outillage INCOMPLET — pose les manquants (`cockpit tools install`) : "
               f"{', '.join(sorted(all_missing))}")
         return 1
-    if not (mcp_ok and runtime_ok):
+    if not (mcp_ok and runtime_ok and provider_ok and runner_ok):
         return 1
     print(f"✅ outillage complet — tous les binaires déclarés résolvent sous {tools_bin(settings)}")
     return 0
@@ -71,6 +73,37 @@ def _report_runtime(settings: Settings) -> bool:
         return True
     print(f"  🔴 runtime conteneur — `{cmd[0]}` absent → `cockpit deploy` échouerait ; installe podman "
           "(rootless, via `provision-ct.sh`) ou configure COCKPIT_COMPOSE_CMD=docker compose")
+    return False
+
+
+def _report_compose_provider(settings: Settings) -> bool:
+    """`cockpit deploy` lance `podman compose` (un wrapper qui DÉLÈGUE) : `podman` présent mais SANS provider
+    (`podman-compose`/`docker-compose`) → `deploy up` échouerait au build (faux-vert de `_report_runtime` qui
+    ne sonde que `cmd[0]`). Ne double-rougit PAS si le moteur lui-même manque (déjà rougi ci-dessus)."""
+    from cockpit.runtime.backend import compose_provider_available, runtime_available
+    cmd = settings.compose_cmd
+    if not runtime_available(cmd):
+        return True  # moteur absent → déjà signalé par `_report_runtime`, on ne redouble pas le 🔴
+    if compose_provider_available(cmd):
+        print(f"  ✅ provider compose — `{' '.join(cmd)}` délègue (provider présent)")
+        return True
+    print(f"  🔴 provider compose — `{cmd[0]}` présent mais `{' '.join(cmd)}` n'a pas de provider "
+          "(`apt install podman-compose`, via `provision-ct.sh`) → `cockpit deploy` échouerait au build")
+    return False
+
+
+def _report_runner(settings: Settings) -> bool:
+    """Le runner Playwright du gate Tier-1.5 (`cockpit gate verify`) doit être présent, sinon `verify`
+    fail-close (jamais de faux-vert, mais toute vérif visuelle échoue). Défaut
+    `$COCKPIT_HOME/runners/render_check.js` (semé par `provision-ct.sh`) ou override
+    `COCKPIT_VERIFY_RUNNER`."""
+    from cockpit.gate.verify import runner_path
+    runner = runner_path(settings)
+    if runner.is_file():
+        print(f"  ✅ runner verify — présent ({runner})")
+        return True
+    print(f"  🔴 runner verify — absent ({runner}) → `cockpit gate verify` fail-close ; "
+          "sème-le (`provision-ct.sh`) ou configure COCKPIT_VERIFY_RUNNER")
     return False
 
 

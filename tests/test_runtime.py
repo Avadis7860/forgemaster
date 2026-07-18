@@ -176,6 +176,28 @@ def test_runtime_available_resolves_engine_binary():
     assert backend_mod.runtime_available([]) is False
 
 
+def test_compose_provider_available_needs_delegated_provider(tmp_path: Path):
+    """`podman compose` DÉLÈGUE : `podman` présent ne suffit pas — un provider
+    (`podman-compose`/`docker-compose`) doit résoudre. `docker compose` (plugin v2) → `cmd[0]` suffit."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+
+    def mk(name: str) -> None:
+        exe = bindir / name
+        exe.write_text("#!/bin/sh\n:\n")
+        exe.chmod(0o755)
+
+    path = str(bindir)
+    mk("podman")                                                             # moteur seul, sans provider
+    assert backend_mod.compose_provider_available(("podman", "compose"), path=path) is False
+    mk("podman-compose")                                                     # provider posé
+    assert backend_mod.compose_provider_available(("podman", "compose"), path=path) is True
+    mk("docker")
+    # `docker compose` = plugin v2 embarqué → présence de `docker` (cmd[0]) suffit
+    assert backend_mod.compose_provider_available(("docker", "compose"), path=path) is True
+    assert backend_mod.compose_provider_available([], path=path) is False
+
+
 def test_missing_engine_raises_compose_error_not_filenotfound(tmp_path: Path):
     """Moteur absent (binaire introuvable) → `ComposeError` **actionnable** (précondition), PAS un
     `FileNotFoundError` brut : le runner par défaut sonde le PATH avant le sous-process. C'est ce qui rend

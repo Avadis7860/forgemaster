@@ -28,6 +28,20 @@ def _seed_project(conn, settings, *, project="proj", feature="feat", task="t") -
     model.add_task(conn, feature_ref=f"{project}/{feature}", slug=task)
 
 
+def _seed_runner(settings: Settings) -> None:
+    """Pose le runner Tier-1.5 à son chemin défaut → la sonde `runner verify` passe au vert."""
+    from cockpit.gate.verify import runner_path
+    p = runner_path(settings)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("// stub runner\n")
+
+
+def _force_runtime_green(monkeypatch) -> None:
+    """Rend déterministes runtime + provider compose (le vrai `which` dépendrait du podman hôte)."""
+    monkeypatch.setattr("cockpit.runtime.backend.runtime_available", lambda *a, **k: True)
+    monkeypatch.setattr("cockpit.runtime.backend.compose_provider_available", lambda *a, **k: True)
+
+
 # -- parseur `allowedTools` -------------------------------------------------------------------------
 
 def test_required_bins_extracts_bash_ignores_rest(tmp_path: Path):
@@ -104,14 +118,17 @@ def test_preflight_passes_when_tools_present(tmp_path: Path, fake_tools):
 
 # -- sonde `cockpit doctor` -------------------------------------------------------------------------
 
-def test_doctor_green_when_all_host_tools_present(tmp_path: Path, fake_tools, capsys):
+def test_doctor_green_when_all_host_tools_present(tmp_path: Path, fake_tools, capsys, monkeypatch):
     settings = _settings(tmp_path)
     fake_tools(settings)
+    _force_runtime_green(monkeypatch)                        # podman + provider compose présents
+    _seed_runner(settings)                                   # runner Tier-1.5 présent
     rc = doctor.cli_dispatch(settings, argparse.Namespace())
     out = capsys.readouterr().out
     assert rc == 0
     assert "outillage complet" in out
     assert "base/doc" in out                                 # rapport par type/facette
+    assert "provider compose" in out and "runner verify" in out   # les deux nouvelles sondes rapportent
 
 
 def test_doctor_red_and_names_missing_tool(tmp_path: Path, capsys):
@@ -120,3 +137,28 @@ def test_doctor_red_and_names_missing_tool(tmp_path: Path, capsys):
     out = capsys.readouterr().out
     assert rc == 1
     assert "INCOMPLET" in out and "docsmap" in out           # nomme au moins un manquant
+
+
+def test_doctor_red_when_verify_runner_absent(tmp_path: Path, fake_tools, capsys, monkeypatch):
+    """Outils hôte OK + runtime OK mais runner Tier-1.5 absent → 🔴 (sinon `gate verify` fail-close muet)."""
+    settings = _settings(tmp_path)
+    fake_tools(settings)
+    _force_runtime_green(monkeypatch)                        # runner NON semé → sonde rouge
+    rc = doctor.cli_dispatch(settings, argparse.Namespace())
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "runner verify" in out and "absent" in out
+
+
+def test_doctor_red_when_compose_provider_missing(tmp_path: Path, fake_tools, capsys, monkeypatch):
+    """`podman` présent mais provider compose absent → 🔴 (faux-vert que `_report_runtime` seul rate)."""
+    settings = _settings(tmp_path)
+    fake_tools(settings)
+    _seed_runner(settings)
+    # podman présent (moteur), mais son provider compose absent
+    monkeypatch.setattr("cockpit.runtime.backend.runtime_available", lambda *a, **k: True)
+    monkeypatch.setattr("cockpit.runtime.backend.compose_provider_available", lambda *a, **k: False)
+    rc = doctor.cli_dispatch(settings, argparse.Namespace())
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "provider compose" in out and "podman-compose" in out

@@ -81,6 +81,19 @@ def runtime_available(cmd: Sequence[str], *, path: str | None = None) -> bool:
     return bool(cmd) and shutil.which(cmd[0], path=path) is not None
 
 
+def compose_provider_available(cmd: Sequence[str], *, path: str | None = None) -> bool:
+    """True si le SOUS-provider de `podman compose` résout. `podman compose` est un wrapper qui DÉLÈGUE à un
+    binaire externe (`podman-compose` ou `docker-compose`) : `podman` seul présent ne garantit PAS que
+    `podman compose up` marche. Pour `docker compose` (plugin v2 embarqué) `cmd[0]` suffit. Sonde `doctor`,
+    sans effet de bord. PUR (which)."""
+    if not cmd:
+        return False
+    if cmd[0] == "podman" and len(cmd) >= 2 and cmd[1] == "compose":
+        return (shutil.which("podman-compose", path=path) is not None
+                or shutil.which("docker-compose", path=path) is not None)
+    return runtime_available(cmd, path=path)
+
+
 def _default_runner(argv: Sequence[str], *, cwd: object, env: Mapping[str, str],
                     timeout: float) -> run.RunResult:
     # Preflight fail-GRACIEUX : le moteur (`podman`/`docker`) doit résoudre AVANT le sous-process, sinon
