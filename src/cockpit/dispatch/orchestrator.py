@@ -21,6 +21,7 @@ branches feature ; `cockpit merge --go` reste un gate humain séparé).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import sqlite3
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 
@@ -30,7 +31,7 @@ from cockpit.db import store
 from cockpit.dispatch import reviewer, worker
 from cockpit.dispatch import worktree as worktree_mod
 from cockpit.gate import merge as merge_gate
-from cockpit.gate import toolchain
+from cockpit.gate import toolchain, verify
 from cockpit.git.backend import GitBackend
 from cockpit.git.internal import GitOpError, InternalGit
 from cockpit.projects.registry import sot_path_for
@@ -141,6 +142,15 @@ def _finalize_feature(conn: sqlite3.Connection, settings: Settings, project: str
     else:
         review_report = reviewer.dispatch_reviewer(conn, settings, feature_ref=feature_ref, git=git,
                                                    runner=review_runner)
+    # Tier-1.5 AUTO : une feature qui touche une surface UI (trigger partagé `has_visual_change`) et n'a pas
+    # encore de preuve fraîche → preview-déploie son worktree + prouve les markers déclarés. C'est ce qui
+    # ferme une feature VISUELLE en autonomie (sans override). Best-effort, fail-CLOSED : type non
+    # hébergeable / podman absent → pas de verdict (ou rouge) → le gate exige la preuve, jamais de faux-vert.
+    diff_text = git.diff_text(sot, base=_BASE_BRANCH, head=feat["branch"])
+    ui_touched = verify.has_visual_change(diff_files, diff_text)
+    if ui_touched and not verify.status(settings, project, feature, current_sha=sha)["fresh"]:
+        with contextlib.suppress(ValueError, OSError):
+            verify.autoverify_feature(conn, settings, project=project, feature=feature, sha=sha)
     ev = merge_gate.evaluate_gate(conn, settings, feature_ref=feature_ref, human_go=False, git=git)
     decision = ev.get("decision") or {}
     return {"feature": feature, "merge_ready": bool(decision.get("gate_green")),

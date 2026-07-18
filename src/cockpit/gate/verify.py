@@ -19,11 +19,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import subprocess
+import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from cockpit.config import Settings
+
+if TYPE_CHECKING:
+    from cockpit.runtime.backend import ComposeBackend
 
 CONTRACT_VERSION = "feature-verify-v1"
 DEFAULT_TIMEOUT_MS = 15000
@@ -244,9 +250,58 @@ def status(settings: Settings, project: str, feature: str, *, current_sha: str |
             "reviewed_sha": v.get("reviewed_sha") if v else None}
 
 
+def _wait_http_ready(url: str, *, timeout_s: float = 90.0, interval_s: float = 1.0) -> bool:
+    """Attend (poll BORNÉ) que le service écoute sur `url`. Toute réponse HTTP — même 4xx/5xx — prouve que le
+    serveur écoute → prêt. Refus de connexion / DNS / socket → retente jusqu'à `timeout_s`. Épuisé → False
+    (l'appelant tente quand même : `verify_target` fail-close si le rendu n'arrive pas). PUR sauf socket."""
+    import urllib.error
+    import urllib.request
+
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            urllib.request.urlopen(url, timeout=5)  # noqa: S310 — URL locale de preview, pas d'entrée externe
+            return True
+        except urllib.error.HTTPError:
+            return True                              # 4xx/5xx = le serveur répond → il écoute
+        except (urllib.error.URLError, OSError):
+            time.sleep(interval_s)                   # connexion refusée / pas encore up → retente
+    return False
+
+
+def autoverify_feature(conn: sqlite3.Connection, settings: Settings, *, project: str, feature: str,
+                       sha: str | None, backend: ComposeBackend | None = None) -> dict:
+    """Preuve de rendu Tier-1.5 **auto-suffisante** (source UNIQUE, CLI + boucle) : preview-déploie le
+    worktree de la feature, attend qu'il réponde, lit les markers déclarés par le worker, prouve le rendu,
+    écrit le verdict SHA-bound, **démonte TOUJOURS** (finally). `deploy_preview` lève `ValueError`
+    (worktree/compose absent = type non hébergeable) → propagé : pas de preuve possible, mais aucun faux-vert.
+    Imports paresseux de `runtime.engine` → coupe le cycle gate↔runtime."""
+    from cockpit.runtime.engine import deploy_preview, teardown_preview
+
+    preview = deploy_preview(conn, settings, slug=project, feature=feature, backend=backend)
+    try:
+        _wait_http_ready(preview["url"])
+        markers = read_declared_markers(Path(preview["workdir"]))
+        res = verify_target(settings, preview["url"], markers, name=feature)
+        return write_verdict(settings, project, feature, [res], sha=sha)
+    finally:
+        teardown_preview(conn, settings, slug=project, feature=feature, backend=backend)
+
+
+def _print_verdict(results: list[dict], verdict: dict, sha: str | None) -> None:
+    for t in results:
+        mark = "🟢" if t.get("ok") else "🔴"
+        extra = f" manquants={t['missing']}" if t.get("missing") else ""
+        extra += f" ({t['error']})" if t.get("error") else ""
+        print(f"  {mark} {t.get('name') or t['url']}{extra}")
+    print(f"feature-verify : {'🟢 vert' if verdict['ok'] else '🔴 échec'} "
+          f"({verdict['n_targets'] - verdict['n_failed']}/{verdict['n_targets']} cibles, sha {str(sha)[:8]})")
+
+
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
-    """Route `cockpit gate verify <feature>` : lit un manifeste `[{name,url,markers}]` sur **stdin**, prouve
-    chaque cible via le runner Node, écrit le verdict Tier-1.5 SHA-bound (ancré sur la branche de feature)."""
+    """Route `cockpit gate verify <feature>` : **sans manifeste stdin** (tty/vide) → self-deploying
+    (`autoverify_feature` : preview-déploie le worktree, prouve les markers déclarés, démonte). **Avec** un
+    manifeste `[{name,url,markers}]` sur stdin → mode URL externe (rétrocompat). Verdict SHA-bound."""
     import sys
 
     from cockpit.db import store
@@ -257,32 +312,39 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     conn = store.open_db(settings)
     try:
         project_slug, feature_slug = args.feature.split("/", 1) if "/" in args.feature else ("", "")
-        feature = resolve_feature(conn, args.feature)
-        sot = Path(get_project(conn, project_slug)["sot_path"])
-    except (ValueError, KeyError) as exc:
-        print(f"erreur : {exc}")
-        return 1
+        try:
+            feature = resolve_feature(conn, args.feature)
+            sot = Path(get_project(conn, project_slug)["sot_path"])
+        except (ValueError, KeyError) as exc:
+            print(f"erreur : {exc}")
+            return 1
+        sha = InternalGit().feature_sha(sot, feature["branch"])
+
+        raw = "" if sys.stdin.isatty() else sys.stdin.read()
+        if not raw.strip():                          # aucun manifeste → self-deploying
+            try:
+                verdict = autoverify_feature(conn, settings, project=project_slug,
+                                             feature=feature_slug, sha=sha)
+            except ValueError as exc:
+                print(f"preview-deploy impossible : {exc}", file=sys.stderr)
+                return 1
+            _print_verdict(verdict["targets"], verdict, sha)
+            return 0 if verdict["ok"] else 1
+
+        try:                                         # manifeste stdin → URL externe (rétrocompat)
+            data = json.loads(raw)
+        except ValueError as exc:
+            print(f"manifeste JSON invalide : {exc}", file=sys.stderr)
+            return 2
+        targets = data.get("targets", data) if isinstance(data, dict) else data
+        if not isinstance(targets, list) or not all(isinstance(t, dict) and t.get("url") for t in targets):
+            print("manifeste invalide : attendu une liste de {name, url, markers[]}", file=sys.stderr)
+            return 2
+        results = [verify_target(settings, t["url"], t.get("markers", []), name=t.get("name"),
+                                 timeout_ms=t.get("timeout_ms", DEFAULT_TIMEOUT_MS),
+                                 cookies=t.get("cookies")) for t in targets]
+        verdict = write_verdict(settings, project_slug, feature_slug, results, sha=sha)
+        _print_verdict(results, verdict, sha)
+        return 0 if verdict["ok"] else 1
     finally:
         conn.close()
-    try:
-        data = json.loads(sys.stdin.read())
-    except ValueError as exc:
-        print(f"manifeste JSON invalide : {exc}", file=sys.stderr)
-        return 2
-    targets = data.get("targets", data) if isinstance(data, dict) else data
-    if not isinstance(targets, list) or not all(isinstance(t, dict) and t.get("url") for t in targets):
-        print("manifeste invalide : attendu une liste de {name, url, markers[]}", file=sys.stderr)
-        return 2
-    sha = InternalGit().feature_sha(sot, feature["branch"])
-    results = [verify_target(settings, t["url"], t.get("markers", []), name=t.get("name"),
-                             timeout_ms=t.get("timeout_ms", DEFAULT_TIMEOUT_MS),
-                             cookies=t.get("cookies")) for t in targets]
-    verdict = write_verdict(settings, project_slug, feature_slug, results, sha=sha)
-    for t in results:
-        mark = "🟢" if t.get("ok") else "🔴"
-        extra = f" manquants={t['missing']}" if t.get("missing") else ""
-        extra += f" ({t['error']})" if t.get("error") else ""
-        print(f"  {mark} {t.get('name') or t['url']}{extra}")
-    print(f"feature-verify : {'🟢 vert' if verdict['ok'] else '🔴 échec'} "
-          f"({verdict['n_targets'] - verdict['n_failed']}/{verdict['n_targets']} cibles, sha {str(sha)[:8]})")
-    return 0 if verdict["ok"] else 1

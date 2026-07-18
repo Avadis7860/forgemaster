@@ -507,6 +507,77 @@ def test_deploy_preview_refuses_missing_worktree_or_compose(ctx):
         engine.deploy_preview(conn, settings, slug="svc", feature="nocompose", backend=FakeBackend())
 
 
+# -- autoverify : preview-deploy + preuve de rendu, auto-suffisant (Tier-1.5 pré-merge) -------------
+
+def test_autoverify_feature_writes_fresh_verdict_and_always_tears_down(ctx, monkeypatch):
+    """`autoverify_feature` orchestre : preview-deploy (worktree) → attend → markers DÉCLARÉS → preuve →
+    verdict SHA-bound frais → teardown. Les markers viennent de `.cockpit/verify-markers.json` du worktree."""
+    from cockpit.gate import verify
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="svc")
+    wt = _seed_worktree(settings, "svc", "feat")
+    (wt / ".cockpit").mkdir()
+    (wt / ".cockpit" / "verify-markers.json").write_text('{"markers": ["Accueil"]}', encoding="utf-8")
+    seen: dict = {}
+    monkeypatch.setattr(verify, "_wait_http_ready", lambda url, **k: True)
+
+    def _fake_verify_target(settings_, url, markers, *, name=None, **k):
+        seen.update(url=url, markers=markers, name=name)
+        return {"name": name, "ok": True, "found": markers, "missing": []}
+
+    monkeypatch.setattr(verify, "verify_target", _fake_verify_target)
+    be = FakeBackend()
+    verdict = verify.autoverify_feature(conn, settings, project="svc", feature="feat", sha="abc123",
+                                        backend=be)
+    assert verdict["ok"] is True and verdict["reviewed_sha"] == "abc123"
+    assert seen["markers"] == ["Accueil"]                                    # cibles = markers déclarés
+    assert seen["url"].startswith("http://127.0.0.1:")
+    assert ("down", "cockpit-svc-preview-feat") in [(c[0], c[1]) for c in be.calls]
+    assert verify.status(settings, "svc", "feat", current_sha="abc123")["fresh"] is True
+
+
+def test_autoverify_feature_tears_down_even_when_verify_raises(ctx, monkeypatch):
+    """Le `finally` démonte TOUJOURS (jamais de fuite de port/conteneur), même si la vérif explose."""
+    from cockpit.gate import verify
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="svc")
+    _seed_worktree(settings, "svc", "feat")
+    monkeypatch.setattr(verify, "_wait_http_ready", lambda url, **k: True)
+
+    def _boom(*a, **k):
+        raise RuntimeError("runner explose")
+
+    monkeypatch.setattr(verify, "verify_target", _boom)
+    be = FakeBackend()
+    with pytest.raises(RuntimeError):
+        verify.autoverify_feature(conn, settings, project="svc", feature="feat", sha="s", backend=be)
+    assert ("down", "cockpit-svc-preview-feat") in [(c[0], c[1]) for c in be.calls]
+    re_prev = engine.deploy_preview(conn, settings, slug="svc", feature="feat", backend=FakeBackend())
+    assert engine.DEPLOY_RANGE[0] <= re_prev["port"] <= engine.DEPLOY_RANGE[1]  # port relâché → re-preview OK
+
+
+def test_wait_http_ready_polls_bounded(monkeypatch):
+    """Toute réponse HTTP (même 4xx/5xx) = le serveur écoute → prêt ; refus de connexion → borné → False."""
+    import urllib.error
+    import urllib.request
+
+    from cockpit.gate import verify
+    monkeypatch.setattr(urllib.request, "urlopen", lambda url, timeout=5: object())
+    assert verify._wait_http_ready("http://x/", timeout_s=1) is True
+
+    def _http_err(url, timeout=5):
+        raise urllib.error.HTTPError(url, 503, "down", {}, None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _http_err)
+    assert verify._wait_http_ready("http://x/", timeout_s=1) is True
+
+    def _refused(url, timeout=5):
+        raise urllib.error.URLError("connexion refusée")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _refused)
+    assert verify._wait_http_ready("http://x/", timeout_s=0.05, interval_s=0.01) is False
+
+
 # -- anti-pollution P4 : frontière FS structurelle + pools de ports disjoints ----------------------
 
 def test_deploy_dirs_are_per_project_isolated(tmp_path: Path):

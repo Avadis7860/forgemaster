@@ -378,6 +378,58 @@ def test_run_finalizes_complete_feature_to_merge_ready(ctx, monkeypatch):
     assert v is not None and v["counts"]["red"] == 0     # verdict Tier-1 SHA-bound écrit, propre
 
 
+def test_run_ui_feature_autoverified_becomes_merge_ready(ctx, monkeypatch):
+    """La boucle ferme une feature VISUELLE en autonomie : un diff UI-touched (`.css`) déclenche l'auto-verify
+    (preview-deploy + preuve de rendu) AVANT le gate → verdict Tier-1.5 frais → merge-ready **sans override**.
+    Le hook fournit le `sha` de la feature (pas de faux-vert : la preuve est SHA-bound)."""
+    settings, conn = ctx
+    fake_home = settings.home / "fakehome"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+    _new_project(conn, settings, "proj")
+    _seed(conn, settings, "proj", "feat", [("impl", [])])
+
+    from cockpit.gate import verify
+    calls: list[tuple] = []
+
+    def _spy(conn_, settings_, *, project, feature, sha, backend=None):    # preview-verify stubbé
+        calls.append((project, feature, sha))
+        return verify.write_verdict(settings_, project, feature,
+                                    [{"name": feature, "ok": True, "found": ["x"], "missing": []}], sha=sha)
+
+    monkeypatch.setattr(orchestrator.verify, "autoverify_feature", _spy)
+    summary = orchestrator.run_project(
+        conn, settings, project="proj",
+        runner=_writing_worker(rel="assets/theme.css", content=".app { color: red; }\n"),
+        review_runner=_review_worker())
+    assert len(calls) == 1 and calls[0][:2] == ("proj", "feat")           # hook a preview-vérifié la feature
+    assert calls[0][2]                                                    # sha non vide (preuve SHA-bound)
+    assert summary["merge_ready"] == ["feat"]                            # Tier-1.5 satisfait sans override
+
+
+def test_run_ui_feature_not_merge_ready_when_render_proof_absent(ctx, monkeypatch):
+    """Fail-CLOSED : si l'auto-verify ne peut pas prouver le rendu (preview impossible → `ValueError`, avalé
+    par le hook), la feature UI reste NON merge-ready — le gate exige la preuve, jamais de faux-vert."""
+    settings, conn = ctx
+    fake_home = settings.home / "fakehome"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+    _new_project(conn, settings, "proj")
+    _seed(conn, settings, "proj", "feat", [("impl", [])])
+
+    def _spy_fails(conn_, settings_, *, project, feature, sha, backend=None):
+        raise ValueError("type non hébergeable — pas de compose au worktree")
+
+    monkeypatch.setattr(orchestrator.verify, "autoverify_feature", _spy_fails)
+    summary = orchestrator.run_project(
+        conn, settings, project="proj",
+        runner=_writing_worker(rel="assets/theme.css", content=".app { color: red; }\n"),
+        review_runner=_review_worker())
+    assert summary["merge_ready"] == []
+    fin = summary["finalizations"][0]
+    assert any("Tier-1.5" in b for b in fin["blockers"])                  # preuve e2e exigée
+
+
 def test_run_finalizes_docs_only_skips_reviewer(ctx, monkeypatch):
     """Un livrable **docs-only** (prose seule) est finalisé SANS dispatcher de reviewer de code (pas de
     gaspillage de worker — alternative rejetée du finding) et reste **merge-ready** : le gate traite Tier-1
