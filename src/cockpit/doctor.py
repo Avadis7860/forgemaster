@@ -64,30 +64,31 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
 
 
 def _report_runtime(settings: Settings) -> bool:
-    """Le moteur de run conteneur (podman/docker) est requis pour `cockpit deploy` (P2). Absent → 🔴
-    **bloquant** (le deploy crasherait) avec l'action ; présent → ✅."""
-    from cockpit.runtime.backend import runtime_available
-    cmd = settings.compose_cmd
-    if runtime_available(cmd):
-        print(f"  ✅ runtime conteneur — `{cmd[0]}` présent (deploy P2 disponible)")
+    """Le moteur de run conteneur (podman/docker) — DÉRIVÉ du compose cmd (`compose_engine` : un
+    `podman-compose` standalone a pour moteur `podman`) — est requis pour `cockpit deploy` (P2). Absent → 🔴
+    **bloquant** (le deploy crasherait) ; présent → ✅."""
+    from cockpit.runtime.backend import compose_engine, runtime_available
+    engine = compose_engine(settings.compose_cmd)
+    if runtime_available([engine]):
+        print(f"  ✅ runtime conteneur — `{engine}` présent (deploy P2 disponible)")
         return True
-    print(f"  🔴 runtime conteneur — `{cmd[0]}` absent → `cockpit deploy` échouerait ; installe podman "
-          "(rootless, via `provision-ct.sh`) ou configure COCKPIT_COMPOSE_CMD=docker compose")
+    print(f"  🔴 runtime conteneur — `{engine}` absent → `cockpit deploy` échouerait ; installe podman "
+          "(via `provision-ct.sh`) ou configure COCKPIT_COMPOSE_CMD=docker compose")
     return False
 
 
 def _report_compose_provider(settings: Settings) -> bool:
-    """`cockpit deploy` lance `podman compose` (un wrapper qui DÉLÈGUE) : `podman` présent mais SANS provider
-    (`podman-compose`/`docker-compose`) → `deploy up` échouerait au build (faux-vert de `_report_runtime` qui
-    ne sonde que `cmd[0]`). Ne double-rougit PAS si le moteur lui-même manque (déjà rougi ci-dessus)."""
-    from cockpit.runtime.backend import compose_provider_available, runtime_available
+    """Le binaire compose (`podman-compose` standalone par défaut) doit résoudre : moteur présent mais compose
+    absent → `deploy up` échouerait (faux-vert de `_report_runtime` qui ne sonde que le moteur). Ne
+    double-rougit PAS si le moteur lui-même manque (déjà rougi ci-dessus)."""
+    from cockpit.runtime.backend import compose_engine, compose_provider_available, runtime_available
     cmd = settings.compose_cmd
-    if not runtime_available(cmd):
+    if not runtime_available([compose_engine(cmd)]):
         return True  # moteur absent → déjà signalé par `_report_runtime`, on ne redouble pas le 🔴
     if compose_provider_available(cmd):
-        print(f"  ✅ provider compose — `{' '.join(cmd)}` délègue (provider présent)")
+        print(f"  ✅ provider compose — `{' '.join(cmd)}` disponible")
         return True
-    print(f"  🔴 provider compose — `{cmd[0]}` présent mais `{' '.join(cmd)}` n'a pas de provider "
+    print(f"  🔴 provider compose — moteur présent mais compose `{cmd[0]}` absent "
           "(`apt install podman-compose`, via `provision-ct.sh`) → `cockpit deploy` échouerait au build")
     return False
 

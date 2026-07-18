@@ -18,7 +18,7 @@ from typing import Protocol, runtime_checkable
 
 from cockpit.core import run
 
-DEFAULT_COMPOSE_CMD: tuple[str, ...] = ("podman", "compose")
+DEFAULT_COMPOSE_CMD: tuple[str, ...] = ("podman-compose",)
 COMPOSE_TIMEOUT = 600.0   # s ; un `up --build` peut être long (pull d'image + build) sans pendre l'appelant.
 
 # Variables d'environnement du daemon **autorisées** à atteindre la CLI compose (allowlist, anti-pollution
@@ -81,11 +81,21 @@ def runtime_available(cmd: Sequence[str], *, path: str | None = None) -> bool:
     return bool(cmd) and shutil.which(cmd[0], path=path) is not None
 
 
+def compose_engine(cmd: Sequence[str]) -> str:
+    """Le moteur conteneur (podman/docker) pour les requêtes DIRECTES (`ps`/`logs`), distinct du binaire
+    compose. Un compose *standalone* (`podman-compose`/`docker-compose`) porte le moteur dans son nom → on
+    strippe le suffixe `-compose` ; la forme sous-commande (`podman compose`) l'a déjà en `cmd[0]`. PUR."""
+    if not cmd:
+        return ""
+    head = cmd[0]
+    return head[: -len("-compose")] if head.endswith("-compose") else head
+
+
 def compose_provider_available(cmd: Sequence[str], *, path: str | None = None) -> bool:
-    """True si le SOUS-provider de `podman compose` résout. `podman compose` est un wrapper qui DÉLÈGUE à un
-    binaire externe (`podman-compose` ou `docker-compose`) : `podman` seul présent ne garantit PAS que
-    `podman compose up` marche. Pour `docker compose` (plugin v2 embarqué) `cmd[0]` suffit. Sonde `doctor`,
-    sans effet de bord. PUR (which)."""
+    """True si le binaire compose résout. Deux formes : *standalone* (`podman-compose`/`docker-compose`) →
+    `cmd[0]` EST le provider ; *sous-commande* (`<engine> compose`, ≥ podman 4.4 / docker v2) → un provider
+    externe doit résoudre (`podman-compose`/`docker-compose`), sauf `docker compose` (plugin embarqué) où
+    `cmd[0]=docker` suffit. Sonde `doctor`, sans effet de bord. PUR (which)."""
     if not cmd:
         return False
     if cmd[0] == "podman" and len(cmd) >= 2 and cmd[1] == "compose":
@@ -152,9 +162,10 @@ class PodmanCompose:
         # On interroge le moteur de conteneurs **directement** (`<engine> ps`), PAS `compose ps` :
         # podman-compose 1.0.6 n'accepte ni `--format json` ni `-a` pour `ps`, et re-parse le compose
         # (→ exige COCKPIT_PORT).
-        # Le filtre par label `com.docker.compose.project` (posé par docker ET podman) donne l'état honnête
-        # par conteneur, sans re-parse compose. Cross-backend (`self._cmd[0]` = podman|docker), env P4 scellé.
-        argv = [self._cmd[0], "ps", "-a", "--format", "json",
+        # Le filtre par label `com.docker.compose.project` (posé par docker-compose ET podman-compose) donne
+        # l'état honnête par conteneur, sans re-parse compose. Le moteur est DÉRIVÉ (`compose_engine`) : avec
+        # un compose standalone (`podman-compose`) `cmd[0]` N'EST PAS le moteur → on strippe `-compose`.
+        argv = [compose_engine(self._cmd), "ps", "-a", "--format", "json",
                 "--filter", f"label=com.docker.compose.project={project_name}"]
         r = self._run(argv, cwd=workdir, env=self._base_env(env), timeout=COMPOSE_TIMEOUT)
         if not r.ok:
@@ -172,7 +183,7 @@ class PodmanCompose:
             cid = str(c.get("Id") or c.get("ID") or "")       # podman: `Id` ; docker ndjson: `ID`
             if not cid:
                 continue
-            argv = [self._cmd[0], "logs", "--timestamps", "--tail", str(tail), cid]
+            argv = [compose_engine(self._cmd), "logs", "--timestamps", "--tail", str(tail), cid]
             r = self._run(argv, cwd=workdir, env=self._base_env(env), timeout=COMPOSE_TIMEOUT)
             if not r.ok:
                 raise ComposeError(f"logs @ {project_name}: {r.stderr.strip()[:200]}")

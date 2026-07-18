@@ -24,12 +24,14 @@ live-follow arrivera si un vrai besoin le réclame, ancré sur la même route.
    (`engine.status` → `running`/`stopped`, ou `unhealthy` si la sonde échoue). Ce GET **à effet** est rattaché
    au RefreshButton, **jamais** au polling d'un runner *goto-only* — exactement le couple `GET /git` (pur) vs
    `GET /git/sync` (live) de la vue Git.
-2. **`ps` et `logs` interrogent le MOTEUR directement, pas la CLI compose.** podman-compose 1.0.6 (le provider
-   de `podman compose` par défaut) n'accepte ni `ps --format json`/`-a`, ni `logs --no-color/--no-log-prefix`,
+2. **`ps` et `logs` interrogent le MOTEUR directement, pas la CLI compose.** podman-compose 1.0.6 (le compose
+   standalone par défaut) n'accepte ni `ps --format json`/`-a`, ni `logs --no-color/--no-log-prefix`,
    et **n'écrit pas fiablement** les logs sur stdout. Donc `ps` = `<engine> ps -a --format json --filter
-   label=com.docker.compose.project=<name>` (label posé par docker ET podman → état honnête par conteneur), et
-   `logs` = `<engine> logs --timestamps --tail <n> <cid>` par conteneur découvert (stdout **ET** stderr : un
-   handler http logge souvent sur stderr). Cross-backend (`self._cmd[0]` = podman|docker), **allowlist d'env P4
+   label=com.docker.compose.project=<name>` — le moteur est DÉRIVÉ (`compose_engine`, strippe `-compose`) car
+   `cmd[0]` (`podman-compose`) N'EST PAS le moteur ; label posé par docker-compose ET podman-compose → état
+   honnête par conteneur ; et `logs` = `<engine> logs --timestamps --tail <n> <cid>` par conteneur découvert
+   (stdout **ET** stderr : un handler http logge souvent sur stderr). Cross-backend (moteur dérivé =
+   podman|docker), **allowlist d'env P4
    préservée** (aucun secret ne fuit), borné (**jamais** `--follow`). `tail` clampé (`engine._LOGS_TAIL_MAX =
    1000`) + borné par la route (`Query(ge=1,le=1000)`).
 3. **Toute sous-commande compose mutante reçoit `COCKPIT_PORT`.** Le compose est **re-parsé à chaque appel** et

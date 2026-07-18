@@ -19,9 +19,11 @@ namespace → **anti-pollution par construction** (P4 durcira secrets/env/FS par
    `compose_project_name`), stocké dans `deployments.compose_ref`, passé en `<cmd> -p <ref>` **et** en
    `COMPOSE_PROJECT_NAME`. L'isolation est structurelle, pas un durcissement ajouté.
 2. **Moteur abstrait + configurable.** `ComposeBackend` (Protocol `@runtime_checkable`) est le contrat ;
-   `PodmanCompose` l'adapter par défaut (édition publique = **podman-rootless**). Le préfixe vient de
-   `Settings.compose_cmd` (défaut `("podman","compose")`, env `COCKPIT_COMPOSE_CMD`) → basculer sur
-   `docker compose` est **un réglage, pas du code**.
+   `PodmanCompose` l'adapter par défaut (édition publique = **podman**). Le préfixe vient de
+   `Settings.compose_cmd` (défaut `("podman-compose",)` — binaire STANDALONE, car Debian 12 ne package que
+   podman 4.3.1, dépourvu de la sous-commande `podman compose` ≥4.4 ; env `COCKPIT_COMPOSE_CMD`) → basculer sur
+   `docker compose` est **un réglage, pas du code**. `ps`/`logs` frappent le moteur `podman` DIRECTEMENT
+   (dérivé via `compose_engine`, qui strippe le suffixe `-compose`), jamais `compose ps`.
 3. **Seam `Runner` injecté** (défaut `core.run.run`, calque `dispatch/worker.py`) → les tests ne spawnent
    **jamais** un vrai conteneur ; le smoke réel les complète contre podman.
 4. **Pool de ports deploy DISTINCT.** `DEPLOY_RANGE=(5250,5329)`, séparé du pool worktree `(5170,5249)` →

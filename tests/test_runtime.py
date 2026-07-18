@@ -195,7 +195,42 @@ def test_compose_provider_available_needs_delegated_provider(tmp_path: Path):
     mk("docker")
     # `docker compose` = plugin v2 embarqué → présence de `docker` (cmd[0]) suffit
     assert backend_mod.compose_provider_available(("docker", "compose"), path=path) is True
+    # standalone `podman-compose` (défaut) : le binaire lui-même EST le provider (`cmd[0]`)
+    assert backend_mod.compose_provider_available(("podman-compose",), path=path) is True
     assert backend_mod.compose_provider_available([], path=path) is False
+
+
+def test_compose_engine_derives_container_engine():
+    """Le moteur direct (`ps`/`logs`) est DÉRIVÉ du compose cmd : un standalone `*-compose` strippe son
+    suffixe (→ `podman`) ; la forme sous-commande a déjà le moteur en `cmd[0]`."""
+    assert backend_mod.compose_engine(("podman-compose",)) == "podman"
+    assert backend_mod.compose_engine(("docker-compose",)) == "docker"
+    assert backend_mod.compose_engine(("podman", "compose")) == "podman"
+    assert backend_mod.compose_engine(("docker", "compose")) == "docker"
+    assert backend_mod.compose_engine([]) == ""
+
+
+def test_standalone_compose_up_builds_binary_argv(tmp_path: Path):
+    """Le défaut `podman-compose` (standalone) : `up` construit `podman-compose -p <name> up -d --build`."""
+    calls, rec = _recorder()
+    PodmanCompose(cmd=("podman-compose",), runner=rec).up(
+        "cockpit-x-dev", tmp_path, env={"COCKPIT_PORT": "5250"})
+    assert calls[0][0] == ["podman-compose", "-p", "cockpit-x-dev", "up", "-d", "--build"]
+
+
+def test_ps_uses_derived_engine_for_standalone_compose(tmp_path: Path):
+    """Avec un compose STANDALONE (`podman-compose`), `ps` frappe le moteur `podman` DIRECTEMENT (pas
+    `podman-compose ps`, qui ne fait pas le `--format json` moteur) — via `compose_engine`."""
+    calls: list[list[str]] = []
+
+    def cap(argv, *, cwd, env, timeout):
+        calls.append(list(argv))
+        return RunResult(argv=list(argv), returncode=0, stdout='[{"State": "running"}]', stderr="")
+
+    PodmanCompose(cmd=("podman-compose",), runner=cap).ps("cockpit-x-dev", tmp_path)
+    assert calls[0][0] == "podman"                                   # moteur dérivé, PAS `podman-compose`
+    assert calls[0][1] == "ps" and "--format" in calls[0]
+    assert "label=com.docker.compose.project=cockpit-x-dev" in calls[0]
 
 
 def test_missing_engine_raises_compose_error_not_filenotfound(tmp_path: Path):

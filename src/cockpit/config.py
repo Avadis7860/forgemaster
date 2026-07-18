@@ -23,7 +23,7 @@ ENV_COMPOSE_CMD = "COCKPIT_COMPOSE_CMD"
 DEFAULT_HOME = "~/.cockpit"
 DEFAULT_PROJECTS_ROOT = "~/projects"
 DEFAULT_SECRET_STORE = "file"  # coffre par défaut : EncryptedFileStore (portable, zéro-config). Cf. secrets/.
-DEFAULT_COMPOSE_CMD = "podman compose"  # moteur de run (P2) : podman-rootless par défaut (édition publique).
+DEFAULT_COMPOSE_CMD = "podman-compose"  # moteur de run (P2) : podman-compose standalone (portable Debian 12).
 
 
 @dataclass(frozen=True)
@@ -33,9 +33,10 @@ class Settings:
     home: Path
     projects_root: Path
     secret_store: str = "file"  # sélecteur du coffre de credentials : "file" | "bws" (cf. secrets/).
-    # Préfixe de commande du moteur compose (P2 runtime). Défaut podman-rootless ; `("docker","compose")`
-    # via `COCKPIT_COMPOSE_CMD` est un simple réglage (le backend est abstrait, cf. runtime/backend.py).
-    compose_cmd: tuple[str, ...] = ("podman", "compose")
+    # Préfixe de commande du moteur compose (P2 runtime). Défaut `podman-compose` standalone : Debian 12 ne
+    # package que podman 4.3.1, dépourvu de la sous-commande `podman compose` (≥4.4). `("docker","compose")`
+    # via `COCKPIT_COMPOSE_CMD` reste un réglage (backend abstrait + engine-aware, cf. runtime/backend.py).
+    compose_cmd: tuple[str, ...] = ("podman-compose",)
 
     @property
     def db_path(self) -> Path:

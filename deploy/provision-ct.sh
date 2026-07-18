@@ -95,22 +95,22 @@ install_podman() {
   echo "   ✓ podman OK : $(podman --version 2>/dev/null || echo installé)"
 }
 
-# Provider compose : `cockpit deploy` lance `podman compose` (défaut config), un wrapper qui DÉLÈGUE à un
-# provider externe — `podman` seul NE suffit PAS (sans provider, `deploy up` échoue au build). Debian 12
-# package `podman-compose` en apt (le provider contre lequel le backend est écrit, cf. runtime/backend.py).
-# Idempotent (skip si `podman compose` délègue déjà), fail-loud. apt exige root → `sudo` sinon.
+# Moteur compose : `cockpit deploy` lance `podman-compose` (défaut config). Debian 12 ne package QUE podman
+# 4.3.1, DÉPOURVU de la sous-commande `podman compose` (≥ 4.4) → on installe le binaire STANDALONE
+# `podman-compose` (celui contre lequel le backend est écrit, cf. runtime/backend.py ; le backend interroge le
+# moteur `podman` DIRECTEMENT pour ps/logs). Idempotent (skip si présent), fail-loud. apt root → `sudo` sinon.
 install_compose_provider() {
-  if podman compose version >/dev/null 2>&1; then
-    echo "   déjà présent : provider compose (\`podman compose\` délègue)"; return 0
+  if command -v podman-compose >/dev/null 2>&1; then
+    echo "   déjà présent : $(podman-compose --version 2>&1 | tail -1 || echo podman-compose)"; return 0
   fi
   local APT=apt-get
   [ "$(id -u)" -eq 0 ] || APT="sudo apt-get"
-  echo "   installe podman-compose (provider de \`podman compose\`) via $APT…"
+  echo "   installe podman-compose (moteur compose standalone) via $APT…"
   $APT update -qq && $APT install -y -qq podman-compose \
-    || { echo "✗ install podman-compose échouée — installe-le à la main ou COCKPIT_COMPOSE_CMD=docker compose" >&2; return 1; }
-  podman compose version >/dev/null 2>&1 \
-    || { echo "✗ \`podman compose\` ne délègue toujours pas après podman-compose (provider ko)" >&2; return 1; }
-  echo "   ✓ provider compose OK"
+    || { echo "✗ install podman-compose échouée — installe-le à la main ou configure COCKPIT_COMPOSE_CMD=docker compose" >&2; return 1; }
+  command -v podman-compose >/dev/null 2>&1 \
+    || { echo "✗ podman-compose absent après install" >&2; return 1; }
+  echo "   ✓ podman-compose OK"
 }
 
 # Runner de vérification visuelle (gate Tier-1.5 `cockpit gate verify`) : Playwright headless. `verify.py` le
@@ -184,7 +184,7 @@ echo "→ [4/8] outillage hôte-niveau (maps + Node + qualité py → $home/tool
 if [ -n "$token_file" ]; then "$cockpit" tools install --token-file "$token_file"; else "$cockpit" tools install; fi
 echo "   runtime conteneur (podman) pour \`cockpit deploy\` (P2)"
 install_podman
-echo "   provider compose (podman-compose) — \`podman compose\` DÉLÈGUE, podman seul ne suffit pas"
+echo "   moteur compose (podman-compose standalone — podman 4.3.1 de Debian 12 n'a pas \`podman compose\`)"
 install_compose_provider
 echo "   runner de vérification visuelle (gate Tier-1.5) + Chromium sous \$COCKPIT_HOME/runners"
 seed_verify_runner
