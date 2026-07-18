@@ -2,6 +2,7 @@
 `claude` INTERACTIF (launcher injecté — jamais un vrai `claude`), et clôture VÉRIFIÉE du socle à la sortie."""
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from cockpit.db import store
 from cockpit.git.internal import InternalGit
 from cockpit.projects import registry
 from cockpit.roadmap import model
+from cockpit.tools import tools_bin
 
 
 @pytest.fixture
@@ -77,6 +79,24 @@ def test_interview_incomplete_leaves_socle_open(ctx):
     assert report["work_feature"] is False
     status = conn.execute("SELECT status FROM tasks WHERE slug='cadrage'").fetchone()["status"]
     assert status == "todo"                                                       # jamais faux-done
+
+
+def test_interview_env_exposes_cockpit_and_tools_on_path(ctx):
+    """La session interview reçoit un env dont le PATH porte `cockpit` (bin du venv courant → authoring de la
+    roadmap dans la DB via `cockpit roadmap add-feature`) ET l'outillage (`tools/bin`). Régression du bug live
+    2026-07-18 : `env=None` → PATH fragile sans `cockpit`/`node` → session incapable d'authorer."""
+    settings, conn = ctx
+    _socle_project(conn, settings)
+    seen: dict = {}
+
+    def capture_launcher(argv, *, cwd, env=None):
+        seen["env"] = env
+        return 0
+
+    interview.run_interview(conn, settings, project="proj", git=InternalGit(), launcher=capture_launcher)
+    path = (seen["env"] or {}).get("PATH", "")
+    assert str(Path(sys.executable).parent) in path          # `cockpit` résout dans la session
+    assert str(tools_bin(settings)) in path                  # maps + node résolvent aussi
 
 
 def test_interview_no_interactive_task_does_not_launch(ctx):

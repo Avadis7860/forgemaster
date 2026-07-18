@@ -15,7 +15,9 @@ du prompt (déterministe, comme `roadmap/prompt.py`).
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -28,6 +30,7 @@ from cockpit.git.identity import resolve_identity
 from cockpit.git.internal import InternalGit
 from cockpit.projects.registry import get_project, sot_path_for
 from cockpit.roadmap import check, model, resolver
+from cockpit.tools import tools_env
 
 # launcher(argv, *, cwd, env) -> returncode. Défaut = subprocess TTY hérité ; injecté en test (jamais un
 # vrai `claude`). Distinct du `Runner` du worker (qui CAPTURE le stdout `-p`) : ici stdout/stdin/stderr sont
@@ -105,6 +108,19 @@ def verify_and_complete(conn, project: str, feature: dict) -> dict:
             "work_feature": work}
 
 
+def interview_env(settings: Settings) -> dict[str, str]:
+    """Env de la session d'interview : `tools_env` (maps + Node + `~/.local/bin` pour `claude`, comme le
+    worker) PRÉFIXÉ du bin du venv COURANT — là où vit `cockpit`. Car la session AUTHORE la roadmap dans la DB
+    via `cockpit roadmap add-feature`/`cockpit task add` (prescrit par le skill `roadmap-decompose`), et
+    `cockpit` n'est PAS dans `tools/bin`. `env=None` héritait d'un PATH fragile (shell lanceur / PATH systemd
+    minimal du daemon) où `cockpit` — ET `node` — pouvaient manquer : la session ne pouvait alors NI authorer
+    NI vérifier, elle repliait sur une édition YAML que la réconciliation (qui lit la DB) ne voit pas. PUR."""
+    env = tools_env(settings)
+    cockpit_bin = str(Path(sys.executable).parent)          # /…/venv/bin — porte le script `cockpit`
+    env["PATH"] = os.pathsep.join([cockpit_bin, env["PATH"]])
+    return env
+
+
 def _default_launcher(argv: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> int:
     """Lance `claude` en HÉRITANT le terminal (stdin/stdout/stderr non capturés) → l'humain dialogue en
     direct. Retourne le code de sortie. Isolé (patchable en test), mais les tests injectent un launcher : ils
@@ -130,7 +146,7 @@ def run_interview(conn, settings: Settings, *, project: str, git: GitBackend | N
     prompt = build_interview_prompt(get_project(conn, project), feature, task)
     argv = build_interview_argv(prompt)
     launch = launcher or _default_launcher
-    launch(argv, cwd=res["path"], env=None)
+    launch(argv, cwd=res["path"], env=interview_env(settings))
     # Réconciliation / vérification à la sortie : la doc éditée + la roadmap authorée sont dans worktree/DB.
     outcome = verify_and_complete(conn, project, feature)
     if outcome["completed"]:

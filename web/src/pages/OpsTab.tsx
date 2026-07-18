@@ -18,8 +18,11 @@ type Panel = 'git' | 'flow'
  *  pilotés par l'URL `?panel=git|flow` → deep-linkables (capturables at-rest par le juge visuel). */
 export function OpsTab() {
   const project = useParams({ strict: false }).project ?? ''
-  const { panel } = useSearch({ strict: false }) as { panel?: Panel }
+  const { panel, run } = useSearch({ strict: false }) as { panel?: Panel; run?: string }
   const navigate = useNavigate()
+  // Handoff depuis le dispatch d'un socle interactif (`?run=interview`) : le terminal auto-lance la commande
+  // d'interview à l'ouverture. Le search param d'URL EST le canal (deep-linkable, capturable at-rest).
+  const initialCommand = run === 'interview' && project ? `cockpit interview ${project}` : undefined
   // Ouverture/fermeture par updater fonctionnel → préserve les autres params (ex. `?op=` de Flow).
   const openPanel = (p: Panel) =>
     navigate({ to: '/$project/ops', params: { project }, search: (prev) => ({ ...prev, panel: p }) })
@@ -41,7 +44,7 @@ export function OpsTab() {
       {/* Terminal = ancre, remplit le reste de la hauteur. */}
       <div className="min-h-0 flex-1">
         <Suspense fallback={<LoadingState label="Chargement du terminal…" />}>
-          <TerminalPane key={project} project={project} />
+          <TerminalPane key={project} project={project} initialCommand={initialCommand} />
         </Suspense>
       </div>
 

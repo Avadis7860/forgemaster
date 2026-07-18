@@ -6,7 +6,7 @@ import type { TaskClassified } from './schemas'
 function mk(slug: string, state: string, depends_on: string[] = []): TaskClassified {
   return {
     id: slug, feature_id: 'f', slug, title: slug, status: 'todo', priority: 'P1',
-    created_at: '2026-01-01', depends_on, state, blockers: [],
+    mode: 'headless', created_at: '2026-01-01', depends_on, state, blockers: [],
   }
 }
 

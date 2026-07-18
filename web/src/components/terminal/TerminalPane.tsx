@@ -52,12 +52,15 @@ function readTheme(el: HTMLElement): Record<string, string> {
  *  `{"type":"resize",cols,rows}`. Le login shell (`bash -l`) tourne dans la racine du projet côté daemon ;
  *  à sa sortie le socket se ferme → « Relancer » recrée la session. Barre d'outils : recherche dans le
  *  scrollback, taille de police (persistée), effacer, lancer Claude. */
-export function TerminalPane({ project }: { project: string }) {
+export function TerminalPane({ project, initialCommand }: { project: string; initialCommand?: string }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const searchRef = useRef<SearchAddon | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  // `initialCommand` (ex. handoff interview) auto-lancé UNE fois par montage — pas à chaque reconnexion
+  // (`reconnectKey`) ni sur une reconnexion manuelle. Persiste tant que le projet ne change pas (`key`).
+  const sentInitialRef = useRef(false)
   const [status, setStatus] = useState<TermStatus>('connecting')
   const [fontSize, setFontSize] = useState<number>(readFontSize)
   const [reconnectKey, setReconnectKey] = useState(0)
@@ -111,6 +114,12 @@ export function TerminalPane({ project }: { project: string }) {
       term.writeln(`\x1b[2m— session terminal · ${project} (bash -l) —\x1b[0m`)
       safeFit()
       sendResize()
+      // Handoff auto-run (une fois) : envoie la commande au PTY comme une frappe (frame binaire + newline),
+      // exactement comme le bouton « Lancer Claude ». Le shell la lit une fois son prompt prêt.
+      if (initialCommand && !sentInitialRef.current) {
+        sentInitialRef.current = true
+        ws.send(enc.encode(`${initialCommand}\n`))
+      }
     }
     ws.onmessage = (ev) => {
       if (ev.data instanceof ArrayBuffer) term.write(new Uint8Array(ev.data))

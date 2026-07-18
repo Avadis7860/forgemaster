@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from '@tanstack/react-router'
 import { Alert, Badge, Button, Card, LoadingState, SectionTitle } from '@/components/ui'
 import { Transcript } from '@/components/dispatch/Transcript'
 import { ClaudeAuthBlock } from '@/components/ClaudeAuthStatus'
@@ -22,6 +23,7 @@ export function DispatchPanel({ project, feature }: { project: string; feature: 
   // on l'annonce et on désarme le bouton plutôt que d'attendre l'erreur. `undefined` (onboarding pas chargé)
   // ne bloque pas — le backend reste l'autorité (fail-closed côté serveur).
   const authBlocked = claudeAuth ? !claudeAuth.authenticated : false
+  const navigate = useNavigate()
   const dispatch = useDispatch(project, feature.slug)
   const jobs = useFeatureJobs(project, feature.slug, dispatch.isPending ? 1000 : false)
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
@@ -29,6 +31,12 @@ export function DispatchPanel({ project, feature }: { project: string; feature: 
 
   const jobList = useMemo(() => jobs.data ?? [], [jobs.data])
   const nextTask = feature.next ? feature.tasks.find((t) => t.slug === feature.next) : undefined
+  // Next task INTERACTIVE (interview de socle) : ne se dispatche pas en headless → l'action primaire n'est PAS
+  // « Dispatcher » (un no-op ici) mais « Lancer l'interview », qui ouvre l'onglet Ops en auto-lançant la
+  // commande (search param `run=interview` relayé au TerminalPane). Détecté depuis la roadmap, AVANT tout clic.
+  const interactiveNext = nextTask?.mode === 'interactive'
+  const launchInterview = () =>
+    navigate({ to: '/$project/ops', params: { project }, search: { run: 'interview' } })
 
   const selectedJob = jobList.find((j) => j.id === activeJobId) ?? null
   const running = Boolean(selectedJob && RUNNING.has(selectedJob.status))
@@ -72,14 +80,20 @@ export function DispatchPanel({ project, feature }: { project: string; feature: 
             <p className="text-sm text-faint">Aucune task READY — rien à dispatcher.</p>
           )}
         </div>
-        <Button
-          variant="primary"
-          onClick={onDispatch}
-          busy={dispatch.isPending}
-          disabled={!feature.next || authBlocked}
-        >
-          {dispatch.isPending ? 'Dispatch en cours…' : 'Dispatcher la feature'}
-        </Button>
+        {interactiveNext ? (
+          <Button variant="primary" onClick={launchInterview}>
+            Lancer l'interview dans le terminal
+          </Button>
+        ) : (
+          <Button
+            variant="primary"
+            onClick={onDispatch}
+            busy={dispatch.isPending}
+            disabled={!feature.next || authBlocked}
+          >
+            {dispatch.isPending ? 'Dispatch en cours…' : 'Dispatcher la feature'}
+          </Button>
+        )}
       </div>
 
       {authBlocked && claudeAuth && <ClaudeAuthBlock auth={claudeAuth} />}
@@ -95,6 +109,15 @@ export function DispatchPanel({ project, feature }: { project: string; feature: 
       {dispatch.data && dispatch.data.failed > 0 && (
         <Alert tone="danger" title="Dispatch en échec">
           {dispatch.data.runs.find((r) => !r.ok)?.reason ?? 'un run a échoué'}
+        </Alert>
+      )}
+      {/* Socle interactif : une interview ne se mène pas en `claude -p` → l'action primaire (en-tête) ouvre
+          l'onglet Ops en auto-lançant `cockpit interview <projet>` (search param `run=interview` → TerminalPane).
+          Ce bloc explicite POURQUOI le bouton diffère — le point d'entrée UI que le dispatch muet n'offrait pas. */}
+      {interactiveNext && (
+        <Alert tone="info" title="Interview de 1ʳᵉ session requise">
+          Le socle de ce projet se cadre en <strong>terminal interactif</strong> (pas en headless) : lance
+          l'interview ci-dessus — un humain mène la conception, puis la roadmap de travail en est dérivée.
         </Alert>
       )}
 

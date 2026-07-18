@@ -177,6 +177,7 @@ def _seed(port: int, slugs: list[str], *, home: Path) -> None:
             _post(port, f"/api/features/{proj}/{feature}/tasks",
                   {"slug": task, "title": title, "depends_on": deps})
     _seed_dispatch_job(home, proj)
+    _seed_interview_socle(home, proj)
     _seed_gate_states(home, proj)
     _seed_git_state(home, proj)
     _seed_credential_state(home, slugs)
@@ -224,6 +225,28 @@ def _seed_dispatch_job(home: Path, proj: str) -> None:
         conn.execute("UPDATE dispatch_jobs SET status = 'failed', error = ? WHERE id = ?",
                      ("claude -p rc=1 : ToolPreflightError — `ruff` introuvable sur le PATH", failed))
         conn.commit()
+    finally:
+        conn.close()
+
+
+def _seed_interview_socle(home: Path, proj: str) -> None:
+    """Seed une feature de SOCLE dont la NEXT task est `interactive` (mode v12) → rend VOYANT at-rest le bouton
+    « Lancer l'interview » du DispatchPanel (action primaire gated sur la ROADMAP, pas sur une mutation). En
+    direct-DB car l'API task-add n'expose pas `mode`. Le voir : `…/atlas-demo/travail?feature=socle-design`."""
+    try:
+        from cockpit.config import Settings
+        from cockpit.db import store
+        from cockpit.roadmap import model
+    except ImportError:
+        return  # build-only → le bouton interview ne sera pas seedé (screenshot non cassé)
+    settings = Settings.resolve(home=home / "home", projects_root=home / "projects")
+    conn = store.open_db(settings)
+    try:
+        model.add_feature(conn, project_slug=proj, slug="socle-design",
+                          title="Socle — design & décomposition")
+        model.add_task(conn, feature_ref=f"{proj}/socle-design", slug="interview",
+                       title="Interview de conception (1ʳᵉ session)",
+                       acceptance="docs/design.md § Concept renseigné.", mode="interactive")
     finally:
         conn.close()
 

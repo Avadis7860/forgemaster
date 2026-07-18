@@ -42,6 +42,10 @@ export const TaskSchema = z.object({
   status: z.string(),
   depends_on: z.array(z.string()),
   priority: z.string(),
+  // `mode` (v12) : `headless` | `interactive`. Une task `interactive` (interview de socle) ne se dispatche PAS
+  // en `claude -p` → l'UI propose de la mener en terminal. TOUJOURS émis par le backend (colonne NOT NULL,
+  // `list_tasks` SELECT *) → requis, sans default (évite la divergence input/output de Zod).
+  mode: z.string(),
   created_at: z.string(),
 })
 export type Task = z.infer<typeof TaskSchema>
@@ -138,6 +142,7 @@ export const FeatureRunReportSchema = z.object({
   failed_features: z.array(z.string()),
   drained: z.boolean(),
   runs: z.array(FeatureRunSchema),
+  needs_interview: z.array(z.string()),
   finalizations: z.array(FeatureFinalizationSchema),
   merge_ready: z.array(z.string()),
 })
