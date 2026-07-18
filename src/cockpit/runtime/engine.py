@@ -13,6 +13,7 @@ un 500 opaque ni un faux-vert.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import shutil
 import sqlite3
 from pathlib import Path
@@ -20,6 +21,7 @@ from pathlib import Path
 from cockpit.config import Settings
 from cockpit.db import store
 from cockpit.dispatch import ports
+from cockpit.dispatch.worktree import worktree_path_for
 from cockpit.git.internal import GitOpError, InternalGit
 from cockpit.projects.deployments import get_deployment, set_deployment
 from cockpit.projects.registry import get_project
@@ -186,6 +188,55 @@ def logs(conn: sqlite3.Connection, settings: Settings, *, slug: str, branch: str
     except ComposeError as exc:
         raise ValueError(f"lecture des logs échouée ({slug}/{branch}) : {exc}") from exc
     return {"lines": lines}
+
+
+def _preview_purpose(feature: str) -> str:
+    """Clé de réservation de port d'un preview-deploy éphémère — distincte de `deploy:<branch>` et de
+    `worktree:<feature>`. Vit dans le pool deploy (5250-5329)."""
+    return f"preview:{feature}"
+
+
+def deploy_preview(conn: sqlite3.Connection, settings: Settings, *, slug: str, feature: str,
+                   backend: ComposeBackend | None = None) -> dict:
+    """Preview-deploy ÉPHÉMÈRE du code d'une feature depuis son **worktree** (déjà checké-out, `compose.yaml`
+    semé P3) — pour prouver le rendu Tier-1.5 AVANT merge, sans la table `deployments`. Réserve
+    un port du pool deploy (clé `preview:<feature>`), `compose up -d --build` sur le worktree, rend
+    `{url, port, name, workdir}`. **Non persisté** → `teardown_preview` démonte + relâche. Worktree/compose
+    absent → `ValueError` ; échec build → port relâché + `ValueError`."""
+    get_project(conn, slug)                                  # KeyError projet absent → 404 (cohérence)
+    backend = backend or PodmanCompose(cmd=settings.compose_cmd)
+    wt = worktree_path_for(settings, slug, feature)
+    if not wt.exists():
+        raise ValueError(f"worktree absent pour {slug}/{feature} — pas de code à prévisualiser")
+    if not any((wt / fn).is_file() for fn in _COMPOSE_FILENAMES):
+        raise ValueError(f"{slug}/{feature} n'expose pas de service déployable (aucun compose.yaml dans le "
+                         "worktree — type non hébergeable)")
+    name = compose_project_name(slug, f"preview-{feature}")
+    res = ports.reserve(conn, project=slug, purpose=_preview_purpose(feature),
+                        port_range=DEPLOY_RANGE, probe=ports.local_probe)
+    port = int(res["port"])
+    env = {"COCKPIT_PORT": str(port), "COMPOSE_PROJECT_NAME": name}
+    try:
+        backend.up(name, wt, env=env)
+    except ComposeError as exc:
+        ports.release(conn, project=slug, purpose=_preview_purpose(feature))
+        raise ValueError(f"preview-deploy échoué ({slug}/{feature}) : {exc}") from exc
+    return {"url": f"http://127.0.0.1:{port}", "port": port, "name": name, "workdir": str(wt)}
+
+
+def teardown_preview(conn: sqlite3.Connection, settings: Settings, *, slug: str, feature: str,
+                     backend: ComposeBackend | None = None) -> None:
+    """Démonte un preview-deploy (`compose down` : conteneurs + réseau) et **relâche le port**
+    (`preview:<feature>`). Idempotent (pas de worktree / rien de monté → release best-effort). Ne supprime
+    JAMAIS le worktree (propriété du worker). À appeler en `finally` après la vérif."""
+    backend = backend or PodmanCompose(cmd=settings.compose_cmd)
+    name = compose_project_name(slug, f"preview-{feature}")
+    wt = worktree_path_for(settings, slug, feature)
+    if wt.exists():
+        # best-effort : que le down réussisse ou non, on relâche le port ensuite (jamais de fuite de port).
+        with contextlib.suppress(ComposeError):
+            backend.down(name, wt, env={"COMPOSE_PROJECT_NAME": name, "COCKPIT_PORT": "0"})
+    ports.release(conn, project=slug, purpose=_preview_purpose(feature))
 
 
 _ACTIONS = {"up": deploy, "down": stop, "restart": restart, "status": status}

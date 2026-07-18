@@ -443,6 +443,70 @@ def test_deploy_refuses_tree_without_compose(ctx):
     assert be.calls == []                                   # refus AVANT tout appel moteur
 
 
+# -- preview-deploy (Tier-1.5 pré-merge) : worktree éphémère, hors table deployments ---------------
+
+def _seed_worktree(settings, slug: str, feature: str, *, compose: bool = True) -> Path:
+    from cockpit.dispatch.worktree import worktree_path_for
+    wt = worktree_path_for(settings, slug, feature)
+    wt.mkdir(parents=True, exist_ok=True)
+    if compose:
+        (wt / "compose.yaml").write_text("services: {}\n")
+    return wt
+
+
+def test_deploy_preview_serves_worktree_on_deploy_pool_port(ctx):
+    """`deploy_preview` up le service depuis le WORKTREE de la feature (pas `deploy_dir`), sur un port du pool
+    deploy, avec un nom compose slash-safe — sans toucher la table `deployments`."""
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="svc")
+    wt = _seed_worktree(settings, "svc", "feat")
+    be = FakeBackend()
+    prev = engine.deploy_preview(conn, settings, slug="svc", feature="feat", backend=be)
+    assert engine.DEPLOY_RANGE[0] <= prev["port"] <= engine.DEPLOY_RANGE[1]       # pool deploy
+    assert prev["url"] == f"http://127.0.0.1:{prev['port']}"
+    assert prev["name"] == "cockpit-svc-preview-feat"                             # slash-safe (feature kebab)
+    assert prev["workdir"] == str(wt)
+    op, name, workdir, env = be.calls[0]
+    assert (op, name) == ("up", "cockpit-svc-preview-feat")
+    assert workdir == str(wt)                                                     # up pointe le WORKTREE
+    assert env["COCKPIT_PORT"] == str(prev["port"])
+
+
+def test_deploy_preview_port_distinct_from_deploy_and_worktree(ctx):
+    """Le port preview est une 3ᵉ clé (`preview:<feature>`) — jamais celui du deploy `dev` ni du worktree."""
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="svc")
+    _seed_worktree(settings, "svc", "feat")
+    dep = engine.deploy(conn, settings, slug="svc", branch="dev", git=FakeGit(), backend=FakeBackend())
+    wt_res = ports.reserve(conn, project="svc", purpose="worktree:feat")
+    prev = engine.deploy_preview(conn, settings, slug="svc", feature="feat", backend=FakeBackend())
+    assert prev["port"] != dep["port"] and prev["port"] != wt_res["port"]
+
+
+def test_teardown_preview_downs_and_releases_port(ctx):
+    """`teardown_preview` down le compose ET relâche le port — le worktree n'est PAS supprimé."""
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="svc")
+    wt = _seed_worktree(settings, "svc", "feat")
+    be = FakeBackend()
+    engine.deploy_preview(conn, settings, slug="svc", feature="feat", backend=be)
+    engine.teardown_preview(conn, settings, slug="svc", feature="feat", backend=be)
+    assert (be.calls[-1][0], be.calls[-1][1]) == ("down", "cockpit-svc-preview-feat")
+    assert wt.exists()                                                           # worktree préservé
+    re_prev = engine.deploy_preview(conn, settings, slug="svc", feature="feat", backend=FakeBackend())
+    assert engine.DEPLOY_RANGE[0] <= re_prev["port"] <= engine.DEPLOY_RANGE[1]   # release n'a pas bloqué
+
+
+def test_deploy_preview_refuses_missing_worktree_or_compose(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="svc")
+    with pytest.raises(ValueError, match="worktree absent"):
+        engine.deploy_preview(conn, settings, slug="svc", feature="ghost", backend=FakeBackend())
+    _seed_worktree(settings, "svc", "nocompose", compose=False)
+    with pytest.raises(ValueError, match="n'expose pas de service déployable"):
+        engine.deploy_preview(conn, settings, slug="svc", feature="nocompose", backend=FakeBackend())
+
+
 # -- anti-pollution P4 : frontière FS structurelle + pools de ports disjoints ----------------------
 
 def test_deploy_dirs_are_per_project_isolated(tmp_path: Path):
