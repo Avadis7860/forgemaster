@@ -166,7 +166,28 @@ install_login_path() {
   fi
 }
 
-echo "→ [1/8] venv Python : $venv"
+# Prérequis OS de l'install ELLE-MÊME (avant le venv) : une image cloud MINIMALE (Ubuntu/Debian genericcloud)
+# n'inclut PAS python3-venv → `python3 -m venv` échoue (« ensurepip is not available »), NI git (bootstrap clone
+# les 5 outils + tools install fait des pip git+https), NI forcément curl (install de Claude). Idempotent (skip
+# si tout présent), fail-loud. apt exige root → `sudo` sinon. Ne PAS supposer un hôte pré-outillé (un vrai user
+# part d'une image nue). cf. install.md (prérequis) + fix-shipped-product (le CT dev-base masquait ce trou).
+ensure_base_deps() {
+  local need=() APT=apt-get
+  python3 -c 'import ensurepip' >/dev/null 2>&1 || need+=(python3-venv)
+  command -v git  >/dev/null 2>&1 || need+=(git)
+  command -v curl >/dev/null 2>&1 || need+=(curl ca-certificates)
+  [ ${#need[@]} -eq 0 ] && { echo "   prérequis de base déjà présents (python3-venv, git, curl)"; return 0; }
+  [ "$(id -u)" -eq 0 ] || APT="sudo apt-get"
+  echo "   installe les prérequis de base via $APT : ${need[*]}…"
+  $APT update -qq && $APT install -y -qq "${need[@]}" \
+    || { echo "✗ install des prérequis de base échouée (apt indisponible ?) — pose ${need[*]} à la main puis relance" >&2; return 1; }
+  python3 -c 'import ensurepip' >/dev/null 2>&1 \
+    || { echo "✗ ensurepip toujours absent après install (python3-venv non posé ?)" >&2; return 1; }
+  echo "   ✓ prérequis de base OK"
+}
+
+echo "→ [1/8] prérequis de base (python3-venv, git, curl) + venv Python : $venv"
+ensure_base_deps
 python3 -m venv "$venv"
 
 echo "→ [2/8] install du wheel (sans Node — l'UI est empaquetée dans le wheel)"

@@ -123,7 +123,8 @@ la base écrite par le bootstrap doit lui appartenir) :
                   --token-file read-token.txt      # omets-le quand les dépôts sont publics
 ```
 
-Le script (idempotent, fail-loud, imprime chaque étape) : crée un venv → installe le wheel → *(Claude, opt-in)*
+Le script (idempotent, fail-loud, imprime chaque étape) : pose les **prérequis de base** (`python3-venv`, `git`,
+`curl` — absents d'une image cloud minimale) → crée un venv → installe le wheel → *(Claude, opt-in)*
 → écrit l'unité systemd → dépose le manifeste sous `COCKPIT_HOME` → **`cockpit bootstrap`** (adopte les 5 outils
 via leur **vrai clone git**) → active le service. Résultat : `http://<hôte>:8700`, rail « Outils » peuplé au 1ᵉʳ
 chargement. Ré-exécuter la commande est sûr (venv réutilisé, outils déjà là *skippés*).
