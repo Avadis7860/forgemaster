@@ -37,9 +37,11 @@ def _seed_runner(settings: Settings) -> None:
 
 
 def _force_runtime_green(monkeypatch) -> None:
-    """Rend déterministes runtime + provider compose (le vrai `which` dépendrait du podman hôte)."""
+    """Rend déterministes runtime + provider compose + device TUN (le vrai `which`/`/dev/net/tun`
+    dépendrait du podman hôte)."""
     monkeypatch.setattr("cockpit.runtime.backend.runtime_available", lambda *a, **k: True)
     monkeypatch.setattr("cockpit.runtime.backend.compose_provider_available", lambda *a, **k: True)
+    monkeypatch.setattr("cockpit.doctor._tun_present", lambda: True)
 
 
 # -- parseur `allowedTools` -------------------------------------------------------------------------
@@ -128,7 +130,8 @@ def test_doctor_green_when_all_host_tools_present(tmp_path: Path, fake_tools, ca
     assert rc == 0
     assert "outillage complet" in out
     assert "base/doc" in out                                 # rapport par type/facette
-    assert "provider compose" in out and "runner verify" in out   # les deux nouvelles sondes rapportent
+    assert "provider compose" in out and "runner verify" in out   # les sondes deploy rapportent
+    assert "device TUN" in out                                     # sonde TUN (build réseau deploy)
 
 
 def test_doctor_red_and_names_missing_tool(tmp_path: Path, capsys):
@@ -162,3 +165,17 @@ def test_doctor_red_when_compose_provider_missing(tmp_path: Path, fake_tools, ca
     out = capsys.readouterr().out
     assert rc == 1
     assert "provider compose" in out and "podman-compose" in out
+
+
+def test_doctor_red_when_tun_absent(tmp_path: Path, fake_tools, capsys, monkeypatch):
+    """Outils + runtime + runner OK mais `/dev/net/tun` absent → 🔴 (sinon le build `cockpit deploy` meurt
+    sur `slirp4netns EOF` sans que le doctor prévienne)."""
+    settings = _settings(tmp_path)
+    fake_tools(settings)
+    _force_runtime_green(monkeypatch)                        # runtime + provider + tun forcés verts…
+    _seed_runner(settings)
+    monkeypatch.setattr("cockpit.doctor._tun_present", lambda: False)   # …puis TUN absent
+    rc = doctor.cli_dispatch(settings, argparse.Namespace())
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "device TUN" in out and "absent" in out

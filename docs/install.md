@@ -15,6 +15,17 @@ Node requis) ou **depuis les sources** (clone + build du front).
   sans elles, le namespace/overlay imbriqué de podman échoue au `build`/`up`. `provision-ct.sh` installe podman +
   le provider compose + fuse-overlayfs, mais **ne peut pas** poser les features (elles se règlent à la création
   du CT, hors du conteneur). CT privilégié = fallback si le non-privilégié ne passe pas.
+- **Device `/dev/net/tun` (device-passthrough, PAS une feature)** — le `build` d'image de `cockpit deploy`
+  (`podman build`, ex. `RUN npm ci`) a besoin du réseau ; sans `/dev/net/tun` dans le CT, **slirp4netns ne peut
+  pas créer son tap** et le build meurt (`failed to read from slirp4netns sync pipe: EOF`). TUN n'est pas
+  réglable par `--features` : ajoute-le à la conf du CT (`/etc/pve/lxc/<id>.conf`) **avant le 1ᵉʳ boot**, puis
+  stop/start :
+  ```
+  lxc.cgroup2.devices.allow: c 10:200 rwm
+  lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file
+  ```
+  Comme les features, c'est un réglage de **création** (hors conteneur) que `provision-ct.sh` ne pose pas ;
+  `cockpit doctor` le sonde (`🔴 device TUN` s'il manque).
 
 ## Installer
 

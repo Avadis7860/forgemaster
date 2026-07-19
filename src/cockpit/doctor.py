@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import time
+from pathlib import Path
 
 from cockpit.config import Settings
 from cockpit.provision import _BUNDLES_DIR
@@ -52,12 +53,13 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     mcp_ok = _report_mcp(settings)
     runtime_ok = _report_runtime(settings)
     provider_ok = _report_compose_provider(settings)
+    tun_ok = _report_tun()
     runner_ok = _report_runner(settings)
     if all_missing:
         print(f"🔴 outillage INCOMPLET — pose les manquants (`cockpit tools install`) : "
               f"{', '.join(sorted(all_missing))}")
         return 1
-    if not (mcp_ok and runtime_ok and provider_ok and runner_ok):
+    if not (mcp_ok and runtime_ok and provider_ok and tun_ok and runner_ok):
         return 1
     print(f"✅ outillage complet — tous les binaires déclarés résolvent sous {tools_bin(settings)}")
     return 0
@@ -105,6 +107,25 @@ def _report_runner(settings: Settings) -> bool:
         return True
     print(f"  🔴 runner verify — absent ({runner}) → `cockpit gate verify` fail-close ; "
           "sème-le (`provision-ct.sh`) ou configure COCKPIT_VERIFY_RUNNER")
+    return False
+
+
+def _tun_present() -> bool:
+    """`/dev/net/tun` (device char 10:200) exposé dans le CT ? PUR, isolé pour être mockable en test."""
+    return Path("/dev/net/tun").exists()
+
+
+def _report_tun() -> bool:
+    """Le device `/dev/net/tun` doit être exposé dans le CT (device-passthrough posé à la CRÉATION du CT,
+    hors du conteneur — `provision-ct.sh` ne peut pas le poser, comme les features LXC). Sans lui,
+    slirp4netns ne peut pas créer son tap → le `RUN` réseau du build d'image (`podman build` de
+    `cockpit deploy`) meurt (`failed to read from slirp4netns sync pipe: EOF`) → tout deploy browser-game
+    échoue AU BUILD. TUN n'est PAS une feature LXC → device-passthrough (cf. docs/install.md)."""
+    if _tun_present():
+        print("  ✅ device TUN — `/dev/net/tun` présent (build réseau de `cockpit deploy` OK)")
+        return True
+    print("  🔴 device TUN — `/dev/net/tun` absent → le build d'image `cockpit deploy` échouera "
+          "(slirp4netns EOF) ; expose-le par device-passthrough à la création du CT (cf. docs/install.md)")
     return False
 
 
