@@ -332,9 +332,9 @@ def test_browser_game_seeds_runnable_ts_mono_skeleton():
         assert rel in bundle and bundle[rel].strip(), f"squelette runnable : {rel} absent/vide du seed"
     pkg = json.loads(bundle["package.json"])
     gate = pkg["scripts"]["gate"]
-    assert "eslint" in gate and "tsc" in gate and "vitest" in gate   # gate réel = eslint → tsc → vitest (semé né-avec)
+    assert "eslint" in gate and "tsc" in gate and "vitest" in gate   # gate réel = eslint → tsc → vitest
     assert "react" in pkg["dependencies"] and "hono" in pkg["dependencies"]   # univers unifié web + server
-    assert "@tanstack/react-query" in pkg["dependencies"]        # poll temps-réel semé né-avec (stack réconciliée)
+    assert "@tanstack/react-query" in pkg["dependencies"]        # poll temps-réel semé né-avec (réconcilié)
     assert "tailwindcss" in pkg["devDependencies"]               # UI de gestion dense : Tailwind semé né-avec
     assert "{{game_name}}" in bundle["src/index.ts"]            # jeton de mission laissé (seed verbatim)
     for rel in ("web/App.tsx", "web/index.html"):               # genericité : aucun slug figé côté client
