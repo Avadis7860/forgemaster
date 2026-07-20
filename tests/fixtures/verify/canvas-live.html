@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Canvas vivant — démo</title></head>
+<body>
+  <!-- Sidecar sémantique : le gate à marqueurs prouve la CORRECTION (« Tour 1 ») via ce texte sr-only,
+       présent dans innerText (clip n'exclut pas ; seuls display:none / visibility:hidden le feraient). -->
+  <div class="sr-only" style="position:absolute;clip:rect(0 0 0 0)">Tour 1</div>
+  <canvas id="v" width="120" height="80"></canvas>
+  <script>
+    // Le canvas PEINT → pixels non-uniformes → plancher non_blank OK.
+    var ctx = document.getElementById('v').getContext('2d');
+    ctx.fillStyle = '#2244cc';
+    ctx.fillRect(10, 10, 60, 40);
+  </script>
+</body>
+</html>

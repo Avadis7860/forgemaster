@@ -216,7 +216,7 @@ def test_verify_read_declared_markers(tmp_path):
 
 
 _EMPTY_CONTRACT = {"markers": [], "clicks": [], "after_markers": [], "wait_for_text": None,
-                   "wait_timeout_ms": None}
+                   "wait_timeout_ms": None, "canvas": {}}
 
 
 def test_verify_read_verify_contract(tmp_path):
@@ -242,6 +242,17 @@ def test_verify_read_verify_contract(tmp_path):
                              ' "wait_timeout_ms": "x"}}')
     c = verify.read_verify_contract(tmp_path)
     assert c["clicks"] == [{"selector": "#go"}] and c["wait_timeout_ms"] is None
+    # canvas bien formé : selector porté, non_blank vrai.
+    _write_markers(tmp_path, '{"markers": ["Tour 1"], "canvas": {"selector": "#board", "non_blank": true}}')
+    c = verify.read_verify_contract(tmp_path)
+    assert c["canvas"] == {"selector": "#board", "non_blank": True}
+    # canvas sans selector → défaut "canvas" ; non_blank absent/faux → {} (pas de plancher).
+    _write_markers(tmp_path, '{"canvas": {"non_blank": true}}')
+    assert verify.read_verify_contract(tmp_path)["canvas"] == {"selector": "canvas", "non_blank": True}
+    _write_markers(tmp_path, '{"canvas": {"selector": "#x"}}')          # non_blank absent → pas de plancher
+    assert verify.read_verify_contract(tmp_path)["canvas"] == {}
+    _write_markers(tmp_path, '{"canvas": "nope"}')                      # canvas non-objet → {}
+    assert verify.read_verify_contract(tmp_path)["canvas"] == {}
     # racine pas un objet → tout vide.
     _write_markers(tmp_path, "[]")
     assert verify.read_verify_contract(tmp_path) == _EMPTY_CONTRACT
@@ -259,6 +270,10 @@ def test_verify_build_payload_carries_interaction_fields():
     # champs vides → non inclus (pas de bruit dans le payload).
     p3 = verify.build_payload("http://x/", ["A"], clicks=[], after_markers=[])
     assert "clicks" not in p3 and "after_markers" not in p3
+    # canvas : inclus ssi non vide (plancher), absent sinon.
+    assert "canvas" not in verify.build_payload("http://x/", ["A"], canvas={})
+    p4 = verify.build_payload("http://x/", ["A"], canvas={"selector": "canvas", "non_blank": True})
+    assert p4["canvas"] == {"selector": "canvas", "non_blank": True}
 
 
 class _FakeProc:
@@ -302,6 +317,26 @@ def test_verify_target_distinguishes_after_missing_from_click_fail(ctx, monkeypa
                                clicks=[{"text": "Jouer"}], after_markers=["Tour 1"])
     assert res["ok"] is False and res["after_missing"] == ["Tour 1"]      # post-marker manquant…
     assert [c for c in res["clicks"] if not c["ok"]]                      # …ET clic échoué : distincts
+
+
+def test_verify_target_threads_canvas_and_surfaces_result(ctx, monkeypatch):
+    settings, _ = ctx
+    _stub_runner(settings)
+    captured: dict = {}
+    # le runner (JS) replie non_blank dans ok ; ici on prouve que verify_target THREAD le contrat canvas au
+    # payload ET porte le verdict canvas du runner (le plancher est calculé côté runner, cf. selfcheck).
+    out = {"ok": False, "found": ["Tour 1"], "missing": [],
+           "canvas": {"non_blank_ok": False, "reason": "canvas uniforme (rien peint)"}}
+
+    def fake_run(cmd, **kw):
+        captured["payload"] = json.loads(cmd[2])
+        return _FakeProc(json.dumps(out))
+
+    monkeypatch.setattr(verify.subprocess, "run", fake_run)
+    res = verify.verify_target(settings, "http://x/", ["Tour 1"], name="canvas",
+                               canvas={"selector": "canvas", "non_blank": True})
+    assert captured["payload"]["canvas"] == {"selector": "canvas", "non_blank": True}   # threadé au runner
+    assert res["ok"] is False and res["canvas"]["non_blank_ok"] is False                # verdict runner porté
 
 
 def test_verify_is_fresh_contract_version_guard():

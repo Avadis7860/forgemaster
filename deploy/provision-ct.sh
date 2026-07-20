@@ -115,7 +115,7 @@ install_compose_provider() {
 
 # Runner de vérification visuelle (gate Tier-1.5 `cockpit gate verify`) : Playwright headless. `verify.py` le
 # résout au défaut `$COCKPIT_HOME/runners/render_check.js` (aucun env à câbler). On sème le .js vendoré
-# (deploy/runners/) + son unique dep `playwright-core` (pinné, package.json) + le browser Chromium (peuplé
+# (deploy/runners/) + ses deps `playwright-core` (pinné) et `pngjs` (plancher canvas, package.json) + le browser Chromium (peuplé
 # sous `~/.cache/ms-playwright` de l'utilisateur du service ; sous --system root = /root = le HOME du service).
 # Node vient de `cockpit tools install` (tools/bin). Idempotent (install browser skip si déjà au bon SHA).
 seed_verify_runner() {

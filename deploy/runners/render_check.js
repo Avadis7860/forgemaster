@@ -7,7 +7,8 @@
 // playwright-core déjà vendoré dans ce dossier + le Chromium de ~/.cache/ms-playwright.
 //
 // Entrée : argv[2] = JSON {url, markers:[...], screenshot?:path, timeout_ms?:int, cookies?:[...],
-//          wait_for_text?:str, wait_timeout_ms?:int, clicks?:[...], after_markers?:[...]}
+//          wait_for_text?:str, wait_timeout_ms?:int, clicks?:[...], after_markers?:[...],
+//          canvas?:{selector,non_blank}}
 //          (ou le même JSON sur stdin si argv[2] absent).
 //          cookies (optionnel) : tableau Playwright {name,value,url|domain+path,...} injecté dans
 //          le contexte AVANT le goto → permet de rendre une UI derrière auth (deep-link authentifié),
@@ -25,15 +26,36 @@
 //          l'état AT-REST avant les gestes, joue `clicks`, puis exige que ces markers apparaissent APRÈS le
 //          geste ET qu'ils étaient ABSENTS at-rest — prouve une TRANSITION d'état observable, pas une simple
 //          présence. Dans ce mode, `markers` reste la cible AT-REST (le cadre déjà rendu au chargement).
+//          canvas (optionnel) : plancher pour un rendu <canvas>/WebGL, dont l'innerText VIDE est invisible au
+//          match textuel. {selector:"canvas", non_blank:true} → le runner screenshote l'élément et exige des
+//          pixels NON-UNIFORMES (le canvas a peint). Ne prouve PAS le bon état (ça = sidecar texte sr-only lu
+//          par `markers`) — juste qu'il n'est ni vide ni cassé. Absent → comportement inchangé.
 // Sortie : {url, ok, found:[], missing:[], after_found:[], after_missing:[], pre_present:[], title,
-//          screenshot, clicks?:[...], error?}
+//          screenshot, clicks?:[...], canvas?:{non_blank_ok,reason?}, error?}
 //   ok (legacy, sans after_markers) = tous les markers présents (page chargée).
 //   ok (deux-temps) = markers at-rest présents ET after_markers présents après geste ET AUCUN d'eux présent
 //   at-rest (pre_present vide = transition prouvée) ET tous les clics réussis.
+//   + si canvas.non_blank déclaré : le canvas a peint (non_blank_ok) — replié dans ok.
 
 const fs = require('fs');
 const path = require('path');
 const { chromium } = require('playwright-core');
+const { PNG } = require('pngjs');
+
+// Plancher canvas : un <canvas> a un innerText VIDE → le match textuel de markers ne peut rien prouver
+// (angle mort structurel). Ce check décode un screenshot de l'élément canvas et assert qu'il a RÉELLEMENT
+// peint — au moins deux valeurs de pixel distinctes (un buffer vierge est uniforme). Ne prouve PAS le bon
+// état (ça, c'est le sidecar texte sr-only lu par les markers) — juste que le canvas n'est pas vide/cassé.
+function isNonBlankPng(buffer) {
+  const png = PNG.sync.read(buffer);        // lève sur PNG invalide → attrapé par l'appelant (fail-close)
+  const d = png.data;                        // RGBA, length = width*height*4
+  if (d.length < 8) return false;            // < 2 pixels : rien à comparer
+  const r0 = d[0], g0 = d[1], b0 = d[2], a0 = d[3];
+  for (let i = 4; i < d.length; i += 4) {
+    if (d[i] !== r0 || d[i + 1] !== g0 || d[i + 2] !== b0 || d[i + 3] !== a0) return true;
+  }
+  return false;                              // tous les pixels identiques → uniforme → vierge
+}
 
 function readStdin() {
   return new Promise((resolve) => {
@@ -155,11 +177,27 @@ async function main() {
       fs.mkdirSync(path.dirname(input.screenshot), { recursive: true });
       await page.screenshot({ path: input.screenshot, fullPage: Boolean(input.full_page) });
     }
+    // Plancher canvas (optionnel) : contrat `canvas:{selector,non_blank}` → décode un screenshot de
+    // l'élément et prouve qu'il a peint (pixels non-uniformes). Élément absent / capture ko / PNG
+    // invalide → fail-close (non_blank_ok:false). Complète le sidecar texte, ne le remplace pas.
+    if (input.canvas && input.canvas.non_blank) {
+      const sel = String(input.canvas.selector || 'canvas');
+      try {
+        const buf = await page.locator(sel).first().screenshot();
+        out.canvas = { non_blank_ok: isNonBlankPng(buf) };
+        if (!out.canvas.non_blank_ok) out.canvas.reason = 'canvas uniforme (rien peint)';
+      } catch (e) {
+        out.canvas = { non_blank_ok: false, reason: String((e && e.message) || e) };
+      }
+    }
     // Legacy : ok ssi markers présents. Deux-temps : + after_markers présents après geste, + aucun déjà
     // présent at-rest (transition prouvée), + tous les clics réussis (un clic raté = preuve non jouée).
+    // + plancher canvas si déclaré (le canvas a peint).
     const clicksAllOk = !Array.isArray(out.clicks) || out.clicks.every((c) => c.ok);
+    const canvasOk = !(input.canvas && input.canvas.non_blank) || Boolean(out.canvas && out.canvas.non_blank_ok);
     out.ok = out.missing.length === 0
-      && (!twoPhase || (out.after_missing.length === 0 && out.pre_present.length === 0 && clicksAllOk));
+      && (!twoPhase || (out.after_missing.length === 0 && out.pre_present.length === 0 && clicksAllOk))
+      && canvasOk;
   } catch (e) {
     out.error = String((e && e.message) || e);
   } finally {

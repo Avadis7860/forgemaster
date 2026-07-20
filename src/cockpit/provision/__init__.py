@@ -111,7 +111,9 @@ def validate_bundle(project_type: str = "generic") -> None:
     """Valide un bundle **avant toute copie** (fail-closed). Lève `BundleError` si : type hors registre ;
     manifeste absent/illisible ; `version` manquante ; `project_type` du manifeste ≠ nom du dossier ;
     `facets` vide ; `default_facet` ∉ `facets` ; une facette déclarée sans dossier `.claude/facets/<f>/`
-    de support dans le bundle composé."""
+    de support dans le bundle composé ; un bloc `[bundle.mcp]` présent mais mal typé (`corpus` non-booléen,
+    `tech_scope` non-nom). Le bloc `mcp` est **optionnel** (absent ⇒ valide) : déclaration sèche du besoin
+    de corpus, jamais un secret ni un endpoint."""
     files = load_bundle(project_type)                      # lève BundleError si type hors registre
     manifest = _parse_manifest(files, project_type)
     if not manifest.get("version"):
@@ -130,6 +132,16 @@ def validate_bundle(project_type: str = "generic") -> None:
         prefix = f".claude/facets/{fac}/"
         if not any(p.startswith(prefix) for p in files):
             raise BundleError(f"bundle {project_type!r} : facette {fac!r} sans dossier {prefix}")
+    mcp_decl = manifest.get("mcp")                             # bloc optionnel, sec (jamais de secret)
+    if mcp_decl is not None:
+        if not isinstance(mcp_decl, dict):
+            raise BundleError(f"bundle {project_type!r} : `[bundle.mcp]` doit être une table")
+        corpus = mcp_decl.get("corpus")
+        if corpus is not None and not isinstance(corpus, bool):
+            raise BundleError(f"bundle {project_type!r} : `mcp.corpus` doit être un booléen")
+        scope = mcp_decl.get("tech_scope")
+        if scope is not None and (not isinstance(scope, str) or not scope.strip()):
+            raise BundleError(f"bundle {project_type!r} : `mcp.tech_scope` doit être un nom de silo non vide")
 
 
 def list_valid_types() -> list[dict]:
@@ -138,7 +150,8 @@ def list_valid_types() -> list[dict]:
     le durcissement des `choices` CLI la consomment (zéro liste dupliquée). Un overlay cassé (manifeste
     absent/incohérent, facette sans dossier de support) est **silencieusement écarté** : on n'offre jamais
     un type qu'on ne saurait pas semer. Chaque entrée : `{type, version, project_type, facets,
-    default_facet}`. Déterministe, ordre de `discover_types` (generic en tête)."""
+    default_facet, mcp}` (`mcp` = déclaration sèche du manifeste, `{}` si absente). Déterministe, ordre de
+    `discover_types` (generic en tête)."""
     valid: list[dict] = []
     for project_type in discover_types():
         try:
@@ -152,6 +165,7 @@ def list_valid_types() -> list[dict]:
             "project_type": manifest.get("project_type", project_type),
             "facets": manifest.get("facets", []),
             "default_facet": manifest.get("default_facet", ""),
+            "mcp": manifest.get("mcp", {}),
         })
     return valid
 

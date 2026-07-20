@@ -143,6 +143,33 @@ def test_list_valid_types_returns_metadata():
     assert bg["version"] == "1"
     assert bg["default_facet"] == "backend"
     assert set(bg["facets"]) == {"frontend", "backend", "game-design", "doc"}
+    # Déclaration MCP sèche surfacée par entrée : browser-game pointe son silo tech dédié.
+    assert bg["mcp"] == {"corpus": True, "tech_scope": "browser-game"}
+    assert by_type["generic"]["mcp"] == {"corpus": True}   # universel, sans silo type-spécifique
+
+
+def test_bundle_manifest_declares_mcp_corpus():
+    """DoD 1 : le manifeste porte une déclaration MCP **sèche** (jamais de secret ni d'endpoint) — `base`
+    (generic) marque l'universel `corpus = true` ; browser-game ajoute son `tech_scope`."""
+    assert read_bundle_manifest("generic")["mcp"] == {"corpus": True}
+    assert read_bundle_manifest("browser-game")["mcp"] == {"corpus": True, "tech_scope": "browser-game"}
+
+
+def test_validate_bundle_rejects_malformed_mcp(tmp_path, monkeypatch):
+    """Le bloc `[bundle.mcp]` est optionnel mais **typé fail-closed** : `corpus` non-booléen → refus."""
+    import cockpit.provision as prov
+    meta = tmp_path / "bundles" / "base" / ".cockpit"
+    meta.mkdir(parents=True)
+    (meta / "bundle.toml").write_text(
+        '[bundle]\nversion = "1"\nproject_type = "generic"\nfacets = ["doc"]\ndefault_facet = "doc"\n'
+        '[bundle.mcp]\ncorpus = "yes"\n',                  # str au lieu de bool → invalide
+        encoding="utf-8")
+    doc = tmp_path / "bundles" / "base" / ".claude" / "facets" / "doc"
+    doc.mkdir(parents=True)
+    (doc / "PERSONA.md").write_text("x", encoding="utf-8")
+    monkeypatch.setattr(prov, "_BUNDLES_DIR", tmp_path / "bundles")
+    with pytest.raises(prov.BundleError, match="corpus"):
+        prov.validate_bundle("generic")
 
 
 def test_list_valid_types_excludes_broken(tmp_path, monkeypatch):
