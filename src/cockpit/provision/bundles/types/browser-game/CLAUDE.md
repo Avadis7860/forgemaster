@@ -13,7 +13,8 @@
   design dans ce fichier ; ce `CLAUDE.md` reste la base structurelle (framework / comment-travailler / règles).
 - **Public cible** : les **joueurs** (client web) et les mainteneurs du service serveur-autoritatif.
 - **État actuel** : **amorçage** — repo semé avec un **squelette TS-mono runnable né-avec** (`package.json` +
-  `web/` client Vite/React + `server/` Hono + Zod partagé + test Vitest ; gate `tsc → vitest` vert sans édition).
+  `web/` client Vite/React + Tailwind + React Query + `server/` Hono + Zod partagé + test Vitest + lint eslint ;
+  gate `eslint → tsc → vitest` vert sans édition).
   La stack est en place : tu **déroules É1** (modèle de domaine), tu ne scaffoldes PAS la toolchain.
 
 ## 2. Rôle de l'IA (persona)
@@ -27,7 +28,7 @@
 
 Univers **TypeScript unique** :
 - **Front** : React 19 + Vite + TypeScript + Tailwind (UI de gestion, rendu CSR) → `web/`.
-- **Back** : Hono + Drizzle + SQLite (état serveur-autoritatif ; SQLite→Postgres plus tard) → `server/`.
+- **Back** : Hono (état serveur-autoritatif ; état **en mémoire à l'amorçage** — persistance **Drizzle + SQLite câblée en É7**, SQLite→Postgres plus tard) → `server/`.
 - **Liant** : schémas **Zod** partagés client/serveur. **Tests** : Vitest. Gate : `eslint` → `tsc` → `vitest`.
 - **Temps réel** : poll React Query (UI) + WebSocket Hono (events critiques). Pas de moteur de jeu lourd au départ.
 - Code indexé par `codemap` (engine **ts**, sous-systèmes `web`/`server`), design-system par `frontmap`.
@@ -38,7 +39,7 @@ Univers **TypeScript unique** :
 - **Règles verrouillées** :
   - **Aucune logique de jeu côté client** (anti-triche) — le client propose, le serveur dispose.
   - **Simulation déterministe** (même seed + commandes → même état) ; la résolution se teste en pur avant l'UI.
-  - **Échelle différée** — monolithe + SQLite d'abord, pas de sur-architecture.
+  - **Échelle différée** — monolithe + SQLite (persistance câblée en É7) d'abord, pas de sur-architecture.
 - **Anti-patterns** (jamais) : signature d'API « de mémoire » avant un import non trivial (React Query / Hono /
   Drizzle / Zod) → **si un MCP de corpus est câblé** (`cockpit mcp wire`), interroge-le
   (`query(type=tech, scope=browser-game)`) ; sinon appuie-toi sur la doc et le code du projet — n'invente pas ;

@@ -6,8 +6,8 @@
 > modèle de domaine **Zod partagé** (+ son test), un **cœur de tick DÉTERMINISTE partagé** (`src/shared/tick`,
 > `(état, commandes, seed) → état'`, testé), un **client** Vite/React (`web/`) et un **serveur** Hono (`server/`)
 > qui fait tourner la boucle de tick sur l'état canonique et la **pousse via un canal WebSocket d'écho
-> autoritatif** (`GET /ws`) — `npm install && npm run dev` sert le client, `npm run gate` (`tsc --noEmit &&
-> vitest run`) est **vert sans édition**. Le worker **ÉTEND** cette boucle née-avec (production réelle, combat,
+> autoritatif** (`GET /ws`) — `npm install && npm run dev` sert le client, `npm run gate` (`eslint . && tsc
+> --noEmit && vitest run`) est **vert sans édition**. Le worker **ÉTEND** cette boucle née-avec (production réelle, combat,
 > bots), il ne la fonde pas. Remplace les `{{jetons}}` de mission (`{{game_name}}`, `{{theme}}`) au fil des
 > features ; ne re-débats PAS la stack.
 
@@ -30,18 +30,25 @@
   "dependencies": {
     "@hono/node-server": "^1.13.7",
     "@hono/node-ws": "^1.3.1",
+    "@tanstack/react-query": "^5.62.0",
     "hono": "^4.6.14",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "zod": "{{zod_version}}"
   },
   "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@tailwindcss/vite": "^4.0.0",
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^9.17.0",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "tailwindcss": "^4.0.0",
     "tsx": "^4.19.2",
     "typescript": "{{ts_version}}",
+    "typescript-eslint": "^8.18.0",
     "vite": "^5.4.11",
     "vitest": "^2.1.8"
   }
@@ -376,17 +383,22 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 ```typescript
 // main.tsx — point de montage du client React (Vite). Le client est une VUE + des commandes : aucune logique
 // de jeu ici (anti-triche, décision verrouillée 2). Étends l'UI en É6 (panneaux ressources/map/flotte).
+import { QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { App } from "./App.js";
+import { queryClient } from "./queryClient.js";
+import "./index.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("élément #root introuvable dans index.html");
 
 createRoot(root).render(
   <StrictMode>
-    <App />
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>
   </StrictMode>,
 );
 ```
@@ -429,14 +441,16 @@ export function App() {
 ### `vite.config.ts` (semé — build/dev du client `web/`)
 
 ```typescript
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 // Vite : racine = web/ (client React). Le dev-server proxifie /api vers le serveur Hono (port 8787) ; le build
 // sort dans dist/. Univers TypeScript unifié : web/ et server/ partagent src/shared (hors racine web/).
+// Tailwind v4 est branché via son plugin Vite (zéro-config : scan du contenu automatique).
 export default defineConfig({
   root: "web",
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   server: {
     proxy: {
       "/api": "http://localhost:8787",
@@ -464,13 +478,69 @@ export default defineConfig({
 });
 ```
 
+### `eslint.config.js` (semé — flat config du 1er maillon du gate `eslint → tsc → vitest`)
+
+```javascript
+// eslint.config.js — flat config (ESLint 9) : 1er maillon du gate Tier-0 `eslint → tsc → vitest`. Base JS
+// recommandée + TypeScript recommandé (non type-checked : rapide, sans service de projet) + règles des Hooks
+// React. `no-undef` est OFF sur le TS (le compilateur gère déjà `document`/`process`/`setInterval`) ; les
+// `.d.ts` sont ignorés (triple-slash de Vite légitime). Étends les règles au fil du projet ; garde le seed
+// lint-clean — un gate qui ment (déclaré mais absent) est pire qu'un gate modeste honnête.
+import js from "@eslint/js";
+import reactHooks from "eslint-plugin-react-hooks";
+import tseslint from "typescript-eslint";
+
+export default tseslint.config(
+  { ignores: ["dist", "node_modules", "**/*.d.ts"] },
+  js.configs.recommended,
+  ...tseslint.configs.recommended,
+  {
+    files: ["**/*.{ts,tsx}"],
+    plugins: { "react-hooks": reactHooks },
+    rules: {
+      "no-undef": "off",
+      "react-hooks/rules-of-hooks": "error",
+      "react-hooks/exhaustive-deps": "warn",
+    },
+  },
+);
+```
+
+### `web/index.css` (semé — feuille racine du client, Tailwind v4)
+
+```css
+/* index.css — feuille racine du client, importée par web/main.tsx. Tailwind v4 en zéro-config : le scan du
+   contenu est automatique (aucun tailwind.config ni postcss.config). Ajoute tes couches / design-tokens sous
+   l'import ; le design-system est indexé par `frontmap`. */
+@import "tailwindcss";
+```
+
+### `web/queryClient.ts` (semé — client React Query partagé, poll temps-réel)
+
+```typescript
+// queryClient.ts — client React Query partagé (lectures ponctuelles REST de l'état serveur-autoritatif). Le
+// canal WebSocket d'écho (`GET /ws`, cf. server/index.ts) POUSSE l'état à chaque tick ; React Query sert les
+// requêtes ponctuelles (santé, listes). Étends les options par défaut (staleTime, retry) au besoin. Le client
+// ne calcule JAMAIS l'état de jeu (anti-triche, décision verrouillée 2) — il lit et propose des commandes.
+import { QueryClient } from "@tanstack/react-query";
+
+export const queryClient = new QueryClient();
+```
+
+### `web/vite-env.d.ts` (semé — types ambiants Vite : imports CSS/assets tsc-verts)
+
+```typescript
+/// <reference types="vite/client" />
+```
+
 ## Ce que tu NE dois pas re-débattre (hérité du blueprint)
 
 - **Un seul univers TypeScript (décision 1)** : `web/` (Vite/React) + `server/` (Hono) + Zod **partagés**. Pas de
   second langage back par défaut — le modèle de domaine vit dans `src/shared/`, importé des deux côtés.
 - **Le squelette est né-avec, pas scaffoldé par un worker (É0)** : un projet frais est runnable (client servi par
-  Vite, gate `tsc → vitest` vert) SANS édition manuelle ; un worker task-scopé n'a jamais à poser
-  `package.json`/`tsconfig`/`web/`/`server/`.
+  Vite, gate `eslint → tsc → vitest` vert) SANS édition manuelle ; la toolchain verrouillée est **née-avec**
+  (eslint flat-config, Tailwind v4, React Query) — un worker task-scopé n'a jamais à poser
+  `package.json`/`tsconfig`/config lint-style/`web/`/`server/`.
 - **Serveur-autoritatif, déterministe (décisions 2 et 5)** : l'état canonique et la résolution vivent côté serveur ;
   le client propose, le serveur dispose. Pas de logique de jeu côté client. **É2 (boucle de tick) est amorcée
   né-avec** (`src/shared/tick` exécuté par `server/index.ts`, poussé sur `GET /ws`) — étends-la, ne la refonde pas.
