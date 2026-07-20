@@ -108,6 +108,10 @@ export function ProjectRail({ open = false, onClose }: { open?: boolean; onClose
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const { isOpen, onOpenChange } = useRailCollapse()
+  // Footer « Nouveau projet » replié par défaut (densité : c'est le plus gros bloc du rail et une action
+  // occasionnelle) — mais FORCÉ ouvert quand l'espace est vide, où créer un projet EST l'action primaire.
+  const [newOpen, setNewOpen] = useState(false)
+  const isEmptyWorkspace = projects.isSuccess && projects.data.length === 0
 
   return (
     <aside
@@ -174,7 +178,16 @@ export function ProjectRail({ open = false, onClose }: { open?: boolean; onClose
       </div>
 
       <div className="border-t border-border p-3">
-        <NewProjectForm onCreated={(project) => navigate({ to: '/$project', params: { project: project.slug } })} />
+        <Collapsible
+          title="Nouveau projet"
+          open={isEmptyWorkspace || newOpen}
+          onOpenChange={setNewOpen}
+        >
+          <NewProjectForm
+            title={null}
+            onCreated={(project) => navigate({ to: '/$project', params: { project: project.slug } })}
+          />
+        </Collapsible>
       </div>
     </aside>
   )
