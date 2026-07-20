@@ -242,7 +242,18 @@ def run_merge(conn: sqlite3.Connection, settings: Settings, *, feature_ref: str,
                             else "gate rouge — " + "; ".join(decision["blockers"]))
         return report
 
-    # (1) merge ff feature→dev, puis dev→main (main-suit-dev). Un non-ff lève (GitOpError) → surfacé.
+    # (1a) réalignement anti-stale-base (cockpit-merge-batched-sibling-stale-base) : quand ≥2 features
+    # siblings branchent du même `dev` (drain parallèle) et se mergent en batch, le 1er merge fait avancer
+    # `dev` → `dev` n'est plus ancêtre de la 2ᵉ → le ff strict lèverait. On rebase la branche sur le `dev`
+    # à jour (linéaire, préserve les commits worker) AVANT le ff. Rebase trivial (fichiers disjoints) → le
+    # diff `dev...HEAD` est préservé, donc le verdict SHA-bound déjà validé par `evaluate_gate` reste
+    # valide ; on ré-ancre `head_sha` sur le nouveau HEAD. Conflit non trivial → `rebase_onto` lève.
+    if not git.is_ancestor(sot, BASE_BRANCH, branch):
+        wt = worktree.worktree_path_for(settings, project_slug, feature_slug)
+        git.rebase_onto(sot, wt, onto=BASE_BRANCH,
+                        identity=resolve_identity(project_slug, BASE_BRANCH, role="worker"))
+        head_sha = git.feature_sha(sot, branch)
+    # (1b) merge ff feature→dev, puis dev→main (main-suit-dev). Un non-ff lève (GitOpError) → surfacé.
     git.merge_ff(sot, into=BASE_BRANCH, source=branch)
     git.merge_ff(sot, into=MAIN_BRANCH, source=BASE_BRANCH)
     # (2) writeback : identité injectée (non persistée) + push miroir best-effort si un remote existe.

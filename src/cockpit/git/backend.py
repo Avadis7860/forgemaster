@@ -48,6 +48,16 @@ class GitBackend(Protocol):
         """Status machine-lisible (branche + ahead/behind + fichiers)."""
         ...
 
+    def is_ancestor(self, sot: Path, ancestor: str, descendant: str) -> bool:
+        """`ancestor` est-il ancêtre de `descendant` sur le SoT ? Read-only (garde ff + réalignement)."""
+        ...
+
+    def rebase_onto(self, sot: Path, worktree: Path, *, onto: str, identity: tuple[str, str]) -> None:
+        """Rebase la branche sortie dans `worktree` sur `onto` (préserve les commits worker ; identité
+        injectée). Conflit non trivial → `rebase --abort` puis lève (jamais d'écrasement silencieux).
+        Réaligne une base périmée avant un ff quand un sibling a fait avancer `onto` (spec sot-local)."""
+        ...
+
     def merge_ff(self, sot: Path, *, into: str, source: str) -> None:
         """Merge fast-forward `source` dans `into` (feature→dev, puis dev→main). Lève si non-ff."""
         ...

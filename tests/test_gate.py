@@ -287,6 +287,53 @@ def test_run_merge_holds_without_go_then_merges_and_cleans_up(ctx):
     assert merge_row is not None and merge_row["sha"] == head_sha
 
 
+def test_run_merge_rebases_stale_sibling_then_ff(ctx):
+    """Deux features siblings branchées du même `dev` (drain parallèle), mergées en batch : le 1er merge
+    fait avancer `dev` → la 2ᵉ n'est plus ff (base périmée). `run_merge` la REBASE sur le `dev` à jour
+    AVANT le ff (préserve son commit worker) → les deux mergent. Régression cockpit-merge-batched-sibling-
+    stale-base (surfacé LIVE le 2026-07-20, E2E deploy-smoke)."""
+    settings, conn = ctx
+    git = InternalGit()
+    registry.create_project(conn, settings, slug="proj")
+    sot = registry.sot_path_for(settings, "proj")
+    base0 = git.feature_sha(sot, "dev")                       # dev au seed (avant les 2 features)
+
+    def seed(slug: str, fname: str) -> str:
+        model.add_feature(conn, project_slug="proj", slug=slug)
+        model.add_task(conn, feature_ref=f"proj/{slug}", slug=f"{slug}-t")
+        conn.execute("UPDATE tasks SET status = 'in_progress' WHERE slug = ?", (f"{slug}-t",))
+        conn.commit()
+        res = worktree.reserve(conn, settings, git, project="proj", feature=slug, probe=None)
+        (res["path"] / fname).write_text("x = 1\n", encoding="utf-8")
+        git.commit_worktree(res["path"], message=f"feat: {slug}",
+                            identity=resolve_identity("proj", "dev", role="worker"))
+        sha = git.feature_sha(sot, f"feature/{slug}")
+        review.write_verdict(settings, "proj", slug, {"findings": []},
+                             sha=sha, diff_text=git.diff_text(sot, base="dev", head=f"feature/{slug}"))
+        toolchain.write_verdict(settings, "proj", slug,
+                                [{"group": "backend", "name": "ruff", "cmd": "ruff check .",
+                                  "exit_code": 0, "ok": True}], sha=sha)
+        return sha
+
+    sha_a = seed("a", "a.py")
+    sha_b = seed("b", "b.py")                                 # a ET b branchent de dev@base0
+
+    done_a = merge.run_merge(conn, settings, feature_ref="proj/a", human_go=True, git=git)
+    assert done_a["merged"] is True and git.feature_sha(sot, "dev") == sha_a
+    assert not git.is_ancestor(sot, "dev", "feature/b")       # pré-condition du bug : base de b périmée
+
+    done_b = merge.run_merge(conn, settings, feature_ref="proj/b", human_go=True, git=git)
+    assert done_b["merged"] is True                           # AVANT le fix : GitOpError non-ff
+    dev_sha = git.feature_sha(sot, "dev")
+    assert done_b["merge_sha"] == dev_sha and dev_sha != sha_b   # merge_sha ré-ancré sur le HEAD rebasé
+    assert git.feature_sha(sot, "main") == dev_sha              # main suit dev
+    landed = set(git.diff_names(sot, base=base0, head="dev"))
+    assert {"a.py", "b.py"} <= landed                          # dev porte les deux (b rebasé, pas écrasé)
+    statuses = {r["slug"]: r["status"] for r in conn.execute(
+        "SELECT slug, status FROM features WHERE slug IN ('a', 'b')")}
+    assert statuses == {"a": "merged", "b": "merged"}
+
+
 def test_run_merge_passes_project_credential_ref_to_writeback(ctx):
     """run_merge lit le `credential_ref` du projet et le passe au writeback (résolu à l'usage). Prouve le
     câblage bout-en-bout : réf opaque en DB → argument de `merge_writeback`, jamais un token en DB."""

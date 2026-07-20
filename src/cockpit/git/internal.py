@@ -366,10 +366,29 @@ class InternalGit:
         """Status machine-lisible (`--porcelain=v2 -b`, parsé)."""
         return parse_status(_checked(workdir, "status", "--porcelain=v2", "-b").stdout)
 
+    def is_ancestor(self, sot: Path, ancestor: str, descendant: str) -> bool:
+        """`ancestor` est-il un ancêtre de `descendant` sur le SoT (`merge-base --is-ancestor`) ? Read-only.
+        Sert la garde ff (`merge_ff`) ET le réalignement anti-stale-base (`run_merge` rebase quand faux)."""
+        return _git(sot, "merge-base", "--is-ancestor", ancestor, descendant).ok
+
+    def rebase_onto(self, sot: Path, worktree: Path, *, onto: str, identity: tuple[str, str]) -> None:
+        """Rebase la branche sortie dans `worktree` sur `onto` (linéarise, **préserve** les commits worker)
+        — réaligne une base périmée quand un sibling a fait avancer `onto` (dev) depuis le drain de cette
+        feature. Identité INJECTÉE (les commits rejoués reçoivent un committer valide, non persisté — spec
+        merge-writeback ; corrige « empty ident »). Sur conflit non trivial : `rebase --abort` (jamais
+        d'état demi-rebasé ni d'écrasement silencieux) puis `GitOpError` — une vraie divergence doit être
+        re-drainée/re-revue. Sérialisé par le flock du SoT (cohérence avec add/remove_worktree)."""
+        env = writeback_env(identity)
+        with _worktree_lock(sot):
+            if not _git(worktree, "rebase", onto, env=env).ok:
+                _git(worktree, "rebase", "--abort")
+                raise GitOpError(f"rebase sur {onto} : conflit non trivial (base périmée non réalignable "
+                                 f"automatiquement) — re-drainer la feature")
+
     def merge_ff(self, sot: Path, *, into: str, source: str) -> None:
         """Merge **fast-forward** `source` dans `into` sur le SoT bare : `into` doit être ancêtre de
         `source` (sinon `GitOpError` non-ff). Sur un bare, un ff = avancer la ref (`branch -f`)."""
-        if not _git(sot, "merge-base", "--is-ancestor", into, source).ok:
+        if not self.is_ancestor(sot, into, source):
             raise GitOpError(f"merge non-ff : {into} n'est pas ancêtre de {source}")
         _checked(sot, "branch", "-f", into, source)
 
