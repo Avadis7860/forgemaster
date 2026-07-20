@@ -1,8 +1,9 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import {
-  Alert, Badge, Button, Card, Collapsible, EmptyState, LoadingState, SectionTitle, Segmented,
+  Alert, Badge, Button, Card, EmptyState, Input, LoadingState, SectionTitle,
 } from '@/components/ui'
+import { cn } from '@/lib/cn'
 import { ApiError } from '@/lib/api'
 import { useBundleFile, useBundleTree, useTypes } from '@/lib/queries'
 import type { BundleFile, BundleFileEntry } from '@/lib/schemas'
@@ -12,24 +13,25 @@ import type { Tone } from '@/lib/statusTone'
 // bundle initial de l'accueil). Un fichier .md du bundle est rendu comme une vraie page ; le reste en mono.
 const DocView = lazy(() => import('@/components/docs/DocView').then((m) => ({ default: m.DocView })))
 
-// Taxonomie de curation CÔTÉ FRONT : libellé + ordre + tone. Les clés (`group`) sont posées par le serveur
-// (`routes/bundles._classify`) ; ici on ne fait que présenter. Ordre = ce qui porte la qualité d'abord, la
-// plomberie repliée en dernier — pour « juger l'efficacité » d'un bundle sans se noyer dans l'outillage.
-const GROUPS: ReadonlyArray<{ key: string; label: string; tone: Tone; defaultOpen: boolean; hint: string }> = [
-  { key: 'method', label: 'Méthode & Persona', tone: 'accent', defaultOpen: true, hint: 'le « comment » — ce qui porte la qualité' },
-  { key: 'deploy', label: 'Contrat de déploiement', tone: 'info', defaultOpen: true, hint: 'manifeste, roadmap de lancement, compose/Docker' },
-  { key: 'seed', label: 'Seed runnable', tone: 'ok', defaultOpen: true, hint: 'la source réellement semée' },
-  { key: 'docs', label: 'Docs', tone: 'purple', defaultOpen: false, hint: 'prose de haut niveau' },
-  { key: 'plumbing', label: 'Plomberie', tone: 'neutral', defaultOpen: false, hint: "config d'outillage (repliée)" },
+// Taxonomie de curation CÔTÉ FRONT : libellé + tone. Les clés (`group`) sont posées par le serveur
+// (`routes/bundles._classify`) ; ici le rôle n'est PLUS un axe de tri concurrent (l'ancien toggle « Curé »)
+// mais une **annotation** — une puce de couleur portée par chaque fichier dans l'arbre de dossiers réel.
+const GROUPS: ReadonlyArray<{ key: string; label: string; tone: Tone }> = [
+  { key: 'method', label: 'Méthode & Persona', tone: 'accent' },
+  { key: 'deploy', label: 'Contrat de déploiement', tone: 'info' },
+  { key: 'seed', label: 'Seed runnable', tone: 'ok' },
+  { key: 'docs', label: 'Docs', tone: 'purple' },
+  { key: 'plumbing', label: 'Plomberie', tone: 'neutral' },
 ]
+const toneOf = (group: string): Tone => GROUPS.find((g) => g.key === group)?.tone ?? 'neutral'
+const labelOf = (group: string): string => GROUPS.find((g) => g.key === group)?.label ?? group
 
-type View = 'curated' | 'full'
-type Search = { bundle?: string; bfile?: string; bview?: View }
+type Search = { bundle?: string; bfile?: string }
 
 /** Explorer READ-ONLY de l'intérieur des bundles vendorés (grade la surface P5). Ressource GLOBALE (offerte à
  *  la création, partagée par tous les projets) → vit sur le Landing top-level, pas dans un workspace projet.
- *  Piloté par l'URL (`?bundle=&bfile=&bview=`) → chaque vue est **deep-linkable** (capturable at-rest par la
- *  boucle visuelle). Deux GET idempotents (arbre, fichier) servent tout — zéro mutation, goto-safe. */
+ *  Piloté par l'URL (`?bundle=&bfile=`) → chaque vue est **deep-linkable** (capturable at-rest par la boucle
+ *  visuelle). Deux GET idempotents (arbre, fichier) servent tout — zéro mutation, goto-safe. */
 export function BundleExplorer() {
   const { data: types, isLoading, isError, error } = useTypes()
   const search = useSearch({ strict: false }) as Search
@@ -56,12 +58,10 @@ export function BundleExplorer() {
   const activeType = search.bundle && types.some((t) => t.type === search.bundle)
     ? search.bundle
     : types[0].type
-  const view: View = search.bview === 'full' ? 'full' : 'curated'
   const file = search.bfile ?? null
 
   const setType = (t: string) =>
     navigate({ to: '/bundles', search: (p) => ({ ...p, bundle: t, bfile: undefined }) })
-  const setView = (v: View) => navigate({ to: '/bundles', search: (p) => ({ ...p, bview: v }) })
   const setFile = (f: string | undefined) =>
     navigate({ to: '/bundles', search: (p) => ({ ...p, bfile: f }) })
 
@@ -88,20 +88,12 @@ export function BundleExplorer() {
         })}
       </div>
 
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-muted">
-          L'intérieur servi = ce qu'un projet <span className="font-medium text-fg">{activeType}</span> reçoit au seed.
-        </p>
-        <Segmented<View>
-          ariaLabel="Densité de l'arbre"
-          value={view}
-          onChange={setView}
-          options={[{ value: 'curated', label: 'Curé' }, { value: 'full', label: 'Tout voir' }]}
-        />
-      </div>
+      <p className="text-sm text-muted">
+        L'intérieur servi = ce qu'un projet <span className="font-medium text-fg">{activeType}</span> reçoit au seed.
+      </p>
 
       <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
-        <BundleTreePane type={activeType} view={view} selected={file} onOpen={setFile} />
+        <BundleTreePane type={activeType} selected={file} onOpen={setFile} />
         {/* Volet de lecture : `self-start` → hauteur de contenu (le placeholder reste visible au lieu d'être
             centré dans un panneau étiré à l'arbre) ; `sticky` → il suit le scroll d'un arbre long. */}
         <div className="md:sticky md:top-4 md:self-start">
@@ -131,17 +123,71 @@ function SectionCard({ children }: { children: React.ReactNode }) {
   )
 }
 
-/** Arbre d'un bundle. Vue **curée** : fichiers groupés par ce qui porte la qualité (méthode → deploy → seed
- *  → docs → plomberie repliée). Vue **complète** : la liste plate triée de TOUS les fichiers. Les deux rendent
- *  la même donnée servie (`useBundleTree`) — le toggle ne change que la présentation. */
+// ── Arbre de dossiers réel ────────────────────────────────────────────────────────────────────────────────
+// Un seul mode : la donnée plate servie (`useBundleTree`, chaque entrée = `{path, group}`) est reconstruite en
+// **arbre de répertoires** (le layout disque réel), chaque fichier annoté d'une **puce de rôle** (l'ancien axe
+// « Curé » devient une annotation, plus une vue concurrente). Un champ de filtre restreint l'arbre en direct.
+
+type TreeNode = {
+  name: string
+  path: string
+  file: BundleFileEntry | null // non-null = feuille (fichier) ; null = répertoire
+  children: TreeNode[]
+  count: number // nombre de fichiers-feuilles sous ce nœud (badge de densité sur les dossiers)
+}
+
+/** Reconstruit l'arbre de dossiers depuis la liste plate de chemins. Répertoires d'abord, puis fichiers, chaque
+ *  strate triée alphabétiquement — l'ordre stable rend la capture at-rest déterministe. */
+function buildTree(files: BundleFileEntry[]): TreeNode[] {
+  const root: TreeNode = { name: '', path: '', file: null, children: [], count: 0 }
+  const index = new Map<string, TreeNode>([['', root]])
+  for (const f of files) {
+    const parts = f.path.split('/')
+    let parentPath = ''
+    parts.forEach((part, i) => {
+      const path = parentPath ? `${parentPath}/${part}` : part
+      let node = index.get(path)
+      if (!node) {
+        node = { name: part, path, file: null, children: [], count: 0 }
+        index.set(path, node)
+        index.get(parentPath)!.children.push(node)
+      }
+      if (i === parts.length - 1) node.file = f
+      parentPath = path
+    })
+  }
+  const finish = (n: TreeNode): number => {
+    n.children.sort((a, b) => {
+      const ad = a.file ? 1 : 0
+      const bd = b.file ? 1 : 0
+      if (ad !== bd) return ad - bd // dossiers (0) avant fichiers (1)
+      return a.name.localeCompare(b.name)
+    })
+    n.count = n.file ? 1 : n.children.reduce((s, c) => s + finish(c), 0)
+    return n.count
+  }
+  finish(root)
+  return root.children
+}
+
 function BundleTreePane(props: {
   type: string
-  view: View
   selected: string | null
   onOpen: (path: string) => void
 }) {
-  const { type, view, selected, onOpen } = props
+  const { type, selected, onOpen } = props
   const { data, isLoading, isError, error } = useBundleTree(type)
+  const [query, setQuery] = useState('')
+  // Ensemble des dossiers dont l'utilisateur a INVERSÉ l'état par défaut (XOR ci-dessous). Défaut : seuls les
+  // répertoires de premier niveau sont ouverts → un aperçu compact de la forme du bundle, le détail à la demande.
+  const [toggled, setToggled] = useState<ReadonlySet<string>>(() => new Set())
+
+  const q = query.trim().toLowerCase()
+  const roots = useMemo(() => {
+    const files = data?.files ?? []
+    const kept = q ? files.filter((f) => f.path.toLowerCase().includes(q)) : files
+    return buildTree(kept)
+  }, [data?.files, q])
 
   if (isLoading) return <LoadingState label="Lecture de l'arbre…" />
   if (isError || !data) {
@@ -155,70 +201,136 @@ function BundleTreePane(props: {
     return <EmptyState title="Bundle vide" description="Aucun fichier dans le bundle composé." />
   }
 
-  if (view === 'full') {
-    return (
-      <ul className="space-y-0.5">
-        {data.files.map((f) => (
-          <li key={f.path}>
-            <FileRow entry={f} active={selected === f.path} onClick={() => onOpen(f.path)} />
-          </li>
-        ))}
-      </ul>
-    )
+  const toggle = (path: string) =>
+    setToggled((prev) => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  // Ouvert = défaut (premier niveau seulement) XOR inversion utilisateur ; filtrer force l'ouverture (sinon un
+  // match sous un dossier replié serait invisible) ; le dossier ancêtre du fichier sélectionné est forcé ouvert
+  // (deep-link `bfile` → la feuille surlignée est visible dans l'arbre).
+  const isOpen = (path: string) => {
+    if (q !== '') return true
+    if (selected && selected.startsWith(`${path}/`)) return true
+    const defaultOpen = !path.includes('/') // profondeur 0 = répertoire de premier niveau
+    return defaultOpen !== toggled.has(path)
   }
 
-  // Curé : un Collapsible par groupe non vide, dans l'ordre de la taxonomie (plomberie repliée par défaut).
-  const byGroup: Record<string, BundleFileEntry[]> = {}
-  for (const f of data.files) (byGroup[f.group] ??= []).push(f)
   return (
-    <div className="space-y-2">
-      {GROUPS.filter((g) => byGroup[g.key]?.length).map((g) => (
-        <Collapsible
-          key={g.key}
-          defaultOpen={g.defaultOpen}
-          title={
-            <span className="flex items-center gap-2">
-              <Badge tone={g.tone} dot>{g.label}</Badge>
-              <span className="text-xs text-faint">{byGroup[g.key].length} · {g.hint}</span>
-            </span>
-          }
-        >
-          <ul className="space-y-0.5 pt-1">
-            {byGroup[g.key].map((f) => (
-              <li key={f.path}>
-                <FileRow entry={f} active={selected === f.path} onClick={() => onOpen(f.path)} showGroup={false} />
-              </li>
-            ))}
-          </ul>
-        </Collapsible>
+    <div className="space-y-3">
+      <Input
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Filtrer les fichiers…"
+        aria-label="Filtrer les fichiers du bundle"
+      />
+      <RoleLegend />
+      {roots.length === 0 ? (
+        <p className="px-2 py-4 text-center text-sm text-faint">Aucun fichier ne correspond à « {query} ».</p>
+      ) : (
+        <TreeRows nodes={roots} depth={0} isOpen={isOpen} toggle={toggle} selected={selected} onOpen={onOpen} />
+      )}
+    </div>
+  )
+}
+
+/** Légende des puces de rôle : décode l'annotation portée par chaque fichier de l'arbre. Ligne discrète
+ *  (text-xs faint) — de l'information, pas du chrome. */
+function RoleLegend() {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-xs text-faint">
+      <span>Rôle :</span>
+      {GROUPS.map((g) => (
+        <span key={g.key} className="flex items-center gap-1">
+          <span className={cn('size-1.5 shrink-0 rounded-pill', dotClass(g.tone))} aria-hidden />
+          {g.label}
+        </span>
       ))}
     </div>
   )
 }
 
-/** Une ligne de fichier : chemin coupé en dossier (atténué) + nom (mis en avant). En vue plate, un point de
- *  couleur rappelle le groupe. Toujours la primitive Button (jamais un bouton brut, R1). */
+/** Rendu récursif d'un niveau de l'arbre. Le guide d'indentation (bordure gauche) est porté par le `<ul>` des
+ *  niveaux profonds → l'indentation vient du nesting, pas d'une valeur dynamique (reste tokenisé). */
+function TreeRows(props: {
+  nodes: TreeNode[]
+  depth: number
+  isOpen: (path: string) => boolean
+  toggle: (path: string) => void
+  selected: string | null
+  onOpen: (path: string) => void
+}) {
+  const { nodes, depth, isOpen, toggle, selected, onOpen } = props
+  return (
+    <ul className={cn('space-y-0.5', depth > 0 && 'ml-3 border-l border-border pl-2')}>
+      {nodes.map((node) =>
+        node.file ? (
+          <li key={node.path}>
+            <FileRow
+              entry={node.file}
+              name={node.name}
+              active={selected === node.file.path}
+              onClick={() => onOpen(node.file!.path)}
+            />
+          </li>
+        ) : (
+          <li key={node.path}>
+            <FolderRow node={node} open={isOpen(node.path)} onToggle={() => toggle(node.path)} />
+            {isOpen(node.path) && (
+              <TreeRows
+                nodes={node.children}
+                depth={depth + 1}
+                isOpen={isOpen}
+                toggle={toggle}
+                selected={selected}
+                onOpen={onOpen}
+              />
+            )}
+          </li>
+        ),
+      )}
+    </ul>
+  )
+}
+
+/** Une ligne de répertoire : chevron (pivote à l'ouverture) + nom + compte de fichiers sous l'arbre. Primitive
+ *  Button ghost (jamais un bouton brut, R1) ; le repli est purement présentation (aucune mutation). */
+function FolderRow({ node, open, onToggle }: { node: TreeNode; open: boolean; onToggle: () => void }) {
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={onToggle}
+      className="w-full justify-start"
+      aria-expanded={open}
+      title={node.path}
+    >
+      <span className={cn('shrink-0 text-faint transition-transform', open && 'rotate-90')} aria-hidden>▸</span>
+      <span className="shrink-0 text-xs" aria-hidden>📁</span>
+      <span className="min-w-0 truncate font-mono text-xs text-fg">{node.name}/</span>
+      <span className="ml-auto shrink-0 text-xs text-faint">{node.count}</span>
+    </Button>
+  )
+}
+
+/** Une ligne de fichier : puce de rôle (annotation de curation) + nom (le dossier est implicite par la
+ *  position dans l'arbre). Toujours la primitive Button (jamais un bouton brut, R1). */
 function FileRow({
-  entry, active, onClick, showGroup = true,
-}: { entry: BundleFileEntry; active: boolean; onClick: () => void; showGroup?: boolean }) {
-  const slash = entry.path.lastIndexOf('/')
-  const dir = slash >= 0 ? entry.path.slice(0, slash + 1) : ''
-  const base = slash >= 0 ? entry.path.slice(slash + 1) : entry.path
-  const tone = GROUPS.find((g) => g.key === entry.group)?.tone ?? 'neutral'
+  entry, name, active, onClick,
+}: { entry: BundleFileEntry; name: string; active: boolean; onClick: () => void }) {
   return (
     <Button
       variant="ghost"
       size="sm"
       onClick={onClick}
       className={active ? 'w-full justify-start bg-surface-raised text-fg' : 'w-full justify-start'}
-      title={entry.path}
+      title={`${entry.path} — ${labelOf(entry.group)}`}
     >
-      {showGroup && <span className={`size-1.5 shrink-0 rounded-pill ${dotClass(tone)}`} aria-hidden />}
+      <span className={cn('size-1.5 shrink-0 rounded-pill', dotClass(toneOf(entry.group)))} aria-hidden />
       <span className="shrink-0 text-xs" aria-hidden>📄</span>
-      <span className="min-w-0 truncate font-mono text-xs">
-        <span className="text-faint">{dir}</span>
-        <span className="text-fg">{base}</span>
-      </span>
+      <span className="min-w-0 truncate font-mono text-xs text-fg">{name}</span>
     </Button>
   )
 }
@@ -287,7 +399,7 @@ function BundleFileBody({ file }: { file: BundleFile }) {
   )
 }
 
-/** La classe de fond d'un point de couleur de groupe (rappel visuel en vue plate). */
+/** La classe de fond d'une puce de couleur de rôle (annotation de curation portée par chaque fichier). */
 function dotClass(tone: Tone): string {
   const map: Record<Tone, string> = {
     ok: 'bg-emerald-500', warn: 'bg-amber-500', danger: 'bg-red-500', info: 'bg-sky-500',
