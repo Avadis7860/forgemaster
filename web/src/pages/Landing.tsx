@@ -1,15 +1,18 @@
 import { Link } from '@tanstack/react-router'
 import { Button, Card, EmptyState } from '@/components/ui'
+import { BundleExplorer } from '@/components/bundles/BundleExplorer'
 import { useOnboarding } from '@/lib/queries'
 
-/** Accueil (aucun projet sélectionné). Sur une **instance neuve** (first_run) → carte de bienvenue qui
- *  mène au wizard `/setup` (jamais un rail vide sans direction) ; sinon l'onboarding classique. */
+/** Accueil (aucun projet sélectionné). En tête, selon l'état de l'instance : carte de bienvenue *first-run*
+ *  (→ wizard `/setup`) ou l'invite classique à choisir un projet. Puis, TOUJOURS, l'explorer des bundles —
+ *  une ressource **globale** (offerte à la création, partagée par tous), pas l'état d'un projet : on peut
+ *  auditer ce que le cockpit embarque depuis l'accueil, sans ouvrir un projet ni un repo à la main. */
 export function Landing() {
   const { data } = useOnboarding()
 
-  if (data?.first_run) {
-    return (
-      <div className="mx-auto max-w-2xl p-8">
+  return (
+    <div className="mx-auto max-w-5xl space-y-8 p-8">
+      {data?.first_run ? (
         <Card className="space-y-4 p-6">
           <div className="space-y-1">
             <h2 className="text-lg font-semibold text-fg">Bienvenue dans ton cockpit</h2>
@@ -22,16 +25,14 @@ export function Landing() {
             <Button variant="primary">Démarrer la configuration</Button>
           </Link>
         </Card>
-      </div>
-    )
-  }
+      ) : (
+        <EmptyState
+          title="Sélectionne un projet"
+          description="Choisis un projet dans le rail de gauche, ou crée-en un nouveau. La forge orchestre projet → roadmap → travail (dispatch → validation → merge)."
+        />
+      )}
 
-  return (
-    <div className="mx-auto max-w-2xl p-8">
-      <EmptyState
-        title="Sélectionne un projet"
-        description="Choisis un projet dans le rail de gauche, ou crée-en un nouveau. La forge orchestre projet → roadmap → travail (dispatch → validation → merge)."
-      />
+      <BundleExplorer />
     </div>
   )
 }

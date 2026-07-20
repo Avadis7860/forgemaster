@@ -50,6 +50,7 @@ def build_app(settings: Settings) -> FastAPI:
     from cockpit.daemon.deps import Deps
     from cockpit.daemon.routes import (
         bootstrap,
+        bundles,
         codemap,
         deployments,
         dispatch,
@@ -105,7 +106,7 @@ def build_app(settings: Settings) -> FastAPI:
                         docs.make_docs_router, onboarding.make_onboarding_router,
                         bootstrap.make_bootstrap_router, terminal.make_terminal_router,
                         tool.make_tool_router, deployments.make_deployments_router,
-                        types.make_types_router):
+                        types.make_types_router, bundles.make_bundles_router):
         app.include_router(make_router())
 
     @app.exception_handler(KeyError)

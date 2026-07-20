@@ -5,6 +5,8 @@ import type { z } from 'zod'
 import {
   BootstrapPreviewSchema,
   BootstrapReportSchema,
+  BundleTreeSchema,
+  BundleFileSchema,
   DeploymentActionSchema,
   DeploymentLogsSchema,
   DeploymentsSchema,
@@ -87,6 +89,17 @@ export const api = {
   // Registre des bundles : les types de projet OFFERTS à la création (filtrés par validation, fail-closed).
   // GET idempotent (lecture du filesystem vendoré — goto-safe). Alimente le dropdown de NewProjectForm.
   listTypes: () => request('/api/types', TypesListSchema).then((r) => r.types),
+
+  // Intérieur d'un bundle (explorer P5) : arbre curé (chemins + groupe) puis corps d'UN fichier. GET
+  // idempotents (lecture du bundle composé vendoré — goto-safe). Fail-closed : type non offert / fichier
+  // absent → 404 (mappé en ApiError). Le corps = lookup de clé côté serveur (aucun path-traversal possible).
+  getBundleTree: (type: string) =>
+    request(`/api/bundles/${encodeURIComponent(type)}/tree`, BundleTreeSchema),
+  getBundleFile: (type: string, path: string) =>
+    request(
+      `/api/bundles/${encodeURIComponent(type)}/file?path=${encodeURIComponent(path)}`,
+      BundleFileSchema,
+    ),
 
   listProjects: () => request('/api/projects', ProjectsListSchema).then((r) => r.projects),
   getProject: (slug: string) => request(`/api/projects/${encodeURIComponent(slug)}`, ProjectSchema),

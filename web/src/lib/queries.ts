@@ -7,6 +7,8 @@ import type { BootstrapRunInput, CredentialLinkInput, CreateProjectInput, McpWir
 export const qk = {
   health: ['health'] as const,
   types: ['types'] as const,
+  bundleTree: (type: string) => ['bundle-tree', type] as const,
+  bundleFile: (type: string, path: string) => ['bundle-file', type, path] as const,
   projects: ['projects'] as const,
   project: (slug: string) => ['projects', slug] as const,
   roadmap: (project: string) => ['roadmap', project] as const,
@@ -46,6 +48,26 @@ export function useTypes() {
 
 export function useProjects() {
   return useQuery({ queryKey: qk.projects, queryFn: api.listProjects })
+}
+
+// Intérieur d'un bundle (explorer P5). Stable (change au dépôt d'un overlay) → staleTime élevé, pas de poll.
+// `enabled` garde la requête tant qu'aucun type/fichier n'est choisi (GET idempotents, goto-safe).
+export function useBundleTree(type: string) {
+  return useQuery({
+    queryKey: qk.bundleTree(type),
+    queryFn: () => api.getBundleTree(type),
+    enabled: !!type,
+    staleTime: 60_000,
+  })
+}
+
+export function useBundleFile(type: string, path: string) {
+  return useQuery({
+    queryKey: qk.bundleFile(type, path),
+    queryFn: () => api.getBundleFile(type, path),
+    enabled: !!type && !!path,
+    staleTime: 60_000,
+  })
 }
 
 export function useProject(slug: string) {

@@ -94,6 +94,26 @@ export type BundleType = z.infer<typeof BundleTypeSchema>
 
 export const TypesListSchema = z.object({ types: z.array(BundleTypeSchema) })
 
+// Intérieur d'un bundle (explorer P5, GET /api/bundles/{type}/…). L'arbre = les fichiers du bundle composé,
+// chacun avec son `group` de curation (méthode/deploy/seed/docs/plomberie) posé par le serveur. Le corps est
+// tiré à la demande (un fichier). Read-only, goto-safe (lecture du vendoré, fail-closed sur type/fichier absent).
+export const BundleFileEntrySchema = z.object({ path: z.string(), group: z.string() })
+export type BundleFileEntry = z.infer<typeof BundleFileEntrySchema>
+
+export const BundleTreeSchema = z.object({
+  type: z.string(),
+  files: z.array(BundleFileEntrySchema),
+})
+export type BundleTree = z.infer<typeof BundleTreeSchema>
+
+export const BundleFileSchema = z.object({
+  type: z.string(),
+  path: z.string(),
+  group: z.string(),
+  content: z.string(),
+})
+export type BundleFile = z.infer<typeof BundleFileSchema>
+
 export interface CreateProjectInput {
   slug: string
   name?: string | null
