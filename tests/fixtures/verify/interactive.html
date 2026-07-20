@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Jalon jouable — démo</title></head>
+<body>
+  <h1>Compteur : <span id="c">0</span></h1>
+  <div id="etat">Au repos</div>
+  <button id="play">Jouer un tour</button>
+  <script>
+    // Boucle jouable minimale : le geste FAIT AVANCER un état observable.
+    let tour = 0;
+    document.getElementById('play').addEventListener('click', function () {
+      tour += 1;
+      document.getElementById('c').textContent = String(tour);
+      document.getElementById('etat').textContent = 'Tour ' + tour;  // « Tour 1 » n'existe qu'APRÈS le clic
+    });
+  </script>
+</body>
+</html>

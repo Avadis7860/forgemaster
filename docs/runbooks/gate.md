@@ -72,8 +72,10 @@ target non prouvé n'est pas un target vert).
 
 ## verify.build_verdict() — Tier-1.5 feature-verified
 `src/cockpit/gate/verify.py:103` · appelé par `verify.write_verdict`
-PUR. Assemble le verdict `feature-verify-v1` : `ok=True` ssi **≥1 cible ET toutes ok** (jamais blanchi par 0
-cible — pas de vert par absence de preuve). Expose `n_targets`/`n_failed`. `sha`/`ts` injectés par l'appelant
+PUR. Assemble le verdict `feature-verify-v2` (`CONTRACT_VERSION`, preuve deux-temps) : `ok=True` ssi **≥1 cible
+ET toutes ok** (jamais blanchi par 0 cible — pas de vert par absence de preuve). Expose `n_targets`/`n_failed`.
+Une cible « jalon jouable » n'est ok que si son `after_marker` apparaît **après** le geste et était **absent**
+at-rest (`pre_present` vide). `sha`/`ts` injectés par l'appelant
 (pas de git/horloge implicite). Instance Tier-1.5 de la forme `build_verdict` partagée ; `gate_blocking` (voisin)
 bloque dès `n_failed > 0` ou `ok=False`.
 

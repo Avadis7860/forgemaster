@@ -31,7 +31,7 @@ from cockpit.config import Settings
 if TYPE_CHECKING:
     from cockpit.runtime.backend import ComposeBackend
 
-CONTRACT_VERSION = "feature-verify-v1"
+CONTRACT_VERSION = "feature-verify-v2"  # v2 : preuve deux-temps — cf. docs/specs/feature-verified-gate.md
 DEFAULT_TIMEOUT_MS = 15000
 ENV_RUNNER = "COCKPIT_VERIFY_RUNNER"
 
@@ -121,46 +121,113 @@ def runner_path(settings: Settings) -> Path:
 MARKERS_FILE = ".cockpit/verify-markers.json"
 
 
-def read_declared_markers(workdir: Path) -> list[str]:
-    """Markers de rendu **déclarés par le worker** dans `<workdir>/.cockpit/verify-markers.json`
-    (`{"markers": ["<chaîne FR rendue>", ...]}`). Source autonome des cibles Tier-1.5 : le worker déclare
-    ce que SON UI rend, `verify_target` prouve qu'ils sont vraiment dans le DOM (il ne peut pas mentir).
+def _clean_str_list(value: object) -> list[str]:
+    """Chaînes non vides (`.strip()`) d'une liste, robuste aux entrées sales. PUR."""
+    if not isinstance(value, list):
+        return []
+    return [s.strip() for s in value if isinstance(s, str) and s.strip()]
 
-    PUR, ne lève JAMAIS. Absent / JSON invalide / forme inattendue → `[]` (dégrade honnête = smoke-render ;
-    `[]` reste fail-closed en aval, cf. `build_verdict` — jamais blanchi par absence de marker). Ne garde que
-    les chaînes non vides (`.strip()`), robuste aux entrées sales."""
+
+def _clean_clicks(value: object) -> list[dict]:
+    """Gestes valides d'une liste : chaque entrée garde un `text` OU `selector` non vide (les optionnels
+    `nth`/`wait_ms`/`exact`/`timeout_ms` passent tels quels au runner). Entrées sales filtrées. PUR. La garde
+    **read-only** reste doctrinale (METHOD + commentaire runner), non enforcée runtime : un denylist de labels
+    ferait des faux-négatifs sur des libellés légitimes (« Envoyer un tour » lisible mais read-only)."""
+    if not isinstance(value, list):
+        return []
+    out: list[dict] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        text, selector = item.get("text"), item.get("selector")
+        has_text = isinstance(text, str) and bool(text.strip())
+        has_sel = isinstance(selector, str) and bool(selector.strip())
+        if has_text or has_sel:
+            out.append(item)
+    return out
+
+
+def read_verify_contract(workdir: Path) -> dict:
+    """Contrat de preuve **déclaré par le worker** dans `<workdir>/.cockpit/verify-markers.json`. Deux formes,
+    la seconde ADDITIVE (rétro-compatible) :
+
+    - at-rest seul (legacy) : `{"markers": ["<chaîne FR rendue>", ...]}` ;
+    - **jalon jouable** (deux-temps) : idem + `"interaction": {"clicks": [{"text": "..."}], "after_markers":
+      ["<chaîne qui n'existe qu'APRÈS le geste>"], "wait_for_text": "...", "wait_timeout_ms": 8000}`. Prouve
+      une TRANSITION : le runner joue `clicks`, exige `after_markers` APRÈS le geste ET assert qu'ils étaient
+      ABSENTS at-rest (`pre_present` non vide ⇒ transition non prouvée ⇒ 🔴).
+
+    PUR, ne lève JAMAIS. Absent / JSON invalide / forme inattendue → tout vide (dégrade honnête ; `markers`
+    vide reste fail-closed en aval via `build_verdict`, jamais blanchi par absence de cible)."""
+    empty: dict = {"markers": [], "clicks": [], "after_markers": [], "wait_for_text": None,
+                   "wait_timeout_ms": None}
     path = workdir / MARKERS_FILE
     if not path.is_file():
-        return []
+        return empty
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (ValueError, OSError):
-        return []
-    if not isinstance(data, dict) or not isinstance(data.get("markers"), list):
-        return []
-    return [s.strip() for s in data["markers"] if isinstance(s, str) and s.strip()]
+        return empty
+    if not isinstance(data, dict):
+        return empty
+    contract: dict = dict(empty)
+    contract["markers"] = _clean_str_list(data.get("markers"))
+    interaction = data.get("interaction")
+    if isinstance(interaction, dict):
+        contract["clicks"] = _clean_clicks(interaction.get("clicks"))
+        contract["after_markers"] = _clean_str_list(interaction.get("after_markers"))
+        wft = interaction.get("wait_for_text")
+        contract["wait_for_text"] = wft.strip() if isinstance(wft, str) and wft.strip() else None
+        wtm = interaction.get("wait_timeout_ms")
+        valid_wtm = isinstance(wtm, int) and not isinstance(wtm, bool) and wtm > 0
+        contract["wait_timeout_ms"] = wtm if valid_wtm else None
+    return contract
+
+
+def read_declared_markers(workdir: Path) -> list[str]:
+    """Markers at-rest déclarés (`{"markers": [...]}`). Wrapper mince sur `read_verify_contract` — conserve
+    sa signature et ses appelants ; toute la nouveauté (interaction deux-temps) via `read_verify_contract`."""
+    return read_verify_contract(workdir)["markers"]
 
 
 # -- runner (PUR sauf le subprocess node) -----------------------------------------------------------
 
 def build_payload(url: str, markers: list[str], *, timeout_ms: int = DEFAULT_TIMEOUT_MS,
-                  screenshot: str | None = None, cookies: list[dict] | None = None) -> dict:
-    """Payload passé au runner Node. PUR. `cookies` inclus ssi non vide (deep-link authentifié) ; sinon
-    contexte anonyme (rétro-compatible)."""
+                  screenshot: str | None = None, cookies: list[dict] | None = None,
+                  clicks: list[dict] | None = None, after_markers: list[str] | None = None,
+                  wait_for_text: str | None = None, wait_timeout_ms: int | None = None) -> dict:
+    """Payload passé au runner Node. PUR. Champs at-rest toujours ; champs d'interaction (deux-temps) inclus
+    **ssi non vides** → rétro-compatible (un contrat legacy produit exactement l'ancien payload). `cookies`
+    ssi non vide (deep-link authentifié) ; sinon contexte anonyme."""
     payload: dict = {"url": url, "markers": markers, "timeout_ms": timeout_ms}
     if screenshot:
         payload["screenshot"] = screenshot
     if cookies:
         payload["cookies"] = cookies
+    if clicks:
+        payload["clicks"] = clicks
+    if after_markers:
+        payload["after_markers"] = after_markers
+    if wait_for_text:
+        payload["wait_for_text"] = wait_for_text
+    if wait_timeout_ms:
+        payload["wait_timeout_ms"] = wait_timeout_ms
     return payload
 
 
 def verify_target(settings: Settings, url: str, markers: list[str], *, name: str | None = None,
-                  timeout_ms: int = DEFAULT_TIMEOUT_MS, cookies: list[dict] | None = None) -> dict:
+                  timeout_ms: int = DEFAULT_TIMEOUT_MS, cookies: list[dict] | None = None,
+                  clicks: list[dict] | None = None, after_markers: list[str] | None = None,
+                  wait_for_text: str | None = None, wait_timeout_ms: int | None = None) -> dict:
     """Vérifie une cible via le runner Node. Ne lève JAMAIS : runner absent / node ko / browser ko / timeout
-    → `{ok: False, error: ...}` (fail-closed — un target non prouvé n'est pas vert)."""
-    payload = build_payload(url, markers, timeout_ms=timeout_ms, cookies=cookies)
+    → `{ok: False, error: ...}` (fail-closed — un target non prouvé n'est pas vert). Si `after_markers` est
+    déclaré (jalon jouable), le runner joue `clicks` puis exige ces markers APRÈS le geste ET assert qu'ils
+    étaient ABSENTS at-rest (`pre_present` non vide = transition non prouvée = 🔴)."""
+    payload = build_payload(url, markers, timeout_ms=timeout_ms, cookies=cookies, clicks=clicks,
+                            after_markers=after_markers, wait_for_text=wait_for_text,
+                            wait_timeout_ms=wait_timeout_ms)
     res: dict = {"name": name, "url": url, "ok": False, "found": [], "missing": list(markers),
+                 "after_found": [], "after_missing": list(after_markers or []), "pre_present": [],
                  "title": None}
     runner = runner_path(settings)
     if not runner.is_file():
@@ -183,6 +250,9 @@ def verify_target(settings: Settings, url: str, markers: list[str], *, name: str
     out["name"] = name
     out.setdefault("found", [])
     out.setdefault("missing", list(markers))
+    out.setdefault("after_found", [])
+    out.setdefault("after_missing", list(after_markers or []))
+    out.setdefault("pre_present", [])
     return out
 
 
@@ -226,8 +296,12 @@ def read_verdict(settings: Settings, project: str, feature: str) -> dict | None:
 
 
 def is_fresh(verdict: dict | None, *, current_sha: str | None) -> bool:
-    """True ssi un verdict existe ET porte le SHA courant de la feature. `current_sha` injecté → PUR."""
+    """True ssi un verdict existe, porte le SHA courant de la feature, ET le `CONTRACT_VERSION` courant. Un
+    verdict d'un contrat antérieur (`feature-verify-v1`, preuve at-rest seule) est traité **non frais** → il
+    force un re-gate sous la sémantique deux-temps (durcissement du bump v2). `current_sha` injecté → PUR."""
     if not verdict:
+        return False
+    if verdict.get("contract_version") != CONTRACT_VERSION:
         return False
     return bool(current_sha) and verdict.get("reviewed_sha") == current_sha
 
@@ -281,8 +355,11 @@ def autoverify_feature(conn: sqlite3.Connection, settings: Settings, *, project:
     preview = deploy_preview(conn, settings, slug=project, feature=feature, backend=backend)
     try:
         _wait_http_ready(preview["url"])
-        markers = read_declared_markers(Path(preview["workdir"]))
-        res = verify_target(settings, preview["url"], markers, name=feature)
+        contract = read_verify_contract(Path(preview["workdir"]))
+        res = verify_target(settings, preview["url"], contract["markers"], name=feature,
+                            clicks=contract["clicks"], after_markers=contract["after_markers"],
+                            wait_for_text=contract["wait_for_text"],
+                            wait_timeout_ms=contract["wait_timeout_ms"])
         return write_verdict(settings, project, feature, [res], sha=sha)
     finally:
         teardown_preview(conn, settings, slug=project, feature=feature, backend=backend)
@@ -292,6 +369,13 @@ def _print_verdict(results: list[dict], verdict: dict, sha: str | None) -> None:
     for t in results:
         mark = "🟢" if t.get("ok") else "🔴"
         extra = f" manquants={t['missing']}" if t.get("missing") else ""
+        if t.get("after_missing"):
+            extra += f" post-geste manquants={t['after_missing']}"
+        if t.get("pre_present"):
+            extra += f" (déjà présents at-rest → transition non prouvée : {t['pre_present']})"
+        failed_clicks = [c.get("step") for c in t.get("clicks", []) if not c.get("ok")]
+        if failed_clicks:
+            extra += f" clics échoués={failed_clicks}"
         extra += f" ({t['error']})" if t.get("error") else ""
         print(f"  {mark} {t.get('name') or t['url']}{extra}")
     print(f"feature-verify : {'🟢 vert' if verdict['ok'] else '🔴 échec'} "
@@ -342,7 +426,10 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
             return 2
         results = [verify_target(settings, t["url"], t.get("markers", []), name=t.get("name"),
                                  timeout_ms=t.get("timeout_ms", DEFAULT_TIMEOUT_MS),
-                                 cookies=t.get("cookies")) for t in targets]
+                                 cookies=t.get("cookies"), clicks=t.get("clicks"),
+                                 after_markers=t.get("after_markers"),
+                                 wait_for_text=t.get("wait_for_text"),
+                                 wait_timeout_ms=t.get("wait_timeout_ms")) for t in targets]
         verdict = write_verdict(settings, project_slug, feature_slug, results, sha=sha)
         _print_verdict(results, verdict, sha)
         return 0 if verdict["ok"] else 1

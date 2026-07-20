@@ -22,7 +22,8 @@ dans `docs/design.md`, ancrer l'implémentabilité, ne toucher ni code ni gate).
 
 1. `docs/design.md` ne porte **plus aucun « (à renseigner) »** dans ses sections de conception :
    - **Concept & périmètre jouable** : le pitch en une phrase + la définition binaire de « jouable » du
-     premier jalon.
+     premier jalon — « jouable » = **un état change de façon observable APRÈS un geste du joueur** (clic →
+     tick → nouvel écran), pas un écran statique. La preuve Tier-1.5 l'exigera (marqueur post-interaction).
    - **Boucle de jeu** : la décision répétée du joueur (ce qu'il fait en boucle, et pourquoi c'est
      intéressant).
    - **Économie & équilibrage** : les ressources / coûts / taux **chiffrés** (des nombres justifiés, pas
@@ -57,7 +58,8 @@ cockpit roadmap check <projet>          # VERT (0 issue)
 ```
 
 Séquence back → merge → front (le front consomme le contrat serveur mergé — cf. `roadmap-decompose`). Chaque
-task porte une **`acceptance` binaire** (jouable = observable, pas « faire marcher »).
+task porte une **`acceptance` binaire** (jouable = observable **après un geste**, pas « faire marcher » ni un
+écran statique — l'`acceptance` du jalon jouable doit nommer l'état qui change après l'interaction).
 
 ### 4. Rendre la main
 Préviens l'humain. La forge **vérifie** (roadmap check vert + ≥1 feature de travail) et clôt le socle-design

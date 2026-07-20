@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Jalon jouable — marqueur déjà présent</title></head>
+<body>
+  <h1>Compteur : <span id="c">0</span></h1>
+  <div id="etat">Tour 1</div>
+  <button id="play">Jouer un tour</button>
+  <script>
+    // Anti-cas : « Tour 1 » est DÉJÀ rendu at-rest → le geste ne le cause pas → pre_present → 🔴
+    // (transition non prouvée : un label statique n'est pas une preuve d'interaction).
+    let tour = 1;
+    document.getElementById('play').addEventListener('click', function () {
+      tour += 1;
+      document.getElementById('c').textContent = String(tour);
+      document.getElementById('etat').textContent = 'Tour ' + tour;
+    });
+  </script>
+</body>
+</html>

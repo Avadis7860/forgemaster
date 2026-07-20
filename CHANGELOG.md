@@ -5,6 +5,23 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Gate — preuve Tier-1.5 DEUX-TEMPS (jalon jouable) + bump `feature-verify-v1 → v2` (`gate/verify.py`)
+- **Bump du contrat de verdict** `feature-verify-v1 → feature-verify-v2` : la sémantique d'un vert Tier-1.5 se
+  **renforce** (présence at-rest → **transition observable après un geste**). `is_fresh` traite désormais un
+  verdict d'un `contract_version` antérieur comme **non frais** → re-gate forcé (durcissement du bump).
+- **Contrat étendu, rétro-compatible** : `.cockpit/verify-markers.json` accepte un bloc `interaction`
+  (`clicks` read-only + `after_markers` + `wait_for_text`) via `read_verify_contract` (nouveau) ;
+  `read_declared_markers` reste un wrapper mince (legacy `{"markers":[…]}` inchangé). `build_payload` /
+  `verify_target` / `autoverify_feature` / le manifeste stdin threadent les champs d'interaction **ssi non
+  vides** (payload legacy identique).
+- **Runner deux-temps** (`deploy/runners/render_check.js`, additif) : capture l'état at-rest **avant** les
+  gestes, exige les `after_markers` **après** ET **absents** at-rest (`pre_present` non vide ⇒ 🔴) — prouve une
+  transition d'état, pas un label statique. Sans `after_markers` : comportement legacy inchangé.
+- **Seed** : `browser-game/.claude/facets/frontend/METHOD.md` (point 2) et la skill `first-session-interview`
+  exigent le contrat deux-temps pour un jalon jouable (« jouable = observable **après un geste** »).
+- Prouvé par un self-check réel (`scripts/verify_interaction_selfcheck.py` + fixtures) : positif 🟢,
+  geste-sans-effet 🔴, marqueur-déjà-présent 🔴. E2E jeu réel (VM golden) différé avec `tick-substrate-seed`.
+
 ### Gate/API — surface de LECTURE de la trace (findings, toolchain, historique) — pas de bump
 - `GET /api/gate` porte désormais **`toolchain`** (Tier-0 natif, miroir de `review`/`verify`) : `evaluate_gate`
   surface le `native_status` **déjà calculé** (aucune double-lecture).

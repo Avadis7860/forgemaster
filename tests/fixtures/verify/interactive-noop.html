@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Jalon jouable — geste sans effet</title></head>
+<body>
+  <h1>Compteur : <span id="c">0</span></h1>
+  <div id="etat">Au repos</div>
+  <button id="play">Jouer un tour</button>
+  <script>
+    // Anti-cas : le geste ne change RIEN → « Tour 1 » n'apparaît jamais → after_missing → 🔴.
+    document.getElementById('play').addEventListener('click', function () { /* no-op */ });
+  </script>
+</body>
+</html>

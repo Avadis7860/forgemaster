@@ -4,6 +4,7 @@ writeback, et le cycle `run_merge` de bout en bout sur un **SoT bare réel** (ff
 worktree AVANT delete-branch, port relâché, clôture DB)."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -212,6 +213,104 @@ def test_verify_read_declared_markers(tmp_path):
     assert verify.read_declared_markers(tmp_path) == []
     _write_markers(tmp_path, "[]")                       # racine pas un objet
     assert verify.read_declared_markers(tmp_path) == []
+
+
+_EMPTY_CONTRACT = {"markers": [], "clicks": [], "after_markers": [], "wait_for_text": None,
+                   "wait_timeout_ms": None}
+
+
+def test_verify_read_verify_contract(tmp_path):
+    # absent → tout vide (dégrade honnête).
+    assert verify.read_verify_contract(tmp_path) == _EMPTY_CONTRACT
+    # legacy {"markers":[...]} → markers seuls, interaction vide (RÉTRO-COMPAT).
+    _write_markers(tmp_path, '{"markers": ["Accueil", "Score"]}')
+    c = verify.read_verify_contract(tmp_path)
+    assert c["markers"] == ["Accueil", "Score"] and c["clicks"] == [] and c["after_markers"] == []
+    # deux-temps bien formé : trim des after_markers, wait_for_text/wait_timeout_ms portés.
+    _write_markers(tmp_path, '{"markers": ["Cadre"], "interaction": {"clicks": [{"text": "Jouer un tour"}],'
+                             ' "after_markers": ["  Tour 1  ", ""], "wait_for_text": " Prêt ",'
+                             ' "wait_timeout_ms": 5000}}')
+    c = verify.read_verify_contract(tmp_path)
+    assert c["markers"] == ["Cadre"] and c["clicks"] == [{"text": "Jouer un tour"}]
+    assert c["after_markers"] == ["Tour 1"] and c["wait_for_text"] == "Prêt" and c["wait_timeout_ms"] == 5000
+    # interaction non-objet → sous-champs vides, markers préservés.
+    _write_markers(tmp_path, '{"markers": ["A"], "interaction": "nope"}')
+    c = verify.read_verify_contract(tmp_path)
+    assert c["markers"] == ["A"] and c["clicks"] == [] and c["after_markers"] == []
+    # clicks sales (ni text ni selector → filtrés) ; wait_timeout_ms non-int → None.
+    _write_markers(tmp_path, '{"interaction": {"clicks": [{"nth": 1}, {"text": ""}, {"selector": "#go"}],'
+                             ' "wait_timeout_ms": "x"}}')
+    c = verify.read_verify_contract(tmp_path)
+    assert c["clicks"] == [{"selector": "#go"}] and c["wait_timeout_ms"] is None
+    # racine pas un objet → tout vide.
+    _write_markers(tmp_path, "[]")
+    assert verify.read_verify_contract(tmp_path) == _EMPTY_CONTRACT
+
+
+def test_verify_build_payload_carries_interaction_fields():
+    # legacy : aucun champ d'interaction → payload minimal inchangé (rétro-compat).
+    p = verify.build_payload("http://x/", ["Accueil"])
+    assert "clicks" not in p and "after_markers" not in p and "wait_for_text" not in p
+    # deux-temps : champs inclus ssi non vides.
+    p2 = verify.build_payload("http://x/", ["Cadre"], clicks=[{"text": "Jouer"}],
+                              after_markers=["Tour 1"], wait_for_text="Prêt", wait_timeout_ms=5000)
+    assert p2["clicks"] == [{"text": "Jouer"}] and p2["after_markers"] == ["Tour 1"]
+    assert p2["wait_for_text"] == "Prêt" and p2["wait_timeout_ms"] == 5000
+    # champs vides → non inclus (pas de bruit dans le payload).
+    p3 = verify.build_payload("http://x/", ["A"], clicks=[], after_markers=[])
+    assert "clicks" not in p3 and "after_markers" not in p3
+
+
+class _FakeProc:
+    def __init__(self, stdout: str, returncode: int = 0, stderr: str = ""):
+        self.stdout, self.returncode, self.stderr = stdout, returncode, stderr
+
+
+def _stub_runner(settings) -> None:
+    runner = verify.runner_path(settings)
+    runner.parent.mkdir(parents=True, exist_ok=True)
+    runner.write_text("// stub", encoding="utf-8")       # présent → pas de fail-close « runner absent »
+
+
+def test_verify_target_threads_interaction_to_runner(ctx, monkeypatch):
+    settings, _ = ctx
+    _stub_runner(settings)
+    captured: dict = {}
+    out = {"ok": True, "found": ["Cadre"], "missing": [], "after_found": ["Tour 1"], "after_missing": [],
+           "pre_present": [], "clicks": [{"step": "Jouer", "ok": True}]}
+
+    def fake_run(cmd, **kw):
+        captured["payload"] = json.loads(cmd[2])
+        return _FakeProc(json.dumps(out))
+
+    monkeypatch.setattr(verify.subprocess, "run", fake_run)
+    res = verify.verify_target(settings, "http://x/", ["Cadre"], name="jalon",
+                               clicks=[{"text": "Jouer"}], after_markers=["Tour 1"], wait_for_text="Prêt")
+    assert captured["payload"]["clicks"] == [{"text": "Jouer"}]
+    assert captured["payload"]["after_markers"] == ["Tour 1"]
+    assert captured["payload"]["wait_for_text"] == "Prêt"
+    assert res["ok"] is True and res["after_found"] == ["Tour 1"] and res["pre_present"] == []
+
+
+def test_verify_target_distinguishes_after_missing_from_click_fail(ctx, monkeypatch):
+    settings, _ = ctx
+    _stub_runner(settings)
+    out = {"ok": False, "found": ["Cadre"], "missing": [], "after_found": [], "after_missing": ["Tour 1"],
+           "pre_present": [], "clicks": [{"step": "Jouer", "ok": False, "error": "not found"}]}
+    monkeypatch.setattr(verify.subprocess, "run", lambda *a, **k: _FakeProc(json.dumps(out)))
+    res = verify.verify_target(settings, "http://x/", ["Cadre"], name="jalon",
+                               clicks=[{"text": "Jouer"}], after_markers=["Tour 1"])
+    assert res["ok"] is False and res["after_missing"] == ["Tour 1"]      # post-marker manquant…
+    assert [c for c in res["clicks"] if not c["ok"]]                      # …ET clic échoué : distincts
+
+
+def test_verify_is_fresh_contract_version_guard():
+    v2 = verify.build_verdict([{"ok": True}], sha="abc", ts="t")          # contract_version courant (v2)
+    assert v2["contract_version"] == verify.CONTRACT_VERSION
+    assert verify.is_fresh(v2, current_sha="abc") is True
+    assert verify.is_fresh(v2, current_sha="def") is False
+    v1 = {**v2, "contract_version": "feature-verify-v1"}                  # verdict d'un contrat périmé
+    assert verify.is_fresh(v1, current_sha="abc") is False                # → non frais, force re-gate
 
 
 # -- identité writeback (PUR) -----------------------------------------------------------------------

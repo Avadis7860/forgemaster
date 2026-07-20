@@ -7,7 +7,7 @@
 // playwright-core déjà vendoré dans ce dossier + le Chromium de ~/.cache/ms-playwright.
 //
 // Entrée : argv[2] = JSON {url, markers:[...], screenshot?:path, timeout_ms?:int, cookies?:[...],
-//          wait_for_text?:str, wait_timeout_ms?:int, clicks?:[...]}
+//          wait_for_text?:str, wait_timeout_ms?:int, clicks?:[...], after_markers?:[...]}
 //          (ou le même JSON sur stdin si argv[2] absent).
 //          cookies (optionnel) : tableau Playwright {name,value,url|domain+path,...} injecté dans
 //          le contexte AVANT le goto → permet de rendre une UI derrière auth (deep-link authentifié),
@@ -21,8 +21,15 @@
 //          le texte contient `text`. USAGE STRICT : n'ouvrir que des surfaces READ-ONLY (détail, aperçu,
 //          historique) — JAMAIS un geste à effet mutant/destructif (submit, delete, dispatch). Absent →
 //          comportement inchangé (goto-only pur).
-// Sortie : {url, ok, found:[], missing:[], title, screenshot, error?}
-//   ok = true ssi tous les markers sont présents (et la page a chargé).
+//          after_markers (optionnel) : preuve DEUX-TEMPS d'un jalon jouable. Si présent, le runner capture
+//          l'état AT-REST avant les gestes, joue `clicks`, puis exige que ces markers apparaissent APRÈS le
+//          geste ET qu'ils étaient ABSENTS at-rest — prouve une TRANSITION d'état observable, pas une simple
+//          présence. Dans ce mode, `markers` reste la cible AT-REST (le cadre déjà rendu au chargement).
+// Sortie : {url, ok, found:[], missing:[], after_found:[], after_missing:[], pre_present:[], title,
+//          screenshot, clicks?:[...], error?}
+//   ok (legacy, sans after_markers) = tous les markers présents (page chargée).
+//   ok (deux-temps) = markers at-rest présents ET after_markers présents après geste ET AUCUN d'eux présent
+//   at-rest (pre_present vide = transition prouvée) ET tous les clics réussis.
 
 const fs = require('fs');
 const path = require('path');
@@ -71,8 +78,8 @@ async function main() {
   const input = JSON.parse(raw);
   const markers = Array.isArray(input.markers) ? input.markers : [];
   const timeout = input.timeout_ms || 15000;
-  const out = { url: input.url, ok: false, found: [], missing: [], title: null,
-                screenshot: input.screenshot || null };
+  const out = { url: input.url, ok: false, found: [], missing: [], after_found: [], after_missing: [],
+                pre_present: [], title: null, screenshot: input.screenshot || null };
   const browser = await launch();
   try {
     // viewport (optionnel) : {width,height} pour capturer une largeur donnée (desktop/mobile) ; défaut
@@ -97,6 +104,22 @@ async function main() {
       ).catch(() => {});
       await page.waitForTimeout(600);
     }
+    // Preuve DEUX-TEMPS (jalon jouable) : after_markers déclaré → capturer l'état AT-REST AVANT tout geste
+    // (baseline). `markers` = cadre at-rest ; on note les after_markers déjà visibles at-rest (pre_present :
+    // le geste ne les cause pas ⇒ transition non prouvée). Sans after_markers → legacy inchangé.
+    const afterMarkers = Array.isArray(input.after_markers) ? input.after_markers : [];
+    const twoPhase = afterMarkers.length > 0;
+    if (twoPhase) {
+      const titleBefore = await page.title();
+      const textBefore = await page.evaluate(() => (document.body ? document.body.innerText : ''));
+      const hayBefore = `${titleBefore || ''}\n${textBefore}`;
+      for (const m of markers) {
+        (hayBefore.includes(m) ? out.found : out.missing).push(m);
+      }
+      for (const m of afterMarkers) {
+        if (hayBefore.includes(m)) out.pre_present.push(m);
+      }
+    }
     // gestes read-only (clicks) : ouvrir des surfaces pilotées par un state React (sans route). Joués en
     // séquence ; chaque geste attend son court répit pour laisser le panneau se peindre. Échec d'un clic
     // (élément absent) → consigné dans out.clicks, sans planter (la capture montrera l'état atteint).
@@ -118,15 +141,25 @@ async function main() {
     }
     out.title = await page.title();
     const text = await page.evaluate(() => (document.body ? document.body.innerText : ''));
-    const hay = `${out.title || ''}\n${text}`;
-    for (const m of markers) {
-      (hay.includes(m) ? out.found : out.missing).push(m);
+    const hay = `${out.title || ''}\n${text}`;   // état APRÈS les gestes
+    if (twoPhase) {
+      for (const m of afterMarkers) {
+        (hay.includes(m) ? out.after_found : out.after_missing).push(m);
+      }
+    } else {
+      for (const m of markers) {
+        (hay.includes(m) ? out.found : out.missing).push(m);
+      }
     }
     if (input.screenshot) {
       fs.mkdirSync(path.dirname(input.screenshot), { recursive: true });
       await page.screenshot({ path: input.screenshot, fullPage: Boolean(input.full_page) });
     }
-    out.ok = out.missing.length === 0;
+    // Legacy : ok ssi markers présents. Deux-temps : + after_markers présents après geste, + aucun déjà
+    // présent at-rest (transition prouvée), + tous les clics réussis (un clic raté = preuve non jouée).
+    const clicksAllOk = !Array.isArray(out.clicks) || out.clicks.every((c) => c.ok);
+    out.ok = out.missing.length === 0
+      && (!twoPhase || (out.after_missing.length === 0 && out.pre_present.length === 0 && clicksAllOk));
   } catch (e) {
     out.error = String((e && e.message) || e);
   } finally {
