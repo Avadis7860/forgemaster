@@ -1,12 +1,14 @@
 import { Link } from '@tanstack/react-router'
 import { Button, Card, EmptyState } from '@/components/ui'
 import { BundleExplorer } from '@/components/bundles/BundleExplorer'
+import { CapitalExplorer } from '@/components/capital/CapitalExplorer'
 import { useOnboarding } from '@/lib/queries'
 
 /** Accueil (aucun projet sélectionné). En tête, selon l'état de l'instance : carte de bienvenue *first-run*
- *  (→ wizard `/setup`) ou l'invite classique à choisir un projet. Puis, TOUJOURS, l'explorer des bundles —
- *  une ressource **globale** (offerte à la création, partagée par tous), pas l'état d'un projet : on peut
- *  auditer ce que le cockpit embarque depuis l'accueil, sans ouvrir un projet ni un repo à la main. */
+ *  (→ wizard `/setup`) ou l'invite classique à choisir un projet. Puis, TOUJOURS, deux explorers d'une
+ *  ressource **globale** (pas l'état d'un projet), pour juger l'efficacité du cockpit avant distribution :
+ *  ce qu'il SÈME (BundleExplorer, intérieur des bundles) et ce qu'il LOUE/POSSÈDE (CapitalExplorer, capital-
+ *  token servi par le MCP) — auditables depuis l'accueil, sans ouvrir un projet ni un repo à la main. */
 export function Landing() {
   const { data } = useOnboarding()
 
@@ -33,6 +35,7 @@ export function Landing() {
       )}
 
       <BundleExplorer />
+      <CapitalExplorer />
     </div>
   )
 }

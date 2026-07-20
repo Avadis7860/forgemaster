@@ -114,6 +114,71 @@ export const BundleFileSchema = z.object({
 })
 export type BundleFile = z.infer<typeof BundleFileSchema>
 
+// Capital-token servi par le MCP (explorer d'introspection, GET /api/capital/…). Le daemon est un proxy
+// authentifié FIN : il passe le corps MCP tel quel (le serveur mcp-catalogs est la SoT de la forme). Les
+// réponses sont HÉTÉROGÈNES par type/layout (tech silo : {path,title,h2s,lead} ; blueprint plat :
+// {id,title,tags,status,file}) → schémas TOLÉRANTS (`passthrough`) : on déclare ce qu'on affiche, le reste
+// passe sans casser. `wired:false` (porte /status) → l'explorer rend « non câblé » sans tenter de parcours.
+export const CapitalStatusSchema = z.object({ wired: z.boolean(), endpoint: z.string() })
+export type CapitalStatus = z.infer<typeof CapitalStatusSchema>
+
+export const CapitalTypeSchema = z
+  .object({
+    id: z.string(),
+    layout: z.string().optional(),        // 'silo' | 'flat-collection' — pilote la présence de collections
+    query: z.string().optional(),         // 'scoped' | 'canonical' | 'reference'
+    unit: z.string().optional(),          // 'chunk' | 'file'
+    distilled_of: z.string().nullish(),   // lignée de distillation (blueprint←decision, templates←blueprint)
+  })
+  .passthrough()
+export type CapitalType = z.infer<typeof CapitalTypeSchema>
+export const CapitalTypesSchema = z.object({ types: z.array(CapitalTypeSchema) })
+
+export const CapitalCollectionSchema = z
+  .object({
+    name: z.string(),
+    completeness: z.string().optional(),  // 'full' | 'partial' — annotation d'état de la source (silo tech)
+    pages_count: z.number().optional(),
+    chunks_count: z.number().optional(),
+    last_synced: z.string().nullish(),
+  })
+  .passthrough()
+export type CapitalCollection = z.infer<typeof CapitalCollectionSchema>
+export const CapitalCollectionsSchema = z.object({
+  type: z.string(),
+  collections: z.array(CapitalCollectionSchema),
+  facets: z.array(z.string()).optional(),
+})
+
+export const CapitalSectionSchema = z
+  .object({
+    id: z.string().optional(),            // corpus plat (blueprint) : la ref de lecture EST l'id
+    path: z.string().optional(),          // silo (tech) : la ref de lecture = `<scope>/<path>`
+    title: z.string().optional(),
+    status: z.string().optional(),        // blueprint : 'active' | 'superseded' (jamais servi si superseded)
+    lead: z.string().optional(),          // tech : chapeau de la page
+    tags: z.array(z.string()).optional(),
+  })
+  .passthrough()
+export type CapitalSection = z.infer<typeof CapitalSectionSchema>
+export const CapitalSectionsSchema = z.object({
+  type: z.string(),
+  scope: z.string().nullish(),
+  sections: z.array(CapitalSectionSchema),
+  total: z.number().optional(),
+})
+
+export const CapitalBodySchema = z
+  .object({
+    type: z.string(),
+    ref: z.string(),
+    title: z.string().optional(),
+    body: z.string().optional(),          // blueprint : la prose Markdown
+    content: z.string().optional(),       // tech : la prose Markdown
+  })
+  .passthrough()
+export type CapitalBody = z.infer<typeof CapitalBodySchema>
+
 export interface CreateProjectInput {
   slug: string
   name?: string | null

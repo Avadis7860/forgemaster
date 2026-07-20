@@ -9,6 +9,12 @@ export const qk = {
   types: ['types'] as const,
   bundleTree: (type: string) => ['bundle-tree', type] as const,
   bundleFile: (type: string, path: string) => ['bundle-file', type, path] as const,
+  capitalStatus: ['capital-status'] as const,
+  capitalTypes: ['capital-types'] as const,
+  capitalCollections: (type: string) => ['capital-collections', type] as const,
+  capitalSections: (type: string, scope: string | null) =>
+    ['capital-sections', type, scope ?? ''] as const,
+  capitalBody: (type: string, ref: string) => ['capital-body', type, ref] as const,
   projects: ['projects'] as const,
   project: (slug: string) => ['projects', slug] as const,
   roadmap: (project: string) => ['roadmap', project] as const,
@@ -67,6 +73,59 @@ export function useBundleFile(type: string, path: string) {
     queryFn: () => api.getBundleFile(type, path),
     enabled: !!type && !!path,
     staleTime: 60_000,
+  })
+}
+
+// Capital-token servi par le MCP (explorer d'introspection). `/status` (porte) : léger, sans réseau côté
+// daemon → poll doux pour refléter un câblage à chaud (wizard) sans recharger. Les parcours sont `enabled`
+// en cascade (types → collections → sections → corps) et ne partent QUE si le MCP est câblé (`enabledWired`),
+// pour ne pas marteler un 503 quand `wired:false`. `retry:false` : un 503 honnête ne se re-tente pas.
+export function useCapitalStatus() {
+  return useQuery({
+    queryKey: qk.capitalStatus,
+    queryFn: api.getCapitalStatus,
+    refetchInterval: 15_000,
+    retry: false,
+  })
+}
+
+export function useCapitalTypes(enabledWired: boolean) {
+  return useQuery({
+    queryKey: qk.capitalTypes,
+    queryFn: api.getCapitalTypes,
+    enabled: enabledWired,
+    staleTime: 60_000,
+    retry: false,
+  })
+}
+
+export function useCapitalCollections(type: string, enabledWired: boolean) {
+  return useQuery({
+    queryKey: qk.capitalCollections(type),
+    queryFn: () => api.getCapitalCollections(type),
+    enabled: enabledWired && !!type,
+    staleTime: 60_000,
+    retry: false,
+  })
+}
+
+export function useCapitalSections(type: string, scope: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: qk.capitalSections(type, scope),
+    queryFn: () => api.getCapitalSections(type, scope),
+    enabled,
+    staleTime: 60_000,
+    retry: false,
+  })
+}
+
+export function useCapitalBody(type: string, ref: string, enabled: boolean) {
+  return useQuery({
+    queryKey: qk.capitalBody(type, ref),
+    queryFn: () => api.getCapitalBody(type, ref),
+    enabled: enabled && !!ref,
+    staleTime: 60_000,
+    retry: false,
   })
 }
 

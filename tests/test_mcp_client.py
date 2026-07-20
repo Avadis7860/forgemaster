@@ -13,7 +13,7 @@ import pytest
 from taskmap.context import _blueprint_verdict
 
 from cockpit.config import Settings
-from cockpit.mcp import blueprint_resolver
+from cockpit.mcp import blueprint_resolver, capital_browser
 
 _SECRET = "x" * 40                      # ≥32 → le mint HS256 réel passe
 _FAKE_REF = "ref-opaque"
@@ -108,3 +108,71 @@ def test_plugs_into_taskmap_seam_down(settings):
     v = _blueprint_verdict({"id": "some-gate", "posture": None}, resolve)
     assert v is not None
     assert v["resolved"] is False and v["reason"]                # liaison morte signalée, jamais inventé
+
+
+# -- capital_browser : parcours read-only du capital-token (même dégradation honnête, aucun réseau) -----
+
+def test_capital_no_secret_ref_returns_none_without_calling_mcp(settings, monkeypatch):
+    """MCP non câblé (aucun ref) → chaque méthode rend None sans jamais toucher le réseau."""
+    monkeypatch.delenv("COCKPIT_MCP_JWT_SECRET_REF", raising=False)
+    called: list = []
+
+    def caller(*a, **k):
+        called.append(1)
+        return {"x": 1}
+
+    b = capital_browser(settings, caller=caller, resolver=_ok_secret)
+    assert b.list_types() is None
+    assert b.list_collections("tech") is None
+    assert b.list_sections("tech", "fastapi") is None
+    assert b.read("blueprint", "some-bp") is None
+    assert called == []                      # caller JAMAIS atteint (pas de secret → pas d'appel)
+
+
+def test_capital_short_secret_returns_none(settings):
+    """Secret <32c → no-op honnête, aucun appel."""
+    b = capital_browser(settings, secret_ref=_FAKE_REF, resolver=lambda _r: "trop-court",
+                        caller=lambda *a, **k: {"x": 1})
+    assert b.list_types() is None
+
+
+def test_capital_mcp_down_is_swallowed_to_none(settings):
+    """Exception réseau → None, jamais propagée (contrat du module)."""
+    def caller(*a, **k):
+        raise ConnectionError("MCP injoignable")
+
+    b = capital_browser(settings, secret_ref=_FAKE_REF, resolver=_ok_secret, caller=caller)
+    assert b.list_types() is None
+    assert b.read("blueprint", "x") is None
+
+
+def test_capital_empty_list_is_a_valid_answer_not_none(settings):
+    """Un `[]` (type sans collection) est une réponse VALIDE, pas une indispo : le browser le rend tel quel
+    (contrairement au resolver blueprint qui coerce `{}`→None pour signaler une liaison morte)."""
+    b = capital_browser(settings, secret_ref=_FAKE_REF, resolver=_ok_secret, caller=lambda *a, **k: [])
+    assert b.list_collections("tech") == []
+
+
+def test_capital_each_method_calls_the_right_tool_with_real_jwt(settings):
+    """Chaque méthode appelle l'outil MCP éponyme avec les bons arguments et un JWT réellement minté."""
+    seen: list[dict] = []
+
+    def caller(endpoint, token, tool, arguments, *, timeout):
+        seen.append({"endpoint": endpoint, "token": token, "tool": tool, "arguments": arguments})
+        return {"ok": tool}
+
+    b = capital_browser(settings, secret_ref=_FAKE_REF, resolver=_ok_secret, caller=caller,
+                        endpoint="http://mcp.test/mcp")
+    assert b.list_types() == {"ok": "list_types"}
+    assert b.list_collections("tech") == {"ok": "list_collections"}
+    assert b.list_sections("tech", "fastapi") == {"ok": "list_sections"}
+    assert b.read("blueprint", "some-bp") == {"ok": "read"}
+
+    tools = [c["tool"] for c in seen]
+    assert tools == ["list_types", "list_collections", "list_sections", "read"]
+    assert seen[0]["arguments"] == {}
+    assert seen[1]["arguments"] == {"type": "tech"}
+    assert seen[2]["arguments"] == {"type": "tech", "scope": "fastapi"}
+    assert seen[3]["arguments"] == {"type": "blueprint", "ref": "some-bp"}
+    assert all(c["endpoint"] == "http://mcp.test/mcp" for c in seen)
+    assert all(c["token"].count(".") == 2 for c in seen)     # un JWT (header.body.sig) réellement minté

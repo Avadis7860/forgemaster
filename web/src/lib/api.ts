@@ -7,6 +7,11 @@ import {
   BootstrapReportSchema,
   BundleTreeSchema,
   BundleFileSchema,
+  CapitalStatusSchema,
+  CapitalTypesSchema,
+  CapitalCollectionsSchema,
+  CapitalSectionsSchema,
+  CapitalBodySchema,
   DeploymentActionSchema,
   DeploymentLogsSchema,
   DeploymentsSchema,
@@ -99,6 +104,27 @@ export const api = {
     request(
       `/api/bundles/${encodeURIComponent(type)}/file?path=${encodeURIComponent(path)}`,
       BundleFileSchema,
+    ),
+
+  // Capital-token servi par le MCP (explorer d'introspection). `/status` = porte SANS réseau (`{wired}`) : le
+  // front ne tente le parcours que si `wired`. Les 4 GET de parcours passent le corps MCP tel quel ; MCP non
+  // câblé/injoignable → 503 (mappé en ApiError). `sections` : `?scope=<silo>` pour un silo (tech), omis pour un
+  // corpus plat (blueprint). `read` : ref = `<scope>/<path>` (silo) ou `<id>` (plat).
+  getCapitalStatus: () => request('/api/capital/status', CapitalStatusSchema),
+  getCapitalTypes: () => request('/api/capital/types', CapitalTypesSchema),
+  getCapitalCollections: (type: string) =>
+    request(`/api/capital/${encodeURIComponent(type)}/collections`, CapitalCollectionsSchema),
+  getCapitalSections: (type: string, scope: string | null) =>
+    request(
+      `/api/capital/${encodeURIComponent(type)}/sections${
+        scope ? `?scope=${encodeURIComponent(scope)}` : ''
+      }`,
+      CapitalSectionsSchema,
+    ),
+  getCapitalBody: (type: string, ref: string) =>
+    request(
+      `/api/capital/read?type=${encodeURIComponent(type)}&ref=${encodeURIComponent(ref)}`,
+      CapitalBodySchema,
     ),
 
   listProjects: () => request('/api/projects', ProjectsListSchema).then((r) => r.projects),
