@@ -67,20 +67,25 @@ export function BundleExplorer() {
 
   return (
     <SectionCard>
-      {/* Sélecteur de type — chips (primitive Button, jamais un bouton brut). Le type actif est mis en avant. */}
+      {/* Sélecteur de type — chips (primitive Button). TOUTES en `secondary` → un contour au repos signale
+          qu'elles sont cliquables (affordance) ; l'active porte une bordure accent. */}
       <div className="flex flex-wrap gap-2" role="tablist" aria-label="Type de bundle">
-        {types.map((t) => (
-          <Button
-            key={t.type}
-            variant={t.type === activeType ? 'secondary' : 'ghost'}
-            size="sm"
-            onClick={() => setType(t.type)}
-            className={t.type === activeType ? 'bg-surface-raised text-fg' : ''}
-          >
-            {t.type}
-            <span className="ml-2 text-xs text-faint">v{t.version}</span>
-          </Button>
-        ))}
+        {types.map((t) => {
+          const active = t.type === activeType
+          return (
+            <Button
+              key={t.type}
+              variant="secondary"
+              size="sm"
+              onClick={() => setType(t.type)}
+              aria-pressed={active}
+              className={active ? 'border-accent-500 text-fg' : 'text-muted'}
+            >
+              {t.type}
+              <span className="ml-2 text-xs text-faint">v{t.version}</span>
+            </Button>
+          )
+        })}
       </div>
 
       <div className="flex items-center justify-between gap-3">
@@ -97,7 +102,11 @@ export function BundleExplorer() {
 
       <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
         <BundleTreePane type={activeType} view={view} selected={file} onOpen={setFile} />
-        <BundleFilePane type={activeType} file={file} />
+        {/* Volet de lecture : `self-start` → hauteur de contenu (le placeholder reste visible au lieu d'être
+            centré dans un panneau étiré à l'arbre) ; `sticky` → il suit le scroll d'un arbre long. */}
+        <div className="md:sticky md:top-4 md:self-start">
+          <BundleFilePane type={activeType} file={file} />
+        </div>
       </div>
     </SectionCard>
   )
@@ -111,7 +120,7 @@ function SectionCard({ children }: { children: React.ReactNode }) {
       <SectionTitle
         eyebrow="Capital embarqué"
         title="Explorer les bundles"
-        actions={<Badge tone="neutral">lecture seule</Badge>}
+        actions={<Badge tone="neutral" className="whitespace-nowrap">lecture seule</Badge>}
       />
       <p className="-mt-2 text-sm text-muted">
         Parcours l'intérieur de chaque bundle vendoré — l'arbre et le corps des fichiers, au-delà des
@@ -205,6 +214,7 @@ function FileRow({
       title={entry.path}
     >
       {showGroup && <span className={`size-1.5 shrink-0 rounded-pill ${dotClass(tone)}`} aria-hidden />}
+      <span className="shrink-0 text-xs" aria-hidden>📄</span>
       <span className="min-w-0 truncate font-mono text-xs">
         <span className="text-faint">{dir}</span>
         <span className="text-fg">{base}</span>
@@ -219,9 +229,12 @@ function BundleFilePane({ type, file }: { type: string; file: string | null }) {
   const { data, isLoading, isError, error } = useBundleFile(type, file ?? '')
 
   if (!file) {
+    // Message nu (pas d'EmptyState bordé) : le volet EST déjà une carte bordée — un cadre interne ferait une
+    // double bordure « panneau dans panneau » (gate tissu > panneau).
     return (
-      <Card className="flex min-h-48 items-center justify-center p-5">
-        <EmptyState title="Aucun fichier" description="Choisis un fichier dans l'arbre pour l'afficher." />
+      <Card className="flex min-h-48 flex-col items-center justify-center gap-1 p-8 text-center">
+        <p className="text-sm font-medium text-fg">Aucun fichier sélectionné</p>
+        <p className="max-w-sm text-sm text-muted">Choisis un fichier dans l'arbre pour lire son corps.</p>
       </Card>
     )
   }
