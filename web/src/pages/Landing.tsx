@@ -1,20 +1,17 @@
 import { Link } from '@tanstack/react-router'
-import { Button, Card, EmptyState } from '@/components/ui'
-import { BundleExplorer } from '@/components/bundles/BundleExplorer'
-import { CapitalExplorer } from '@/components/capital/CapitalExplorer'
+import { Button, Card } from '@/components/ui'
 import { useOnboarding } from '@/lib/queries'
 
-/** Accueil (aucun projet sélectionné). En tête, selon l'état de l'instance : carte de bienvenue *first-run*
- *  (→ wizard `/setup`) ou l'invite classique à choisir un projet. Puis, TOUJOURS, deux explorers d'une
- *  ressource **globale** (pas l'état d'un projet), pour juger l'efficacité du cockpit avant distribution :
- *  ce qu'il SÈME (BundleExplorer, intérieur des bundles) et ce qu'il LOUE/POSSÈDE (CapitalExplorer, capital-
- *  token servi par le MCP) — auditables depuis l'accueil, sans ouvrir un projet ni un repo à la main. */
+/** Accueil (aucun projet sélectionné). MINIMAL par choix (2026-07-21) : le rail gauche EST la navigation
+ *  (projets · outils · bundles · capital-token). En *first-run* seulement, une carte de bienvenue guide vers
+ *  le wizard `/setup` ; sinon l'accueil s'efface — les explorers de ressources globales ont leurs routes
+ *  propres (`/bundles`, `/capital`), atteintes depuis le rail, plus empilées ici. */
 export function Landing() {
   const { data } = useOnboarding()
 
-  return (
-    <div className="mx-auto max-w-5xl space-y-8 p-8">
-      {data?.first_run ? (
+  if (data?.first_run) {
+    return (
+      <div className="mx-auto max-w-5xl p-8">
         <Card className="space-y-4 p-6">
           <div className="space-y-1">
             <h2 className="text-lg font-semibold text-fg">Bienvenue dans ton cockpit</h2>
@@ -27,15 +24,15 @@ export function Landing() {
             <Button variant="primary">Démarrer la configuration</Button>
           </Link>
         </Card>
-      ) : (
-        <EmptyState
-          title="Sélectionne un projet"
-          description="Choisis un projet dans le rail de gauche, ou crée-en un nouveau. La forge orchestre projet → roadmap → travail (dispatch → validation → merge)."
-        />
-      )}
+      </div>
+    )
+  }
 
-      <BundleExplorer />
-      <CapitalExplorer />
+  // Accueil au repos : canvas discret, sans invite redondante (le rail EST la navigation). Une identité
+  // sobre marque l'espace vide sans réintroduire le « Sélectionne un projet » retiré.
+  return (
+    <div className="flex h-full items-center justify-center p-8">
+      <p className="text-sm font-medium tracking-tight text-faint">cockpit</p>
     </div>
   )
 }

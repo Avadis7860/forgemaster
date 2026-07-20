@@ -1,13 +1,41 @@
-import { Link, useNavigate, useParams } from '@tanstack/react-router'
+import { useState } from 'react'
+import { Link, useLocation, useNavigate, useParams } from '@tanstack/react-router'
 import { useProjects, useGitSync } from '@/lib/queries'
 import { cn } from '@/lib/cn'
 import { syncTone, dotClasses } from '@/lib/statusTone'
-import { Alert, Badge, Button, Card, Eyebrow, EmptyState, LoadingState } from '@/components/ui'
+import { Alert, Badge, Button, Card, Collapsible, Eyebrow, LoadingState } from '@/components/ui'
 import { NewProjectForm } from '@/components/NewProjectForm'
 import type { Project } from '@/lib/schemas'
 
 // Le lien « Réglages » du rail a été retiré (2026-07-03) : doublon du header (haut-droite), il occupait de
 // la place inutile. Le signal « à régler » (onboarding incomplet) a migré sur le Réglages du header (App.tsx).
+
+const RAIL_COLLAPSE_KEY = 'cockpit.rail.collapse'
+
+/** État replié/déplié des 4 catégories du rail, PERSISTÉ en localStorage (ouvert par défaut). Une seule clé
+ *  porte un objet `{ projet, outils, bundle, capital }` → le choix de l'utilisateur tient d'une session à
+ *  l'autre, sans dépendre d'un projet. Dégrade silencieusement (SSR/quota/JSON cassé) vers « tout ouvert ». */
+function useRailCollapse() {
+  const [state, setState] = useState<Record<string, boolean>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(RAIL_COLLAPSE_KEY) ?? '{}') as Record<string, boolean>
+    } catch {
+      return {}
+    }
+  })
+  const isOpen = (key: string) => state[key] ?? true
+  const onOpenChange = (key: string) => (next: boolean) =>
+    setState((s) => {
+      const merged = { ...s, [key]: next }
+      try {
+        localStorage.setItem(RAIL_COLLAPSE_KEY, JSON.stringify(merged))
+      } catch {
+        /* stockage indisponible (mode privé / quota) — l'état reste en mémoire pour la session */
+      }
+      return merged
+    })
+  return { isOpen, onOpenChange }
+}
 
 /** Une entité du rail (projet ou outil) : carte sélectionnable → workspace. */
 function EntityCard({ p, active }: { p: Project; active: string | undefined }) {
@@ -40,32 +68,46 @@ function EntityCard({ p, active }: { p: Project; active: string | undefined }) {
   )
 }
 
-/** Une section titrée du rail (Projets / Outils), TOUJOURS rendue — la taxonomie reste lisible même vide
- *  (indice discret `emptyHint`), pour que la structure soit visible d'un coup d'œil. */
-function EntitySection(
-  { label, items, active, emptyHint }:
-  { label: string; items: Project[]; active: string | undefined; emptyHint: string },
+/** Corps d'une catégorie-liste (Projets / Outils) : les cartes d'entités, ou un indice discret si vide —
+ *  la taxonomie reste lisible même vide. */
+function EntityList(
+  { items, active, emptyHint }: { items: Project[]; active: string | undefined; emptyHint: string },
 ) {
+  if (items.length === 0) return <p className="px-1 text-xs text-faint">{emptyHint}</p>
   return (
-    <div className="space-y-1.5">
-      <Eyebrow>{label}</Eyebrow>
-      {items.length === 0 ? (
-        <p className="px-1 text-xs text-faint">{emptyHint}</p>
-      ) : (
-        <ul className="space-y-1.5">
-          {items.map((p) => <EntityCard key={p.id} p={p} active={active} />)}
-        </ul>
-      )}
-    </div>
+    <ul className="space-y-1.5">
+      {items.map((p) => <EntityCard key={p.id} p={p} active={active} />)}
+    </ul>
   )
 }
 
-/** Rail de gauche = l'espace de travail : entités classées en **Projets** (travaillés) et **Outils**
- *  (génériques du framework) via `kind`, sélectionnables + création. Contexte global du shell. */
+/** Corps d'une catégorie-explorer (Bundles / Capital-token) : une carte de navigation vers la route propre
+ *  de l'explorer (ressource GLOBALE, hors projet). Surlignée quand on est déjà sur cette destination. */
+function ExplorerCard(
+  { to, label, hint, active }:
+  { to: '/bundles' | '/capital'; label: string; hint: string; active: boolean },
+) {
+  return (
+    <Card className={cn('transition-colors', active && 'border-accent-500/50 bg-surface-raised')}>
+      <Link to={to} className="block rounded-card px-3 py-2">
+        <span className="text-sm font-medium text-fg">{label}</span>
+        <p className="truncate text-xs text-muted">{hint}</p>
+      </Link>
+    </Card>
+  )
+}
+
+/** Rail de gauche = l'espace de travail : 4 catégories **repliables** (état persistant) — `Projets` et
+ *  `Outils` (entités travaillées/génériques, classées par `kind`, sélectionnables + création en pied) puis
+ *  `Bundles` et `Capital-token` (navigation vers les explorers de ressources globales, promus en routes
+ *  propres). Contexte global du shell ; les explorers ne dépendent pas du daemon projet et restent
+ *  atteignables même daemon injoignable. */
 export function ProjectRail({ open = false, onClose }: { open?: boolean; onClose?: () => void }) {
   const projects = useProjects()
   const active = useParams({ strict: false }).project
   const navigate = useNavigate()
+  const { pathname } = useLocation()
+  const { isOpen, onOpenChange } = useRailCollapse()
 
   return (
     <aside
@@ -85,31 +127,50 @@ export function ProjectRail({ open = false, onClose }: { open?: boolean; onClose
         </Button>
       </div>
 
-      <div className="min-h-0 flex-1 space-y-4 overflow-auto p-3">
+      <div className="min-h-0 flex-1 space-y-2.5 overflow-auto p-3">
+        {/* Projets + Outils — dépendent du daemon (liste des projets). */}
         {projects.isPending ? (
           <LoadingState label="Chargement de l’espace…" />
         ) : projects.isError ? (
           <Alert tone="danger" title="Daemon injoignable">
             Vérifie que <code>cockpit serve</code> tourne.
           </Alert>
-        ) : projects.data.length === 0 ? (
-          <EmptyState title="Espace vide" description="Crée le premier projet ci-dessous." />
         ) : (
           <>
-            <EntitySection
-              label="Projets"
-              items={projects.data.filter((p) => p.kind !== 'tool')}
-              active={active}
-              emptyHint="Aucun projet — crée le premier ci-dessous."
-            />
-            <EntitySection
-              label="Outils"
-              items={projects.data.filter((p) => p.kind === 'tool')}
-              active={active}
-              emptyHint="Aucun outil pour l’instant."
-            />
+            <Collapsible title="Projets" open={isOpen('projet')} onOpenChange={onOpenChange('projet')}>
+              <EntityList
+                items={projects.data.filter((p) => p.kind !== 'tool')}
+                active={active}
+                emptyHint="Aucun projet — crée le premier ci-dessous."
+              />
+            </Collapsible>
+            <Collapsible title="Outils" open={isOpen('outils')} onOpenChange={onOpenChange('outils')}>
+              <EntityList
+                items={projects.data.filter((p) => p.kind === 'tool')}
+                active={active}
+                emptyHint="Aucun outil pour l’instant."
+              />
+            </Collapsible>
           </>
         )}
+
+        {/* Bundles + Capital-token — ressources GLOBALES, indépendantes du daemon projet. */}
+        <Collapsible title="Bundles" open={isOpen('bundle')} onOpenChange={onOpenChange('bundle')}>
+          <ExplorerCard
+            to="/bundles"
+            label="Explorer les bundles"
+            hint="ce que le cockpit sème"
+            active={pathname.startsWith('/bundles')}
+          />
+        </Collapsible>
+        <Collapsible title="Capital-token" open={isOpen('capital')} onOpenChange={onOpenChange('capital')}>
+          <ExplorerCard
+            to="/capital"
+            label="Explorer le capital"
+            hint="doc & patrons servis par le MCP"
+            active={pathname.startsWith('/capital')}
+          />
+        </Collapsible>
       </div>
 
       <div className="border-t border-border p-3">

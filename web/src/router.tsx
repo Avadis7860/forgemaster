@@ -1,6 +1,8 @@
 import { createRootRoute, createRoute, createRouter } from '@tanstack/react-router'
 import { AppShell } from './App'
 import { Landing } from './pages/Landing'
+import { Bundles } from './pages/Bundles'
+import { Capital } from './pages/Capital'
 import { ProjectWorkspace } from './pages/ProjectWorkspace'
 import { AccueilTab } from './pages/AccueilTab'
 import { RoadmapTab } from './pages/RoadmapTab'
@@ -13,6 +15,11 @@ import { SetupWizard } from './pages/SetupWizard'
 const rootRoute = createRootRoute({ component: AppShell })
 
 const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: Landing })
+
+// Explorers de ressources GLOBALES (pas l'état d'un projet), promus du Landing en destinations propres
+// atteintes depuis le rail gauche (catégories `bundle` / `capital-token`). Chacun reste piloté par l'URL.
+const bundlesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/bundles', component: Bundles })
+const capitalRoute = createRoute({ getParentRoute: () => rootRoute, path: '/capital', component: Capital })
 
 // /setup = wizard 1er-démarrage guidé (bienvenue → coffre → 1er projet → miroir+token → prêt).
 const setupRoute = createRoute({ getParentRoute: () => rootRoute, path: '/setup', component: SetupWizard })
@@ -31,6 +38,8 @@ const opsRoute = createRoute({ getParentRoute: () => projectRoute, path: 'ops', 
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
+  bundlesRoute,
+  capitalRoute,
   setupRoute,
   settingsRoute,
   projectRoute.addChildren([accueilRoute, roadmapRoute, travailRoute, opsRoute]),

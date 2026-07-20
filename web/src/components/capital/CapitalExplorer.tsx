@@ -32,11 +32,11 @@ export function CapitalExplorer() {
   const types = useCapitalTypes(wired)
 
   const setType = (t: string) =>
-    navigate({ to: '/', search: (p) => ({ ...p, cap: t, capcol: undefined, capref: undefined }) })
+    navigate({ to: '/capital', search: (p) => ({ ...p, cap: t, capcol: undefined, capref: undefined }) })
   const setScope = (s: string | undefined) =>
-    navigate({ to: '/', search: (p) => ({ ...p, capcol: s, capref: undefined }) })
+    navigate({ to: '/capital', search: (p) => ({ ...p, capcol: s, capref: undefined }) })
   const setRef = (r: string | undefined) =>
-    navigate({ to: '/', search: (p) => ({ ...p, capref: r }) })
+    navigate({ to: '/capital', search: (p) => ({ ...p, capref: r }) })
 
   if (status.isLoading) {
     return <CapitalSectionCard><LoadingState label="Interrogation du câblage MCP…" /></CapitalSectionCard>

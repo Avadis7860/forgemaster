@@ -60,10 +60,10 @@ export function BundleExplorer() {
   const file = search.bfile ?? null
 
   const setType = (t: string) =>
-    navigate({ to: '/', search: (p) => ({ ...p, bundle: t, bfile: undefined }) })
-  const setView = (v: View) => navigate({ to: '/', search: (p) => ({ ...p, bview: v }) })
+    navigate({ to: '/bundles', search: (p) => ({ ...p, bundle: t, bfile: undefined }) })
+  const setView = (v: View) => navigate({ to: '/bundles', search: (p) => ({ ...p, bview: v }) })
   const setFile = (f: string | undefined) =>
-    navigate({ to: '/', search: (p) => ({ ...p, bfile: f }) })
+    navigate({ to: '/bundles', search: (p) => ({ ...p, bfile: f }) })
 
   return (
     <SectionCard>
