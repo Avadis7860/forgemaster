@@ -19,7 +19,8 @@ def test_derive_reproduces_managed_set_with_jetons():
     (gate/versions), les jetons **projet** restent `{{…}}` (remplis par le worker du projet)."""
     res = derive.derive_type("browser-game")
     assert set(res.files) == {"package.json", "tsconfig.json", "src/shared/schema.ts",
-                              "src/shared/schema.test.ts", "src/index.ts", "server/index.ts",
+                              "src/shared/schema.test.ts", "src/shared/tick.ts",
+                              "src/shared/tick.test.ts", "src/index.ts", "server/index.ts",
                               "web/index.html", "web/main.tsx", "web/App.tsx", "vite.config.ts",
                               "vitest.config.ts", "CLAUDE.md"}
     assert res.template_ref == "browser-game-pve/scaffold"

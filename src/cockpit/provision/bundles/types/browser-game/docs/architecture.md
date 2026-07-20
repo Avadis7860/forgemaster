@@ -37,3 +37,9 @@ affiche l'état serveur, jamais de règle côté client. Boucle `work-loop` (fea
 - **Déterminisme** : même seed + même suite de commandes → même état ; la résolution se teste en pur.
 - **Patron d'étapes** (blueprint browser-game-pve) : modèle Zod → tick serveur → commandes → IA bots →
   combat → UI → persistance. _(chaque étape se documente ici quand elle est franchie)_
+  - **É1 (modèle) + É2 (tick serveur) — AMORCÉS né-avec.** Le contrat partagé porte `GameState` + `Command`
+    (`src/shared/schema.ts`) ; le cœur déterministe `(état, commandes, seed) → état'` vit en
+    `src/shared/tick.ts` (`applyTick`/`applyCommand`, testés `src/shared/tick.test.ts`) ; le serveur exécute
+    la boucle de tick sur l'état canonique et pousse l'état via un **canal WebSocket d'écho autoritatif**
+    `GET /ws` (`server/index.ts`, `attachGameLoop` ; réuni en prod mono-port par `server/prod.ts`). **Étends**
+    cette primitive (production réelle, commandes entrantes en É3, combat en É5) — ne la refonde pas.

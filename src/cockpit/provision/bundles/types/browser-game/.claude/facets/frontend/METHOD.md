@@ -28,7 +28,10 @@
      networkidle).
 3. **Design-system d'abord** — `frontmap where` (tokens / primitives / routes) avant de créer du neuf.
 4. **Serveur-autoritatif** — l'UI lit l'état (React Query poll + WebSocket events), envoie des commandes
-   validées par des schémas **Zod partagés** ; jamais de règle de jeu calculée côté client.
+   validées par des schémas **Zod partagés** ; jamais de règle de jeu calculée côté client. **Canal semé
+   né-avec** : le serveur pousse l'état après chaque tick sur `GET /ws` (écho autoritatif — cf.
+   `server/index.ts`, `attachGameLoop`). Branche ta vue dessus (`new WebSocket(...)` → applique l'état reçu) ;
+   comme le contenu arrive **après** `networkidle`, cale ta preuve Tier-1.5 avec `wait_for_text` (point 2).
 5. **Doc-first (anti-boucle)** — avant un import non trivial (React Query / Zod), interroge le MCP
    (`query(type=tech, scope=browser-game)`) — pas de signature inventée.
 6. **Gate** — `eslint` → `tsc` → `vitest` vert. Corrige la cause.

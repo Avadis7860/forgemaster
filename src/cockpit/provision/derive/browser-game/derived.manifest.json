@@ -1,6 +1,6 @@
 {
   "template": "browser-game-pve/scaffold",
-  "template_sha": "094b0a5cf9722c39054090d8eadd56bc83f0ae39d6d12e432170e7fec8b89114",
+  "template_sha": "d26fca360f0996f559fef0f11da4cb60b6aa5eb60ffa3db0c4103e39486104d5",
   "blueprint_sha": "1449935735475b86096432d8ecb0bdaa4f2f07932334b00470b264a873270a32",
   "values_sha": "4f184d1fb548def5e2c3ff896d2f54c6e1969135c7aa52a995e55cd4d6cbedd3",
   "generator_version": "1",
@@ -11,6 +11,8 @@
     "src/index.ts",
     "src/shared/schema.test.ts",
     "src/shared/schema.ts",
+    "src/shared/tick.test.ts",
+    "src/shared/tick.ts",
     "tsconfig.json",
     "vite.config.ts",
     "vitest.config.ts",
