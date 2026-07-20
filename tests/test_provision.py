@@ -298,14 +298,17 @@ def test_browser_game_seeds_runnable_ts_mono_skeleton():
     test Vitest, gate `tsc → vitest`. On prouve la PRÉSENCE + la montabilité statique du squelette ; le vert
     npm réel (`npm install && npm run dev` + `vitest`) se prouve sur env node, hors de ce gate."""
     bundle = load_bundle("browser-game")
-    expected = ("package.json", "tsconfig.json", "vite.config.ts", "vitest.config.ts",
+    expected = ("package.json", "tsconfig.json", "vite.config.ts", "vitest.config.ts", "eslint.config.js",
                 "src/shared/schema.ts", "src/shared/schema.test.ts", "server/index.ts",
-                "web/index.html", "web/main.tsx", "web/App.tsx")
+                "web/index.html", "web/main.tsx", "web/App.tsx", "web/index.css", "web/queryClient.ts")
     for rel in expected:
         assert rel in bundle and bundle[rel].strip(), f"squelette runnable : {rel} absent/vide du seed"
     pkg = json.loads(bundle["package.json"])
-    assert "vitest" in pkg["scripts"]["gate"]                    # gate semé = tsc → vitest
+    gate = pkg["scripts"]["gate"]
+    assert "eslint" in gate and "tsc" in gate and "vitest" in gate   # gate réel = eslint → tsc → vitest (semé né-avec)
     assert "react" in pkg["dependencies"] and "hono" in pkg["dependencies"]   # univers unifié web + server
+    assert "@tanstack/react-query" in pkg["dependencies"]        # poll temps-réel semé né-avec (stack réconciliée)
+    assert "tailwindcss" in pkg["devDependencies"]               # UI de gestion dense : Tailwind semé né-avec
     assert "{{game_name}}" in bundle["src/index.ts"]            # jeton de mission laissé (seed verbatim)
     for rel in ("web/App.tsx", "web/index.html"):               # genericité : aucun slug figé côté client
         assert "cockpit-" not in bundle[rel] and "demo" not in bundle[rel].lower()

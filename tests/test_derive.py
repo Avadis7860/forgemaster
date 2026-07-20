@@ -22,7 +22,8 @@ def test_derive_reproduces_managed_set_with_jetons():
                               "src/shared/schema.test.ts", "src/shared/tick.ts",
                               "src/shared/tick.test.ts", "src/index.ts", "server/index.ts",
                               "web/index.html", "web/main.tsx", "web/App.tsx", "vite.config.ts",
-                              "vitest.config.ts", "CLAUDE.md"}
+                              "vitest.config.ts", "CLAUDE.md", "eslint.config.js", "web/index.css",
+                              "web/queryClient.ts", "web/vite-env.d.ts"}
     assert res.template_ref == "browser-game-pve/scaffold"
     pkg = res.files["package.json"]
     assert '"name": "game"' in pkg and '"zod"' in pkg          # archétype rempli (nom valide, dép Zod)

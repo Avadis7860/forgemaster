@@ -9,7 +9,7 @@ ref = "browser-game-pve/scaffold"
 [archetype]
 # Jetons CONSTANTS pour tout le type → remplis au build, gravés dans l'overlay vendoré.
 pkg_name = "game"
-gate_cmd = "tsc --noEmit && vitest run"
+gate_cmd = "eslint . && tsc --noEmit && vitest run"
 ts_version = "5.5.4"
 zod_version = "^3.23.8"
 

@@ -1,11 +1,12 @@
 {
   "template": "browser-game-pve/scaffold",
-  "template_sha": "d26fca360f0996f559fef0f11da4cb60b6aa5eb60ffa3db0c4103e39486104d5",
+  "template_sha": "7ffa0a4cc8b7e68baa1aaa1fab8c9bbc4b6c87af1df14edb3325a667e2fc4305",
   "blueprint_sha": "1449935735475b86096432d8ecb0bdaa4f2f07932334b00470b264a873270a32",
-  "values_sha": "4f184d1fb548def5e2c3ff896d2f54c6e1969135c7aa52a995e55cd4d6cbedd3",
+  "values_sha": "86299903a4a2b3108a95a31ac8a2e47f74db86c52e45dd021583d53e4c8d0694",
   "generator_version": "1",
   "managed_paths": [
     "CLAUDE.md",
+    "eslint.config.js",
     "package.json",
     "server/index.ts",
     "src/index.ts",
@@ -17,7 +18,10 @@
     "vite.config.ts",
     "vitest.config.ts",
     "web/App.tsx",
+    "web/index.css",
     "web/index.html",
-    "web/main.tsx"
+    "web/main.tsx",
+    "web/queryClient.ts",
+    "web/vite-env.d.ts"
   ]
 }

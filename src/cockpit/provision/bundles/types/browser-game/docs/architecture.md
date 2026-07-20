@@ -13,13 +13,13 @@ boucles, factions, map) vit dans `docs/design.md`, pas ici.
 ## Stack (verrouillée)
 Univers **TypeScript unique** — cf. `CLAUDE.md §3` :
 - **Front** `web/` : React 19 + Vite + TypeScript + Tailwind (CSR, UI de gestion).
-- **Back** `server/` : Hono + Drizzle + SQLite (état serveur-autoritatif).
+- **Back** `server/` : Hono (état serveur-autoritatif ; **persistance Drizzle + SQLite câblée en É7**, en mémoire à l'amorçage).
 - **Liant** : schémas **Zod** partagés client/serveur. **Tests** : Vitest. **Temps réel** : React Query
   (poll) + WebSocket Hono (events critiques).
 
 ## Où vit quoi
 - `web/` — le front (composants, écrans, appels API). Interroge-le via `codemap where` / `frontmap where`.
-- `server/` — la simulation serveur-autoritative (tick, commandes, combat, persistance Drizzle).
+- `server/` — la simulation serveur-autoritative (tick, commandes, combat, persistance Drizzle **en É7**).
 - `docs/design.md` — le foyer de la conception (game-design) ; `docs/` — la prose durable, via `docsmap`.
 - `tests/` — un test par capacité ; la résolution de sim se teste **en pur** avant l'UI.
 
