@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Console WS — démo</title></head>
+<body>
+  <h1>Console de flux</h1>
+  <div id="flux">Connexion…</div>
+  <script>
+    // Simule un contenu piloté WebSocket : « Flux prêt » arrive APRÈS networkidle (le WS n'est pas suivi
+    // par networkidle). Sans wait_for_text, la capture se fait avant → marqueur absent → FAUX-ROUGE.
+    // Avec wait_for_text="Flux prêt", le runner sonde jusqu'à le voir → 🟢.
+    setTimeout(function () {
+      document.getElementById('flux').textContent = 'Flux prêt';
+    }, 1500);
+  </script>
+</body>
+</html>

@@ -147,6 +147,18 @@ def _clean_clicks(value: object) -> list[dict]:
     return out
 
 
+def _clean_canvas(value: object) -> dict:
+    """Contrat **plancher canvas** : `{"selector": "<css>", "non_blank": true}` — prouve qu'un rendu
+    `<canvas>`/WebGL (innerText vide, invisible au match textuel) a réellement peint. Robuste aux entrées
+    sales → `{}` (pas de plancher). `selector` défaut `"canvas"`. Le canvas ne prouve PAS le bon état (ça =
+    sidecar texte sr-only lu par `markers`) — juste qu'il n'est ni vide ni cassé. PUR."""
+    if not isinstance(value, dict) or not value.get("non_blank"):
+        return {}
+    sel = value.get("selector")
+    selector = sel.strip() if isinstance(sel, str) and sel.strip() else "canvas"
+    return {"selector": selector, "non_blank": True}
+
+
 def read_verify_contract(workdir: Path) -> dict:
     """Contrat de preuve **déclaré par le worker** dans `<workdir>/.cockpit/verify-markers.json`. Deux formes,
     la seconde ADDITIVE (rétro-compatible) :
@@ -160,7 +172,7 @@ def read_verify_contract(workdir: Path) -> dict:
     PUR, ne lève JAMAIS. Absent / JSON invalide / forme inattendue → tout vide (dégrade honnête ; `markers`
     vide reste fail-closed en aval via `build_verdict`, jamais blanchi par absence de cible)."""
     empty: dict = {"markers": [], "clicks": [], "after_markers": [], "wait_for_text": None,
-                   "wait_timeout_ms": None}
+                   "wait_timeout_ms": None, "canvas": {}}
     path = workdir / MARKERS_FILE
     if not path.is_file():
         return empty
@@ -172,6 +184,7 @@ def read_verify_contract(workdir: Path) -> dict:
         return empty
     contract: dict = dict(empty)
     contract["markers"] = _clean_str_list(data.get("markers"))
+    contract["canvas"] = _clean_canvas(data.get("canvas"))
     interaction = data.get("interaction")
     if isinstance(interaction, dict):
         contract["clicks"] = _clean_clicks(interaction.get("clicks"))
@@ -195,10 +208,11 @@ def read_declared_markers(workdir: Path) -> list[str]:
 def build_payload(url: str, markers: list[str], *, timeout_ms: int = DEFAULT_TIMEOUT_MS,
                   screenshot: str | None = None, cookies: list[dict] | None = None,
                   clicks: list[dict] | None = None, after_markers: list[str] | None = None,
-                  wait_for_text: str | None = None, wait_timeout_ms: int | None = None) -> dict:
-    """Payload passé au runner Node. PUR. Champs at-rest toujours ; champs d'interaction (deux-temps) inclus
-    **ssi non vides** → rétro-compatible (un contrat legacy produit exactement l'ancien payload). `cookies`
-    ssi non vide (deep-link authentifié) ; sinon contexte anonyme."""
+                  wait_for_text: str | None = None, wait_timeout_ms: int | None = None,
+                  canvas: dict | None = None) -> dict:
+    """Payload passé au runner Node. PUR. Champs at-rest toujours ; champs d'interaction (deux-temps) et
+    `canvas` (plancher) inclus **ssi non vides** → rétro-compatible (un contrat legacy produit exactement
+    l'ancien payload). `cookies` ssi non vide (deep-link authentifié) ; sinon contexte anonyme."""
     payload: dict = {"url": url, "markers": markers, "timeout_ms": timeout_ms}
     if screenshot:
         payload["screenshot"] = screenshot
@@ -212,20 +226,24 @@ def build_payload(url: str, markers: list[str], *, timeout_ms: int = DEFAULT_TIM
         payload["wait_for_text"] = wait_for_text
     if wait_timeout_ms:
         payload["wait_timeout_ms"] = wait_timeout_ms
+    if canvas:
+        payload["canvas"] = canvas
     return payload
 
 
 def verify_target(settings: Settings, url: str, markers: list[str], *, name: str | None = None,
                   timeout_ms: int = DEFAULT_TIMEOUT_MS, cookies: list[dict] | None = None,
                   clicks: list[dict] | None = None, after_markers: list[str] | None = None,
-                  wait_for_text: str | None = None, wait_timeout_ms: int | None = None) -> dict:
+                  wait_for_text: str | None = None, wait_timeout_ms: int | None = None,
+                  canvas: dict | None = None) -> dict:
     """Vérifie une cible via le runner Node. Ne lève JAMAIS : runner absent / node ko / browser ko / timeout
     → `{ok: False, error: ...}` (fail-closed — un target non prouvé n'est pas vert). Si `after_markers` est
     déclaré (jalon jouable), le runner joue `clicks` puis exige ces markers APRÈS le geste ET assert qu'ils
-    étaient ABSENTS at-rest (`pre_present` non vide = transition non prouvée = 🔴)."""
+    étaient ABSENTS at-rest (`pre_present` non vide = transition non prouvée = 🔴). Si `canvas` est déclaré
+    (plancher), le runner exige que l'élément canvas ait peint (pixels non-uniformes) — replié dans `ok`."""
     payload = build_payload(url, markers, timeout_ms=timeout_ms, cookies=cookies, clicks=clicks,
                             after_markers=after_markers, wait_for_text=wait_for_text,
-                            wait_timeout_ms=wait_timeout_ms)
+                            wait_timeout_ms=wait_timeout_ms, canvas=canvas)
     res: dict = {"name": name, "url": url, "ok": False, "found": [], "missing": list(markers),
                  "after_found": [], "after_missing": list(after_markers or []), "pre_present": [],
                  "title": None}
@@ -359,7 +377,7 @@ def autoverify_feature(conn: sqlite3.Connection, settings: Settings, *, project:
         res = verify_target(settings, preview["url"], contract["markers"], name=feature,
                             clicks=contract["clicks"], after_markers=contract["after_markers"],
                             wait_for_text=contract["wait_for_text"],
-                            wait_timeout_ms=contract["wait_timeout_ms"])
+                            wait_timeout_ms=contract["wait_timeout_ms"], canvas=contract["canvas"])
         return write_verdict(settings, project, feature, [res], sha=sha)
     finally:
         teardown_preview(conn, settings, slug=project, feature=feature, backend=backend)
@@ -373,6 +391,8 @@ def _print_verdict(results: list[dict], verdict: dict, sha: str | None) -> None:
             extra += f" post-geste manquants={t['after_missing']}"
         if t.get("pre_present"):
             extra += f" (déjà présents at-rest → transition non prouvée : {t['pre_present']})"
+        if isinstance(t.get("canvas"), dict) and not t["canvas"].get("non_blank_ok"):
+            extra += f" canvas vide/cassé ({t['canvas'].get('reason', 'non peint')})"
         failed_clicks = [c.get("step") for c in t.get("clicks", []) if not c.get("ok")]
         if failed_clicks:
             extra += f" clics échoués={failed_clicks}"
@@ -429,7 +449,8 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
                                  cookies=t.get("cookies"), clicks=t.get("clicks"),
                                  after_markers=t.get("after_markers"),
                                  wait_for_text=t.get("wait_for_text"),
-                                 wait_timeout_ms=t.get("wait_timeout_ms")) for t in targets]
+                                 wait_timeout_ms=t.get("wait_timeout_ms"),
+                                 canvas=t.get("canvas")) for t in targets]
         verdict = write_verdict(settings, project_slug, feature_slug, results, sha=sha)
         _print_verdict(results, verdict, sha)
         return 0 if verdict["ok"] else 1

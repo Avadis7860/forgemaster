@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Canvas vide — anti-cas</title></head>
+<body>
+  <!-- Anti-cas du plancher : le sidecar dit « Tour 1 » (markers passeraient) MAIS le canvas n'est JAMAIS
+       peint → uniforme → non_blank_ok=false → 🔴. Ferme le faux-vert « sidecar ment, canvas cassé ». -->
+  <div class="sr-only" style="position:absolute;clip:rect(0 0 0 0)">Tour 1</div>
+  <canvas id="v" width="120" height="80"></canvas>
+</body>
+</html>
