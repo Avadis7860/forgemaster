@@ -2,6 +2,7 @@ import { Alert, Badge, Card, EmptyState, LoadingState, RefreshButton, SectionTit
 import { ApiError } from '@/lib/api'
 import { CredentialForm } from '@/components/credential/CredentialForm'
 import { MirrorForm } from '@/components/credential/MirrorForm'
+import { McpCorpus } from '@/components/mcp/McpCorpus'
 import { useOnboarding } from '@/lib/queries'
 import type { OnboardingRequirement, SecretStoreHealth } from '@/lib/schemas'
 
@@ -54,6 +55,16 @@ export function SettingsTab() {
             ))}
           </ul>
         )}
+      </Card>
+
+      <Card className="space-y-4 p-5">
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-medium text-fg">Corpus capital (MCP)</p>
+          <Badge tone={data.mcp.wired ? 'ok' : 'info'} dot>
+            {data.mcp.wired ? 'connecté' : 'à connecter'}
+          </Badge>
+        </div>
+        <McpCorpus mcp={data.mcp} />
       </Card>
     </div>
   )

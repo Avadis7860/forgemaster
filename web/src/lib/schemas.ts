@@ -86,6 +86,9 @@ export const BundleTypeSchema = z.object({
   version: z.string(),
   facets: z.array(z.string()),    // granularités de dispatch adossées (une par dossier .claude/facets/<f>/)
   default_facet: z.string(),
+  // déclaration MCP sèche du manifeste (sans secret) : `corpus` = bénéficie du capital-token universel ;
+  // `tech_scope` = silo tech dédié au type (pointeur). Optionnel → les types sans déclaration valident.
+  mcp: z.object({ corpus: z.boolean().optional(), tech_scope: z.string().optional() }).optional(),
 })
 export type BundleType = z.infer<typeof BundleTypeSchema>
 

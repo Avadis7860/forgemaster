@@ -148,6 +148,24 @@ def test_status_reports_mcp_wire_state_default_unwired_and_injected(ctx, mcp_env
     assert st2["mcp"] == {"wired": True, "endpoint": "http://ep/mcp"}          # état injectable (tests)
 
 
+def test_cli_status_surfaces_mcp_line_unwired_then_wired(ctx, mcp_env, capsys):
+    """DoD 3a : `cockpit onboard status` **imprime** l'état MCP (déjà dans le dict, jamais surfacé avant).
+    Non câblé → ligne `ℹ️ … à connecter` (visible et compréhensible, jamais un vide muet) ; câblé → `✅ …
+    câblé (<endpoint>)`. MCP optionnel : la ligne n'est jamais 🔴."""
+    import argparse
+    settings, _ = ctx
+    args = argparse.Namespace(action="status")
+    onboarding.cli_dispatch(settings, args)                                    # mcp_env = "" → non câblé
+    out = capsys.readouterr().out
+    assert "corpus capital (MCP)" in out and "à connecter" in out
+    assert "🔴 corpus capital" not in out                                     # optionnel → jamais bloquant
+    mcp_env.setenv(mcp.ENV_MCP_JWT_SECRET_REF, "ref-xyz")                      # câblé (env vivant)
+    mcp_env.setenv("COCKPIT_MCP_ENDPOINT", "http://ep/mcp")
+    onboarding.cli_dispatch(settings, args)
+    out2 = capsys.readouterr().out
+    assert "corpus capital (MCP) — câblé" in out2 and "http://ep/mcp" in out2
+
+
 def test_wire_mcp_value_stores_ref_persists_and_reflects_live_env(ctx, mcp_env):
     settings, _ = ctx
     secret = "x" * 40                                                          # ≥32c : HS256 l'exige

@@ -142,6 +142,12 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
                 need = "token lié" if r["linked"] else ("token REQUIS (miroir)" if r["needs_credential"]
                                                         else "aucun miroir")
                 print(f"  {icon} {r['project']} — {need}")
+            mcp_st = st["mcp"]                                   # optionnel : jamais bloquant (ℹ️, pas 🔴)
+            if mcp_st.get("wired"):
+                print(f"  ✅ corpus capital (MCP) — câblé ({mcp_st.get('endpoint', '')})")
+            else:
+                print("  ℹ️ corpus capital (MCP) — à connecter (wizard /setup ou `cockpit mcp wire`) ; "
+                      "sans lui tu travailles sans ton capital-token")
             print("onboarding complet ✅" if st["complete"] else "onboarding INCOMPLET 🔴")
             return 0 if st["complete"] else 1
         if action == "link":
