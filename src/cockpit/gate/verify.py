@@ -26,6 +26,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from cockpit import tools
 from cockpit.config import Settings
 
 if TYPE_CHECKING:
@@ -234,8 +235,13 @@ def verify_target(settings: Settings, url: str, markers: list[str], *, name: str
         res["error"] = f"runner absent : {runner} (configure {ENV_RUNNER})"
         return res
     try:
+        # `env=tools_env` : le PATH systemd minimal du daemon (`/usr/bin:/usr/sbin:…`) n'expose PAS
+        # `node` (nodeenv sous `tools/bin`). Sans ce préfixe, `subprocess.run(["node", …])` lève
+        # FileNotFoundError sur toute install réelle → runner mort-né. Même résolution que le worker de
+        # dispatch et le gate toolchain (cf. `tools.tools_env`).
         p = subprocess.run(["node", str(runner), json.dumps(payload)],
-                           capture_output=True, text=True, timeout=timeout_ms / 1000 + 30)
+                           capture_output=True, text=True, timeout=timeout_ms / 1000 + 30,
+                           env=tools.tools_env(settings))
     except (subprocess.TimeoutExpired, OSError) as exc:
         res["error"] = f"{type(exc).__name__}: {exc}"
         return res

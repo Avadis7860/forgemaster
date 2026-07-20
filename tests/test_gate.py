@@ -304,6 +304,26 @@ def test_verify_target_distinguishes_after_missing_from_click_fail(ctx, monkeypa
     assert [c for c in res["clicks"] if not c["ok"]]                      # …ET clic échoué : distincts
 
 
+def test_verify_target_invokes_node_with_tools_path(ctx, monkeypatch):
+    """Régression : le daemon a un PATH systemd minimal (`/usr/bin:/usr/sbin:…`) SANS `node` (nodeenv sous
+    `tools/bin`). Le runner DOIT être lancé avec `tools_env` (PATH préfixé `tools/bin`) — sinon
+    `subprocess.run(["node", …])` lève FileNotFoundError sur toute install réelle (runner mort-né). On prouve
+    que l'env transmis au subprocess porte `tools/bin` en tête, comme le worker de dispatch et le gate."""
+    from cockpit import tools
+    settings, _ = ctx
+    _stub_runner(settings)
+    captured: dict = {}
+
+    def fake_run(cmd, **kw):
+        captured["env"] = kw.get("env")
+        return _FakeProc(json.dumps({"ok": True, "found": ["Accueil"], "missing": []}))
+
+    monkeypatch.setattr(verify.subprocess, "run", fake_run)
+    verify.verify_target(settings, "http://x/", ["Accueil"], name="home")
+    assert captured["env"] is not None                                    # env explicite, pas hérité passif
+    assert captured["env"]["PATH"].split(":")[0] == str(tools.tools_bin(settings))   # tools/bin en tête
+
+
 def test_verify_is_fresh_contract_version_guard():
     v2 = verify.build_verdict([{"ok": True}], sha="abc", ts="t")          # contract_version courant (v2)
     assert v2["contract_version"] == verify.CONTRACT_VERSION
