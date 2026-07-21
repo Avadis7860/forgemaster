@@ -143,21 +143,25 @@ function FilePane({ project, gitRef, file }: { project: string; gitRef: string; 
   const [showHistory, setShowHistory] = useState(false)
   const { data, isLoading, isError, error } = useGitBlob(project, gitRef, file ?? '')
 
+  // Vide/chargement = TISSU, pas un carton dans le carton « Fichiers » (gate tissu > panneau) : la cellule
+  // droite reste un espace, pas un panneau bordé. Le relief (Card) est réservé au CONTENU réel du fichier.
   if (!file) {
     return (
-      <Card className="flex min-h-40 items-center justify-center p-5">
+      <div className="flex min-h-40 items-center justify-center">
         <EmptyState title="Aucun fichier" description="Choisis un fichier dans l'arbre pour l'afficher." />
-      </Card>
+      </div>
     )
   }
-  if (isLoading) return <Card className="p-5"><LoadingState label="Lecture du fichier…" /></Card>
+  if (isLoading) {
+    return <div className="flex min-h-40 items-center justify-center"><LoadingState label="Lecture du fichier…" /></div>
+  }
   if (isError || !data) {
     return (
-      <Card className="p-5">
+      <div className="min-h-40">
         <Alert tone="danger" title="Fichier indisponible">
           {error instanceof ApiError ? error.detail : String(error)}
         </Alert>
-      </Card>
+      </div>
     )
   }
   return (

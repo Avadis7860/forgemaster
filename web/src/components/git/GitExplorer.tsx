@@ -7,6 +7,7 @@ import {
 import { ProjectCredentialCard } from '@/components/credential/ProjectCredentialCard'
 import { RepoExplorer } from '@/components/git/RepoExplorer'
 import { CommitDetailCard, DiffCard } from '@/components/git/GitIntelligence'
+import { cn } from '@/lib/cn'
 import { ApiError } from '@/lib/api'
 import { useGit, useGitSync, useProjects, useReconcileSync } from '@/lib/queries'
 import {
@@ -14,7 +15,9 @@ import {
   reconcilePlan, syncSummary,
 } from '@/lib/git'
 import { gitBranchTone, reconcileTone, syncTone } from '@/lib/statusTone'
-import type { GitAheadBehind, GitBranch, GitLogEntry, GitSync, Project } from '@/lib/schemas'
+import type {
+  GitAheadBehind, GitBranch, GitLogEntry, GitSync, GitView as GitViewData, Project,
+} from '@/lib/schemas'
 
 type GitView = 'historique' | 'fichiers' | 'diff'
 type Search = { project?: string; view?: GitView; sha?: string }
@@ -161,24 +164,31 @@ function GitSurface({ project, view, sha }: { project: string; view: GitView; sh
   // On n'en affiche alors qu'UN (pleine largeur) au lieu de deux colonnes redondantes.
   const unified = isLogUnified(data.ahead_behind, refs.length)
   const hasBranches = data.branches.length > 0
-  const headSha = (data.branches.find((b) => b.name === 'dev') ?? data.branches[0])?.sha
+  // Tête du dépôt : la réf `dev` (sinon la 1ʳᵉ branche) — l'ancre « où pointe le dépôt » de l'en-tête.
+  const headRef = data.branches.find((b) => b.name === 'dev') ?? data.branches[0]
   // Branche représentante de la paire protégée (dev/main) pour la rangée unifiée quand dev==main.
   const unifiedHead = data.branches.find((b) => refs.includes(b.name))
 
   return (
     <div className="space-y-4">
-      {/* En-tête compact : réfs + SHA de tête + état de synchro + rafraîchir. */}
-      <div className="flex flex-wrap items-center gap-2">
-        {data.branches.map((b) => (
-          <Badge key={b.name} tone={gitBranchTone(b.name)}>{b.name}</Badge>
-        ))}
-        {headSha && <code className="font-mono text-xs text-faint">{headSha}</code>}
-        {data.ahead_behind && <SyncChip ab={data.ahead_behind} />}
-        <RemoteSyncChip sync={sync} />
-        {sync.data && needsReconcile(sync.data) && (
-          <Button variant="ghost" size="sm" onClick={() => setReconcileOpen((o) => !o)}
-            aria-expanded={reconcileOpen}>⟳ Réconcilier</Button>
+      {/* En-tête HIÉRARCHISÉ : la TÊTE (réf + SHA) prime, ancrée à gauche ; puis les signaux de synchro
+          groupés à part ; l'énumération complète des branches vit dans l'organisateur ci-dessous (pas ici,
+          pour ne pas noyer le signal de tête ni murer le mobile). */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        {headRef && (
+          <span className="flex items-center gap-2">
+            <Badge tone={gitBranchTone(headRef.name)}>{headRef.name}</Badge>
+            <code className="font-mono text-xs text-muted">{headRef.sha}</code>
+          </span>
         )}
+        <span className="flex flex-wrap items-center gap-2">
+          {data.ahead_behind && <SyncChip ab={data.ahead_behind} />}
+          <RemoteSyncChip sync={sync} />
+          {sync.data && needsReconcile(sync.data) && (
+            <Button variant="ghost" size="sm" onClick={() => setReconcileOpen((o) => !o)}
+              aria-expanded={reconcileOpen}>⟳ Réconcilier</Button>
+          )}
+        </span>
         <RefreshButton className="ml-auto" onClick={onRefresh} busy={isFetching || sync.isFetching} />
       </div>
 
@@ -199,40 +209,21 @@ function GitSurface({ project, view, sha }: { project: string; view: GitView; sh
       {view === 'historique' && (
         <div className="space-y-4">
           {sha && <CommitDetailCard project={project} sha={sha} onClose={() => setSha(null)} />}
-          <Card className="space-y-3 p-5">
-            <p className="text-sm font-medium text-fg">Branches</p>
+          {/* UN organisateur unifié : les branches en index ; dev/main DÉPLIENT leur log inline (accordéon),
+              les features ouvrent le détail de leur tête. Fini la carte « Branches » doublée de LogCards
+              demi-largeur qui répétaient les mêmes réfs et laissaient le canvas à moitié vide (axe 5/4). */}
+          <Card className="p-2">
             {hasBranches ? (
-              <ul className="space-y-2">
-                {/* dev==main : une seule rangée pour la paire protégée (axe 5, pas deux lignes identiques) ;
-                    les autres branches (features) restent distinctes. */}
-                {unified && unifiedHead ? (
-                  <>
-                    <BranchRow
-                      branch={unifiedHead}
-                      also={refs.filter((r) => r !== unifiedHead.name)}
-                      onSelect={setSha}
-                    />
-                    {data.branches
-                      .filter((b) => !refs.includes(b.name))
-                      .map((b) => <BranchRow key={b.name} branch={b} onSelect={setSha} />)}
-                  </>
-                ) : (
-                  data.branches.map((b) => <BranchRow key={b.name} branch={b} onSelect={setSha} />)
-                )}
+              <ul className="divide-y divide-border/50">
+                {buildBranchRows(data, refs, unified, unifiedHead).map((row, i) => (
+                  <BranchRow key={row.branch.name} branch={row.branch} also={row.also} log={row.log}
+                    defaultOpen={i === 0} onSelect={setSha} />
+                ))}
               </ul>
             ) : (
               <EmptyState title="Aucune branche" description="Le SoT ne porte encore aucune branche." />
             )}
           </Card>
-          {unified ? (
-            <LogCard refName="dev" entries={data.logs.dev} onSelect={setSha} alsoRef="main" />
-          ) : refs.length > 0 ? (
-            <div className="grid gap-4 md:grid-cols-2">
-              {refs.map((ref) => (
-                <LogCard key={ref} refName={ref} entries={data.logs[ref]} onSelect={setSha} />
-              ))}
-            </div>
-          ) : null}
         </div>
       )}
 
@@ -369,58 +360,78 @@ function ReconcilePanel({ project, sync, onDone, onClose }: {
   )
 }
 
-/** Une branche : nom (ton par réf) + sha court mono + sujet, cliquable pour ouvrir le détail du commit de
- *  tête (via la primitive Button, jamais un bouton HTML brut — R1). `also` (mode unifié dev==main) : réfs
- *  supplémentaires pointant le MÊME commit, rendues en badges + « identiques » sur une seule rangée (axe 5). */
-function BranchRow({ branch, also, onSelect }: {
+type BranchRowModel = { branch: GitBranch; also?: string[]; log?: GitLogEntry[] }
+
+/** Ordonne les rangées de l'organisateur unifié : les réfs protégées d'abord (dev/main, porteuses d'un log
+ *  dépliable), les features ensuite (sans log → clic direct sur la tête). dev==main : UNE rangée pour la
+ *  paire (badges cumulés + log partagé), au lieu de deux lignes identiques (axe 5). */
+function buildBranchRows(
+  data: GitViewData, refs: string[], unified: boolean, unifiedHead: GitBranch | undefined,
+): BranchRowModel[] {
+  const features = data.branches.filter((b) => !refs.includes(b.name))
+  const protectedRows: BranchRowModel[] = unified && unifiedHead
+    ? [{ branch: unifiedHead, also: refs.filter((r) => r !== unifiedHead.name), log: data.logs[unifiedHead.name] }]
+    : refs
+        .map((r) => data.branches.find((b) => b.name === r))
+        .filter((b): b is GitBranch => Boolean(b))
+        .map((b) => ({ branch: b, log: data.logs[b.name] }))
+  return [...protectedRows, ...features.map((b) => ({ branch: b }))]
+}
+
+/** Une rangée de branche dans l'organisateur unifié. **Tissu** (ghost, relief au hover) + **scent de
+ *  cliquabilité** à rest = un caret `▸` (idiome `Collapsible`, rotate au dépli). dev/main portent un `log`
+ *  → la rangée DÉPLIE son log inline (accordéon) ; une feature (sans log) ouvre directement le détail de sa
+ *  tête (`?sha`). Toujours via la primitive Button (jamais un `<button>` brut — R1). `also` (mode unifié
+ *  dev==main) : réfs supplémentaires pointant le MÊME commit, rendues en badges + « identiques » (axe 5). */
+function BranchRow({ branch, also, log, defaultOpen, onSelect }: {
   branch: GitBranch
   also?: string[]
+  log?: GitLogEntry[]
+  defaultOpen?: boolean
   onSelect: (sha: string) => void
 }) {
+  const hasLog = (log?.length ?? 0) > 0
+  const [open, setOpen] = useState(Boolean(defaultOpen && hasLog))
   return (
     <li>
-      <Button variant="ghost" size="sm" onClick={() => onSelect(branch.sha)}
-        className="w-full justify-start gap-3">
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => (hasLog ? setOpen((o) => !o) : onSelect(branch.sha))}
+        aria-expanded={hasLog ? open : undefined}
+        className="w-full justify-start gap-3"
+      >
+        {/* Scent : caret de dépli (tissu, cohérent Collapsible) — colonne de LARGEUR FIXE (masqué sans log)
+            pour que tous les badges de réf s'alignent, expandable comme feuille. */}
+        <span aria-hidden className={cn('w-3 shrink-0 text-center text-faint transition-transform',
+          hasLog && open && 'rotate-90', !hasLog && 'opacity-0')}>▸</span>
         <span className="flex shrink-0 items-center gap-1.5">
           <Badge tone={gitBranchTone(branch.name)}>{branch.name}</Badge>
           {also?.map((n) => <Badge key={n} tone={gitBranchTone(n)}>{n}</Badge>)}
           {also && also.length > 0 && <span className="text-xs text-faint">identiques</span>}
         </span>
-        <code className="shrink-0 font-mono text-xs text-muted">{branch.sha}</code>
-        <span className="truncate text-sm text-muted" title={branch.subject}>{branch.subject}</span>
+        {/* sha+sujet = résumé de tête, UNIQUEMENT à l'état replié (ou feuille) : déplié, le log porte déjà
+            ce commit en 1ʳᵉ ligne → ne pas le rebégayer dans l'en-tête (axe 5). */}
+        {!open && (
+          <>
+            <code className="shrink-0 font-mono text-xs text-muted">{branch.sha}</code>
+            <span className="truncate text-sm text-muted" title={branch.subject}>{branch.subject}</span>
+          </>
+        )}
       </Button>
+      {hasLog && open && (
+        <ol className="ml-6 space-y-0.5 border-l border-border/60 py-1 pl-3">
+          {log!.map((e) => (
+            <li key={e.sha}>
+              <Button variant="ghost" size="sm" onClick={() => onSelect(e.sha)}
+                className="w-full items-baseline justify-start gap-2">
+                <code className="shrink-0 font-mono text-xs text-muted">{e.sha}</code>
+                <span className="truncate text-sm text-fg" title={e.subject}>{e.subject}</span>
+              </Button>
+            </li>
+          ))}
+        </ol>
+      )}
     </li>
-  )
-}
-
-/** Log court d'une réf (récents d'abord) : sha court mono + sujet, chaque entrée cliquable pour son détail.
- *  `alsoRef` (mode unifié dev==main) : affiche une 2ᵉ réf + « identiques » — un seul log pour les deux. */
-function LogCard({ refName, entries, onSelect, alsoRef }: {
-  refName: string
-  entries: GitLogEntry[]
-  onSelect: (sha: string) => void
-  alsoRef?: string
-}) {
-  return (
-    <Card className="space-y-3 p-5">
-      <div className="flex items-center gap-2">
-        <Badge tone={gitBranchTone(refName)}>{refName}</Badge>
-        {alsoRef && <Badge tone={gitBranchTone(alsoRef)}>{alsoRef}</Badge>}
-        <span className="text-xs text-faint">
-          {entries.length} commit(s){alsoRef ? ' · branches identiques' : ''}
-        </span>
-      </div>
-      <ol className="space-y-0.5">
-        {entries.map((e) => (
-          <li key={e.sha}>
-            <Button variant="ghost" size="sm" onClick={() => onSelect(e.sha)}
-              className="w-full items-baseline justify-start gap-2">
-              <code className="shrink-0 font-mono text-xs text-muted">{e.sha}</code>
-              <span className="truncate text-sm text-fg" title={e.subject}>{e.subject}</span>
-            </Button>
-          </li>
-        ))}
-      </ol>
-    </Card>
   )
 }

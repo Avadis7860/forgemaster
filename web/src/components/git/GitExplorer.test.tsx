@@ -85,13 +85,24 @@ describe('GitExplorer', () => {
     expect(screen.getByText('repo-explorer-stub')).toBeInTheDocument()
   })
 
-  it('un clic sur un commit du log deep-linke `?sha=`', () => {
+  it('un clic sur un commit du log déplié deep-linke `?sha=`', () => {
     h.search = { project: 'alpha' }  // vue par défaut = historique
     h.git = GIT_VIEW
     render(<GitExplorer />)
-    // le sujet du commit est cliquable (dans le LogCard)
+    // dev (1ʳᵉ réf protégée) est déplié par défaut → son log est visible ; le sujet du commit est cliquable
     fireEvent.click(screen.getByText('feat: x'))
     expect(h.nav).toContainEqual({ to: '/git', search: { project: 'alpha', sha: 'abc1234' } })
+  })
+
+  it('accordéon : cliquer la rangée de branche replie/déplie son log inline', () => {
+    h.search = { project: 'alpha' }
+    h.git = GIT_VIEW
+    render(<GitExplorer />)
+    // dev est déplié par défaut → le commit du log est présent…
+    expect(screen.getByText('feat: x')).toBeInTheDocument()
+    // …la rangée dépliée est le bouton `aria-expanded` ; le cliquer la replie → le log disparaît.
+    fireEvent.click(screen.getByRole('button', { expanded: true }))
+    expect(screen.queryByText('feat: x')).toBeNull()
   })
 
   it('le bouton « Réconcilier » reste caché sans divergence, et apparaît quand needsReconcile', () => {
