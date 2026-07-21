@@ -105,17 +105,22 @@ def _has_work_feature(conn, project: str, socle_slug: str) -> bool:
 
 def verify_and_complete(conn, project: str, feature: dict) -> dict:
     """VÉRIFIE le socle après la session (verified, pas trusted) : `roadmap check` vert ET ≥1 feature de
-    travail → clôt TOUTES les tasks du socle en `done` (l'interview a rempli la doc, decompose a authoré la
-    roadmap). Sinon laisse le socle `todo` et rend ce qui manque. Rend `{completed, issues, work_feature}`."""
+    travail → clôt les tasks du socle en `done` (l'interview a rempli la doc, decompose a authoré la
+    roadmap). Sinon laisse le socle `todo` et rend ce qui manque. Rend
+    `{completed, issues, work_feature, socle_tasks_closed}` (`socle_tasks_closed` = nombre de tasks
+    RÉELLEMENT transitionnées → done, pour le compte-rendu humain de la réconciliation)."""
     issues = check.check_roadmap(conn, project)
     work = _has_work_feature(conn, project, feature["slug"])
     completed = not issues and work
+    closed = 0
     if completed:
-        conn.execute("UPDATE tasks SET status = 'done' WHERE feature_id = ? AND status != 'cancelled'",
-                     (feature["id"],))
+        cur = conn.execute("UPDATE tasks SET status = 'done' "
+                           "WHERE feature_id = ? AND status NOT IN ('done', 'cancelled')",
+                           (feature["id"],))
+        closed = cur.rowcount
         conn.commit()
     return {"completed": completed, "issues": [f"{i.kind} {i.feature}/{i.task or '-'}" for i in issues],
-            "work_feature": work}
+            "work_feature": work, "socle_tasks_closed": closed}
 
 
 def _socle_worked(conn, project: str, feature: dict) -> bool:
@@ -125,10 +130,11 @@ def _socle_worked(conn, project: str, feature: dict) -> bool:
     return _has_work_feature(conn, project, feature["slug"]) and not check.check_roadmap(conn, project)
 
 
-def _commit_design(git: GitBackend, project: str, feature: dict, wt_path) -> None:
-    """Rend la doc de design éditée durable sur la branche du socle (arbre net → no-op propre)."""
-    git.commit_worktree(wt_path, message=f"docs({feature['slug']}): interview de 1ʳᵉ session",
-                        identity=resolve_identity(project, worktree.WORKTREE_BASE, role="worker"))
+def _commit_design(git: GitBackend, project: str, feature: dict, wt_path) -> str | None:
+    """Rend la doc de design éditée durable sur la branche du socle (arbre net → no-op propre). Retourne le
+    SHA du commit créé (ou `None` si rien à committer) — remonté au compte-rendu de la réconciliation."""
+    return git.commit_worktree(wt_path, message=f"docs({feature['slug']}): interview de 1ʳᵉ session",
+                               identity=resolve_identity(project, worktree.WORKTREE_BASE, role="worker"))
 
 
 def reconcile_socle(conn, settings: Settings, *, project: str, git: GitBackend | None = None) -> dict | None:
@@ -149,9 +155,40 @@ def reconcile_socle(conn, settings: Settings, *, project: str, git: GitBackend |
         return None                              # pas encore objectivement travaillé → rien à clore
     res = worktree.reserve(conn, settings, git, project=project, feature=feature["slug"])
     outcome = verify_and_complete(conn, project, feature)
-    if outcome["completed"]:
-        _commit_design(git, project, feature, res["path"])
-    return outcome
+    design_sha = _commit_design(git, project, feature, res["path"]) if outcome["completed"] else None
+    return {**outcome, "design_sha": design_sha,
+            "next_step": ("Drain des features de travail (`cockpit run`)." if outcome["completed"]
+                          else "Roadmap encore incomplète — termine l'interview.")}
+
+
+def reconcile_socle_report(conn, settings: Settings, *, project: str,
+                           git: GitBackend | None = None) -> dict:
+    """Variante **rapportée** de `reconcile_socle` pour l'UI (« Valider l'interview & clôturer le socle ») :
+    agit (clôt le socle si prêt) et rend TOUJOURS un compte-rendu humain — jamais `None`. `status` ∈
+    {`reconciled` (socle clôturé, design committé), `already_closed` (rien à faire), `interview_incomplete`
+    (il manque design/roadmap), `no_socle` (projet sans socle interactif)}. Chaque cas porte son `next_step`
+    en clair. Délègue l'ACTION à `reconcile_socle` (idempotent) ; n'ajoute que la désambiguïsation du `None`
+    pour ne rien afficher de muet (deep-linkable, robuste à une course état/clic)."""
+    git = git or InternalGit()
+    outcome = reconcile_socle(conn, settings, project=project, git=git)
+    if outcome is not None:                          # socle travaillé → clôturé (completed toujours vrai ici)
+        return {"status": "reconciled", "feature": (socle_feature(conn, project) or {}).get("slug"),
+                **outcome}
+    socle = socle_feature(conn, project)
+    if socle is None:
+        return {"status": "no_socle", "completed": False, "feature": None, "design_sha": None,
+                "socle_tasks_closed": 0, "issues": [],
+                "next_step": "Pas de socle d'interview pour ce projet."}
+    if resolve_interview(conn, project) is None:     # socle présent mais plus de task interactive READY
+        return {"status": "already_closed", "completed": True, "feature": socle["slug"], "design_sha": None,
+                "socle_tasks_closed": 0, "issues": [],
+                "next_step": "Socle déjà clôturé — draine les features de travail (`cockpit run`)."}
+    issues = [f"{i.kind} {i.feature}/{i.task or '-'}" for i in check.check_roadmap(conn, project)]
+    why = ("aucune feature de travail authorée"
+           if not _has_work_feature(conn, project, socle["slug"]) else "roadmap incomplète")
+    return {"status": "interview_incomplete", "completed": False, "feature": socle["slug"],
+            "design_sha": None, "socle_tasks_closed": 0, "issues": issues,
+            "next_step": f"Termine l'interview ({why}) avant de clôturer le socle."}
 
 
 def interview_env(settings: Settings) -> dict[str, str]:

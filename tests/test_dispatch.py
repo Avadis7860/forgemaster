@@ -13,7 +13,8 @@ from cockpit.config import Settings
 from cockpit.core import run
 from cockpit.db import schema, store
 from cockpit.dispatch import jobs, ports, worker, worktree
-from cockpit.git.internal import InternalGit
+from cockpit.git.identity import resolve_identity
+from cockpit.git.internal import GitOpError, InternalGit
 from cockpit.projects import registry
 from cockpit.provision import load_bundle
 from cockpit.roadmap import model, prompt
@@ -134,6 +135,65 @@ def test_two_features_reserve_isolated_worktrees_and_ports(ctx):
     assert not a["path"].exists() and b["path"].is_dir()
     assert {r["purpose"] for r in ports.list_reservations(conn)} == {"worktree:feat-b"}
     assert worktree.audit(conn, settings) == []
+
+
+def test_reserve_realigns_stale_base(ctx):
+    """Un worktree pré-existant (run interrompu) dont la base a divergé de `dev` est RÉALIGNÉ au prochain
+    `reserve` (rebase préservant les commits worker), au lieu d'être réutilisé sur une base périmée —
+    symétrique de l'anti-stale-base de `run_merge`, mais côté CRÉATION du worktree où code le worker."""
+    settings, conn = ctx
+    git = InternalGit()
+    sot = registry.sot_path_for(settings, "proj")
+    _seed_project(conn, settings)                              # proj/feat
+    model.add_feature(conn, project_slug="proj", slug="sib")   # sibling pour faire avancer dev
+    model.add_task(conn, feature_ref="proj/sib", slug="t")
+    ident = resolve_identity("proj", "dev", role="worker")
+
+    # worktree feat + un commit worker (fichier disjoint → rebase trivial)
+    res = worktree.reserve(conn, settings, git, project="proj", feature="feat", probe=None)
+    (res["path"] / "worker.txt").write_text("work\n", encoding="utf-8")
+    git.commit_worktree(res["path"], message="feat: worker", identity=ident)
+    assert git.is_ancestor(sot, "dev", "feature/feat")         # base fraîche au départ
+
+    # faire avancer `dev` via un sibling mergé → feature/feat devient périmée
+    sib = worktree.reserve(conn, settings, git, project="proj", feature="sib", probe=None)
+    (sib["path"] / "sib.txt").write_text("sib\n", encoding="utf-8")
+    git.commit_worktree(sib["path"], message="sib: worker", identity=ident)
+    git.merge_ff(sot, into="dev", source="feature/sib")
+    assert not git.is_ancestor(sot, "dev", "feature/feat")     # base périmée (le bug qu'on corrige)
+
+    # reserve à nouveau → réaligne sur dev à jour, SANS perdre le commit worker
+    again = worktree.reserve(conn, settings, git, project="proj", feature="feat", probe=None)
+    assert again["port"] == res["port"]                        # toujours idempotent (port stable)
+    assert git.is_ancestor(sot, "dev", "feature/feat")         # RÉALIGNÉ
+    assert (res["path"] / "worker.txt").read_text() == "work\n"   # commit worker préservé
+
+
+def test_reserve_stale_base_conflict_surfaces_not_overwrites(ctx):
+    """Réalignement d'une base périmée avec conflit RÉEL (même fichier touché des deux côtés) : `reserve`
+    lève `GitOpError` (rebase --abort) au lieu d'écraser le travail worker — fail-closed, à re-drainer."""
+    settings, conn = ctx
+    git = InternalGit()
+    sot = registry.sot_path_for(settings, "proj")
+    _seed_project(conn, settings)
+    model.add_feature(conn, project_slug="proj", slug="sib")
+    model.add_task(conn, feature_ref="proj/sib", slug="t")
+    ident = resolve_identity("proj", "dev", role="worker")
+
+    res = worktree.reserve(conn, settings, git, project="proj", feature="feat", probe=None)
+    (res["path"] / "clash.txt").write_text("feat side\n", encoding="utf-8")
+    git.commit_worktree(res["path"], message="feat: clash", identity=ident)
+
+    sib = worktree.reserve(conn, settings, git, project="proj", feature="sib", probe=None)
+    (sib["path"] / "clash.txt").write_text("dev side\n", encoding="utf-8")   # MÊME fichier → conflit
+    git.commit_worktree(sib["path"], message="sib: clash", identity=ident)
+    git.merge_ff(sot, into="dev", source="feature/sib")
+    assert not git.is_ancestor(sot, "dev", "feature/feat")
+
+    with pytest.raises(GitOpError):
+        worktree.reserve(conn, settings, git, project="proj", feature="feat", probe=None)
+    # rebase --abort → le commit worker survit intact (aucun écrasement)
+    assert (res["path"] / "clash.txt").read_text() == "feat side\n"
 
 
 def test_concurrent_add_worktree_serialized_by_flock(ctx):

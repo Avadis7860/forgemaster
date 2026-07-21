@@ -103,6 +103,56 @@ def test_reconcile_socle_noop_when_not_worked(ctx):
     assert conn.execute("SELECT status FROM tasks WHERE slug='cadrage'").fetchone()["status"] == "todo"
 
 
+def test_reconcile_socle_report_reconciles_and_reports(ctx):
+    """`reconcile_socle_report` (action UI « Valider l'interview & clôturer le socle ») : socle travaillé
+    (feature de travail authorée + design.md rempli) → clôt le socle et RAPPORTE en clair (status reconciled,
+    N tasks closes, sha du design committé, prochaine étape = drain)."""
+    from cockpit.dispatch import worktree
+    settings, conn = ctx
+    git = InternalGit()
+    _socle_project(conn, settings)
+    model.add_feature(conn, project_slug="proj", slug="build", facet="code")
+    model.add_task(conn, feature_ref="proj/build", slug="impl", acceptance="Code posé et testé.")
+    res = worktree.reserve(conn, settings, git, project="proj", feature="socle", probe=None)
+    (res["path"] / "design.md").write_text("# Design rempli\n", encoding="utf-8")   # doc éditée à committer
+
+    rep = interview.reconcile_socle_report(conn, settings, project="proj", git=git)
+    assert rep["status"] == "reconciled" and rep["completed"] is True
+    assert rep["socle_tasks_closed"] == 1                 # la task `cadrage` transitionnée → done
+    assert rep["design_sha"] is not None                 # design.md committé (sha remonté)
+    assert "cockpit run" in rep["next_step"]
+    assert conn.execute("SELECT status FROM tasks WHERE slug='cadrage'").fetchone()["status"] == "done"
+
+
+def test_reconcile_socle_report_already_closed_then_incomplete_and_no_socle(ctx):
+    """Les autres cas rendent TOUJOURS un compte-rendu (jamais muet) : socle déjà clos → `already_closed` ;
+    interview inachevée (aucune feature) → `interview_incomplete` ; projet sans socle → `no_socle`."""
+    settings, conn = ctx
+    git = InternalGit()
+    # (a) déjà clôturé : on réconcilie une 1ʳᵉ fois, la 2ᵉ n'a plus rien à faire
+    _socle_project(conn, settings)
+    model.add_feature(conn, project_slug="proj", slug="build", facet="code")
+    model.add_task(conn, feature_ref="proj/build", slug="impl", acceptance="Code.")
+    interview.reconcile_socle_report(conn, settings, project="proj", git=git)
+    again = interview.reconcile_socle_report(conn, settings, project="proj", git=git)
+    assert again["status"] == "already_closed" and again["completed"] is True
+    assert "déjà clôturé" in again["next_step"]
+    # (b) interview incomplète : socle neuf sans feature de travail
+    _socle_project(conn, settings, project="proj2")
+    inc = interview.reconcile_socle_report(conn, settings, project="proj2", git=git)
+    assert inc["status"] == "interview_incomplete" and inc["completed"] is False
+    assert inc["socle_tasks_closed"] == 0 and "Termine l'interview" in inc["next_step"]
+    # (c) pas de socle interactif du tout
+    registry.create_project(conn, settings, slug="proj3")
+    conn.execute("DELETE FROM tasks")
+    conn.execute("DELETE FROM features")
+    conn.commit()
+    model.add_feature(conn, project_slug="proj3", slug="work", facet="code")
+    model.add_task(conn, feature_ref="proj3/work", slug="t", acceptance="X.")   # headless
+    none_rep = interview.reconcile_socle_report(conn, settings, project="proj3", git=git)
+    assert none_rep["status"] == "no_socle" and none_rep["feature"] is None
+
+
 def test_socle_feature_identifies_socle_durably(ctx):
     """`socle_feature` identifie le socle par sa task `interactive` — marqueur DURABLE, contrairement à
     `resolve_interview` : il tient MÊME quand le socle est clos (task `done`, plus aucune task READY)."""

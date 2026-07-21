@@ -1,6 +1,7 @@
 import { Suspense, lazy } from 'react'
 import { Link, useParams } from '@tanstack/react-router'
 import { Alert, Badge, Button, Card, Eyebrow, LoadingState } from '@/components/ui'
+import { LaunchCycle } from '@/components/dispatch/LaunchCycle'
 import { useDeployments, useDocs, useRoadmap } from '@/lib/queries'
 
 // react-markdown est lourd → code-split : le renderer ne se charge QUE quand la carte docs a du contenu.
@@ -59,6 +60,10 @@ export function AccueilTab() {
           </>
         )}
       </Card>
+
+      {/* Cycle de lancement : frise d'état + action nommée par son résultat (« Valider l'interview & clôturer
+          le socle »). Ne se rend que pour un projet à socle interactif — invisible pour un projet mûr. */}
+      {roadmap.data && <LaunchCycle project={project} roadmap={roadmap.data} />}
 
       {/* Points d'entrée à scent : où aller ensuite, avec un aperçu d'état (badge dérivé, pas d'endpoint neuf). */}
       <section className="space-y-3">

@@ -277,6 +277,29 @@ export const AbortResultSchema = z.object({
 })
 export type AbortResult = z.infer<typeof AbortResultSchema>
 
+// Gate de complétude de la roadmap (`GET /api/projects/{project}/roadmap/check`) — même autorité que le CLI
+// `cockpit roadmap check`. Le front n'en lit que `ok` (l'étape « Design rempli » de la frise de lancement).
+export const RoadmapCheckSchema = z.object({
+  project: z.string(),
+  ok: z.boolean(),
+  issues: z.array(z.record(z.unknown())),
+})
+export type RoadmapCheck = z.infer<typeof RoadmapCheckSchema>
+
+// Résultat de « Valider l'interview & clôturer le socle » (`POST /api/dispatch/{project}/reconcile-socle`) :
+// compte-rendu HUMAIN de la réconciliation (jamais muet). `status` classe le cas ; le reste RAPPORTE (sha du
+// design committé, N tasks socle closes, prochaine étape en clair).
+export const ReconcileSocleResultSchema = z.object({
+  status: z.enum(['reconciled', 'already_closed', 'interview_incomplete', 'no_socle']),
+  completed: z.boolean(),
+  feature: z.string().nullable(),
+  design_sha: z.string().nullable(),
+  socle_tasks_closed: z.number(),
+  issues: z.array(z.string()),
+  next_step: z.string(),
+})
+export type ReconcileSocleResult = z.infer<typeof ReconcileSocleResultSchema>
+
 // Événement de transcript normalisé (jobs.normalize_line) poussé par le WS. `job` = frame terminale
 // synthétique (fin de run) émise par stream.stream_job. Le front ne fabrique jamais ces formes.
 const AssistantToolSchema = z.object({ name: z.string().nullable(), input_summary: z.string() })

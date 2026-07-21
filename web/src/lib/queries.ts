@@ -19,6 +19,7 @@ export const qk = {
   projects: ['projects'] as const,
   project: (slug: string) => ['projects', slug] as const,
   roadmap: (project: string) => ['roadmap', project] as const,
+  roadmapCheck: (project: string) => ['roadmap-check', project] as const,
   git: (project: string) => ['git', project] as const,
   gitSync: (project: string) => ['git-sync', project] as const,
   gitTree: (project: string, ref: string, path: string) => ['git-tree', project, ref, path] as const,
@@ -153,6 +154,28 @@ export function useRoadmap(project: string) {
     queryKey: qk.roadmap(project),
     queryFn: () => api.getRoadmap(project),
     enabled: Boolean(project),
+  })
+}
+
+// Gate de complétude de la roadmap (`ok`) — alimente l'étape « Design rempli » de la frise de lancement.
+export function useRoadmapCheck(project: string) {
+  return useQuery({
+    queryKey: qk.roadmapCheck(project),
+    queryFn: () => api.getRoadmapCheck(project),
+    enabled: Boolean(project),
+  })
+}
+
+// « Valider l'interview & clôturer le socle » (action nommée par son résultat). À la résolution, invalide la
+// roadmap (socle → done) ET son check → la frise de lancement avance toute seule (jamais un état deviné).
+export function useReconcileSocle(project: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.reconcileSocle(project),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: qk.roadmap(project) })
+      qc.invalidateQueries({ queryKey: qk.roadmapCheck(project) })
+    },
   })
 }
 

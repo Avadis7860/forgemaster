@@ -17,6 +17,7 @@ from pathlib import Path
 from cockpit.config import Settings
 from cockpit.dispatch import ports
 from cockpit.git.backend import GitBackend
+from cockpit.git.identity import resolve_identity
 from cockpit.projects.registry import sot_path_for
 from cockpit.provision import facet as facet_mod
 from cockpit.roadmap import model
@@ -37,12 +38,24 @@ def reserve(conn: sqlite3.Connection, settings: Settings, git: GitBackend, *,
             project: str, feature: str, probe: ports.Probe | None = ports.local_probe) -> dict:
     """Réserve (idempotent) un worktree **attaché au SoT** + un port pour `feature`. Retourne
     `{path, port, branch}`. Le worktree est créé sur `feature/<slug>` ancré sur `dev` (flock dans
-    `git/internal`) ; le port est stable au re-provision (`ports.reserve`)."""
+    `git/internal`) ; le port est stable au re-provision (`ports.reserve`).
+
+    Réalignement anti-stale-base (symétrique de `run_merge`, spec sot-local) : un worktree **déjà sur
+    disque** — fabriqué par un run antérieur **interrompu** avant que `dev` ne porte le socle/merge — reste
+    ancré sur un `dev` périmé même après que `dev` a avancé, et le worker coderait contre l'ancienne base.
+    Quand `dev` n'est plus ancêtre de `feature/<slug>`, on **rebase** la branche sur le `dev` à jour
+    (linéaire, **préserve** les commits worker) ; conflit non trivial → `rebase_onto` fait `rebase --abort`
+    puis lève `GitOpError` (jamais d'écrasement silencieux — la feature doit être re-drainée). Base==dev ⇒
+    `is_ancestor` vrai ⇒ rebase sauté ⇒ réutilisation idempotente (non-régression)."""
     feat = model.resolve_feature(conn, f"{project}/{feature}")   # KeyError si feature absente
     sot = sot_path_for(settings, project)
     wt = worktree_path_for(settings, project, feature)
     if not wt.exists():
         git.add_worktree(sot, wt, branch=feat["branch"], base=WORKTREE_BASE)
+    elif not git.is_ancestor(sot, WORKTREE_BASE, feat["branch"]):
+        # worktree pré-existant sur base divergée (run interrompu avant l'avancée de dev) → réaligne
+        git.rebase_onto(sot, wt, onto=WORKTREE_BASE,
+                        identity=resolve_identity(project, WORKTREE_BASE, role="worker"))
     # Activer la facette de la feature DANS la worktree : pose `.claude/settings.local.json` (gitignoré) —
     # hooks/permissions du type de travail. Idempotent (overwrite). La persona/méthode passent, elles, par
     # le prompt (`build_worker_prompt`). Fail-soft si la facette n'a pas de settings.local.json.

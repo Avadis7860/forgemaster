@@ -11,7 +11,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, WebSocket
 from starlette.concurrency import run_in_threadpool
 
-from cockpit import auth
+from cockpit import auth, interview
 from cockpit.daemon.deps import Deps, get_deps
 from cockpit.dispatch import abort, jobs, orchestrator, stream
 from cockpit.roadmap import model
@@ -31,6 +31,22 @@ def make_dispatch_router() -> APIRouter:
         Déclaré AVANT `/{project}/{feature}` : sinon `/proj/abort` matcherait avec feature=='abort'."""
         return await run_in_threadpool(
             abort.request_abort, deps.settings, project=project, feature=feature)
+
+    @router.post("/api/dispatch/{project}/reconcile-socle")
+    async def reconcile_socle(project: str, deps: Deps = Depends(get_deps)) -> dict:
+        """**Valide l'interview & clôture le socle** (action nommée par son résultat, symétrique du bouton
+        pré-interview) : réconcilie le socle du projet — clôt ses tasks + committe `design.md` — SANS
+        relancer l'interview, et RAPPORTE ce qu'elle a fait (`status`, sha du design, N tasks closes,
+        prochaine étape). Idempotent (re-jouable). Git = **bloquant** → threadpool. Pas de gate d'auth (aucun
+        spawn `claude`, mutation locale idempotente — comme `abort`). Déclaré AVANT `/{project}/{feature}`
+        (sinon `reconcile-socle` matcherait comme un slug de feature)."""
+        def _run() -> dict:
+            conn = deps.open_db()
+            try:
+                return interview.reconcile_socle_report(conn, deps.settings, project=project)
+            finally:
+                conn.close()
+        return await run_in_threadpool(_run)
 
     @router.post("/api/dispatch/{project}/{feature}")
     async def dispatch(project: str, feature: str, deps: Deps = Depends(get_deps)) -> dict:

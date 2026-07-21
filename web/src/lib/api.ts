@@ -40,6 +40,8 @@ import {
   ProjectSchema,
   ProjectsListSchema,
   RoadmapSchema,
+  RoadmapCheckSchema,
+  ReconcileSocleResultSchema,
   TemplatesListSchema,
   TypesListSchema,
   type BootstrapRunInput,
@@ -147,6 +149,18 @@ export const api = {
 
   getRoadmap: (project: string) =>
     request(`/api/projects/${encodeURIComponent(project)}/roadmap`, RoadmapSchema),
+
+  // Gate de complétude de la roadmap (l'étape « Design rempli » de la frise de lancement). GET idempotent.
+  getRoadmapCheck: (project: string) =>
+    request(`/api/projects/${encodeURIComponent(project)}/roadmap/check`, RoadmapCheckSchema),
+
+  // « Valider l'interview & clôturer le socle » : réconcilie le socle (clôt ses tasks + committe design.md)
+  // et RAPPORTE (sha, N tasks, prochaine étape). POST, corps vide (calque `abortRun`). Idempotent côté serveur.
+  reconcileSocle: (project: string) =>
+    request(`/api/dispatch/${encodeURIComponent(project)}/reconcile-socle`, ReconcileSocleResultSchema, {
+      method: 'POST',
+      body: '{}',
+    }),
 
   // Vue Git read-only du SoT bare (branches · ahead/behind main↔dev · log par réf). GET idempotent —
   // aucun effet (le runner de boucle visuelle goto-only l'atteint sans risque).

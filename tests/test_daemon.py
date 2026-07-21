@@ -374,6 +374,36 @@ def test_abort_run_endpoint_kills_and_requeues(client):
         conn.close()
 
 
+def test_reconcile_socle_endpoint_reports_result(client):
+    """`POST /api/dispatch/{project}/reconcile-socle` (action « Valider l'interview & clôturer le socle ») :
+    socle travaillé (feature de travail authorée) → clôt le socle et RAPPORTE en clair (status reconciled,
+    N tasks closes, prochaine étape). La route littérale est déclarée AVANT `/{project}/{feature}` → non
+    avalée avec feature=='reconcile-socle' (sinon 404/spawn)."""
+    c, settings = client
+    conn = store.open_db(settings)
+    registry.create_project(conn, settings, slug="proj")
+    conn.execute("DELETE FROM tasks")
+    conn.execute("DELETE FROM features")
+    conn.commit()
+    model.add_feature(conn, project_slug="proj", slug="socle", facet="doc")
+    model.add_task(conn, feature_ref="proj/socle", slug="cadrage", acceptance="Intention.",
+                   mode="interactive")
+    model.add_feature(conn, project_slug="proj", slug="build", facet="code")   # feature de travail authorée
+    model.add_task(conn, feature_ref="proj/build", slug="impl", acceptance="Code.")
+    conn.close()
+
+    r = c.post("/api/dispatch/proj/reconcile-socle")
+    assert r.status_code == 200                               # route atteinte (pas swallow par /{feature})
+    body = r.json()
+    assert body["status"] == "reconciled" and body["completed"] is True
+    assert body["socle_tasks_closed"] == 1 and "cockpit run" in body["next_step"]
+    conn = store.open_db(settings)
+    try:
+        assert conn.execute("SELECT status FROM tasks WHERE slug='cadrage'").fetchone()["status"] == "done"
+    finally:
+        conn.close()
+
+
 def test_lifespan_reconciles_orphan_running_jobs_at_boot(tmp_path):
     """Au démarrage du daemon (lifespan), tout job resté `running` (worker tué / daemon redémarré en plein
     run — dispatch synchrone in-process, aucun thread ne survit) est réconcilié : `killed` + sa task
