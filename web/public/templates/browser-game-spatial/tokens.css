@@ -1,0 +1,48 @@
+/* tokens.css — IDENTITÉ du template « browser-game-spatial ».
+   Zéro composant : uniquement des design-tokens, en :root/.app plat (parsable par un
+   navigateur brut, sans build). C'est la SEULE couche à éditer pour re-thémer —
+   template.css ne fait que lire des var(--…), aucune valeur d'identité en dur ailleurs.
+
+   Structure partagée (:root, constante entre colorimétries) + 3 colorimétries posées
+   sur .app[data-theme="…"]. Le sélecteur ne bascule QUE ces variables ; la structure
+   ne bouge pas.
+
+   NB : template d'INSPIRATION (CSS pur, sans asset externe). L'intégration d'assets et
+   les embellissements fins se font quand un vrai browser-game est développé. */
+
+:root {
+  --radius: 14px;
+  --gap: 14px;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "SFMono-Regular", monospace;
+}
+
+/* ── colorimétrie ORBITAL (holographique cyan/violet) ─────────────────────── */
+.app[data-theme="orbital"] {
+  --bg: #04060e; --panel: rgba(12,20,40,.55); --glass: rgba(90,150,235,.06); --row: rgba(90,150,235,.05);
+  --row-hover: rgba(90,150,235,.12); --line: rgba(120,190,255,.22); --line-strong: rgba(140,205,255,.42); --ringline: rgba(120,200,255,.28);
+  --fg: #eaf3ff; --muted: #8fa8d6; --accent: #5fe6ff; --accent2: #b088ff; --ok: #57e39b; --warn: #ffce6b; --danger: #ff6b6b;
+  --neb1: rgba(60,120,230,.30); --neb2: rgba(150,90,255,.24); --glow: rgba(95,230,255,.6);
+  --planet-a: #2a6cff; --planet-b: #8a5cff; --planet-hi: #bfe9ff; --on-accent: #04121a;
+  --btn-bg: linear-gradient(120deg, #5fe6ff, #8ab4ff); --stars: 1;
+}
+
+/* ── colorimétrie REACTOR (industriel plasma/orange) ──────────────────────── */
+.app[data-theme="reactor"] {
+  --bg: #080610; --panel: rgba(28,18,34,.55); --glass: rgba(180,90,255,.06); --row: rgba(255,138,61,.05);
+  --row-hover: rgba(255,138,61,.12); --line: rgba(200,120,255,.24); --line-strong: rgba(255,150,90,.45); --ringline: rgba(255,138,61,.26);
+  --fg: #fceefe; --muted: #c39ad0; --accent: #33d6ff; --accent2: #ff8a3d; --ok: #46e0a0; --warn: #ffb454; --danger: #ff5d6c;
+  --neb1: rgba(200,60,255,.30); --neb2: rgba(255,120,40,.24); --glow: rgba(255,140,70,.6);
+  --planet-a: #ff7a3d; --planet-b: #c04dff; --planet-hi: #ffd9b0; --on-accent: #160a02;
+  --btn-bg: linear-gradient(120deg, #ff8a3d, #ff4d94); --stars: .7;
+}
+
+/* ── colorimétrie VOID (minimal du vide) ──────────────────────────────────── */
+.app[data-theme="void"] {
+  --bg: #03040a; --panel: rgba(10,16,28,.5); --glass: rgba(150,190,255,.03); --row: rgba(150,190,255,.025);
+  --row-hover: rgba(150,190,255,.07); --line: rgba(150,200,255,.16); --line-strong: rgba(160,210,255,.34); --ringline: rgba(150,200,255,.16);
+  --fg: #eef5ff; --muted: #8397bd; --accent: #7fecff; --accent2: #a97bff; --ok: #6fe6ad; --warn: #ffd98a; --danger: #ff9a8a;
+  --neb1: rgba(50,110,200,.18); --neb2: rgba(120,90,220,.14); --glow: rgba(127,236,255,.45);
+  --planet-a: #2f7fbf; --planet-b: #7a5fd0; --planet-hi: #bfeaff; --on-accent: #05121a;
+  --btn-bg: linear-gradient(120deg, #7fecff, #a97bff); --stars: .7;
+}

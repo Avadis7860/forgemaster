@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Épsilon-4 — commandement · référence browser-game spatial</title>
+  <!-- Self-contained, zéro-build : liens RELATIFS (ouvrable en file://, servi tel quel). -->
+  <link rel="stylesheet" href="./tokens.css">
+  <link rel="stylesheet" href="./template.css">
+</head>
+<body>
+<div class="app" id="app" data-theme="orbital">
+  <div class="sky">
+    <div class="neb n1"></div><div class="neb n2"></div>
+    <div class="stars"></div><div class="stars b"></div>
+    <div class="grid-floor"></div>
+  </div>
+  <div class="shell">
+
+    <div class="top">
+      <div class="brand">
+        <div class="brand__mark"></div>
+        <div><div class="brand__name">ASTRA · Commandement</div><div class="brand__sub">Empire d'Épsilon</div></div>
+      </div>
+      <div class="switch" role="group" aria-label="Colorimétrie">
+        <button type="button" data-set-theme="orbital" aria-pressed="true">Orbital</button>
+        <button type="button" data-set-theme="reactor" aria-pressed="false">Reactor</button>
+        <button type="button" data-set-theme="void" aria-pressed="false">Void</button>
+      </div>
+      <div class="hud">
+        <div class="res res--metal"><span class="res__ic"><i></i></span><span class="res__body"><span class="res__k">Métal</span><span class="res__v">2,84 M</span></span><span class="res__d">+1.2k/s</span></div>
+        <div class="res res--crystal"><span class="res__ic"><i></i></span><span class="res__body"><span class="res__k">Cristal</span><span class="res__v">1,19 M</span></span><span class="res__d">+740/s</span></div>
+        <div class="res res--deut"><span class="res__ic"><i></i></span><span class="res__body"><span class="res__k">Deutérium</span><span class="res__v">642 K</span></span><span class="res__d">+310/s</span></div>
+        <div class="res res--energy"><span class="res__ic"><i></i></span><span class="res__body"><span class="res__k">Énergie</span><span class="res__v">+3 120</span></span><span class="res__d">72%</span></div>
+      </div>
+    </div>
+
+    <div class="layout">
+      <!-- HERO tactique : la planète (signature) -->
+      <div class="viewport">
+        <div class="frame"><span class="tl"></span><span class="tr"></span><span class="bl"></span><span class="br"></span></div>
+        <div class="scanline"></div>
+        <div class="system">
+          <div class="orbit o1"></div><div class="orbit o2"></div><div class="orbit o3"></div>
+          <div class="sweep"></div>
+          <div class="moon"><i></i></div>
+          <div class="planet-wrap">
+            <div class="p-halo"></div>
+            <div class="p-ring"></div>
+            <div class="planet"><span class="p-terminator"></span></div>
+          </div>
+        </div>
+        <div class="reticle"><span>cible · [4:130:2]</span></div>
+        <div class="v-meta"><div class="v-title">Épsilon-4</div><div class="v-coords">[4:127:8] · planète mère</div></div>
+        <div class="v-badge"><i></i>Systèmes nominaux</div>
+        <div class="v-stats">
+          <div class="v-stat"><b>142 / 188</b><em>Champs</em></div>
+          <div class="v-stat"><b>-12 → 62 °C</b><em>Température</em></div>
+          <div class="v-stat"><b>12 480 km</b><em>Diamètre</em></div>
+          <div class="v-stat"><b>3 lunes</b><em>Satellites</em></div>
+        </div>
+      </div>
+
+      <div class="stack">
+        <!-- chantier : action primaire unique -->
+        <div class="card">
+          <div class="card__head"><div><span class="eyebrow">Chantier</span><h3>File de construction</h3></div><span class="badge badge--warn">File pleine</span></div>
+          <div class="queue">
+            <div class="row"><div class="row__top"><span class="row__name">Mine de métal</span><span class="row__meta">niv. 12 → 13 · 04:31</span></div><div class="bar"><span style="width:64%"></span></div></div>
+            <div class="row"><div class="row__top"><span class="row__name">Usine de robots</span><span class="row__meta">niv. 8 → 9 · en file</span></div><div class="bar"><span style="width:8%"></span></div></div>
+          </div>
+          <div class="actions">
+            <button class="btn" type="button">Lancer la construction<span class="btn__sub">2 en file · 04:31 restant</span></button>
+            <button class="btn btn--ghost" type="button">Annuler</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card__head"><div><span class="eyebrow">Laboratoire</span><h3>Recherche</h3></div><a class="link" href="#">Tout voir →</a></div>
+          <div class="list">
+            <div class="li"><span class="li__name"><b></b>Technologie de combat</span><span class="li__val">niv. <strong>6</strong></span></div>
+            <div class="li"><span class="li__name"><b></b>Espionnage</span><span class="li__val">niv. <strong>9</strong></span></div>
+            <div class="li"><span class="li__name"><b></b>Énergie</span><span class="li__val"><span class="chip">en cours</span> niv. <strong>11</strong></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-3">
+      <!-- Flotte : montre l'état VIDE (doctrine UX, axe 7) -->
+      <div class="card">
+        <div class="card__head"><div><span class="eyebrow">Orbite</span><h3>Flotte &amp; défense</h3></div><a class="link" href="#">Envoyer →</a></div>
+        <div class="list">
+          <div class="li"><span class="li__name"><b></b>Chasseurs légers</span><span class="li__val"><strong>212</strong></span></div>
+          <div class="li"><span class="li__name"><b></b>Croiseurs</span><span class="li__val"><strong>34</strong></span></div>
+          <div class="li"><span class="li__name"><b></b>Lanceurs de missiles</span><span class="li__val"><strong>80</strong></span></div>
+        </div>
+        <div class="empty">Aucun mouvement de flotte en cours.</div>
+      </div>
+
+      <!-- Galaxie : montre l'état CHARGEMENT (scan en cours) -->
+      <div class="card">
+        <div class="card__head"><div><span class="eyebrow">Galaxie</span><h3>Systèmes voisins</h3></div><a class="link" href="#">Carte →</a></div>
+        <div class="list">
+          <div class="li"><span class="li__name"><b></b>Kepler-9</span><span class="li__val">2 colonies</span></div>
+          <div class="li"><span class="li__name"><b></b>Cygnus-X</span><span class="li__val"><span class="chip">hostile</span></span></div>
+        </div>
+        <div class="loading" aria-live="polite">
+          <span class="spinner"></span>
+          <span class="loading__col"><span class="skel w70"></span><span class="skel w45"></span></span>
+        </div>
+      </div>
+
+      <!-- Journal : montre l'état ERREUR (alerte) -->
+      <div class="card">
+        <div class="card__head"><div><span class="eyebrow">Journal</span><h3>Événements</h3></div><span class="badge badge--danger"><i></i>Alerte</span></div>
+        <div class="alert"><span class="alert__icon"></span><div><div class="alert__t">Flotte hostile en approche</div><div class="alert__d">Impact estimé · 02:14</div></div></div>
+        <div class="log">
+          <div class="log__i"><time>08:12</time><span>Recherche « Énergie » niv. 11 démarrée.</span></div>
+          <div class="log__i"><time>07:48</time><span>Rapport d'espionnage reçu · [4:130:2].</span></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Switch de colorimétrie : inline, self-contained (aucun bundle). Lit ?theme= pour
+     capturer chaque colorimétrie at-rest (boucle visuelle / preview). -->
+<script>
+  (function () {
+    var app = document.getElementById('app');
+    var q = new URLSearchParams(location.search).get('theme');
+    if (q === 'orbital' || q === 'reactor' || q === 'void') app.dataset.theme = q;
+    var btns = document.querySelectorAll('.switch button');
+    function sync() {
+      btns.forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.setTheme === app.dataset.theme)); });
+    }
+    btns.forEach(function (b) {
+      b.addEventListener('click', function () { app.dataset.theme = b.dataset.setTheme; sync(); });
+    });
+    sync();
+  })();
+</script>
+</body>
+</html>

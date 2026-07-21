@@ -1,0 +1,15 @@
+# Manifeste sec du template de référence (enums / noms, pas de prose libre).
+# Consommé par la future vitrine (section rail Corpus « template ») pour la carte
+# aperçu + nom + description + filtrage par type-d'outil et sous-genre.
+
+[template]
+version = "1"
+slug = "browser-game-spatial"
+name = "Browser-game spatial — deep-space"
+tool_type = "browser-game"          # archetype : browser-game | front-ts | service-api | cli-tool
+genre = "spatial"                   # sous-genre (tous les browser-games ne sont pas spatiaux)
+tags = ["browser-game", "spatial", "deep-space", "hud", "glass", "token-driven"]
+intention = "Écran de commandement d'un jeu spatial (OGame-like) : HUD ressources, planète, chantier, recherche, flotte, journal — token-driven, 3 colorimétries swappables."
+entry = "index.html"
+preview = "preview.png"
+themes = ["orbital", "reactor", "void"]   # colorimétries portées par tokens.css
