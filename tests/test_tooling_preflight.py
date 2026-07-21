@@ -15,7 +15,7 @@ from cockpit.db import store
 from cockpit.dispatch import worker
 from cockpit.projects import registry
 from cockpit.roadmap import model
-from cockpit.tools import missing_bins, required_bins
+from cockpit.tools import missing_bins, required_bins, tools_bin
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -73,9 +73,14 @@ def test_missing_bins_resolves_present_lists_absent(tmp_path: Path):
 
 # -- greffe au dispatch -----------------------------------------------------------------------------
 
-def test_preflight_blocks_dispatch_when_host_tool_missing(tmp_path: Path):
-    # PAS de fake_tools → `docsmap` (exigé par la facette doc) absent → dispatch refusé, runner jamais appelé.
+def test_preflight_blocks_dispatch_when_host_tool_missing(tmp_path: Path, fake_tools, monkeypatch):
+    # Hôte provisionné SAUF `docsmap` (exigé par la facette doc) → dispatch refusé, runner jamais appelé.
+    # HERMÉTIQUE : on sème tout-sauf-docsmap dans `tools_bin` ET on épingle le PATH du worker à ce seul
+    # répertoire (sinon `tools_env` appende `os.environ` → un `docsmap` du venv de test fuiterait et le
+    # preflight passerait à tort — la version « PAS de fake_tools » dépendait de l'absence AMBIANTE).
     settings = _settings(tmp_path)
+    fake_tools(settings, omit={"docsmap"})
+    monkeypatch.setattr(worker, "tools_env", lambda s, **_k: {"PATH": str(tools_bin(s))})
     conn = store.open_db(settings)
     try:
         _seed_project(conn, settings)

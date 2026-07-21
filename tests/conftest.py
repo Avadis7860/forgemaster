@@ -7,7 +7,7 @@ runner fake — aucun vrai outil n'est lancé, seule leur RÉSOLUTION (`shutil.w
 """
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
 import pytest
 
@@ -16,11 +16,17 @@ from cockpit.tools import _NODE_BINS, _VENV_BINS, tools_bin
 
 
 @pytest.fixture
-def fake_tools() -> Callable[[Settings], None]:
-    def _seed(settings: Settings) -> None:
+def fake_tools() -> Callable[..., None]:
+    def _seed(settings: Settings, *, omit: Iterable[str] = ()) -> None:
+        """Sème les faux binaires du framework sous `tools_bin`. `omit` en exclut certains → simule un hôte
+        partiellement provisionné (ex. `omit={"docsmap"}` : tout présent SAUF docsmap, pour prouver que le
+        preflight isole le manquant)."""
+        skip = set(omit)
         bindir = tools_bin(settings)
         bindir.mkdir(parents=True, exist_ok=True)
         for name in (*_VENV_BINS, *_NODE_BINS, "claude"):   # `claude` = moteur du worker (résolu au dispatch)
+            if name in skip:
+                continue
             exe = bindir / name
             exe.write_text("#!/bin/sh\n:\n")
             exe.chmod(0o755)
