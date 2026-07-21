@@ -1,20 +1,23 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useNavigate, useSearch } from '@tanstack/react-router'
 import {
-  Alert, Badge, Button, Card, Collapsible, EmptyState, LoadingState, RefreshButton, Segmented,
+  Alert, Badge, Button, Card, Collapsible, EmptyState, LoadingState, RefreshButton, SectionTitle,
+  Segmented, Select,
 } from '@/components/ui'
 import { ProjectCredentialCard } from '@/components/credential/ProjectCredentialCard'
 import { RepoExplorer } from '@/components/git/RepoExplorer'
 import { CommitDetailCard, DiffCard } from '@/components/git/GitIntelligence'
 import { ApiError } from '@/lib/api'
-import { useGit, useGitSync, useReconcileSync } from '@/lib/queries'
+import { useGit, useGitSync, useProjects, useReconcileSync } from '@/lib/queries'
 import {
   isLogUnified, isReconcilable, needsReconcile, reconcileActionLabel, reconcileOutcome,
   reconcilePlan, syncSummary,
 } from '@/lib/git'
 import { gitBranchTone, reconcileTone, syncTone } from '@/lib/statusTone'
-import type { GitAheadBehind, GitBranch, GitLogEntry, GitSync } from '@/lib/schemas'
+import type { GitAheadBehind, GitBranch, GitLogEntry, GitSync, Project } from '@/lib/schemas'
 
 type GitView = 'historique' | 'fichiers' | 'diff'
+type Search = { project?: string; view?: GitView; sha?: string }
 
 const VIEWS = [
   { value: 'historique', label: 'Historique' },
@@ -22,19 +25,123 @@ const VIEWS = [
   { value: 'diff', label: 'Diff' },
 ] as const satisfies ReadonlyArray<{ value: GitView; label: string }>
 
-/** Vue Git : visibilité read-only sur le SoT bare du projet. En-tête compact (réfs + SHA + synchro + config
- *  repliée) surmontant un sélecteur segmenté **[Historique · Fichiers · Diff]** — une vue à la fois. Aucune
- *  action mutante (le cycle git vit dans le Gate). Extrait de l'ex-onglet Git ; rendu dans le drawer Ops
- *  (le segmented interne vit ICI, plus d'empilement sous une sous-nav Ops). */
-export function GitPanel({ project }: { project: string }) {
+// Dernier projet consulté — défaut malin quand on atterrit sur `/git` nu (git est per-projet). Persisté en
+// localStorage (patron `useRailCollapse`) ; dégrade silencieusement (mode privé / quota) vers « pas de défaut ».
+const LAST_PROJECT_KEY = 'cockpit.git.lastProject'
+
+const readLastProject = (): string | null => {
+  try {
+    return localStorage.getItem(LAST_PROJECT_KEY)
+  } catch {
+    return null
+  }
+}
+
+/** Surface **Git de plein droit** — atteinte depuis le rail (route GLOBALE `/git`), pilotée par l'URL
+ *  (`?project=<slug>&view=<vue>&sha=<commit>`) → deep-linkable, capturable at-rest. Git étant **per-projet**
+ *  (l'API est `/api/projects/{project}/git`), un **sélecteur de projet** surmonte le SoT read-only : en-tête
+ *  (réfs + SHA + synchro miroir + réconciliation ff-only consent-gated) puis segmented
+ *  **[Historique · Fichiers · Diff]** — une vue à la fois. **Ex-drawer Ops**, promu en destination : un seul
+ *  organisateur git (le drawer `?panel=git` est retiré, plus deux endroits pour la même donnée). */
+export function GitExplorer() {
+  const search = useSearch({ strict: false }) as Search
+  const navigate = useNavigate()
+  const projects = useProjects()
+
+  const setProject = (slug: string) => {
+    try {
+      if (slug) localStorage.setItem(LAST_PROJECT_KEY, slug)
+    } catch {
+      /* stockage indisponible (mode privé / quota) — le choix reste porté par l'URL */
+    }
+    navigate({ to: '/git', search: () => (slug ? { project: slug } : {}) })
+  }
+
+  // Défaut malin : sur `/git` nu, reprendre le dernier projet consulté s'il existe ENCORE (jamais un projet
+  // supprimé). `replace` pour ne pas polluer l'historique. Une fois `?project` posé, la garde coupe l'effet.
+  useEffect(() => {
+    if (search.project || projects.isPending || projects.isError) return
+    const last = readLastProject()
+    if (last && (projects.data ?? []).some((p) => p.slug === last)) {
+      navigate({ to: '/git', replace: true, search: () => ({ project: last }) })
+    }
+  }, [search.project, projects.data, projects.isPending, projects.isError, navigate])
+
+  const project = search.project ?? ''
+
+  return (
+    <div className="space-y-5">
+      <GitHeader
+        options={projects.data ?? []}
+        loading={projects.isPending}
+        error={projects.isError ? projects.error : null}
+        project={project}
+        onProject={setProject}
+      />
+      {!project ? (
+        <EmptyState
+          title="Choisis un projet"
+          description="Le dépôt Git est propre à un projet. Sélectionne-en un ci-dessus pour parcourir ses branches, son historique, son arbre de fichiers et ses diffs."
+        />
+      ) : (
+        <GitSurface key={project} project={project} view={search.view ?? 'historique'} sha={search.sha} />
+      )}
+    </div>
+  )
+}
+
+/** L'en-tête de la surface : titre + **sélecteur de projet** (le contexte « quel dépôt »), toujours visible —
+ *  c'est le commutateur de repo. Daemon injoignable → Alert honnête à la place du sélecteur. */
+function GitHeader({ options, loading, error, project, onProject }: {
+  options: Project[]
+  loading: boolean
+  error: unknown
+  project: string
+  onProject: (slug: string) => void
+}) {
+  return (
+    <div className="space-y-3">
+      <SectionTitle eyebrow="Dépôt du projet" title="Git" />
+      {error ? (
+        <Alert tone="danger" title="Projets indisponibles">
+          {error instanceof ApiError ? error.detail : String(error)}
+        </Alert>
+      ) : (
+        <Select
+          aria-label="Projet"
+          value={project}
+          onChange={(e) => onProject(e.target.value)}
+          disabled={loading}
+        >
+          <option value="">— choisir un projet —</option>
+          {options.map((p) => (
+            <option key={p.id} value={p.slug}>{p.slug}</option>
+          ))}
+        </Select>
+      )}
+    </div>
+  )
+}
+
+/** Le corps de la surface pour un projet donné (ex-`GitPanel`) : en-tête compact (réfs + SHA de tête + synchro
+ *  dev↔main + synchro miroir + réconciliation ff-only) surmontant le segmented **[Historique · Fichiers · Diff]**.
+ *  `view`/`sha` viennent de l'URL (deep-linkables) ; les callbacks les réécrivent en préservant `?project`.
+ *  Aucune mutation hormis la réconciliation (consent-gated). */
+function GitSurface({ project, view, sha }: { project: string; view: GitView; sha?: string }) {
   const { data, isLoading, isError, error, refetch, isFetching } = useGit(project)
   // Sync miroir : RÉSEAU, manuel — jamais auto (enabled:false) ; le refresh manuel déclenche les DEUX
-  // (vue read-only idempotente + fetch du miroir), pour que le badge reflète l'état après un clic.
+  // (vue read-only idempotente + fetch du miroir), pour que le badge reflète l'état après un clic. Le cache
+  // (même queryKey) est aussi lu par le rail pour son dot rollup → on le garde chaud via ce double refetch.
   const sync = useGitSync(project)
   const onRefresh = () => { void refetch(); void sync.refetch() }
-  const [sha, setSha] = useState<string | null>(null)  // commit sélectionné (clic sur log/branche)
-  const [view, setView] = useState<GitView>('historique')
   const [reconcileOpen, setReconcileOpen] = useState(false)  // panneau de réconciliation ff-only déplié
+  const navigate = useNavigate()
+
+  // Sous-vues deep-linkables : `?view=` (segment) et `?sha=` (détail commit), en préservant `?project`.
+  const setView = (v: GitView) =>
+    navigate({ to: '/git', search: (prev) => ({ ...prev, view: v, sha: undefined }) })
+  const setSha = (s: string | null) =>
+    navigate({ to: '/git', search: (prev) => ({ ...prev, sha: s ?? undefined }) })
 
   if (isLoading) return <div className="py-6"><LoadingState label="Lecture du dépôt…" /></div>
   if (isError || !data) {

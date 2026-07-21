@@ -4,6 +4,7 @@ import { Landing } from './pages/Landing'
 import { Bundles } from './pages/Bundles'
 import { Capital } from './pages/Capital'
 import { Templates } from './pages/Templates'
+import { Git } from './pages/Git'
 import { ProjectWorkspace } from './pages/ProjectWorkspace'
 import { AccueilTab } from './pages/AccueilTab'
 import { RoadmapTab } from './pages/RoadmapTab'
@@ -22,6 +23,9 @@ const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', com
 const bundlesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/bundles', component: Bundles })
 const capitalRoute = createRoute({ getParentRoute: () => rootRoute, path: '/capital', component: Capital })
 const templatesRoute = createRoute({ getParentRoute: () => rootRoute, path: '/templates', component: Templates })
+// /git = surface Git de plein droit (ex-drawer Ops `?panel=git`), ressource globale atteinte depuis le rail.
+// Per-projet via son propre sélecteur (`?project=`) — cf. GitExplorer. Pilotée par l'URL (deep-linkable).
+const gitRoute = createRoute({ getParentRoute: () => rootRoute, path: '/git', component: Git })
 
 // /setup = wizard 1er-démarrage guidé (bienvenue → coffre → 1er projet → miroir+token → prêt).
 const setupRoute = createRoute({ getParentRoute: () => rootRoute, path: '/setup', component: SetupWizard })
@@ -43,6 +47,7 @@ const routeTree = rootRoute.addChildren([
   bundlesRoute,
   capitalRoute,
   templatesRoute,
+  gitRoute,
   setupRoute,
   settingsRoute,
   projectRoute.addChildren([accueilRoute, roadmapRoute, travailRoute, opsRoute]),

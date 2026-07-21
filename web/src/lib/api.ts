@@ -152,7 +152,7 @@ export const api = {
   getGit: (project: string) =>
     request(`/api/projects/${encodeURIComponent(project)}/git`, GitViewSchema),
   // GET /api/projects/{p}/git/sync : écart SoT↔miroir GitHub. RÉSEAU (git fetch), NON-idempotent →
-  // JAMAIS via un runner goto-only ni un poll ; déclenché par le refresh manuel de GitPanel uniquement.
+  // JAMAIS via un runner goto-only ni un poll ; déclenché par le refresh manuel de GitExplorer uniquement.
   getGitSync: (project: string) =>
     request(`/api/projects/${encodeURIComponent(project)}/git/sync`, GitSyncSchema),
   // POST /api/projects/{p}/git/sync/reconcile : réconciliation **ff-only** (la SEULE mutation git de l'UI, et

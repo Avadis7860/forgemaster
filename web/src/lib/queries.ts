@@ -166,7 +166,7 @@ export function useGit(project: string) {
 }
 
 // Sync SoT↔miroir GitHub : RÉSEAU (git fetch), NON-idempotent → `enabled:false`, JAMAIS auto ni greffé sur
-// `useGit` no-poll. Déclenché À LA MAIN par le RefreshButton de GitPanel (`.refetch()`). `staleTime`/`gcTime`
+// `useGit` no-poll. Déclenché À LA MAIN par le RefreshButton de GitExplorer (`.refetch()`). `staleTime`/`gcTime`
 // Infinity : le résultat manuel PERSISTE en cache — le rail (EntityCard) le relit en lecture seule (même
 // queryKey, `enabled:false`) pour un dot rollup, sans jamais déclencher de fetch réseau.
 export function useGitSync(project: string) {

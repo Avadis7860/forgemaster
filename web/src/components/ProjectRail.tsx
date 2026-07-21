@@ -48,7 +48,7 @@ function useRailCollapse() {
 /** Une entité du rail (projet ou outil) : une **rangée** sélectionnable → workspace (pas une carte). */
 function EntityRow({ p, active }: { p: Project; active: string | undefined }) {
   const isActive = p.slug === active
-  // Dot rollup de sync miroir : lecture SEULE du cache (même queryKey que GitPanel, enabled:false) — ne
+  // Dot rollup de sync miroir : lecture SEULE du cache (même queryKey que GitExplorer, enabled:false) — ne
   // déclenche AUCUN fetch réseau. Absent tant que le projet n'a pas été vérifié ; `no_mirror` = pas de dot.
   const sync = useGitSync(p.slug)
   const syncState = sync.data?.state
@@ -84,11 +84,12 @@ function EntityList(
   )
 }
 
-/** Corps d'une catégorie-explorer (Bundles / Capital-token / Templates) : une **rangée** de navigation vers la
- *  route propre de l'explorer (ressource GLOBALE, hors projet). Surlignée quand on est déjà sur la destination. */
+/** Corps d'une catégorie-explorer (Bundles / Capital-token / Templates / Git) : une **rangée** de navigation
+ *  vers la route propre de l'explorer. Les trois premiers sont des ressources GLOBALES ; Git est per-projet mais
+ *  atteint globalement (son propre sélecteur de projet). Surlignée quand on est déjà sur la destination. */
 function ExplorerRow(
   { to, label, hint, active }:
-  { to: '/bundles' | '/capital' | '/templates'; label: string; hint: string; active: boolean },
+  { to: '/bundles' | '/capital' | '/templates' | '/git'; label: string; hint: string; active: boolean },
 ) {
   return (
     <Link to={to} className={rowClass(active)}>
@@ -100,9 +101,10 @@ function ExplorerRow(
 
 /** Rail de gauche = l'espace de travail : 3 catégories **repliables** (état persistant, variante `section`
  *  sans cadre) — `Projets` et `Outils` (entités travaillées/génériques, classées par `kind`, sélectionnables
- *  + création en pied) puis `Corpus` (les trois explorers de ressources globales — bundles + capital-token +
- *  templates — regroupés, promus en routes propres). Contexte global du shell ; les explorers ne dépendent pas
- *  du daemon projet et restent atteignables même daemon injoignable. */
+ *  + création en pied) puis `Corpus` (les explorers regroupés, promus en routes propres — bundles + capital-token
+ *  + templates, ressources globales — plus la surface Git, per-projet mais atteinte globalement). Contexte global
+ *  du shell ; les trois explorers de corpus ne dépendent pas du daemon projet et restent atteignables même daemon
+ *  injoignable (Git, lui, lit le SoT du projet sélectionné). */
 export function ProjectRail({ open = false, onClose }: { open?: boolean; onClose?: () => void }) {
   const projects = useProjects()
   const active = useParams({ strict: false }).project
@@ -160,9 +162,10 @@ export function ProjectRail({ open = false, onClose }: { open?: boolean; onClose
           </>
         )}
 
-        {/* Corpus — ressources GLOBALES parcourables (bundles semés + capital servi par le MCP + templates de
-            référence UI), indépendantes du daemon projet. Un seul regroupement : les explorers ne méritent pas
-            chacun un en-tête de catégorie solo (place perdue) — le relief porte le groupe, pas chaque rangée. */}
+        {/* Corpus — surfaces parcourables regroupées : bundles semés + capital servi par le MCP + templates de
+            référence UI (ressources GLOBALES, indépendantes du daemon projet) + la surface Git (per-projet, via son
+            propre sélecteur). Un seul regroupement : chaque rangée ne mérite pas un en-tête de catégorie solo (place
+            perdue) — le relief porte le groupe, pas chaque rangée. */}
         <Collapsible variant="section" title="Corpus" open={isOpen('corpus')} onOpenChange={onOpenChange('corpus')}>
           <ExplorerRow
             to="/bundles"
@@ -181,6 +184,12 @@ export function ProjectRail({ open = false, onClose }: { open?: boolean; onClose
             label="Explorer les templates"
             hint="modèles d'UI à appliquer"
             active={pathname.startsWith('/templates')}
+          />
+          <ExplorerRow
+            to="/git"
+            label="Explorer le dépôt Git"
+            hint="branches · commits · diff d'un projet"
+            active={pathname.startsWith('/git')}
           />
         </Collapsible>
       </div>
