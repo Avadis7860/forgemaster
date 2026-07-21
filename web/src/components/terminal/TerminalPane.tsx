@@ -49,6 +49,19 @@ function readTheme(el: HTMLElement): Record<string, string> {
   return buildTheme((name) => cs.getPropertyValue(name))
 }
 
+/** Frame de contrôle TEXTE émise par le daemon à la (ré)connexion : `{"t":"session","fresh":bool}`. `fresh`
+ *  distingue une session NEUVE (le client rejoue son `initialCommand`) d'une RÉ-ATTACHE (scrollback rejoué,
+ *  surtout pas de re-run). Retourne null si le texte n'est pas cette frame (→ sortie PTY texte brute). */
+export function parseSessionFrame(data: string): { fresh: boolean } | null {
+  try {
+    const m = JSON.parse(data) as { t?: string; fresh?: unknown }
+    if (m && m.t === 'session') return { fresh: Boolean(m.fresh) }
+  } catch {
+    /* pas du JSON → sortie PTY texte brute */
+  }
+  return null
+}
+
 /** Terminal PTY d'un projet : xterm.js (addons fit + search + web-links) ↔ `WS /ws/terminal/{project}`.
  *  Frames BINAIRES = frappes (envoyées telles quelles au PTY) ; frames TEXTE = contrôle
  *  `{"type":"resize",cols,rows}`. Le login shell (`bash -l`) tourne dans la racine du projet côté daemon ;
@@ -111,21 +124,36 @@ export function TerminalPane({ project, initialCommand }: { project: string; ini
 
     ws.onopen = () => {
       setStatus('connected')
-      // Bannière cliente (repère stable pour la boucle visuelle + affordance « où suis-je »), puis on cale la
-      // taille du PTY sur celle d'xterm avant que le shell n'émette son prompt.
-      term.writeln(`\x1b[2m— session terminal · ${project} (bash -l) —\x1b[0m`)
+      // Cale la taille du PTY sur celle d'xterm avant que le serveur ne (re)joue la sortie. La bannière et le
+      // handoff auto-run sont différés à la frame de session (le serveur dit d'abord si elle est neuve).
       safeFit()
       sendResize()
-      // Handoff auto-run (une fois) : envoie la commande au PTY comme une frappe (frame binaire + newline),
-      // exactement comme le bouton « Lancer Claude ». Le shell la lit une fois son prompt prêt.
-      if (initialCommand && !sentInitialRef.current) {
+    }
+    ws.onmessage = (ev) => {
+      if (ev.data instanceof ArrayBuffer) {
+        term.write(new Uint8Array(ev.data))
+        return
+      }
+      if (typeof ev.data !== 'string') return
+      // Frame de CONTRÔLE serveur (texte) : annonce de session (neuve vs ré-attachée). La sortie du PTY,
+      // elle, est TOUJOURS binaire — un texte ne peut être qu'un contrôle.
+      const ctl = parseSessionFrame(ev.data)
+      if (!ctl) {
+        term.write(ev.data)
+        return
+      }
+      // Bannière cliente (repère stable pour la boucle visuelle + « où suis-je »), fraîche vs restaurée.
+      term.writeln(
+        ctl.fresh
+          ? `\x1b[2m— session terminal · ${project} (bash -l) —\x1b[0m`
+          : `\x1b[2m— session restaurée · ${project} (scrollback rejoué) —\x1b[0m`,
+      )
+      // Handoff auto-run : UNIQUEMENT sur une session NEUVE (jamais rejoué sur une ré-attache — sinon revenir
+      // sur l'onglet Ops relancerait `cockpit interview`), une seule fois.
+      if (ctl.fresh && initialCommand && !sentInitialRef.current) {
         sentInitialRef.current = true
         ws.send(enc.encode(`${initialCommand}\n`))
       }
-    }
-    ws.onmessage = (ev) => {
-      if (ev.data instanceof ArrayBuffer) term.write(new Uint8Array(ev.data))
-      else if (typeof ev.data === 'string') term.write(ev.data)
     }
     ws.onerror = () => setStatus('error')
     ws.onclose = () => setStatus((s) => (s === 'error' ? s : 'closed'))

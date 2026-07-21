@@ -72,8 +72,12 @@ def build_app(settings: Settings) -> FastAPI:
         # Réconciliation au démarrage : le dispatch est synchrone in-process → aucun thread de worker ne
         # survit un restart, donc tout `dispatch_jobs.status='running'` observé ici est orphelin par
         # construction (worker tué, daemon redémarré en plein run). On le finalise (killed) + task→todo.
+        import asyncio
+        import contextlib
+
         from cockpit.db import store
         from cockpit.dispatch import reconcile
+        from cockpit.terminal.registry import PtySessionRegistry, run_reaper
 
         conn = store.open_db(settings)
         try:
@@ -84,7 +88,21 @@ def build_app(settings: Settings) -> FastAPI:
                     len(orphans), orphans)
         finally:
             conn.close()
-        yield
+
+        # Registre des sessions PTY détachables + reaper de sessions détachées (feature « le terminal survit à
+        # la déconnexion WS »). Le registre vit sur `app.state` (slot dédié, pas un god-module mutable) ; le
+        # reaper est une tâche de fond annulée au shutdown.
+        _app.state.terminals = PtySessionRegistry()
+        reaper = asyncio.create_task(run_reaper(_app.state.terminals))
+        try:
+            yield
+        finally:
+            # Moitié shutdown (absente jusqu'ici) : couper le reaper puis tuer toute session PTY vivante ou
+            # détachée — pas de shell orphelin ni de PTY fuité quand le daemon s'arrête.
+            reaper.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await reaper
+            _app.state.terminals.close_all()
 
     app = FastAPI(title="cockpit", version=__version__, lifespan=_lifespan)
     app.state.deps = Deps(settings)                      # conteneur DI unique, lu par get_deps

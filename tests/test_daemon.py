@@ -1,11 +1,12 @@
 """Tests du daemon : `build_app` importable **sans god-module** (DI explicite sur app.state), routers de
 domaine frappés par TestClient (projects / roadmap / dispatch / gate, y compris un merge e2e sur SoT réel),
-et le pont PTY **local** (`pty_bridge` sur un shell local, plus de ssh)."""
+et le terminal PTY **local détachable** (`serve_project_terminal` + registre de sessions, plus de ssh)."""
 from __future__ import annotations
 
 import asyncio
 import json
 import os
+import signal
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,7 @@ from cockpit.git.internal import InternalGit, writeback_env
 from cockpit.projects import registry
 from cockpit.roadmap import model
 from cockpit.terminal import pty
+from cockpit.terminal import registry as term_reg
 
 
 @pytest.fixture
@@ -870,30 +872,135 @@ def test_resolve_workdir_is_bounded_and_control_parsed(tmp_path):
     assert pty.local_shell_argv() == ["/bin/bash", "-l"]
 
 
-class _FakeWS:
-    """WebSocket minimal pour exercer `pty_bridge` sans réseau : collecte les octets, ne se ferme jamais
-    côté client (le PTY termine en premier → FIRST_COMPLETED)."""
+class _ScriptWS:
+    """WebSocket scriptable pour piloter `serve_project_terminal` sans réseau : collecte les octets + les
+    frames texte, et ne rend `websocket.disconnect` que sur ordre du test (`disconnect()`) — sinon `receive`
+    bloque (comme un vrai client resté connecté), laissant l'EOF du PTY décider de la fin."""
 
     def __init__(self) -> None:
         self.sent = bytearray()
+        self.texts: list[str] = []
         self.closed = False
+        self._disconnect = asyncio.Event()
 
     async def send_bytes(self, b: bytes) -> None:
         self.sent.extend(b)
 
+    async def send_text(self, t: str) -> None:
+        self.texts.append(t)
+
     async def receive(self) -> dict:
-        await asyncio.sleep(5)                            # sera annulée quand le PTY finit
+        await self._disconnect.wait()
         return {"type": "websocket.disconnect"}
+
+    def disconnect(self) -> None:
+        self._disconnect.set()
 
     async def close(self) -> None:
         self.closed = True
 
 
-def test_pty_bridge_runs_local_shell_and_relays_output(tmp_path):
-    ws = _FakeWS()
-    argv = ["/bin/bash", "-c", "printf COCKPIT-PTY-OK"]
-    asyncio.run(pty.pty_bridge(ws, argv, cwd=str(tmp_path)))
-    assert b"COCKPIT-PTY-OK" in bytes(ws.sent) and ws.closed is True
+async def _until(pred, *, timeout: float = 5.0) -> None:
+    """Attend qu'un prédicat devienne vrai (poll court) — pas de `time` dans la boucle (l'horloge peut être
+    injectée ailleurs)."""
+    for _ in range(int(timeout / 0.02)):
+        if pred():
+            return
+        await asyncio.sleep(0.02)
+    raise AssertionError("condition non atteinte dans le délai")
+
+
+def test_terminal_detaches_on_disconnect_and_shell_survives(tmp_path):
+    """La feature : à la déconnexion WS, le shell SURVIT (détaché au registre), il n'est PAS tué. La 1ʳᵉ
+    connexion s'annonce `fresh:true` (le client y rejoue son initialCommand)."""
+    async def scenario():
+        reg = term_reg.PtySessionRegistry()
+        ws = _ScriptWS()
+        argv = ["/bin/sh", "-c", "sleep 30"]
+        task = asyncio.create_task(pty.serve_project_terminal(
+            ws, reg, project="p", argv=argv, cwd=str(tmp_path), env=None))
+        await _until(lambda: bool(ws.texts))                 # la frame de session est partie
+        ws.disconnect()
+        await task
+        sess = reg.get("p")
+        assert sess is not None and sess.alive() and sess.detached_at is not None
+        assert sess.proc.poll() is None                      # shell TOUJOURS vivant (détaché, pas tué)
+        assert json.loads(ws.texts[0]) == {"t": "session", "fresh": True}
+        reg.close_all()                                      # cleanup : tue le sleep
+        assert sess.proc.wait(timeout=5) is not None
+    asyncio.run(scenario())
+
+
+def test_terminal_reattach_replays_scrollback(tmp_path):
+    """Reconnexion → ré-attache la même session : le scrollback est REJOUÉ dans le xterm recréé, et la frame
+    s'annonce `fresh:false` (le client NE re-lance PAS l'initialCommand)."""
+    async def scenario():
+        reg = term_reg.PtySessionRegistry()
+        argv = ["/bin/sh", "-c", "printf MARKER123; sleep 30"]
+        ws1 = _ScriptWS()
+        t1 = asyncio.create_task(pty.serve_project_terminal(
+            ws1, reg, project="p", argv=argv, cwd=str(tmp_path), env=None))
+        await _until(lambda: b"MARKER123" in ws1.sent)
+        ws1.disconnect()
+        await t1
+        assert reg.get("p").detached_at is not None          # détachée, pas tuée
+        ws2 = _ScriptWS()
+        t2 = asyncio.create_task(pty.serve_project_terminal(
+            ws2, reg, project="p", argv=argv, cwd=str(tmp_path), env=None))
+        await _until(lambda: b"MARKER123" in ws2.sent)       # scrollback REJOUÉ sur la ré-attache
+        assert json.loads(ws2.texts[0])["fresh"] is False    # ré-attache → pas de re-run
+        ws2.disconnect()
+        await t2
+        reg.close_all()
+    asyncio.run(scenario())
+
+
+def test_terminal_eof_tears_down_and_deregisters(tmp_path):
+    """Le shell sort de lui-même (EOF) → relais de la sortie, fermeture du socket, retrait du registre (pas
+    de session zombie)."""
+    async def scenario():
+        reg = term_reg.PtySessionRegistry()
+        ws = _ScriptWS()                                     # ne déconnecte jamais → seul l'EOF sort
+        await pty.serve_project_terminal(
+            ws, reg, project="p", argv=["/bin/sh", "-c", "printf DONE"], cwd=str(tmp_path), env=None)
+        assert b"DONE" in ws.sent and ws.closed is True
+        assert reg.get("p") is None                          # session morte retirée du registre
+    asyncio.run(scenario())
+
+
+def test_reaper_terminates_detached_session_past_ttl(tmp_path):
+    """Le reaper (clock + killer INJECTÉS) tue une session détachée au-delà du TTL — sans dormir ni tuer un
+    vrai process à l'aveugle."""
+    async def scenario():
+        now = [0.0]
+        calls: list[int] = []
+
+        def killer(pgid: int, sig: int) -> None:
+            calls.append(sig)
+            os.killpg(pgid, sig)                             # observe ET tue pour de vrai (aucun zombie)
+
+        reg = term_reg.PtySessionRegistry(clock=lambda: now[0], killer=killer)
+        ws = _ScriptWS()
+        ws.disconnect()                                      # déconnexion immédiate → détach à t=0
+        await pty.serve_project_terminal(
+            ws, reg, project="p", argv=["/bin/sh", "-c", "sleep 30"], cwd=str(tmp_path), env=None)
+        sess = reg.get("p")
+        assert sess is not None and sess.detached_at == 0.0
+        assert reg.reap() == []                              # pas encore expirée
+        now[0] = term_reg.DETACH_TTL_S + 1
+        assert reg.reap() == ["p"]                            # TTL franchi → reapée
+        assert signal.SIGTERM in calls and reg.get("p") is None
+        assert sess.proc.wait(timeout=5) is not None          # shell tué
+    asyncio.run(scenario())
+
+
+def test_terminal_ws_refuses_unknown_project_before_accept(client):
+    """Correctif F2 : un projet inexistant est refusé (1008) AVANT `accept()` — plus de `bash -l` spawné
+    dans un dir absent qui crashait post-accept."""
+    c, _ = client
+    # fermé avant accept → disconnect levé au connect
+    with pytest.raises(WebSocketDisconnect), c.websocket_connect("/ws/terminal/does-not-exist"):
+        pass
 
 
 # -- fail-loud UI : dist absente → page d'aide, jamais un 404 muet ----------------------------------

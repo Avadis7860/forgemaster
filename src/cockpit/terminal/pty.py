@@ -17,17 +17,14 @@ import asyncio
 import contextlib
 import fcntl
 import json
+import logging
 import os
-import pty
-import signal
 import struct
-import subprocess
 import termios
 
 from cockpit.config import Settings
 from cockpit.core import fs
-
-READ_SIZE = 65536
+from cockpit.terminal.registry import PtySession, PtySessionRegistry
 
 
 def local_shell_argv(shell: str = "/bin/bash") -> list[str]:
@@ -75,67 +72,88 @@ def _set_winsize(fd: int, rows: int, cols: int) -> None:
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
 
-def _terminate(proc: subprocess.Popen) -> None:
-    """Tue le groupe de process du shell proprement (SIGTERM puis SIGKILL). Évite les zombies."""
+# Motifs de sortie du relais : d'où vient la fin de session (décide détacher vs teardown).
+_DISCONNECT = "disconnect"   # le client WS est parti → détacher (le shell survit)
+_EOF = "eof"                 # le shell a fermé le PTY → teardown final
+_REPLACED = "replaced"       # un nouveau client a pris la session → sortir sans y toucher
+
+
+async def serve_project_terminal(websocket, registry: PtySessionRegistry, *, project: str,
+                                 argv: list[str], cwd: str | None, env: dict | None) -> None:
+    """Sert le terminal PTY d'un projet, **détachable** : réutilise la session vivante du registre
+    (ré-attache + rejeu du scrollback) ou en spawn une neuve. Le WebSocket est déjà `accept()` par le router.
+    À la déconnexion du client alors que le shell VIT, on **détache** (le shell continue, le reaper le TTL-e)
+    au lieu de le tuer — la feature même. Sur EOF réel (shell sorti), teardown final + retrait du
+    registre. Annonce d'abord une frame de contrôle `{"t":"session","fresh":…}` : le client ne rejoue son
+    `initialCommand` (handoff interview) que sur une session NEUVE, jamais sur une ré-attache."""
+    session = registry.get(project)
+    if session is not None and not session.alive():
+        session.close(registry.killer)                       # session morte résiduelle → on repart propre
+        registry.pop(project, session)
+        session = None
+    fresh = session is None
+    if session is None:
+        session = PtySession.spawn(project, argv, cwd=cwd, env=env, clock=registry.clock)
+        registry.put(project, session)
+    epoch, cursor = session.attach()
+
+    with contextlib.suppress(Exception):                     # contrôle TEXTE (bytes serveur→client = PTY)
+        await websocket.send_text(json.dumps({"t": "session", "fresh": fresh}))
+
+    reason = await _relay(websocket, session, epoch, cursor)
+    if reason == _REPLACED:
+        return                                               # un nouveau client possède la session
+    if reason == _DISCONNECT and session.alive():
+        session.detach()                                     # le shell survit ; le reaper s'en chargera
+        return
+    session.close(registry.killer)                           # EOF / shell mort → teardown final
+    registry.pop(project, session)
     with contextlib.suppress(Exception):
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-    try:
-        proc.wait(timeout=3)
-    except Exception:  # noqa: BLE001
-        with contextlib.suppress(Exception):
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        await websocket.close()
 
 
-async def pty_bridge(websocket, argv: list[str], *, cwd: str | None = None,
-                     env: dict | None = None) -> None:
-    """Ouvre un PTY local pilotant `argv` (dans `cwd`), relaie PTY↔WebSocket jusqu'à la fin de l'un ou
-    l'autre, puis nettoie. L'appelant a déjà `accept()` le WebSocket et validé la session. Agnostique au
-    transport (le legacy passait un argv ssh ; ici un argv `bash -l` local — même corps)."""
-    master, slave = pty.openpty()
-    proc = subprocess.Popen(argv, stdin=slave, stdout=slave, stderr=slave,  # noqa: S603
-                            cwd=cwd, start_new_session=True, close_fds=True, env=env)
-    os.close(slave)
-    loop = asyncio.get_running_loop()
-    q: asyncio.Queue = asyncio.Queue()
-
-    def _on_readable() -> None:
-        try:
-            data = os.read(master, READ_SIZE)
-        except OSError:
-            data = b""                       # PTY fermé (process terminé) → EOF
-        q.put_nowait(data)
-
-    loop.add_reader(master, _on_readable)
-
-    async def pty_to_ws() -> None:
+async def _relay(websocket, session: PtySession, epoch: int, cursor: int) -> str:
+    """Relais bidirectionnel PTY↔WS jusqu'à la fin de l'un des sens. Retourne le motif de sortie
+    (`disconnect`/`eof`/`replaced`). Le sens PTY→WS lit le scrollback par **curseur** (rejeu à l'attache puis
+    live), sort en `replaced` si l'epoch a changé (nouveau client) ou en `eof` quand le shell a fini.
+    Le sens WS→PTY sort en `disconnect`. Une exception de transport (client coupé net) est traitée comme une
+    déconnexion (loggée, jamais avalée — durcissement)."""
+    async def pty_to_ws() -> str:
+        c = cursor
         while True:
-            data = await q.get()
-            if not data:                     # b"" = EOF du PTY
-                return
-            await websocket.send_bytes(data)
+            await session.data_event.wait()
+            if session.epoch != epoch:                       # un attach plus récent nous a remplacés
+                return _REPLACED
+            session.data_event.clear()                       # clear AVANT lecture : pas de réveil perdu
+            chunk, total = session.read_from(c)
+            if chunk:
+                await websocket.send_bytes(chunk)
+                c = total
+            if session.eof and c >= session.total:
+                return _EOF
 
-    async def ws_to_pty() -> None:
+    async def ws_to_pty() -> str:
         while True:
             msg = await websocket.receive()
             if msg.get("type") == "websocket.disconnect":
-                return
+                return _DISCONNECT
             if msg.get("bytes") is not None:
-                os.write(master, msg["bytes"])
+                os.write(session.master, msg["bytes"])
             elif msg.get("text") is not None:
                 size = parse_control(msg["text"])
                 if size:
-                    _set_winsize(master, *size)
+                    _set_winsize(session.master, *size)
 
     t1 = asyncio.create_task(pty_to_ws())
     t2 = asyncio.create_task(ws_to_pty())
-    try:
-        await asyncio.wait({t1, t2}, return_when=asyncio.FIRST_COMPLETED)
-    finally:
-        for t in (t1, t2):
-            t.cancel()
-        loop.remove_reader(master)
-        with contextlib.suppress(OSError):
-            os.close(master)
-        _terminate(proc)
-        with contextlib.suppress(Exception):
-            await websocket.close()
+    done, pending = await asyncio.wait({t1, t2}, return_when=asyncio.FIRST_COMPLETED)
+    for t in pending:
+        t.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await t
+    finished = done.pop()
+    exc = finished.exception()
+    if exc is not None:                                      # transport cassé côté client → déconnexion
+        logging.getLogger("cockpit").info("relais terminal interrompu (%s) → détache", type(exc).__name__)
+        return _DISCONNECT
+    return finished.result()
