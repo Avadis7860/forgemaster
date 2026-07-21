@@ -94,6 +94,61 @@ def test_ensure_codemap_installs_from_sibling(monkeypatch, tmp_path: Path):
     assert seen == [[sys.executable, "-m", "pip", "install", str(src)]]
 
 
+# -- cartes siblings (docs-map/front-map/task-map : from-clone → CLI dispo dans le venv de dev) ----------
+
+def _seed_map_sibling(root: Path, repo: str, module: str) -> Path:
+    """Crée `root/<repo>/src/<module>/__init__.py` (checkout carte sibling minimal)."""
+    pkg = root / repo / "src" / module
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    return root / repo
+
+
+def test_find_map_src_locates_sibling(tmp_path: Path):
+    _seed_map_sibling(tmp_path, "front-map", "frontmap")
+    start = tmp_path / "cockpit" / "src" / "cockpit" / "webbuild.py"
+    start.parent.mkdir(parents=True)
+    start.write_text("")
+    assert webbuild.find_map_src("front-map", "frontmap", start) == tmp_path / "front-map"
+    assert webbuild.find_map_src("docs-map", "docsmap", start) is None       # sibling absent → None
+
+
+def test_ensure_map_noop_when_already_importable(monkeypatch):
+    monkeypatch.setattr(webbuild.importlib.util, "find_spec", lambda _n: object())
+    called: list = []
+    monkeypatch.setattr(webbuild.subprocess, "run", lambda *a, **k: called.append(a))
+    assert "déjà disponible" in webbuild.ensure_map("front-map", "frontmap") and called == []
+
+
+def test_ensure_map_warns_when_no_sibling(monkeypatch):
+    monkeypatch.setattr(webbuild.importlib.util, "find_spec", lambda _n: None)
+    monkeypatch.setattr(webbuild, "find_map_src", lambda *a, **k: None)
+    called: list = []
+    monkeypatch.setattr(webbuild.subprocess, "run", lambda *a, **k: called.append(a))
+    msg = webbuild.ensure_map("front-map", "frontmap")
+    assert "introuvable" in msg and "frontmap" in msg and called == []       # actionnable, jamais fatal
+
+
+def test_ensure_map_installs_from_sibling(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(webbuild.importlib.util, "find_spec", lambda _n: None)
+    monkeypatch.setattr(webbuild, "find_map_src", lambda *a, **k: tmp_path / "front-map")
+    seen: list = []
+    monkeypatch.setattr(webbuild.subprocess, "run", lambda cmd, **k: seen.append(cmd))
+    assert "installé depuis" in webbuild.ensure_map("front-map", "frontmap")
+    assert str(tmp_path / "front-map") in seen[0]                            # pip a visé le sibling
+
+
+def test_ensure_maps_covers_the_four_framework_maps(monkeypatch):
+    """`ensure_maps` câble les 4 cartes : code-map (Flow) + docs-map/front-map/task-map. Le trou historique
+    (seul code-map câblé → frontmap absent en dev) est fermé."""
+    monkeypatch.setattr(webbuild.importlib.util, "find_spec", lambda _n: object())   # présentes → no-op
+    report = webbuild.ensure_maps()
+    assert len(report) == 4
+    joined = " ".join(report)
+    for module in ("code-map", "docsmap", "frontmap", "taskmap"):
+        assert module in joined                                             # les 4 sont rapportées
+
+
 # -- hook de packaging : décision d'embarquement (SPA + code-map + taskmap) dans le wheel ----------------
 
 def _touch(p: Path) -> None:

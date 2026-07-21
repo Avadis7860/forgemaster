@@ -86,3 +86,45 @@ def ensure_codemap() -> str:
     except subprocess.CalledProcessError as exc:
         return f"install code-map échouée ({' '.join(exc.cmd)} → code {exc.returncode}) — Flow indisponible."
     return f"code-map installé depuis {src} (`python -m codemap`)."
+
+
+# Les 3 AUTRES cartes du framework (code-map a son propre chemin Flow ci-dessus). Cartes par-projet déclarées
+# au contrat (`bundles/base/CLAUDE.md`) : le cockpit étant lui-même un projet, ses sessions/worktrees doivent
+# pouvoir les interroger. En install wheel les CLIs viennent du provisioning (`tools.MAP_REPOS`) ; ce câblage
+# sert le chemin **from-clone** (dev) depuis les siblings. Trou historique : `cockpit setup` ne câblait QUE
+# code-map → frontmap/docsmap/taskmap absents du venv de dev (anti-archéologie front/docs cassée).
+_SIBLING_MAPS: dict[str, str] = {"docs-map": "docsmap", "front-map": "frontmap", "task-map": "taskmap"}
+
+
+def find_map_src(repo: str, module: str, start: Path | None = None) -> Path | None:
+    """Localise un checkout **sibling** `…/<repo>` portant `src/<module>/__init__.py`, en remontant depuis le
+    checkout cockpit. `None` si absent."""
+    here = (start or Path(__file__)).resolve()
+    for base in here.parents:
+        if (base / repo / "src" / module / "__init__.py").is_file():
+            return base / repo
+    return None
+
+
+def ensure_map(repo: str, module: str) -> str:
+    """Garantit la carte `<module>` dans le venv courant (CLI `<module>` + `python -m <module>`). Déjà
+    importable → no-op ; sinon installe le sibling `../<repo>` s'il existe. **Jamais fatal** — une carte
+    absente dégrade l'anti-archéologie, pas le démarrage ; message actionnable."""
+    if importlib.util.find_spec(module) is not None:
+        return f"{module} déjà disponible."
+    src = find_map_src(repo, module)
+    if src is None:
+        return (f"{module} introuvable → clone {repo} en sibling du cockpit puis relance `cockpit setup`, "
+                f"ou installe le wheel packagé.")
+    try:
+        subprocess.run([sys.executable, "-m", "pip", "install", str(src)], check=True)
+    except subprocess.CalledProcessError as exc:
+        return f"install {module} échouée ({' '.join(map(str, exc.cmd))} → code {exc.returncode})."
+    return f"{module} installé depuis {src}."
+
+
+def ensure_maps() -> list[str]:
+    """Câble les **4 cartes** du framework dans le venv du checkout cockpit (from-clone) : code-map (Flow) +
+    les 3 siblings (docs-map/front-map/task-map). Rapport par carte, best-effort. Corrige le trou où seul
+    code-map était câblé → frontmap absent du venv de dev (cf. cockpit-frontmap-cli-absent-from-venv)."""
+    return [ensure_codemap(), *(ensure_map(repo, mod) for repo, mod in _SIBLING_MAPS.items())]

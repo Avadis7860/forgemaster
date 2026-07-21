@@ -363,7 +363,8 @@ def _h_setup(settings: Settings, args: argparse.Namespace) -> int:
         print(f"erreur : {exc}")
         return 1
     print(f"UI buildée → {dist}.")
-    print(webbuild.ensure_codemap())     # from-clone : rend `python -m codemap` dispo (onglet Flow)
+    for line in webbuild.ensure_maps():  # from-clone : câble les 4 cartes (Flow codemap + anti-archéologie)
+        print(f"  {line}")
     print("Lance `cockpit serve`.")
     return 0
 
