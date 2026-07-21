@@ -11,6 +11,7 @@ const GREEN_HOLD: MergeDecision = {
   ui_touched: false,
   t15_overridden: false,
   t1_overridden: false,
+  refixable: false,
   blockers: [],
   reasons: ['Tier-1 : revue fraîche, aucun finding (PASS)'],
 }
@@ -23,6 +24,7 @@ const RED_BLOCKED: MergeDecision = {
   ui_touched: true,
   t15_overridden: false,
   t1_overridden: false,
+  refixable: true,
   blockers: ['Tier-1 : 1 🔴 reviewer (le rapport bloque le merge) → corriger, ou override humain explicite'],
   reasons: ['Tier-1 : 1 🔴 reviewer (le rapport bloque le merge) → corriger, ou override humain explicite'],
 }

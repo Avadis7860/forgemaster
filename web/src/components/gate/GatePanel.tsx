@@ -2,8 +2,19 @@ import { useState } from 'react'
 import { Alert, Button, Card, EmptyState, Input, LoadingState, RefreshButton } from '@/components/ui'
 import { DecisionBanner, ReviewEvidence, VerifyEvidence } from '@/components/gate/GateReport'
 import { ApiError } from '@/lib/api'
-import { useGate, useMerge, useReviewDispatch } from '@/lib/queries'
-import type { FeatureWithTasks } from '@/lib/schemas'
+import { useGate, useMerge, useRefixDispatch, useReviewDispatch } from '@/lib/queries'
+import type { FeatureWithTasks, RefixResult } from '@/lib/schemas'
+
+// Rendu du compte-rendu d'une passe de correction, par statut (source unique : le backend `dispatch.refix`).
+const REFIX_TONE: Record<RefixResult['status'], 'ok' | 'info' | 'warn' | 'danger'> = {
+  green: 'ok', still_red: 'info', exhausted: 'warn',
+  not_refixable: 'info', not_red: 'info', dispatch_failed: 'danger',
+}
+const REFIX_TITLE: Record<RefixResult['status'], string> = {
+  green: 'Gate re-évalué vert', still_red: 'Toujours rouge', exhausted: 'Borne de correction atteinte',
+  not_refixable: 'Non corrigible par un worker', not_red: 'Rien à corriger',
+  dispatch_failed: 'Échec de la correction',
+}
 
 /** Panneau d'une feature : décision de merge (bannière), évidence Tier-1/Tier-1.5, overrides + GO humain.
  *  Invariant fail-closed : gate vert SANS go ⇒ hold, jamais merge (le backend décide ; le front ne recompose
@@ -12,6 +23,7 @@ export function GatePanel({ project, feature }: { project: string; feature: Feat
   const gate = useGate(project, feature.slug)
   const merge = useMerge(project, feature.slug)
   const reviewDispatch = useReviewDispatch(project, feature.slug)
+  const refix = useRefixDispatch(project, feature.slug)
   const [t1Override, setT1Override] = useState('')
   const [t15Override, setT15Override] = useState('')
 
@@ -98,6 +110,44 @@ export function GatePanel({ project, feature }: { project: string; feature: Feat
           )}
           {reviewDispatch.data && !reviewDispatch.data.reviewed && (
             <Alert tone="warn" title="Review non produite">{reviewDispatch.data.reason}</Alert>
+          )}
+        </div>
+      )}
+
+      {/* Gate rouge par un DÉFAUT DE CODE (refixable) → offre une passe de correction bornée. Complémentaire
+          du bloc review ci-dessus (refixable=false quand la review est absente/périmée). Le merge reste GO. */}
+      {!decision.gate_green && decision.refixable && (
+        <div className="space-y-3 rounded-card border border-border px-4 py-3">
+          <p className="text-sm text-fg">
+            Gate rouge par un défaut de code. Tu peux dispatcher une passe de correction : un worker reprend la
+            branche, corrige les bloqueurs cités, puis le gate est ré-évalué. Le merge reste sous ton GO.
+          </p>
+          <Button
+            variant="secondary"
+            onClick={() => refix.mutate()}
+            busy={refix.isPending}
+            disabled={refix.isPending}
+          >
+            {refix.isPending ? 'Correction en cours…' : 'Dispatcher une passe de correction'}
+          </Button>
+          {refix.isError && (
+            <Alert tone="danger" title="Échec du dispatch de correction">
+              {refix.error instanceof ApiError ? refix.error.detail : String(refix.error)}
+            </Alert>
+          )}
+          {refix.data && (
+            <Alert tone={REFIX_TONE[refix.data.status]} title={REFIX_TITLE[refix.data.status]}>
+              <p>
+                Passe {refix.data.fix_pass}/{refix.data.max_passes}. {refix.data.next_step}
+              </p>
+              {refix.data.blockers.length > 0 && (
+                <ul className="mt-1 space-y-0.5">
+                  {refix.data.blockers.map((b, i) => (
+                    <li key={i}>🔴 {b}</li>
+                  ))}
+                </ul>
+              )}
+            </Alert>
           )}
         </div>
       )}

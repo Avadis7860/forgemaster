@@ -416,6 +416,19 @@ export function useReviewDispatch(project: string, feature: string) {
   })
 }
 
+// Dispatche UNE passe de correction sur un gate rouge (offre bornée). À la résolution, invalide le gate (ré-
+// évalué sur le nouveau HEAD) ET les jobs (le job `kind='fix'` apparaît dans la liste, suivable en live).
+export function useRefixDispatch(project: string, feature: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.refixDispatch(project, feature),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: qk.gate(project, feature) })
+      qc.invalidateQueries({ queryKey: qk.jobs(project, feature) })
+    },
+  })
+}
+
 // Vue Gate d'une feature : statut brut + décision composée (preview GO=false). GET idempotent, pas de poll.
 export function useGate(project: string, feature: string) {
   return useQuery({

@@ -300,6 +300,21 @@ export const ReconcileSocleResultSchema = z.object({
 })
 export type ReconcileSocleResult = z.infer<typeof ReconcileSocleResultSchema>
 
+// Résultat d'une passe de correction sur gate rouge (`POST /api/gate/{p}/{f}/refix-dispatch`) : compte-rendu
+// HUMAIN (offre, pas autonomie). `status` classe le cas ; `fix_pass/max_passes` situe la borne ; `blockers` +
+// `next_step` disent quoi faire ensuite. Le merge n'est JAMAIS déclenché ici (GO humain).
+export const RefixResultSchema = z.object({
+  status: z.enum(['green', 'still_red', 'exhausted', 'not_refixable', 'not_red', 'dispatch_failed']),
+  feature: z.string(),
+  gate_green: z.boolean(),
+  fix_pass: z.number(),
+  max_passes: z.number(),
+  blockers: z.array(z.string()),
+  head_sha: z.string().nullable(),
+  next_step: z.string(),
+})
+export type RefixResult = z.infer<typeof RefixResultSchema>
+
 // Événement de transcript normalisé (jobs.normalize_line) poussé par le WS. `job` = frame terminale
 // synthétique (fin de run) émise par stream.stream_job. Le front ne fabrique jamais ces formes.
 const AssistantToolSchema = z.object({ name: z.string().nullable(), input_summary: z.string() })
@@ -383,6 +398,7 @@ export const MergeDecisionSchema = z.object({
   ui_touched: z.boolean(),
   t15_overridden: z.boolean(),
   t1_overridden: z.boolean(),
+  refixable: z.boolean(),   // rouge par défaut de code frais → une passe de correction est OFFRABLE
   blockers: z.array(z.string()),
   reasons: z.array(z.string()),
 })

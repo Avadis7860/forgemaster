@@ -62,8 +62,9 @@ def compose_merge_decision(tier0_decision: dict, tier1_status: dict, *, human_go
       - **human_go is True** — le LLM ne merge JAMAIS seul.
 
     Le **gate** et le **GO** sont SÉPARÉS dans le retour (`gate_green` vs `human_go`) : gate vert SANS go →
-    `hold`. Fail-CLOSED : Tier-1/Tier-1.5 absent/périmé → hold. Retour {allow, decision, gate_green, human_go,
-    ui_touched, t15_overridden, t1_overridden, blockers, reasons}."""
+    `hold`. Fail-CLOSED : Tier-1/Tier-1.5 absent/périmé → hold. `refixable` = rouge par défaut de code frais
+    qu'un worker peut corriger (`dispatch.refix`). Retour {allow, decision, gate_green, human_go, ui_touched,
+    t15_overridden, t1_overridden, refixable, blockers, reasons}."""
     red0 = tier0_decision.get("red", 0)
     yellow0 = tier0_decision.get("yellow", 0)
     t15 = t15_status or {}
@@ -117,6 +118,15 @@ def compose_merge_decision(tier0_decision: dict, tier1_status: dict, *, human_go
                                 f"corriger le rendu avant merge")
 
     gate_green = not blockers
+    # « refixable » : le gate est rouge à cause d'un défaut de CODE FRAIS qu'un worker de correction peut
+    # traiter (Tier-0 natif cassé · 🔴 reviewer frais non-overridé · 🔴 Tier-0 déterministe). PUR, dérivé (pas
+    # d'état) — consommé par `dispatch.refix` pour décider s'il OFFRE une passe. Un rouge « review absente/
+    # périmée » n'est PAS refixable (re-dispatcher la review, pas corriger le code) ; un overridé non plus.
+    refixable = bool(
+        red0
+        or (nat.get("applicable") and not nat.get("ok"))
+        or (code_touched and tier1_status.get("present") and tier1_status.get("fresh")
+            and red1 and not t1_overridden))
     reasons = list(blockers) + overrides
     if not code_touched:
         reasons.append("Tier-1 : N/A (aucune source exécutable — livrable docs-only)")
@@ -143,7 +153,8 @@ def compose_merge_decision(tier0_decision: dict, tier1_status: dict, *, human_go
     return {"allow": allow, "decision": "merge" if allow else "hold",
             "gate_green": gate_green, "human_go": bool(human_go),
             "ui_touched": bool(ui_touched), "t15_overridden": t15_overridden,
-            "t1_overridden": t1_overridden, "blockers": blockers, "reasons": reasons}
+            "t1_overridden": t1_overridden, "refixable": refixable,
+            "blockers": blockers, "reasons": reasons}
 
 
 # -- orchestration IMPURE : run_merge (internal-first) ----------------------------------------------

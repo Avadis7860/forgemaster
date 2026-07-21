@@ -102,6 +102,40 @@ def test_compose_ui_touched_requires_proof_but_na_when_not_touched():
     assert proven["allow"] is True
 
 
+# -- « refixable » : rouge par défaut de code frais qu'un worker peut corriger (consommé par dispatch.refix)
+
+def test_refixable_true_on_fresh_reviewer_red():
+    t1_red = {"present": True, "fresh": True, "counts": {"red": 1}}
+    d = merge.compose_merge_decision({"red": 0}, t1_red, human_go=False)
+    assert d["gate_green"] is False and d["refixable"] is True
+
+
+def test_refixable_true_on_native_toolchain_failure():
+    nat = {"applicable": True, "ok": False, "cmd": "ruff", "exit_code": 1}
+    d = merge.compose_merge_decision({"red": 0}, _T1_CLEAN, human_go=False, native_status=nat)
+    assert d["gate_green"] is False and d["refixable"] is True
+
+
+def test_refixable_false_on_absent_or_stale_review():
+    # Rouge par garde de PROCESS (review absente/périmée) → PAS refixable (re-dispatcher la review).
+    absent = merge.compose_merge_decision({"red": 0}, {"present": False}, human_go=False)
+    stale = merge.compose_merge_decision({"red": 0}, {"present": True, "fresh": False, "counts": {"red": 0}},
+                                         human_go=False)
+    assert absent["gate_green"] is False and absent["refixable"] is False
+    assert stale["gate_green"] is False and stale["refixable"] is False
+
+
+def test_refixable_false_when_reviewer_red_overridden():
+    t1_red = {"present": True, "fresh": True, "counts": {"red": 1}}
+    d = merge.compose_merge_decision({"red": 0}, t1_red, human_go=True, t1_override="vérifié à la main")
+    assert d["t1_overridden"] is True and d["refixable"] is False
+
+
+def test_refixable_false_on_green_gate():
+    d = merge.compose_merge_decision({"red": 0}, _T1_CLEAN, human_go=False)
+    assert d["gate_green"] is True and d["refixable"] is False
+
+
 # -- garde déterministe evidence ⊂ diff (review Tier-1, PUR verbatim) --------------------------------
 
 _DIFF = (

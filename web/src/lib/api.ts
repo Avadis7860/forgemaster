@@ -42,6 +42,7 @@ import {
   RoadmapSchema,
   RoadmapCheckSchema,
   ReconcileSocleResultSchema,
+  RefixResultSchema,
   TemplatesListSchema,
   TypesListSchema,
   type BootstrapRunInput,
@@ -296,6 +297,15 @@ export const api = {
     request(
       `/api/gate/${encodeURIComponent(project)}/${encodeURIComponent(feature)}/review-dispatch`,
       ReviewerDispatchReportSchema,
+      { method: 'POST', body: '{}' },
+    ),
+  // POST refix-dispatch — UNE passe de correction bornée sur un gate ROUGE (offre) : worker de fix ancré sur
+  // les findings, sur la branche → re-finalise → gate ré-évalué. Refuse honnêtement si non-rouge/non-refixable/
+  // borne atteinte. Le merge n'est JAMAIS déclenché (GO humain). 403 si pas d'auth (spawn `claude`).
+  refixDispatch: (project: string, feature: string) =>
+    request(
+      `/api/gate/${encodeURIComponent(project)}/${encodeURIComponent(feature)}/refix-dispatch`,
+      RefixResultSchema,
       { method: 'POST', body: '{}' },
     ),
 

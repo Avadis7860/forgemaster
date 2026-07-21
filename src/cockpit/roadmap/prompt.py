@@ -77,6 +77,73 @@ def _acceptance_block(task: dict) -> str:
     return f"## Critères d'acceptation (DoD)\n{acc}" if acc else ""
 
 
+def _fix_mandate() -> str:
+    """Mandat d'une passe de CORRECTION (variante de `_mandate`) : le worker est dispatché sur la branche de
+    feature (retour au dev) pour corriger les défauts d'un gate rouge, pas pour dérouler une task neuve."""
+    return (
+        "Tu es un worker autonome dispatché pour **corriger les défauts d'un gate rouge**, dans un worktree "
+        "git isolé sur la branche de feature (« retour au dev » — ta branche est déjà créée et checkout). "
+        "Corrige **exactement** les bloqueurs listés ci-dessous (findings 🔴 du reviewer et/ou étapes Tier-0 "
+        "en échec) : lis le contexte, applique le fix minimal, vérifie qu'il passe. Travaille SANS poser de "
+        "question (headless). Interroge la doc du repo avec `docsmap where \"<intention>\"`. NE touche PAS "
+        "au cycle git (pas de branch/commit/push) — la forge committe ton travail après ton run. Reste "
+        "STRICTEMENT dans le périmètre des défauts cités ; ne refactore pas au-delà. "
+        "TERMINE ton message final par une section `## Décisions prises` : ce que tu as corrigé et pourquoi."
+    )
+
+
+def _findings_block(findings: dict) -> str:
+    """Rend les findings du gate rouge (le **brief = le verdict**) : les 🔴 du reviewer Tier-1 (file:line —
+    claim + evidence) et les étapes Tier-0 natives en échec (cmd + exit + extrait d'erreur). Un verdict absent
+    est simplement omis (fail-soft)."""
+    lines: list[str] = []
+    review = findings.get("review") or {}
+    reds = [f for f in review.get("findings", []) if str(f.get("severity", "")).startswith("🔴")]
+    if reds:
+        lines.append("### 🔴 Findings reviewer (Tier-1) à corriger")
+        for f in reds:
+            loc = f"{f.get('file', '?')}:{f.get('line', '?')}"
+            lines.append(f"- **{loc}** — {f.get('claim', '').strip()}")
+            if f.get("evidence"):
+                lines.append(f"  > {str(f['evidence']).strip()}")
+    toolchain = findings.get("toolchain") or {}
+    failed = [s for s in toolchain.get("steps", []) if not s.get("ok")]
+    if failed:
+        lines.append("### 🔴 Étapes Tier-0 (toolchain native) en échec")
+        for s in failed:
+            lines.append(f"- **{s.get('name', '?')}** : `{s.get('cmd', '?')}` (exit {s.get('exit_code')})")
+            if s.get("error"):
+                lines.append(f"  > {str(s['error']).strip()}")
+    if not lines:
+        return ("### bloqueurs\n(verdicts détaillés indisponibles — appuie-toi sur l'état du gate et le "
+                "diff de la branche pour identifier les défauts.)")
+    return "\n".join(lines)
+
+
+def build_fix_prompt(project: dict, feature: dict, *, findings: dict, root: Path) -> str:
+    """Compose le prompt d'une **passe de correction** (gate rouge → refix) : même cadrage facette
+    (PERSONA/METHOD) + contexte in-repo que `build_worker_prompt`, mais le mandat est un fix ciblé et le corps
+    porte les **findings** (le brief = le verdict). `findings` = `{review, toolchain}` (verdicts lus). PUR
+    (hors lecture des fichiers présents). Part sur le **stdin** de `claude -p`."""
+    root = Path(root)
+    facet = facet_mod.resolve_facet(root, feature.get("facet"))
+    header = (
+        f"# Passe de correction — feature {feature['slug']} "
+        f"({feature.get('title') or feature['slug']})\n"
+        f"Projet : {project['slug']} ({project.get('name') or project['slug']}) · "
+        f"Facette : {facet} · Branche : {feature.get('branch', '')}"
+    )
+    blocks = [
+        header,
+        _facet_block(root, facet, "PERSONA.md"),
+        _fix_mandate(),
+        _facet_block(root, facet, "METHOD.md"),
+        f"## Bloqueurs du gate à corriger\n{_findings_block(findings)}",
+        f"## Contexte du projet\n{_context_block(root)}",
+    ]
+    return "\n\n".join(b for b in blocks if b) + "\n"
+
+
 def build_worker_prompt(project: dict, feature: dict, task: dict, *, root: Path) -> str:
     """Compose le prompt worker à partir de la task NEXT, sa feature (dont la **facette**), son projet, et le
     contexte in-repo (`root` = le worktree). La facette injecte **persona + méthode** (lues des `.md`

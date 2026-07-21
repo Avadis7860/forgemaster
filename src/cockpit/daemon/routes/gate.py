@@ -11,7 +11,7 @@ from starlette.concurrency import run_in_threadpool
 
 from cockpit import auth
 from cockpit.daemon.deps import Deps, get_deps
-from cockpit.dispatch import reviewer, worktree
+from cockpit.dispatch import refix, reviewer, worktree
 from cockpit.gate import history, merge, review, toolchain
 from cockpit.git.internal import GitOpError, InternalGit
 from cockpit.projects.registry import get_project
@@ -101,6 +101,25 @@ def make_gate_router() -> APIRouter:
             conn = deps.open_db()
             try:
                 return reviewer.dispatch_reviewer(conn, deps.settings, feature_ref=f"{project}/{feature}")
+            finally:
+                conn.close()
+        return await run_in_threadpool(_run)
+
+    @router.post("/api/gate/{project}/{feature}/refix-dispatch", status_code=201)
+    async def dispatch_refix_route(project: str, feature: str, deps: Deps = Depends(get_deps)) -> dict:
+        """**Passe de correction** sur un gate ROUGE (offre, pas autonomie) : dispatche UN worker qui corrige
+        les bloqueurs cités sur la branche de feature (« retour au dev », brief = le verdict) → re-finalise
+        (Tier-0 + review re-dispatchée) → ré-évalue le gate. **Bornée** (`MAX_FIX_PASSES`/feature), refuse
+        honnêtement si non-rouge/non-refixable/borne atteinte (0 spawn). Le **merge n'est jamais déclenché**
+        (GO humain). Jusqu'à 2 spawns `claude` longs (fix + reviewer) → threadpool. Gate d'auth (jamais de
+        spawn silencieux)."""
+        if not auth.claude_auth_status()["authenticated"]:
+            raise HTTPException(status_code=403, detail=auth.AUTH_HINT)
+
+        def _run() -> dict:
+            conn = deps.open_db()
+            try:
+                return refix.dispatch_refix(conn, deps.settings, project=project, feature=feature)
             finally:
                 conn.close()
         return await run_in_threadpool(_run)

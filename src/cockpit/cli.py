@@ -134,6 +134,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_abort.add_argument("--feature", default=None,
                          help="ne cibler que les workers de cette feature (défaut : tout le run du projet)")
 
+    # -- refix --------------------------------------------------------------------------------------
+    p_refix = sub.add_parser("refix", parents=[common],
+                             help="dispatcher UNE passe de correction bornée sur un gate rouge (offre)")
+    p_refix.add_argument("project")
+    p_refix.add_argument("feature")
+
     # -- interview ----------------------------------------------------------------------------------
     p_interview = sub.add_parser("interview", parents=[common],
                                  help="mener l'interview terminale interactive du socle (1ʳᵉ session)")
@@ -301,6 +307,11 @@ def _h_abort(settings: Settings, args: argparse.Namespace) -> int:
     return abort.cli_dispatch(settings, args)
 
 
+def _h_refix(settings: Settings, args: argparse.Namespace) -> int:
+    from cockpit.dispatch import refix
+    return refix.cli_dispatch(settings, args)
+
+
 def _h_interview(settings: Settings, args: argparse.Namespace) -> int:
     from cockpit import interview
     return interview.cli_dispatch(settings, args)
@@ -387,6 +398,7 @@ _HANDLERS = {
     "dispatch": _h_dispatch,
     "run": _h_run,
     "abort": _h_abort,
+    "refix": _h_refix,
     "interview": _h_interview,
     "deploy": _h_deploy,
     "gate": _h_gate,

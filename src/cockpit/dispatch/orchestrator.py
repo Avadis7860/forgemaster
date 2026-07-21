@@ -116,8 +116,8 @@ def _worked_complete_features(conn: sqlite3.Connection, project: str, failed: se
     return out
 
 
-def _finalize_feature(conn: sqlite3.Connection, settings: Settings, project: str, feature: str, *,
-                      review_runner: reviewer.Runner | None) -> dict:
+def finalize_feature(conn: sqlite3.Connection, settings: Settings, project: str, feature: str, *,
+                     review_runner: reviewer.Runner | None) -> dict:
     """Finalise une feature au travail fini : exécute le **Tier-0 toolchain** (déterministe, SHA-bound) PUIS
     **dispatche le reviewer Tier-1** (charte : LLM génère / déterministe gate), et évalue le gate en *preview*
     (`human_go=False` → on ne merge JAMAIS ici — le GO reste humain). Retourne `{feature, merge_ready,
@@ -226,7 +226,7 @@ def run_project(conn: sqlite3.Connection, settings: Settings, *, project: str,
     # Drain fini → FINALISE chaque feature au travail complet : Tier-0 + reviewer dispatché → merge-ready.
     # C'est le tronçon « qualité » de la boucle autonome (le merge reste le GO humain, hors boucle).
     worked = _worked_complete_features(conn, project, failed | needs_interview | held_for_socle)
-    finalizations = [_finalize_feature(conn, settings, project, slug, review_runner=review_runner)
+    finalizations = [finalize_feature(conn, settings, project, slug, review_runner=review_runner)
                      for slug in worked]
     dispositions = _dispositions(conn, project, drained=set(worked), failed=failed,
                                  interview=needs_interview, held_socle=held_for_socle)
@@ -241,7 +241,7 @@ def run_feature(conn: sqlite3.Connection, settings: Settings, *, project: str, f
     worker à la fois) PUIS la FINALISE (Tier-0 toolchain + reviewer dispatché → gate en preview GO=false).
     Symétrise le chemin WEB (`POST /api/dispatch`) sur le chemin CLI (`run_project`) SANS dupliquer la
     sémantique : réutilise `_dispatch_one` (qui possède la transition `done` — cf. docstring de module),
-    `_worked_complete_features` et `_finalize_feature`. `conn` = lectures roadmap + finalisation (thread
+    `_worked_complete_features` et `finalize_feature`. `conn` = lectures roadmap + finalisation (thread
     appelant) ; chaque worker ouvre la SIENNE (thread-local). Terminaison garantie : chaque run réussi avance
     une task (`done`) ⇒ le READY décroît ; un échec rompt la boucle (task revenue `todo` par `dispatch_next`,
     jamais re-dispatchée en spin). Retourne le rapport agrégé de `_summarize` (même forme que `run_project`,
@@ -278,7 +278,7 @@ def run_feature(conn: sqlite3.Connection, settings: Settings, *, project: str, f
     needs_interview: set[str] = {feature} if last_held else set()
     failed: set[str] = {feature} if (reports and not reports[-1]["ok"] and not last_held) else set()
     worked = _worked_complete_features(conn, project, failed | needs_interview)
-    finalizations = ([_finalize_feature(conn, settings, project, feature, review_runner=review_runner)]
+    finalizations = ([finalize_feature(conn, settings, project, feature, review_runner=review_runner)]
                      if feature in worked else [])
     dispositions = _dispositions(conn, project, drained=set(worked), failed=failed,
                                  interview=needs_interview, held_socle=set())

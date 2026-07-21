@@ -33,7 +33,7 @@ from cockpit.git.internal import InternalGit
 from cockpit.projects.registry import get_project, sot_path_for
 from cockpit.provision.mcp import inject_mcp_config
 from cockpit.roadmap import model, resolver
-from cockpit.roadmap.prompt import build_worker_prompt
+from cockpit.roadmap.prompt import build_fix_prompt, build_worker_prompt
 from cockpit.tools import ToolPreflightError, preflight_tools, tools_env
 
 # -- politique d'outils (verbatim de worker_dispatch.py) --------------------------------------------
@@ -215,38 +215,64 @@ def dispatch_next(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
     job_id = jobs.record_start(conn, task_id=nxt["id"], worktree=str(res["path"]),
                                port=res["port"], session_id=session_id, log_path=str(log_path))
 
+    def _on_success(parsed: dict) -> None:
+        # Récolte le minerai AVANT le commit : le message final du worker (ses décisions) devient un
+        # `docs/decisions/<date>--<task>.md` durable, embarqué dans le même commit que le code. Branche ok
+        # uniquement → un run raté (revient `todo`) ne laisse jamais de minerai orphelin. Le worker écrit le
+        # code mais NE fait PAS de git (mandat) → la forge committe son travail sur la branche de feature dès
+        # le run réussi, pour que le gate SHA-bound ait un HEAD à ancrer (arbre net → no-op propre).
+        write_decision_doc(res["path"], nxt["slug"], parsed.get("result"),
+                           date_str=date.today().isoformat())
+        git.commit_worktree(res["path"], message=f"feat({feature}): {nxt['slug']} (worker dispatch)",
+                            identity=resolve_identity(project, worktree.WORKTREE_BASE, role="worker"))
+
+    def _on_failure(_parsed: dict) -> None:
+        conn.execute("UPDATE tasks SET status = 'todo' WHERE id = ?", (nxt["id"],))   # re-dispatchable
+        conn.commit()
+
+    parsed = _run_worker(conn, settings, res=res, session_id=session_id, job_id=job_id, log_path=log_path,
+                         prompt=prompt, project=project, runner=runner,
+                         on_success=_on_success, on_failure=_on_failure)
+    return {"dispatched": True, "reason": "ok" if parsed.get("ok") else (parsed.get("error") or "échec"),
+            "task": nxt["slug"], "job_id": job_id, "result": parsed}
+
+
+def _run_worker(conn: sqlite3.Connection, settings: Settings, *, res: dict, session_id: str, job_id: str,
+                log_path: Path, prompt: str, project: str, runner: Runner | None,
+                on_success: Callable[[dict], None], on_failure: Callable[[dict], None]) -> dict:
+    """Tronc de spawn PARTAGÉ par `dispatch_next` (task) et `dispatch_fix` (correction) : câble le MCP,
+    construit l'argv headless, sélectionne le runner (défaut = streaming vers `log_path`),
+    preflight/trust/check `claude`, spawne, parse, `record_finish`. `on_success(parsed)`/`on_failure(parsed)`
+    portent les effets SPÉCIFIQUES à l'appelant (récolte + commit + transition de task, ou commit de fix) —
+    appelés DANS la garde anti-orphelin (sémantique identique à l'ancien inline). Retourne `parsed`.
+
+    Garde de finalisation : le job est déjà `running` (record_start côté appelant). SEUL `record_finish` (ou
+    le callback d'échec) le sort de cet état. Toute exception qui échappe (preflight non-ToolPreflightError,
+    trust/DB, spawn OSError, commit forge…) sauterait la sortie → job `running` ZOMBIE (daemon vivant). On
+    finalise alors l'orphelin (killed + task `in_progress`→todo, scopé au job encore `running`) PUIS on
+    re-propage LOUD — jamais avalé, jamais laissé zombie."""
     # Câble le MCP de corpus dans le worktree (JWT minté, hors-git) → le worker « connaît ses outils ».
     # No-op honnête si le secret n'est pas configuré (install sans corpus privé) : le worker tourne sans MCP.
     mcp_path = inject_mcp_config(res["path"], settings, slug=project)
     # `stream-json` : le worker émet ses événements ligne-à-ligne (NDJSON) sur stdout → streamés vers log_path
-    # en direct. `--output-format json` ne les écrivait qu'à la fin (transcript live impossible). Le runner
-    # par défaut streame vers log_path ; un runner injecté (test) reçoit le même argv sans streamer.
+    # en direct. Le runner par défaut streame ; un runner injecté (test) reçoit le même argv sans streamer.
     argv = build_headless_argv(session_id=session_id, work=True, mcp_config=mcp_path,
                                output_format="stream-json")
     active_runner = runner or _make_default_runner(str(log_path), conn, job_id)
     # PATH d'outils préfixé (`tools/bin`) → le worker RÉSOUT `codemap`/`docsmap`/`frontmap`/`node`/`ruff`…
-    # que sa facette déclare (fin du `env=None` passif : le PATH systemd minimal ne les portait pas). Le MÊME
-    # env sert au preflight (which) ET au spawn — cohérence garantie.
+    # que sa facette déclare. Le MÊME env sert au preflight (which) ET au spawn — cohérence garantie.
     env = tools_env(settings)
     started = time.monotonic()
-    # Garde de finalisation : le job vient d'être posé `running` (record_start). SEUL `record_finish` (ou le
-    # revert task→todo) le sort de cet état. Toute exception qui échappe à la gestion normale ci-dessous
-    # (preflight non-ToolPreflightError, trust/DB en erreur, spawn OSError, commit forge…) sauterait cette
-    # sortie → job `running` ZOMBIE, daemon pourtant vivant. On finalise alors l'orphelin (killed + task→todo,
-    # scopé au job encore `running`) PUIS on re-propage LOUD — jamais avalé, jamais laissé zombie.
     try:
         try:
             # Preflight fail-loud : tout binaire déclaré par la facette (allowedTools) doit résoudre AVANT le
-            # spawn — sinon le worker le découvrirait absent à l'usage (échec tardif et opaque). Absent → job
-            # échoué + task re-dispatchable (comme un RunTimeout), le runner n'est jamais appelé.
+            # spawn — sinon le worker le découvrirait absent à l'usage (échec tardif et opaque).
             preflight_tools(res["path"], settings, env=env)
-            # Le worker n'exécute ses outils QUE si son workspace est TRUSTED — sinon `claude -p` headless
-            # ignore les `allowedTools` de la facette (« this workspace has not been trusted »). La clé de
-            # confiance du worktree est le SoT bare du projet → marqué trusted avant le spawn (idempotent).
+            # Le worker n'exécute ses outils QUE si son workspace est TRUSTED — la clé de confiance du
+            # worktree est le SoT bare du projet → marqué trusted avant le spawn (idempotent).
             auth.trust_workspace(sot_path_for(settings, project))
             # `claude` (moteur du worker) doit résoudre dans l'env du worker (`tools_env` a `~/.local/bin`) :
-            # absent → on échoue FAIL-LOUD (comme le preflight) au lieu d'un spawn mort-né silencieux (le PATH
-            # systemd du daemon n'a pas `~/.local/bin` sans cet env).
+            # absent → FAIL-LOUD (comme le preflight) au lieu d'un spawn mort-né silencieux.
             if shutil.which("claude", path=env.get("PATH")) is None:
                 raise ToolPreflightError(
                     "claude introuvable sur le PATH du worker — installe Claude Code "
@@ -259,24 +285,58 @@ def dispatch_next(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
         wall_s = time.monotonic() - started
         jobs.record_finish(conn, job_id, parsed, wall_s=wall_s)
         if parsed.get("ok"):
-            # Récolte le minerai AVANT le commit : le message final du worker (ses décisions) devient un
-            # `docs/decisions/<date>--<task>.md` durable, embarqué dans le même commit que le code. Dans la
-            # branche ok uniquement → un run raté (revient `todo`) ne laisse jamais de minerai orphelin.
-            write_decision_doc(res["path"], nxt["slug"], parsed.get("result"),
-                               date_str=date.today().isoformat())
-            # Le worker écrit le code mais NE fait PAS de git (mandat) → la forge committe son travail sur la
-            # branche de feature dès le run réussi, pour que le gate SHA-bound ait un HEAD à ancrer. Arbre net
-            # (le worker n'a rien changé) → no-op propre (la feature reste alignée sur sa base).
-            git.commit_worktree(res["path"], message=f"feat({feature}): {nxt['slug']} (worker dispatch)",
-                                identity=resolve_identity(project, worktree.WORKTREE_BASE, role="worker"))
+            on_success(parsed)
         else:
-            conn.execute("UPDATE tasks SET status = 'todo' WHERE id = ?", (nxt["id"],))   # re-dispatchable
-            conn.commit()
-        return {"dispatched": True, "reason": "ok" if parsed.get("ok") else (parsed.get("error") or "échec"),
-                "task": nxt["slug"], "job_id": job_id, "result": parsed}
+            on_failure(parsed)
+        return parsed
     except BaseException:
         reconcile.mark_job_orphan(conn, job_id)   # jamais de zombie ; no-op si le job est déjà finalisé
         raise
+
+
+def dispatch_fix(conn: sqlite3.Connection, settings: Settings, *, feature_ref: str, findings: dict,
+                 git: GitBackend | None = None, runner: Runner | None = None) -> dict:
+    """Dispatche un worker de **correction** sur la branche de feature (gate rouge → refix) : réutilise le
+    worktree (rebase idempotent sur `dev` — « retour au dev »), construit le brief depuis les `findings` (le
+    brief = le verdict), spawne, committe le fix. PAS de task → aucune transition `todo`/`done`, aucune
+    récolte de minerai. Job journalisé `kind='fix'` (ancré sur une task `done` de la feature pour la
+    découverte live/`list_jobs`) → la borne se compte par `count_fix_jobs`. Retourne
+    `{dispatched, reason, job_id?, result?}`."""
+    git = git or InternalGit()
+    project, feature = feature_ref.split("/", 1)
+    feat = model.resolve_feature(conn, feature_ref)
+    anchor = _feature_anchor_task_id(conn, feat["id"])
+    if anchor is None:
+        return {"dispatched": False, "reason": "aucune task dans cette feature — rien à corriger"}
+    res = worktree.reserve(conn, settings, git, project=project, feature=feature)
+    prompt = build_fix_prompt(get_project(conn, project), feat, findings=findings, root=res["path"])
+    session_id = ids.new_id()
+    log_path = jobs.dispatch_log_path(settings, session_id)
+    job_id = jobs.record_start(conn, task_id=anchor, worktree=str(res["path"]), port=res["port"],
+                               session_id=session_id, log_path=str(log_path), kind="fix")
+
+    def _on_success(_parsed: dict) -> None:
+        # Le worker de fix écrit le code mais NE fait PAS de git (mandat) → la forge committe la correction
+        # sur la branche de feature → le gate SHA-bound s'ancre sur le nouveau HEAD (re-finalisé par `refix`).
+        git.commit_worktree(res["path"], message=f"fix({feature}): gate refix pass (worker dispatch)",
+                            identity=resolve_identity(project, worktree.WORKTREE_BASE, role="worker"))
+
+    parsed = _run_worker(conn, settings, res=res, session_id=session_id, job_id=job_id, log_path=log_path,
+                         prompt=prompt, project=project, runner=runner,
+                         on_success=_on_success, on_failure=lambda _p: None)
+    return {"dispatched": True, "reason": "ok" if parsed.get("ok") else (parsed.get("error") or "échec"),
+            "job_id": job_id, "result": parsed}
+
+
+def _feature_anchor_task_id(conn: sqlite3.Connection, feature_id: str) -> str | None:
+    """Une task « ancre » de la feature pour rattacher un job de correction (le modèle `dispatch_jobs` exige
+    un `task_id` NON NULL, or un fix corrige la feature ENTIÈRE, pas une task) : une task `done` de préférence
+    (le fix corrige du travail landé), sinon n'importe laquelle. None si la feature n'a aucune task. Le CHOIX
+    n'affecte que le `task_slug` affiché — la borne `count_fix_jobs` est feature-scopée (join tasks)."""
+    row = conn.execute(
+        "SELECT id FROM tasks WHERE feature_id = ? ORDER BY (status = 'done') DESC, id DESC LIMIT 1",
+        (feature_id,)).fetchone()
+    return row["id"] if row else None
 
 
 def _counts(classified: dict[str, dict]) -> str:

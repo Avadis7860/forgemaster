@@ -81,6 +81,16 @@ def get_job(conn: sqlite3.Connection, job_id: str) -> dict:
     return dict(r)
 
 
+def count_fix_jobs(conn: sqlite3.Connection, feature_id: str) -> int:
+    """Nombre de jobs de **correction** (`kind='fix'`) déjà lancés pour une feature (join `tasks`). Sert la
+    **borne** de `dispatch.refix` (max passes de fix/feature) — feature-scopée, indépendante de la task-ancre
+    à laquelle chaque fix est rattaché."""
+    r = conn.execute(
+        "SELECT COUNT(*) AS n FROM dispatch_jobs j JOIN tasks t ON j.task_id = t.id "
+        "WHERE t.feature_id = ? AND j.kind = 'fix'", (feature_id,)).fetchone()
+    return int(r["n"]) if r else 0
+
+
 def list_jobs(conn: sqlite3.Connection, feature_id: str) -> list[dict]:
     """Jobs d'une feature (join `tasks`), du plus récent au plus ancien ; `task_slug` joint pour l'affichage.
     Sert la **découverte** du job à streamer (le POST dispatch bloque jusqu'à la fin → le front trouve le job
