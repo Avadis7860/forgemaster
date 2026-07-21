@@ -30,6 +30,9 @@ import {
   GitReconcileSchema,
   FlowSchema,
   FlowOperationsSchema,
+  FrontmapTokensSchema,
+  FrontmapPrimitivesSchema,
+  FrontmapRoutesSchema,
   HealthSchema,
   JobDetailSchema,
   JobsListSchema,
@@ -226,6 +229,24 @@ export const api = {
       `/api/projects/${encodeURIComponent(project)}/flow` +
         `?operation=${encodeURIComponent(selector)}&ref=${encodeURIComponent(ref)}&depth=${depth}`,
       FlowSchema,
+    ),
+
+  // Frontmap (design-system indexé) : tokens · primitives · routes du front d'un projet, relais du contrat
+  // JSON front-map. GET idempotents (index bâti au 1ᵉʳ accès, caché par SHA+version — goto-safe, comme flow).
+  getFrontmapTokens: (project: string, ref = 'dev') =>
+    request(
+      `/api/projects/${encodeURIComponent(project)}/frontmap/tokens?ref=${encodeURIComponent(ref)}`,
+      FrontmapTokensSchema,
+    ),
+  getFrontmapPrimitives: (project: string, ref = 'dev') =>
+    request(
+      `/api/projects/${encodeURIComponent(project)}/frontmap/primitives?ref=${encodeURIComponent(ref)}`,
+      FrontmapPrimitivesSchema,
+    ),
+  getFrontmapRoutes: (project: string, ref = 'dev') =>
+    request(
+      `/api/projects/${encodeURIComponent(project)}/frontmap/routes?ref=${encodeURIComponent(ref)}`,
+      FrontmapRoutesSchema,
     ),
 
   // Docs : la carte du projet/outil, lue depuis son repo (SoT). GET idempotent (lecture bare, goto-safe).

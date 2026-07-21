@@ -35,6 +35,7 @@ export const qk = {
   flowOps: (project: string, ref: string) => ['flow-ops', project, ref] as const,
   flow: (project: string, selector: string, ref: string, depth: number) =>
     ['flow', project, selector, ref, depth] as const,
+  frontmap: (project: string, view: string, ref: string) => ['frontmap', project, view, ref] as const,
   next: (project: string, feature: string) => ['next', project, feature] as const,
   jobs: (project: string, feature: string) => ['jobs', project, feature] as const,
   job: (jobId: string) => ['job', jobId] as const,
@@ -343,6 +344,35 @@ export function useFlow(project: string, selector: string, ref = 'dev', depth = 
     queryKey: qk.flow(project, selector, ref, depth),
     queryFn: () => api.getFlow(project, selector, ref, depth),
     enabled: Boolean(project && selector),
+    staleTime: 60_000,
+  })
+}
+
+// Frontmap : design-system indexé d'un projet (tokens/primitives/routes). GET idempotents, pas de poll ;
+// `staleTime` élevé — l'index est (SHA,version)-bound, il ne change qu'à un nouveau commit sur `ref`.
+export function useFrontmapTokens(project: string, ref = 'dev') {
+  return useQuery({
+    queryKey: qk.frontmap(project, 'tokens', ref),
+    queryFn: () => api.getFrontmapTokens(project, ref),
+    enabled: Boolean(project),
+    staleTime: 60_000,
+  })
+}
+
+export function useFrontmapPrimitives(project: string, ref = 'dev') {
+  return useQuery({
+    queryKey: qk.frontmap(project, 'primitives', ref),
+    queryFn: () => api.getFrontmapPrimitives(project, ref),
+    enabled: Boolean(project),
+    staleTime: 60_000,
+  })
+}
+
+export function useFrontmapRoutes(project: string, ref = 'dev') {
+  return useQuery({
+    queryKey: qk.frontmap(project, 'routes', ref),
+    queryFn: () => api.getFrontmapRoutes(project, ref),
+    enabled: Boolean(project),
     staleTime: 60_000,
   })
 }

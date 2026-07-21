@@ -664,6 +664,61 @@ export const FlowSchema = z.object({
 })
 export type Flow = z.infer<typeof FlowSchema>
 
+// -- Frontmap (design-system indexé) : relais du contrat JSON front-map (tokens + primitives + routes) ---
+// Chaque verbe : GET /api/projects/{p}/frontmap/{verbe}. GET idempotents (index bâti au 1ᵉʳ accès, caché par
+// SHA+version — goto-safe, comme flow). Zod strippe les clés non rendues (props/variants/defaults des
+// primitives restent au contrat back mais ne sont pas projetées dans la vue catalogue).
+export const FrontmapTokenSchema = z.object({
+  name: z.string(),
+  value: z.string(),
+  group: z.string(),
+  source_file: z.string(),
+  line: z.number(),
+  lead: z.string().nullish(),
+})
+export type FrontmapToken = z.infer<typeof FrontmapTokenSchema>
+
+export const FrontmapTokensSchema = z.object({
+  tokens: z.array(FrontmapTokenSchema),
+  count: z.number(),
+  engine: z.string().nullish(),
+})
+export type FrontmapTokens = z.infer<typeof FrontmapTokensSchema>
+
+export const FrontmapPrimitiveSchema = z.object({
+  name: z.string(),
+  file: z.string(),
+  line: z.number(),
+  lead: z.string().nullish(),
+})
+export type FrontmapPrimitive = z.infer<typeof FrontmapPrimitiveSchema>
+
+export const FrontmapPrimitivesSchema = z.object({
+  primitives: z.array(FrontmapPrimitiveSchema),
+  count: z.number(),
+  engine: z.string().nullish(),
+})
+export type FrontmapPrimitives = z.infer<typeof FrontmapPrimitivesSchema>
+
+export const FrontmapRouteSchema = z.object({
+  var: z.string(),
+  path: z.string().nullable(),
+  full_path: z.string(),
+  component: z.string().nullish(),
+  parent: z.string().nullable(),
+  is_root: z.boolean(),
+  file: z.string(),
+  line: z.number(),
+})
+export type FrontmapRoute = z.infer<typeof FrontmapRouteSchema>
+
+export const FrontmapRoutesSchema = z.object({
+  routes: z.array(FrontmapRouteSchema),
+  count: z.number(),
+  engine: z.string().nullish(),
+})
+export type FrontmapRoutes = z.infer<typeof FrontmapRoutesSchema>
+
 // -- Onboarding self-hosted (phase 4c) : check config-requise + credential par entité ---------------
 
 // Racine de confiance du store actif : joignable ? (file = zéro-config ; bws = BWS_ACCESS_TOKEN présent).

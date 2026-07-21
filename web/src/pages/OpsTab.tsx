@@ -3,13 +3,14 @@ import { useNavigate, useParams, useSearch } from '@tanstack/react-router'
 import { Button, Dialog, LoadingState } from '@/components/ui'
 import { RuntimeStrip } from '@/components/runtime/RuntimeStrip'
 import { FlowPanel } from '@/components/flow/FlowPanel'
+import { FrontmapPanel } from '@/components/frontmap/FrontmapPanel'
 
 // xterm (~290 kB) code-split hors du bundle principal, comme l'ex-onglet Terminal.
 const TerminalPane = lazy(() =>
   import('@/components/terminal/TerminalPane').then((m) => ({ default: m.TerminalPane })),
 )
 
-type Panel = 'flow'
+type Panel = 'flow' | 'frontmap'
 
 /** Onglet « Ops » : opérer & inspecter le système qui tourne, en UNE vue. **Terminal = ancre** (remplit
  *  l'espace), **Runtime réduit/fondu** en bandeau glanceable au-dessus. **Flow** (modal) s'ouvre AU CLIC
@@ -46,6 +47,7 @@ export function OpsTab() {
         <div className="min-w-0 sm:flex-1"><RuntimeStrip project={project} /></div>
         <div className="flex shrink-0 gap-2">
           <Button variant="secondary" onClick={() => openPanel('flow')} aria-haspopup="dialog">Flow</Button>
+          <Button variant="secondary" onClick={() => openPanel('frontmap')} aria-haspopup="dialog">Frontmap</Button>
         </div>
       </div>
 
@@ -60,6 +62,12 @@ export function OpsTab() {
       <Dialog open={panel === 'flow'} onOpenChange={(o) => { if (!o) closePanel() }}
         side="center" title="Flow · call-flow">
         <FlowPanel project={project} />
+      </Dialog>
+
+      {/* Frontmap = modal centré : inspecte le design-system indexé (tokens/primitives/routes) puis ferme. */}
+      <Dialog open={panel === 'frontmap'} onOpenChange={(o) => { if (!o) closePanel() }}
+        side="center" title="Frontmap · design-system">
+        <FrontmapPanel project={project} />
       </Dialog>
     </div>
   )
