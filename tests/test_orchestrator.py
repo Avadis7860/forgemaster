@@ -304,11 +304,31 @@ def test_run_project_blocks_feature_until_prereq_merged(ctx):
     assert _statuses(conn, "code") == {"impl": "done"}
 
 
+# -- report-counts-clarity : ventilation du résumé par disposition ---------------------------------
+
+def test_run_project_summary_ventilates_dispositions_without_double_count(ctx):
+    """report-counts-clarity (bug live 2026-07-18 : « 4 dispatchée, 3 ok » agrégeait des cas distincts).
+    Le résumé compte PAR DISPOSITION, sans double-compte : 1 drainée (`worked`), 1 bloquée (`blk`, dep
+    non-mergée), 1 échouée (`bad`). Aucune n'est comptée deux fois ; `blocked` surface la feature bloquée."""
+    settings, conn = ctx
+    _new_project(conn, settings, "proj")
+    _seed(conn, settings, "proj", "worked", [("t", [])])              # drainera (runner ok)
+    _seed(conn, settings, "proj", "bad", [("t", [])])                 # échouera (runner fail)
+    model.add_feature(conn, project_slug="proj", slug="blk", depends_on=["worked"])
+    model.add_task(conn, feature_ref="proj/blk", slug="t")            # bloquée : `worked` jamais mergée
+    summary = orchestrator.run_project(conn, settings, project="proj", runner=_Runner(fail=("bad",)))
+    c = summary["counts"]
+    assert (c["drained"], c["blocked"], c["failed"], c["interview"]) == (1, 1, 1, 0)
+    assert summary["blocked_features"] == ["blk"]
+    assert summary["aborted"] is False
+
+
 # -- CLI `cockpit run` : rapport (smoke, sans worker) -----------------------------------------------
 
 def test_cli_dispatch_reports_empty_roadmap(ctx, capsys, monkeypatch):
     # Projet sans feature dispatchable → run_project ne spawn RIEN (aucun `claude`), imprime un rapport
-    # « 0 dispatchée(s) … roadmap drainée » et retourne 0. Prouve le chemin CLI → rapport de bout en bout.
+    # ventilé PAR DISPOSITION (« 0 drainée(s), 0 tenue(s) interview, 0 bloquée(s), 0 échouée(s) ») — plus
+    # l'agrégat trompeur « X dispatchée(s) » — et retourne 0. Prouve le chemin CLI → rapport de bout en bout.
     settings, conn = ctx
     monkeypatch.setattr("cockpit.auth.claude_auth_status",             # auth présente → on teste le rapport
                         lambda *a, **k: {"authenticated": True, "source": "test"})
@@ -318,7 +338,9 @@ def test_cli_dispatch_reports_empty_roadmap(ctx, capsys, monkeypatch):
         project="empty", home=None, projects_root=None))
     out = capsys.readouterr().out
     assert code == 0
-    assert "run empty : 0 dispatchée(s), 0 ok, 0 échouée(s)" in out and "roadmap drainée" in out
+    assert "run empty : 0 drainée(s), 0 tenue(s) interview, 0 bloquée(s), 0 échouée(s)" in out
+    assert "roadmap drainée" in out
+    assert "dispatchée" not in out   # l'agrégat trompeur a bien disparu (report-counts-clarity)
 
 
 def test_cli_dispatch_refuses_without_claude_auth(ctx, capsys, monkeypatch):

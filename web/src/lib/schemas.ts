@@ -241,6 +241,15 @@ const FeatureFinalizationSchema = z.object({
   blockers: z.array(z.string()),
   review: z.record(z.unknown()).nullish(),
 })
+// Comptes PAR DISPOSITION (report-counts-clarity) : chaque feature dans UN bucket, sans double-compte —
+// la source lisible du résumé (« 1 drainée, 1 tenue interview, 2 bloquées ») vs l'agrégat trompeur `dispatched`.
+export const RunCountsSchema = z.object({
+  drained: z.number(),
+  interview: z.number(),
+  held_socle: z.number(),
+  failed: z.number(),
+  blocked: z.number(),
+})
 export const FeatureRunReportSchema = z.object({
   project: z.string(),
   dispatched: z.number(),
@@ -250,10 +259,23 @@ export const FeatureRunReportSchema = z.object({
   drained: z.boolean(),
   runs: z.array(FeatureRunSchema),
   needs_interview: z.array(z.string()),
+  held_for_socle: z.array(z.string()).default([]), // était OMIS → l'UI perdait ce compte serveur
   finalizations: z.array(FeatureFinalizationSchema),
   merge_ready: z.array(z.string()),
+  counts: RunCountsSchema,
+  blocked_features: z.array(z.string()).default([]),
+  aborted: z.boolean().default(false), // un abort humain a rompu le run (rien mergé, re-runnable)
 })
 export type FeatureRunReport = z.infer<typeof FeatureRunReportSchema>
+
+// Résultat d'un abort de run (`POST /api/dispatch/{project}/abort`) : combien de workers arrêtés.
+export const AbortResultSchema = z.object({
+  project: z.string(),
+  feature: z.string().nullable(),
+  aborted: z.number(),
+  jobs: z.array(z.object({ job_id: z.string(), feature: z.string(), pid: z.number().nullable() })),
+})
+export type AbortResult = z.infer<typeof AbortResultSchema>
 
 // Événement de transcript normalisé (jobs.normalize_line) poussé par le WS. `job` = frame terminale
 // synthétique (fin de run) émise par stream.stream_job. Le front ne fabrique jamais ces formes.

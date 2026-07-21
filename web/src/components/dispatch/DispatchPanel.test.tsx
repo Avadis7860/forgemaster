@@ -14,13 +14,15 @@ const JOBS = [
 
 // Holder hoisté : `dispatchData` pilote le retour de `useDispatch` par test ; `navigate` est le spy du router
 // (DispatchPanel navigue vers l'onglet Ops pour le handoff interview).
-const h = vi.hoisted(() => ({ dispatchData: undefined as FeatureRunReport | undefined, navigate: vi.fn() }))
+const h = vi.hoisted(() => ({ dispatchData: undefined as FeatureRunReport | undefined, navigate: vi.fn(),
+  dispatchPending: false, abortMutate: vi.fn() }))
 
 vi.mock('@tanstack/react-router', () => ({ useNavigate: () => h.navigate }))
 
 vi.mock('@/lib/queries', () => ({
   useOnboarding: () => ({ data: { claude_auth: { authenticated: true } } }),
-  useDispatch: () => ({ isPending: false, isError: false, error: null, data: h.dispatchData, mutate: vi.fn() }),
+  useDispatch: () => ({ isPending: h.dispatchPending, isError: false, error: null, data: h.dispatchData, mutate: vi.fn() }),
+  useAbort: () => ({ isPending: false, isError: false, error: null, mutate: h.abortMutate }),
   useFeatureJobs: () => ({ data: JOBS }),
   useJob: () => ({ data: { job: JOBS[0], events: [] }, isLoading: false }),
 }))
@@ -35,7 +37,9 @@ const FEATURE = { slug: 'ingest-pipeline', next: undefined, tasks: [] } as unkno
 
 beforeEach(() => {
   h.dispatchData = undefined
+  h.dispatchPending = false
   h.navigate.mockClear()
+  h.abortMutate.mockClear()
 })
 
 describe('DispatchPanel — visibilité honnête du run reviewer', () => {
@@ -53,6 +57,23 @@ describe('DispatchPanel — visibilité honnête du run reviewer', () => {
     render(<DispatchPanel project="atlas" feature={FEATURE} />)
     expect(screen.getByText('Raison de l\'échec')).toBeInTheDocument()
     expect(screen.getByText(/ToolPreflightError/)).toBeInTheDocument()
+  })
+})
+
+describe('DispatchPanel — arrêt du run (abort)', () => {
+  it('sans run actif, aucun bouton « Arrêter le run »', () => {
+    render(<DispatchPanel project="atlas" feature={FEATURE} />)   // job en tête = failed → pas de run actif
+    expect(screen.queryByRole('button', { name: 'Arrêter le run' })).toBeNull()
+  })
+
+  it('un run actif affiche « Arrêter le run » ; confirmer déclenche l\'abort', () => {
+    h.dispatchPending = true                                      // POST dispatch en cours → run actif
+    render(<DispatchPanel project="atlas" feature={FEATURE} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Arrêter le run' }))   // header (dialog fermé)
+    expect(screen.getByText('Arrêter le run ?')).toBeInTheDocument()          // confirmation ouverte
+    const buttons = screen.getAllByRole('button', { name: 'Arrêter le run' }) // header + confirm dialog
+    fireEvent.click(buttons[buttons.length - 1])                              // confirmer
+    expect(h.abortMutate).toHaveBeenCalledTimes(1)                            // l'abort est déclenché
   })
 })
 

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { Alert, Badge, Button, Card, LoadingState, SectionTitle } from '@/components/ui'
+import { Alert, Badge, Button, Card, Dialog, LoadingState, SectionTitle } from '@/components/ui'
 import { Transcript } from '@/components/dispatch/Transcript'
 import { ClaudeAuthBlock } from '@/components/ClaudeAuthStatus'
 import { ApiError } from '@/lib/api'
-import { useDispatch, useFeatureJobs, useJob, useOnboarding } from '@/lib/queries'
+import { useAbort, useDispatch, useFeatureJobs, useJob, useOnboarding } from '@/lib/queries'
 import { useDispatchStream } from '@/lib/useDispatchStream'
 import { JOB_KIND_TONE, JOB_STATUS_TONE, TASK_STATE_TONE, toneFor } from '@/lib/statusTone'
 import { jobKindLabel, jobStatusLabel, stateLabel } from '@/lib/taskLabels'
@@ -25,6 +25,8 @@ export function DispatchPanel({ project, feature }: { project: string; feature: 
   const authBlocked = claudeAuth ? !claudeAuth.authenticated : false
   const navigate = useNavigate()
   const dispatch = useDispatch(project, feature.slug)
+  const abort = useAbort(project, feature.slug)
+  const [confirmAbort, setConfirmAbort] = useState(false)
   const jobs = useFeatureJobs(project, feature.slug, dispatch.isPending ? 1000 : false)
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
   const armedBaseline = useRef<string | null | undefined>(undefined)
@@ -80,21 +82,59 @@ export function DispatchPanel({ project, feature }: { project: string; feature: 
             <p className="text-sm text-faint">Aucune task READY — rien à dispatcher.</p>
           )}
         </div>
-        {interactiveNext ? (
-          <Button variant="primary" onClick={launchInterview}>
-            Lancer l'interview dans le terminal
-          </Button>
-        ) : (
-          <Button
-            variant="primary"
-            onClick={onDispatch}
-            busy={dispatch.isPending}
-            disabled={!feature.next || authBlocked}
-          >
-            {dispatch.isPending ? 'Dispatch en cours…' : 'Dispatcher la feature'}
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {/* Arrêt de première classe : visible UNIQUEMENT tant qu'un run est actif (POST dispatch bloquant OU
+              job en vol). Gardé par une confirmation (l'abort tue des process). L'abort débloque le POST
+              dispatch en cours → il rend un rapport `aborted`. */}
+          {(dispatch.isPending || running) && (
+            <Button variant="danger" onClick={() => setConfirmAbort(true)} busy={abort.isPending}>
+              Arrêter le run
+            </Button>
+          )}
+          {interactiveNext ? (
+            <Button variant="primary" onClick={launchInterview}>
+              Lancer l'interview dans le terminal
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              onClick={onDispatch}
+              busy={dispatch.isPending}
+              disabled={!feature.next || authBlocked}
+            >
+              {dispatch.isPending ? 'Dispatch en cours…' : 'Dispatcher la feature'}
+            </Button>
+          )}
+        </div>
       </div>
+
+      {/* Confirmation d'abort : l'acte tue les workers en cours (irréversible pour le run courant) → garde
+          explicite (patron `LeaveTerminalConfirm`). Rien n'est mergé, la task revient `todo`, run relançable. */}
+      <Dialog open={confirmAbort} onOpenChange={setConfirmAbort} side="center" title="Arrêter le run ?">
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-fg">
+            Les workers en cours seront arrêtés (leurs process tués) et le mutex de la feature libéré.
+            <strong> Rien ne sera mergé</strong> — la task revient à l'état « à faire » et le run est
+            relançable.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setConfirmAbort(false)}>
+              Annuler
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              busy={abort.isPending}
+              onClick={() => {
+                abort.mutate()
+                setConfirmAbort(false)
+              }}
+            >
+              Arrêter le run
+            </Button>
+          </div>
+        </div>
+      </Dialog>
 
       {authBlocked && claudeAuth && <ClaudeAuthBlock auth={claudeAuth} />}
 
@@ -106,9 +146,19 @@ export function DispatchPanel({ project, feature }: { project: string; feature: 
       {dispatch.data && dispatch.data.dispatched === 0 && dispatch.data.finalizations.length === 0 && (
         <Alert tone="warn" title="Rien à drainer">Aucune task READY dans cette feature.</Alert>
       )}
-      {dispatch.data && dispatch.data.failed > 0 && (
+      {dispatch.data && dispatch.data.failed > 0 && !dispatch.data.aborted && (
         <Alert tone="danger" title="Dispatch en échec">
           {dispatch.data.runs.find((r) => !r.ok)?.reason ?? 'un run a échoué'}
+        </Alert>
+      )}
+      {dispatch.data?.aborted && (
+        <Alert tone="warn" title="Run interrompu">
+          Run arrêté — workers stoppés, mutex libéré, rien mergé. Relançable.
+        </Alert>
+      )}
+      {abort.isError && (
+        <Alert tone="danger" title="Échec de l'arrêt">
+          {abort.error instanceof ApiError ? abort.error.detail : String(abort.error)}
         </Alert>
       )}
       {/* Socle interactif : une interview ne se mène pas en `claude -p` → l'action primaire (en-tête) ouvre

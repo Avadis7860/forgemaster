@@ -154,15 +154,23 @@ def write_decision_doc(worktree: Path, task_slug: str, result: str | None, *,
     return doc
 
 
-def _make_default_runner(out_path: str) -> Runner:
+def _make_default_runner(out_path: str, conn: sqlite3.Connection | None = None,
+                         job_id: str | None = None) -> Runner:
     """Runner par défaut du dispatch : exécute `claude -p` en **streamant** son stdout (`stream-json`) dans
     `out_path` au fil de l'eau → le transcript est suivable EN DIRECT (le pont `dispatch/stream` tail ce
     fichier), au lieu de n'apparaître qu'à la fin. `out_path` (le `log_path` du job) est capturé ici → le
-    protocole `Runner` reste inchangé, les runners injectés en test ne le voient pas."""
+    protocole `Runner` reste inchangé, les runners injectés en test ne le voient pas.
+
+    Spawn en **session propre** (`new_session=True` → le worker est leader de groupe, tuable en groupe par
+    l'abort) et **persiste son pid** dès le spawn (`on_spawn` → `jobs.record_pid`) sur la connexion
+    thread-locale `conn` : c'est le handle explicite que `cockpit abort` lit en DB (fin du `pkill` fragile).
+    `conn`/`job_id` absents (runner de test) → pas de persistance, comportement inchangé."""
     def _runner(argv: list[str], *, cwd: object, input_text: str, timeout: float,
                 env: Mapping[str, str] | None = None) -> run.RunResult:
+        on_spawn = ((lambda pid: jobs.record_pid(conn, job_id, pid))
+                    if conn is not None and job_id is not None else None)
         return run.run_streaming(argv, cwd=cwd, input_text=input_text, timeout=timeout,   # type: ignore[arg-type]
-                                 env=env, out_path=out_path)
+                                 env=env, out_path=out_path, new_session=True, on_spawn=on_spawn)
     return _runner
 
 
@@ -215,7 +223,7 @@ def dispatch_next(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
     # par défaut streame vers log_path ; un runner injecté (test) reçoit le même argv sans streamer.
     argv = build_headless_argv(session_id=session_id, work=True, mcp_config=mcp_path,
                                output_format="stream-json")
-    active_runner = runner or _make_default_runner(str(log_path))
+    active_runner = runner or _make_default_runner(str(log_path), conn, job_id)
     # PATH d'outils préfixé (`tools/bin`) → le worker RÉSOUT `codemap`/`docsmap`/`frontmap`/`node`/`ruff`…
     # que sa facette déclare (fin du `env=None` passif : le PATH systemd minimal ne les portait pas). Le MÊME
     # env sert au preflight (which) ET au spawn — cohérence garantie.

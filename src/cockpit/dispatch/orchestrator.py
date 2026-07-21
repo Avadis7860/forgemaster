@@ -22,13 +22,14 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import signal
 import sqlite3
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 
 from cockpit import auth, interview
 from cockpit.config import Settings
 from cockpit.db import store
-from cockpit.dispatch import reviewer, worker
+from cockpit.dispatch import abort, reviewer, worker
 from cockpit.dispatch import worktree as worktree_mod
 from cockpit.gate import merge as merge_gate
 from cockpit.gate import toolchain, verify
@@ -180,6 +181,8 @@ def run_project(conn: sqlite3.Connection, settings: Settings, *, project: str,
     socle_blocking = socle is not None and socle["status"] != "merged"
     held_for_socle: set[str] = set()   # features de travail tenues jusqu'au merge du socle (pas un échec)
     max_parallel = max(1, max_parallel)
+    abort.clear_abort(settings, project)   # run FRAIS : purge une sentinelle éventée d'un run précédent
+    aborted = False               # un abort humain (UI/CLI/Ctrl-C) a rompu le drain → run marqué interrompu
     in_flight: set[str] = set()   # features en vol — MUTÉ À LA SOUMISSION (mutex, seul le principal assigne)
     failed: set[str] = set()      # features dont un run a échoué → exclues du reste du run (borne le run)
     needs_interview: set[str] = set()   # v12 : next task interactive → tenue pour le terminal (pas un échec)
@@ -188,6 +191,12 @@ def run_project(conn: sqlite3.Connection, settings: Settings, *, project: str,
 
     with ThreadPoolExecutor(max_workers=max_parallel) as pool:
         while True:
+            # Abort humain (sentinelle posée par `abort.request_abort` : bouton UI, `cockpit abort`, Ctrl-C) :
+            # on cesse d'assigner AVANT de découvrir. Les workers en vol ont déjà été tués (killpg) → le
+            # `with` les joint sans pendre. On sort proprement : run `aborted` (rien mergé, re-runnable).
+            if abort.abort_requested(settings, project):
+                aborted = True
+                break
             # `failed | needs_interview | held_for_socle` = les features à NE PLUS soumettre (échec, tenue au
             # terminal, ou tenue jusqu'au merge du socle) : sans les exclure, elles resteraient READY et la
             # boucle spinnerait à l'infini.
@@ -213,13 +222,16 @@ def run_project(conn: sqlite3.Connection, settings: Settings, *, project: str,
                 elif not report["ok"]:
                     failed.add(slug)                    # exclue → pas de re-dispatch en boucle infinie
 
+    abort.clear_abort(settings, project)   # sortie de boucle : la sentinelle a joué son rôle → on la purge
     # Drain fini → FINALISE chaque feature au travail complet : Tier-0 + reviewer dispatché → merge-ready.
     # C'est le tronçon « qualité » de la boucle autonome (le merge reste le GO humain, hors boucle).
+    worked = _worked_complete_features(conn, project, failed | needs_interview | held_for_socle)
     finalizations = [_finalize_feature(conn, settings, project, slug, review_runner=review_runner)
-                     for slug in _worked_complete_features(conn, project,
-                                                           failed | needs_interview | held_for_socle)]
+                     for slug in worked]
+    dispositions = _dispositions(conn, project, drained=set(worked), failed=failed,
+                                 interview=needs_interview, held_socle=held_for_socle)
     return _summarize(project, reports, failed, finalizations, needs_interview=needs_interview,
-                      held_for_socle=held_for_socle)
+                      held_for_socle=held_for_socle, dispositions=dispositions, aborted=aborted)
 
 
 def run_feature(conn: sqlite3.Connection, settings: Settings, *, project: str, feature: str,
@@ -245,8 +257,15 @@ def run_feature(conn: sqlite3.Connection, settings: Settings, *, project: str, f
     if socle is not None and socle["status"] != "merged" and feature != socle["slug"]:
         return _summarize(project, [], set(), [], held_for_socle={feature})
     feature_ref = f"{project}/{feature}"
+    abort.clear_abort(settings, project)   # (web) run frais : purge une sentinelle éventée
+    aborted = False
     reports: list[dict] = []
     while True:
+        # Abort humain (bouton « Arrêter le run » → POST abort sur un autre thread du daemon, ou Ctrl-C) :
+        # le worker en vol a déjà été tué (killpg) → on cesse de spinner, run `aborted` (rien mergé).
+        if abort.abort_requested(settings, project):
+            aborted = True
+            break
         index = resolver.index_for_feature(conn, feature_ref)   # KeyError si projet/feature absent
         if not index or resolver.resolve_next(index) is None:
             break                                               # plus de task READY → feature drainée
@@ -254,39 +273,79 @@ def run_feature(conn: sqlite3.Connection, settings: Settings, *, project: str, f
         reports.append(report)
         if not report["ok"]:
             break                                               # échec OU interactive : ne PAS spinner
+    abort.clear_abort(settings, project)
     last_held = bool(reports and reports[-1].get("needs_terminal"))   # v12 : tenue pour l'interview terminale
     needs_interview: set[str] = {feature} if last_held else set()
     failed: set[str] = {feature} if (reports and not reports[-1]["ok"] and not last_held) else set()
+    worked = _worked_complete_features(conn, project, failed | needs_interview)
     finalizations = ([_finalize_feature(conn, settings, project, feature, review_runner=review_runner)]
-                     if feature in _worked_complete_features(conn, project, failed | needs_interview) else [])
-    return _summarize(project, reports, failed, finalizations, needs_interview=needs_interview)
+                     if feature in worked else [])
+    dispositions = _dispositions(conn, project, drained=set(worked), failed=failed,
+                                 interview=needs_interview, held_socle=set())
+    return _summarize(project, reports, failed, finalizations, needs_interview=needs_interview,
+                      dispositions=dispositions, aborted=aborted)
+
+
+_DISPOSITIONS = ("drained", "interview", "held_socle", "failed", "blocked")
+
+
+def _dispositions(conn: sqlite3.Connection, project: str, *, drained: set[str], failed: set[str],
+                  interview: set[str], held_socle: set[str]) -> dict[str, list[str]]:
+    """Range CHAQUE feature non-inerte du projet dans **UNE** disposition, sans double-compte — c'est ce qui
+    permet un résumé exact (« 1 drainée, 1 tenue-interview, 2 bloquées ») au lieu de « 4 dispatchée, 3 ok »
+    qui agrège des cas distincts (bug de lisibilité constaté E2E 2026-07-18). `blocked` = ni drainée, ni
+    tenue (interview/socle), ni échouée : elle n'a aucune task READY (DAG inter- ou intra-feature non
+    débloqué) → elle n'a rien fait ce run. Les statuts inertes (merged/cancelled) sont hors-run. Read-only."""
+    disp: dict[str, list[str]] = {k: [] for k in _DISPOSITIONS}
+    for f in model.list_features(conn, project):
+        slug = f["slug"]
+        if f["status"] in _INERT_FEATURE_STATUS:
+            continue
+        if slug in failed:
+            disp["failed"].append(slug)
+        elif slug in interview:
+            disp["interview"].append(slug)
+        elif slug in held_socle:
+            disp["held_socle"].append(slug)
+        elif slug in drained:
+            disp["drained"].append(slug)
+        else:
+            disp["blocked"].append(slug)   # rien de READY (deps intra/inter non débloqués) → n'a rien fait
+    return disp
 
 
 def _summarize(project: str, reports: list[dict], failed: set[str],
                finalizations: list[dict] | None = None, *,
                needs_interview: set[str] | None = None,
-               held_for_socle: set[str] | None = None) -> dict:
-    """Agrège les runs + les **finalisations** (Tier-0 + review par feature complète). `drained` ⟺ aucune
-    feature en échec ; `merge_ready` = features dont le gate est vert (prêtes au GO humain). `needs_interview`
-    (v12) = features dont la next task est `interactive` : tenues pour `cockpit interview` (surfacées, pas
-    comptées en échec). `held_for_socle` = features de travail NON dispatchées parce que le socle du projet
-    n'est pas encore mergé dans `dev` (elles branchent depuis `dev` et ont besoin du design du socle) : elles
-    attendent le GO humain `cockpit merge <projet>/<socle> --go`. La boucle ne s'arrête que lorsqu'il ne
-    reste rien à soumettre ; une feature en échec laisse des tasks `todo` re-dispatchables."""
+               held_for_socle: set[str] | None = None,
+               dispositions: dict[str, list[str]] | None = None,
+               aborted: bool = False) -> dict:
+    """Agrège les runs + les **finalisations** (Tier-0 + review par feature complète). `drained` (bool) ⟺
+    aucune feature en échec ; `merge_ready` = features dont le gate est vert (prêtes au GO humain).
+    `needs_interview` (v12) = features dont la next task est `interactive` : tenues pour `cockpit interview`
+    (surfacées, pas comptées en échec). `held_for_socle` = features de travail NON dispatchées parce que le
+    socle du projet n'est pas encore mergé dans `dev`. `counts` (par `_dispositions`) ventile les features
+    par disposition **sans double-compte** — la source de vérité lisible du résumé (les clés historiques
+    `dispatched`/`ok` restent par-task-run, conservées pour la compat schéma). `aborted` = un abort humain a
+    rompu le run (rien mergé, re-runnable)."""
     fins = finalizations or []
     held = needs_interview or set()
     socle_held = held_for_socle or set()
+    disp = dispositions or {}
     # Une run interactive apparaît dans `reports` avec ok=False (aucun worker lancé) mais N'EST PAS un échec :
     # on ne la compte ni dans `ok` ni dans `failed`, elle vit dans `needs_interview`.
     n_ok = sum(1 for r in reports if r["ok"])
     n_held = sum(1 for r in reports if r.get("needs_terminal"))
+    counts = {k: len(disp.get(k, [])) for k in _DISPOSITIONS}
     return {"project": project, "dispatched": len(reports), "ok": n_ok,
             "failed": len(reports) - n_ok - n_held, "failed_features": sorted(failed),
             "drained": not failed, "runs": reports,
             "needs_interview": sorted(held),
             "held_for_socle": sorted(socle_held),
             "finalizations": fins,
-            "merge_ready": sorted(f["feature"] for f in fins if f["merge_ready"])}
+            "merge_ready": sorted(f["feature"] for f in fins if f["merge_ready"]),
+            "counts": counts, "blocked_features": sorted(disp.get("blocked", [])),
+            "aborted": aborted}
 
 
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
@@ -298,6 +357,16 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
         print(f"erreur : {auth.AUTH_HINT}")
         return 2
     conn = store.open_db(settings)
+    prev_sigint = signal.getsignal(signal.SIGINT)
+
+    def _on_sigint(_signum: int, _frame: object) -> None:
+        # Ctrl-C = abort de PREMIÈRE CLASSE (plus de `pkill` fragile) : tue les workers de CE run par leur
+        # pgid persisté (ce qui débloque le join du ThreadPoolExecutor) et pose la sentinelle → la boucle
+        # sort proprement, run `aborted`. request_abort ouvre sa propre connexion (jamais le `conn` du run).
+        print(f"\n⏹  abort demandé (Ctrl-C) — arrêt des workers de {args.project}…")
+        abort.request_abort(settings, project=args.project)
+
+    signal.signal(signal.SIGINT, _on_sigint)
     try:
         summary = run_project(conn, settings, project=args.project,
                               max_parallel=getattr(args, "max_parallel", DEFAULT_MAX_PARALLEL))
@@ -305,11 +374,20 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
         print(f"erreur : {exc}")
         return 1
     finally:
+        signal.signal(signal.SIGINT, prev_sigint)
         conn.close()
+    if summary.get("aborted"):
+        print(f"run {args.project} : INTERROMPU (abort humain) — workers arrêtés, mutex/worktree libéré(s), "
+              f"rien mergé (fail-closed). Relançable : `cockpit run {args.project}`.")
+        return 130
+    c = summary["counts"]
     tail = ("roadmap drainée" if summary["drained"]
             else f"features en échec : {', '.join(summary['failed_features'])}")
-    print(f"run {args.project} : {summary['dispatched']} dispatchée(s), {summary['ok']} ok, "
-          f"{summary['failed']} échouée(s) — {tail}")
+    parts = [f"{c['drained']} drainée(s)", f"{c['interview']} tenue(s) interview",
+             f"{c['blocked']} bloquée(s)", f"{c['failed']} échouée(s)"]
+    if c["held_socle"]:
+        parts.append(f"{c['held_socle']} en attente socle")
+    print(f"run {args.project} : {', '.join(parts)} — {tail}")
     for feat in summary.get("needs_interview", []):
         print(f"  🖐 {feat} — interview terminale requise (task interactive, non dispatchable en headless) : "
               f"lance `cockpit interview {args.project}` dans un terminal.")

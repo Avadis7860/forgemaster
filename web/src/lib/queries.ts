@@ -367,6 +367,20 @@ export function useDispatch(project: string, feature: string) {
   })
 }
 
+// Arrête le run en cours de la feature (bouton « Arrêter le run ») : tue les workers, libère le mutex.
+// À la résolution, invalide les jobs (le job passe `killed`) ET la roadmap (la task revient `todo`) → le
+// front relit la vérité serveur, jamais un état deviné (l'abort backend est l'autorité).
+export function useAbort(project: string, feature: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.abortRun(project, feature),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: qk.jobs(project, feature) })
+      qc.invalidateQueries({ queryKey: qk.roadmap(project) })
+    },
+  })
+}
+
 // Re-lance la review Tier-1 (filet anti-dead-end quand elle est absente/périmée). À la résolution, invalide
 // le gate (le verdict ré-ancré est relu → `review.present`/`fresh`).
 export function useReviewDispatch(project: string, feature: string) {

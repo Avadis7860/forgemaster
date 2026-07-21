@@ -127,6 +127,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--max-parallel", type=int, default=2,
                        help="nombre max de workers concurrents (features en parallèle ; défaut 2)")
 
+    # -- abort --------------------------------------------------------------------------------------
+    p_abort = sub.add_parser("abort", parents=[common],
+                             help="arrêter le run en cours d'un projet (workers tués, mutex libéré)")
+    p_abort.add_argument("project")
+    p_abort.add_argument("--feature", default=None,
+                         help="ne cibler que les workers de cette feature (défaut : tout le run du projet)")
+
     # -- interview ----------------------------------------------------------------------------------
     p_interview = sub.add_parser("interview", parents=[common],
                                  help="mener l'interview terminale interactive du socle (1ʳᵉ session)")
@@ -289,6 +296,11 @@ def _h_run(settings: Settings, args: argparse.Namespace) -> int:
     return orchestrator.cli_dispatch(settings, args)
 
 
+def _h_abort(settings: Settings, args: argparse.Namespace) -> int:
+    from cockpit.dispatch import abort
+    return abort.cli_dispatch(settings, args)
+
+
 def _h_interview(settings: Settings, args: argparse.Namespace) -> int:
     from cockpit import interview
     return interview.cli_dispatch(settings, args)
@@ -374,6 +386,7 @@ _HANDLERS = {
     "task": _h_task,
     "dispatch": _h_dispatch,
     "run": _h_run,
+    "abort": _h_abort,
     "interview": _h_interview,
     "deploy": _h_deploy,
     "gate": _h_gate,

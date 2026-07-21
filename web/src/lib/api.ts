@@ -12,6 +12,7 @@ import {
   CapitalCollectionsSchema,
   CapitalSectionsSchema,
   CapitalBodySchema,
+  AbortResultSchema,
   DeploymentActionSchema,
   DeploymentLogsSchema,
   DeploymentsSchema,
@@ -257,6 +258,14 @@ export const api = {
     request(
       `/api/dispatch/${encodeURIComponent(project)}/${encodeURIComponent(feature)}`,
       FeatureRunReportSchema,
+      { method: 'POST', body: '{}' },
+    ),
+  // Arrête le run en cours (bouton « Arrêter le run ») : tue les workers par leur pgid, libère le mutex →
+  // re-runnable. `feature` optionnel = ne cibler qu'un worker (défaut : tout le run du projet).
+  abortRun: (project: string, feature?: string) =>
+    request(
+      `/api/dispatch/${encodeURIComponent(project)}/abort${feature ? `?feature=${encodeURIComponent(feature)}` : ''}`,
+      AbortResultSchema,
       { method: 'POST', body: '{}' },
     ),
 

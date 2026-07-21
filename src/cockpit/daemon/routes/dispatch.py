@@ -13,12 +13,24 @@ from starlette.concurrency import run_in_threadpool
 
 from cockpit import auth
 from cockpit.daemon.deps import Deps, get_deps
-from cockpit.dispatch import jobs, orchestrator, stream
+from cockpit.dispatch import abort, jobs, orchestrator, stream
 from cockpit.roadmap import model
 
 
 def make_dispatch_router() -> APIRouter:
     router = APIRouter(tags=["dispatch"])
+
+    @router.post("/api/dispatch/{project}/abort")
+    async def abort_run(project: str, feature: str | None = None,
+                        deps: Deps = Depends(get_deps)) -> dict:
+        """**Arrête** le run en cours du projet (bouton « Arrêter le run ») : tue chaque worker par son pgid
+        persisté (handle explicite — plus de `pkill` fragile), marque les jobs `killed` + tasks `todo`, pose
+        la sentinelle que la boucle `run_feature`/`run_project` bloquée lit pour sortir → **re-runnable**,
+        rien mergé. `feature` (query, optionnel) cible un seul worker. killpg + grâce = **bloquant** →
+        threadpool. **Pas de gate d'auth** : arrêter doit TOUJOURS être possible (remède au footgun `pkill`).
+        Déclaré AVANT `/{project}/{feature}` : sinon `/proj/abort` matcherait avec feature=='abort'."""
+        return await run_in_threadpool(
+            abort.request_abort, deps.settings, project=project, feature=feature)
 
     @router.post("/api/dispatch/{project}/{feature}")
     async def dispatch(project: str, feature: str, deps: Deps = Depends(get_deps)) -> dict:

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import subprocess
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -97,6 +97,8 @@ def run_streaming(
     timeout: float | None = None,
     input_text: str | None = None,
     out_path: str | Path | None = None,
+    new_session: bool = False,
+    on_spawn: Callable[[int], None] | None = None,
 ) -> RunResult:
     """Comme `run`, mais **écrit le stdout au fil de l'eau** dans `out_path` (une ligne = un flush) au lieu de
     ne le capturer qu'à la fin — c'est ce qui rend le transcript d'un worker `claude -p --output-format
@@ -104,7 +106,12 @@ def run_streaming(
     accumulé et rendu dans le `RunResult` (le parseur du résultat final le relit). Le `timeout` est honoré
     **même sans aucune sortie** (thread lecteur + `proc.wait(timeout)`, kill → RunTimeout) : un worker qui
     pend ne bloque pas la forge. stdout ET stderr sont drainés en threads → pas de deadlock de pipe. argv en
-    LISTE (zéro shell)."""
+    LISTE (zéro shell).
+
+    `new_session=True` place le process dans sa **propre session** (`setsid` → il est leader de groupe,
+    `pgid == pid`) : un abort peut alors le tuer **en groupe** (`os.killpg`) sans toucher l'orchestrateur —
+    c'est le handle explicite qui remplace le `pgrep`/`kill -0` fragile. `on_spawn(pid)`, si fourni, est
+    appelé juste après le spawn (le dispatch y persiste le pid en DB → l'abort cross-process le retrouve)."""
     proc = subprocess.Popen(  # noqa: S603 — argv liste sans shell
         list(argv),
         cwd=str(cwd) if cwd is not None else None,
@@ -114,7 +121,10 @@ def run_streaming(
         stderr=subprocess.PIPE,
         text=True,
         bufsize=1,                         # ligne-bufferisé → le flush par ligne est effectif
+        start_new_session=new_session,     # leader de groupe → tuable en groupe (abort), sinon inchangé
     )
+    if on_spawn is not None:
+        on_spawn(proc.pid)
     out_chunks: list[str] = []
     err_chunks: list[str] = []
 

@@ -46,16 +46,28 @@ def record_start(conn: sqlite3.Connection, *, task_id: str, worktree: str, sessi
     return job_id
 
 
+def record_pid(conn: sqlite3.Connection, job_id: str, pid: int) -> None:
+    """Renseigne le `pid` (== pgid, le worker est spawné `start_new_session`) d'un job `running` — le handle
+    explicite que l'abort lit pour tuer le worker en groupe (`os.killpg`), au lieu d'un `pgrep` fragile.
+    Appelé par le runner par défaut juste après le spawn (`run_streaming(on_spawn=…)`). Le WHERE
+    `status='running'` évite d'écrire un pid sur un job déjà finalisé (course rare mais possible)."""
+    conn.execute(
+        "UPDATE dispatch_jobs SET pid = ? WHERE id = ? AND status = 'running'", (pid, job_id))
+    conn.commit()
+
+
 def record_finish(conn: sqlite3.Connection, job_id: str, parsed: dict, *,
                   wall_s: float | None = None, status: str | None = None) -> None:
     """Clôt un job : statut `done` si `parsed.ok`, sinon `failed` (un échec se journalise aussi) ; un
-    `status` explicite l'emporte (`killed`/`cancelled`). Renseigne les métriques du run (num_turns, coût) et
-    la raison d'échec `error` (v11 : le snippet calculé par `parse_headless_result`, persisté au lieu d'être
-    jeté dans le retour HTTP)."""
+    `status` explicite l'emporte (`killed` — cf. CHECK `dispatch_jobs.status`). Renseigne les métriques du
+    run (num_turns, coût) et la raison d'échec `error` (v11 : le snippet calculé par `parse_headless_result`,
+    persisté au lieu d'être jeté dans le retour HTTP). La garde `AND status='running'` est **essentielle** :
+    si un abort concurrent a déjà posé `killed` (course `record_finish` vs abort), on ne le **clobbe pas** en
+    `failed` — un job déjà finalisé ne se re-finalise jamais."""
     final = status or ("done" if parsed.get("ok") else "failed")
     conn.execute(
         "UPDATE dispatch_jobs SET status = ?, num_turns = ?, cost_usd = ?, wall_s = ?, "
-        "session_id = COALESCE(?, session_id), error = ?, ended_at = ? WHERE id = ?",
+        "session_id = COALESCE(?, session_id), error = ?, ended_at = ? WHERE id = ? AND status = 'running'",
         (final, parsed.get("num_turns"), parsed.get("cost_usd"), wall_s,
          parsed.get("session_id"), parsed.get("error"), _now(), job_id))
     conn.commit()

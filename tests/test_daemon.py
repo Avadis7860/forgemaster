@@ -232,7 +232,8 @@ def test_web_dispatch_drains_and_produces_review(client, monkeypatch, fake_tools
         out = json.dumps({"is_error": False, "result": '{"findings":[]}', "session_id": sid, "num_turns": 1})
         return run.RunResult(argv=list(argv), returncode=0, stdout=out, stderr="")
 
-    monkeypatch.setattr("cockpit.dispatch.worker._make_default_runner", lambda out_path: _worker)
+    monkeypatch.setattr("cockpit.dispatch.worker._make_default_runner",
+                        lambda out_path, *a, **k: _worker)   # signature élargie (out_path, conn, job_id)
     monkeypatch.setattr("cockpit.dispatch.reviewer._default_runner", _reviewer)
 
     conn = store.open_db(settings)                          # seed projet/feature/task (todo) en direct
@@ -352,6 +353,25 @@ def test_feature_jobs_listing_for_discovery(client):
     assert len(body) == 1 and body[0]["id"] == job_id
     assert body[0]["task_slug"] == "schema" and body[0]["status"] == "running"
     assert c.get("/api/dispatch/proj/nope/jobs").status_code == 404   # feature absente → 404
+
+
+def test_abort_run_endpoint_kills_and_requeues(client):
+    """`POST /api/dispatch/{project}/abort` (bouton « Arrêter le run ») marque le job `killed` + intention
+    tracée, re-runnable. La route littérale `abort` est déclarée AVANT `/{project}/{feature}` → elle n'est
+    PAS avalée avec feature=='abort' (sinon 404). Job sans pid (NULL) → aucun killpg réel (chemin kill
+    couvert par test_abort avec killer injecté) : ici on prouve le routage + le teardown DB."""
+    c, settings = client
+    job_id = _seed_job(settings, "/tmp/none.jsonl")          # job running, pid NULL
+    r = c.post("/api/dispatch/proj/abort")
+    assert r.status_code == 200                               # route atteinte (pas swallow par /{feature})
+    body = r.json()
+    assert body["project"] == "proj" and body["aborted"] == 1
+    conn = store.open_db(settings)
+    try:
+        row = jobs.get_job(conn, job_id)
+        assert row["status"] == "killed" and row["error"] == "aborted by human"
+    finally:
+        conn.close()
 
 
 def test_lifespan_reconciles_orphan_running_jobs_at_boot(tmp_path):
