@@ -84,11 +84,11 @@ function EntityList(
   )
 }
 
-/** Corps d'une catégorie-explorer (Bundles / Capital-token) : une **rangée** de navigation vers la route
- *  propre de l'explorer (ressource GLOBALE, hors projet). Surlignée quand on est déjà sur cette destination. */
+/** Corps d'une catégorie-explorer (Bundles / Capital-token / Templates) : une **rangée** de navigation vers la
+ *  route propre de l'explorer (ressource GLOBALE, hors projet). Surlignée quand on est déjà sur la destination. */
 function ExplorerRow(
   { to, label, hint, active }:
-  { to: '/bundles' | '/capital'; label: string; hint: string; active: boolean },
+  { to: '/bundles' | '/capital' | '/templates'; label: string; hint: string; active: boolean },
 ) {
   return (
     <Link to={to} className={rowClass(active)}>
@@ -100,9 +100,9 @@ function ExplorerRow(
 
 /** Rail de gauche = l'espace de travail : 3 catégories **repliables** (état persistant, variante `section`
  *  sans cadre) — `Projets` et `Outils` (entités travaillées/génériques, classées par `kind`, sélectionnables
- *  + création en pied) puis `Corpus` (les deux explorers de ressources globales — bundles + capital-token —
- *  regroupés, promus en routes propres). Contexte global du shell ; les explorers ne dépendent pas du daemon
- *  projet et restent atteignables même daemon injoignable. */
+ *  + création en pied) puis `Corpus` (les trois explorers de ressources globales — bundles + capital-token +
+ *  templates — regroupés, promus en routes propres). Contexte global du shell ; les explorers ne dépendent pas
+ *  du daemon projet et restent atteignables même daemon injoignable. */
 export function ProjectRail({ open = false, onClose }: { open?: boolean; onClose?: () => void }) {
   const projects = useProjects()
   const active = useParams({ strict: false }).project
@@ -160,9 +160,9 @@ export function ProjectRail({ open = false, onClose }: { open?: boolean; onClose
           </>
         )}
 
-        {/* Corpus — ressources GLOBALES parcourables (bundles semés + capital servi par le MCP),
-            indépendantes du daemon projet. Un seul regroupement : deux explorers ne méritent pas chacun
-            un en-tête de catégorie solo (place perdue) — le relief porte le groupe, pas chaque rangée. */}
+        {/* Corpus — ressources GLOBALES parcourables (bundles semés + capital servi par le MCP + templates de
+            référence UI), indépendantes du daemon projet. Un seul regroupement : les explorers ne méritent pas
+            chacun un en-tête de catégorie solo (place perdue) — le relief porte le groupe, pas chaque rangée. */}
         <Collapsible variant="section" title="Corpus" open={isOpen('corpus')} onOpenChange={onOpenChange('corpus')}>
           <ExplorerRow
             to="/bundles"
@@ -175,6 +175,12 @@ export function ProjectRail({ open = false, onClose }: { open?: boolean; onClose
             label="Explorer le capital"
             hint="doc & patrons servis par le MCP"
             active={pathname.startsWith('/capital')}
+          />
+          <ExplorerRow
+            to="/templates"
+            label="Explorer les templates"
+            hint="modèles d'UI à appliquer"
+            active={pathname.startsWith('/templates')}
           />
         </Collapsible>
       </div>

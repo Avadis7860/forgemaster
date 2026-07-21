@@ -187,6 +187,25 @@ export interface CreateProjectInput {
   project_type?: string     // type de bundle semé (défaut 'generic' côté daemon)
 }
 
+// Un template de référence UI OFFERT par la vitrine (GET /api/templates) : le résumé d'un dossier zéro-build
+// `web/public/templates/<slug>/` servi statiquement à `/templates/<slug>/…`. `slug` = nom de dossier (URL-safe) ;
+// `preview`/`entry` sont des chemins RELATIFS au dossier (le front bâtit `/templates/<slug>/<preview|entry>`).
+// Le backend est un scan déterministe fail-closed (dossier mal formé ignoré) → schéma strict, pas de passthrough.
+export const TemplateSummarySchema = z.object({
+  slug: z.string(),
+  name: z.string(),
+  tool_type: z.string(),     // archetype (browser-game | front-ts | …) — filtrage « optimal pour tel outil »
+  genre: z.string(),         // sous-genre (spatial | …) — tous les browser-games ne sont pas OGame-like
+  tags: z.array(z.string()),
+  intention: z.string(),     // description courte affichée sous le nom (« pour quel type d'outil »)
+  preview: z.string(),       // chemin relatif de la vignette (défaut preview.png)
+  entry: z.string(),         // chemin relatif de l'entrée (défaut index.html) — src de l'iframe live
+  themes: z.array(z.string()),  // colorimétries swappables embarquées (orbital | reactor | void)
+})
+export type TemplateSummary = z.infer<typeof TemplateSummarySchema>
+
+export const TemplatesListSchema = z.object({ templates: z.array(TemplateSummarySchema) })
+
 // -- V3 dispatch : job (run worker) + rapport de dispatch + événements de transcript (streamés en WS) --
 
 // Une ligne de `dispatch_jobs` enrichie du `task_slug` (join list_jobs). Champs consommés déclarés ;

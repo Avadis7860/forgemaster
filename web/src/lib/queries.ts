@@ -7,6 +7,7 @@ import type { BootstrapRunInput, CredentialLinkInput, CreateProjectInput, McpWir
 export const qk = {
   health: ['health'] as const,
   types: ['types'] as const,
+  templates: ['templates'] as const,
   bundleTree: (type: string) => ['bundle-tree', type] as const,
   bundleFile: (type: string, path: string) => ['bundle-file', type, path] as const,
   capitalStatus: ['capital-status'] as const,
@@ -54,6 +55,12 @@ export function useTypes() {
 
 export function useProjects() {
   return useQuery({ queryKey: qk.projects, queryFn: api.listProjects })
+}
+
+// Vitrine des templates de référence UI. Stable (change au dépôt d'un template) → staleTime élevé, pas de
+// poll. GET idempotent, goto-safe ; vide honnête si aucun template servi.
+export function useTemplates() {
+  return useQuery({ queryKey: qk.templates, queryFn: api.listTemplates, staleTime: 60_000 })
 }
 
 // Intérieur d'un bundle (explorer P5). Stable (change au dépôt d'un overlay) → staleTime élevé, pas de poll.

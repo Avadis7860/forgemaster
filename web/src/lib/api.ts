@@ -39,6 +39,7 @@ import {
   ProjectSchema,
   ProjectsListSchema,
   RoadmapSchema,
+  TemplatesListSchema,
   TypesListSchema,
   type BootstrapRunInput,
   type CredentialLinkInput,
@@ -94,6 +95,11 @@ export const api = {
   // Registre des bundles : les types de projet OFFERTS à la création (filtrés par validation, fail-closed).
   // GET idempotent (lecture du filesystem vendoré — goto-safe). Alimente le dropdown de NewProjectForm.
   listTypes: () => request('/api/types', TypesListSchema).then((r) => r.types),
+
+  // Vitrine des templates de référence UI : les dossiers zéro-build servis à `/templates/<slug>/…`, décrits
+  // par leur `template.toml`. GET idempotent (scan FS déterministe, fail-closed — goto-safe). Vide honnête si
+  // aucun template (dev sans build). La preview/entry sont chargées en statique par le front, pas via l'API.
+  listTemplates: () => request('/api/templates', TemplatesListSchema).then((r) => r.templates),
 
   // Intérieur d'un bundle (explorer P5) : arbre curé (chemins + groupe) puis corps d'UN fichier. GET
   // idempotents (lecture du bundle composé vendoré — goto-safe). Fail-closed : type non offert / fichier
