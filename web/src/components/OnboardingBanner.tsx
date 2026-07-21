@@ -1,4 +1,4 @@
-import { useNavigate } from '@tanstack/react-router'
+import { useLocation, useNavigate } from '@tanstack/react-router'
 import { Button } from '@/components/ui'
 import { useOnboarding } from '@/lib/queries'
 
@@ -10,8 +10,12 @@ import { useOnboarding } from '@/lib/queries'
 export function OnboardingBanner() {
   const { data } = useOnboarding()
   const navigate = useNavigate()
+  const { pathname } = useLocation()
   if (!data) return null
   if (data.first_run) {
+    // La Landing first_run (`/`) porte déjà l'accueil + son CTA accent contextualisé (Landing.tsx) :
+    // ne pas dupliquer la bannière ici (un seul accent par vue, axe 2). Le nudge reste sur les autres routes.
+    if (pathname === '/') return null
     return (
       <div className="flex items-center justify-between gap-3 border-b border-border bg-surface-raised px-4 py-2">
         <p className="text-sm text-fg">

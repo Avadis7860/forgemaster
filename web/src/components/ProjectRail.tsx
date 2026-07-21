@@ -20,9 +20,9 @@ const rowClass = (active: boolean) =>
     active ? 'bg-surface-raised text-fg' : 'text-muted hover:bg-surface-raised hover:text-fg',
   )
 
-/** État replié/déplié des 4 catégories du rail, PERSISTÉ en localStorage (ouvert par défaut). Une seule clé
- *  porte un objet `{ projet, outils, bundle, capital }` → le choix de l'utilisateur tient d'une session à
- *  l'autre, sans dépendre d'un projet. Dégrade silencieusement (SSR/quota/JSON cassé) vers « tout ouvert ». */
+/** État replié/déplié des 3 catégories du rail, PERSISTÉ en localStorage (ouvert par défaut). Une seule clé
+ *  porte un objet `{ projet, outils, corpus }` → le choix de l'utilisateur tient d'une session à l'autre,
+ *  sans dépendre d'un projet. Dégrade silencieusement (SSR/quota/JSON cassé) vers « tout ouvert ». */
 function useRailCollapse() {
   const [state, setState] = useState<Record<string, boolean>>(() => {
     try {
@@ -98,10 +98,10 @@ function ExplorerRow(
   )
 }
 
-/** Rail de gauche = l'espace de travail : 4 catégories **repliables** (état persistant, variante `section`
+/** Rail de gauche = l'espace de travail : 3 catégories **repliables** (état persistant, variante `section`
  *  sans cadre) — `Projets` et `Outils` (entités travaillées/génériques, classées par `kind`, sélectionnables
- *  + création en pied) puis `Bundles` et `Capital-token` (navigation vers les explorers de ressources
- *  globales, promus en routes propres). Contexte global du shell ; les explorers ne dépendent pas du daemon
+ *  + création en pied) puis `Corpus` (les deux explorers de ressources globales — bundles + capital-token —
+ *  regroupés, promus en routes propres). Contexte global du shell ; les explorers ne dépendent pas du daemon
  *  projet et restent atteignables même daemon injoignable. */
 export function ProjectRail({ open = false, onClose }: { open?: boolean; onClose?: () => void }) {
   const projects = useProjects()
@@ -110,9 +110,10 @@ export function ProjectRail({ open = false, onClose }: { open?: boolean; onClose
   const { pathname } = useLocation()
   const { isOpen, onOpenChange } = useRailCollapse()
   // Footer « Nouveau projet » replié par défaut (densité : c'est le plus gros bloc du rail et une action
-  // occasionnelle) — mais FORCÉ ouvert quand l'espace est vide, où créer un projet EST l'action primaire.
+  // occasionnelle) — un déclencheur compact `Nouveau projet ▾`, jamais force-ouvert (sinon il gonfle et
+  // rogne la dernière section du rail). En first_run, le chemin primaire de création/setup est le hero
+  // contextualisé de la Landing (`/`) ; ce déclencheur reste la voie rapide à un clic.
   const [newOpen, setNewOpen] = useState(false)
-  const isEmptyWorkspace = projects.isSuccess && projects.data.length === 0
 
   return (
     <aside
@@ -159,16 +160,16 @@ export function ProjectRail({ open = false, onClose }: { open?: boolean; onClose
           </>
         )}
 
-        {/* Bundles + Capital-token — ressources GLOBALES, indépendantes du daemon projet. */}
-        <Collapsible variant="section" title="Bundles" open={isOpen('bundle')} onOpenChange={onOpenChange('bundle')}>
+        {/* Corpus — ressources GLOBALES parcourables (bundles semés + capital servi par le MCP),
+            indépendantes du daemon projet. Un seul regroupement : deux explorers ne méritent pas chacun
+            un en-tête de catégorie solo (place perdue) — le relief porte le groupe, pas chaque rangée. */}
+        <Collapsible variant="section" title="Corpus" open={isOpen('corpus')} onOpenChange={onOpenChange('corpus')}>
           <ExplorerRow
             to="/bundles"
             label="Explorer les bundles"
             hint="ce que le cockpit sème"
             active={pathname.startsWith('/bundles')}
           />
-        </Collapsible>
-        <Collapsible variant="section" title="Capital-token" open={isOpen('capital')} onOpenChange={onOpenChange('capital')}>
           <ExplorerRow
             to="/capital"
             label="Explorer le capital"
@@ -181,7 +182,7 @@ export function ProjectRail({ open = false, onClose }: { open?: boolean; onClose
       <div className="border-t border-border p-3">
         <Collapsible
           title="Nouveau projet"
-          open={isEmptyWorkspace || newOpen}
+          open={newOpen}
           onOpenChange={setNewOpen}
         >
           <NewProjectForm
