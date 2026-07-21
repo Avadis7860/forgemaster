@@ -994,12 +994,26 @@ def test_reaper_terminates_detached_session_past_ttl(tmp_path):
     asyncio.run(scenario())
 
 
-def test_terminal_ws_refuses_unknown_project_before_accept(client):
+def test_terminal_ws_refuses_unknown_project_before_accept(client, monkeypatch):
     """Correctif F2 : un projet inexistant est refusé (1008) AVANT `accept()` — plus de `bash -l` spawné
-    dans un dir absent qui crashait post-accept."""
+    dans un dir absent qui crashait post-accept. HERMÉTIQUE : on force l'hôte authentifié pour que le refus
+    soit attribué au **gate projet**, pas au gate auth quand l'hôte n'a pas de credentials."""
     c, _ = client
+    monkeypatch.setattr("cockpit.auth.claude_auth_status",
+                        lambda *a, **k: {"authenticated": True, "source": "test"})
     # fermé avant accept → disconnect levé au connect
     with pytest.raises(WebSocketDisconnect), c.websocket_connect("/ws/terminal/does-not-exist"):
+        pass
+
+
+def test_terminal_ws_refused_when_host_unauthenticated(client, monkeypatch):
+    """Garde d'auth du WS terminal (parité routes mutantes) : hôte NON authentifié → refus 1008 AVANT
+    `accept()`, même pour un projet **valide** (prouve que c'est l'auth qui refuse, pas l'existence)."""
+    c, _ = client
+    c.post("/api/projects", json={"slug": "real"})       # projet existant → seul l'auth peut refuser
+    monkeypatch.setattr("cockpit.auth.claude_auth_status",
+                        lambda *a, **k: {"authenticated": False, "source": None})
+    with pytest.raises(WebSocketDisconnect), c.websocket_connect("/ws/terminal/real"):
         pass
 
 
