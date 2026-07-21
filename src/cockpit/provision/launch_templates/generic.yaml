@@ -1,0 +1,23 @@
+# MIRROR VENDORÉ du template SoT central : templates:cockpit-launch-pipeline/launch-roadmap (mcp-catalogs-data).
+# Ce n'est PAS un fichier semé (il vit hors bundles/) : c'est la copie canonique contre laquelle la graine
+# bundle `.cockpit/launch-roadmap.yaml` est DRIFT-CHECKÉE (provision.check_launch_roadmap_drift, pytest + CLI
+# `cockpit bundle validate`). Pour tout changement : distille d'abord le template CENTRAL (mcp-catalogs-data),
+# re-vendore ici, puis re-dérive la graine bundle — jamais l'inverse (SoT-and-derive, doctrine capital-jeton).
+# Corps = contrat .cockpit/roadmap.yaml SANS la clé `project:` (le slug est fourni au seed).
+version: 1
+features:
+  - slug: socle
+    title: "Socle — cadrage & décomposition"
+    facet: doc
+    tasks:
+      - slug: cadrage
+        title: "Cadrage : renseigner l'Intention du projet"
+        priority: P0
+        mode: interactive
+        depends_on: []
+        acceptance: "docs/architecture.md § « Intention » ne porte plus « À renseigner » : ce que le projet fait, pour qui, et le critère binaire de « fini » du premier jalon sont écrits."
+      - slug: decompose
+        title: "Dériver la roadmap de travail (skill roadmap-decompose)"
+        priority: P0
+        depends_on: [cadrage]
+        acceptance: "À partir de l'Intention, la roadmap du projet porte ≥1 feature de travail (facette + tasks avec depends_on + acceptance) ; `cockpit roadmap check` reste vert."

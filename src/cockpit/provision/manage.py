@@ -16,6 +16,7 @@ import argparse
 from cockpit.config import Settings
 from cockpit.provision import (
     BundleError,
+    check_launch_roadmap_drift,
     discover_types,
     load_bundle,
     read_bundle_manifest,
@@ -43,16 +44,24 @@ def _list(args: argparse.Namespace) -> int:
 
 def _validate(args: argparse.Namespace) -> int:
     """Diagnostic actionnable : valide un type (si fourni) ou tous. `✓ <type>` / `✗ <type> : <raison>`
-    + synthèse. **Retour 1 dès qu'un bundle est invalide** (utilisable en gate/CI)."""
+    + synthèse. Valide la **structure** du bundle (fail-closed `validate_bundle`) ET la **cohérence
+    SoT-and-derive** de la graine (`check_launch_roadmap_drift` : pas de drift vs template central vendoré).
+    **Retour 1 dès qu'un bundle est invalide OU a dérivé** (utilisable en gate/CI)."""
     targets = [args.type] if args.type else list(discover_types())
     invalid = 0
     for t in targets:
         try:
             validate_bundle(t)
-            print(f"✓ {t}")
         except BundleError as exc:
             print(f"✗ {t} : {exc}")
             invalid += 1
+            continue
+        drift = check_launch_roadmap_drift(t)
+        if drift:
+            print(f"✗ {t} : {'; '.join(drift)}")
+            invalid += 1
+        else:
+            print(f"✓ {t}")
     print(f"{len(targets) - invalid} valides, {invalid} invalides")
     return 1 if invalid else 0
 

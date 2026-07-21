@@ -1,3 +1,7 @@
+# SoT: templates:cockpit-launch-pipeline/launch-roadmap (mcp-catalogs-data) — DÉRIVÉ, ne pas diverger.
+# Drift-checké (provision.check_launch_roadmap_drift, `cockpit bundle validate`) contre le mirror vendoré
+# provision/launch_templates/generic.yaml. Distille au CENTRE puis re-dérive ; cf. décision vault
+# corpus/decision/meta/2026-07-21--launch-roadmap-sot-and-derive-lifecycle.md.
 # launch-roadmap.yaml — roadmap de LANCEMENT générique, semée dans le board (DB) à la création du projet.
 # Schéma = contrat .cockpit/roadmap.yaml SANS la clé `project:` (le slug est fourni au seed).
 # Le SOCLE d'amorçage : cadrer l'intention, puis dériver la roadmap de travail via roadmap-decompose.

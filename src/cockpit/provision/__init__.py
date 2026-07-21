@@ -27,6 +27,7 @@ import yaml
 _BUNDLES_DIR = Path(__file__).parent / "bundles"
 _MANIFEST_PATH = ".cockpit/bundle.toml"   # descripteur [bundle], vendoré, lu au dispatch (facet.py)
 _LAUNCH_ROADMAP_PATH = ".cockpit/launch-roadmap.yaml"   # graine de roadmap de lancement (seed au create)
+_LAUNCH_TEMPLATES_DIR = Path(__file__).parent / "launch_templates"   # mirrors vendorés du SoT central
 
 
 class BundleError(ValueError):
@@ -180,6 +181,41 @@ def load_launch_roadmap(project_type: str = "generic") -> dict:
     if raw is None:
         return {}
     return yaml.safe_load(raw) or {}
+
+
+def _canonical_launch_roadmap(project_type: str) -> tuple[str, dict] | None:
+    """Le `(nom-de-mirror, roadmap-parsée)` du template SoT central **vendoré** (`launch_templates/`) contre
+    lequel la graine de lancement de `project_type` doit être en phase (SoT-and-derive, I6 du blueprint
+    `cockpit-launch-pipeline`). Le mirror est choisi par la **présence d'un overlay** : un type qui surcharge
+    `.cockpit/launch-roadmap.yaml` a son propre mirror `<type>.yaml` ; sinon il hérite de `generic.yaml` (le
+    socle base). `None` si le mirror attendu est absent (divergence indétectable → surfacée par le check)."""
+    overlay_seed = _BUNDLES_DIR / "types" / project_type / _LAUNCH_ROADMAP_PATH
+    mirror_name = f"{project_type}.yaml" if overlay_seed.is_file() else "generic.yaml"
+    mirror = _LAUNCH_TEMPLATES_DIR / mirror_name
+    if not mirror.is_file():
+        return None
+    return mirror_name, yaml.safe_load(mirror.read_text(encoding="utf-8")) or {}
+
+
+def check_launch_roadmap_drift(project_type: str = "generic") -> list[str]:
+    """Garde de drift déterministe : la graine `.cockpit/launch-roadmap.yaml` du bundle composé
+    `base ⊕ overlay(type)` a-t-elle divergé du **template SoT central vendoré** (`launch_templates/`) ?
+    Retourne la liste des problèmes (`[]` = en phase). C'est la garde qui interdit à la graine de re-diverger
+    du template après la décision SoT-and-derive (décider que X dérive de Y sans check ne suffit pas —
+    cf. décision `cockpit-template-derives-bundle-seed`) ; câblée en pytest ET en `cockpit bundle validate`.
+    Compare la **structure YAML parsée** (robuste aux commentaires). Un type sans graine (`{}`) passe."""
+    seed = load_launch_roadmap(project_type)                   # lève BundleError si type hors registre
+    if not seed:
+        return []
+    canon = _canonical_launch_roadmap(project_type)
+    if canon is None:
+        return [f"{project_type} : graine de lancement présente mais aucun mirror vendoré "
+                f"(launch_templates/{project_type}.yaml) — divergence indétectable"]
+    mirror_name, expected = canon
+    if seed != expected:
+        return [f"{project_type} : {_LAUNCH_ROADMAP_PATH} diverge du template SoT vendoré "
+                f"(launch_templates/{mirror_name}) — distille au CENTRE puis re-dérive, ne patche pas ici"]
+    return []
 
 
 def load_payload() -> dict[str, str]:
