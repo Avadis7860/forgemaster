@@ -1,10 +1,15 @@
-"""tools — provisionnement **hôte-niveau** de l'outillage que les bundles DÉCLARENT (les 4 cartes + Node +
+"""tools — provisionnement **hôte-niveau** de l'outillage que les bundles DÉCLARENT (les 3 cartes + Node +
 qualité py), dans un venv d'outils dédié sous `$COCKPIT_HOME/tools/`, exposé sur un **unique** `tools/bin`
 que le dispatch worker ET le gate natif préfixent au PATH. Ferme le fossé « déclaré → présent » (P0 de
-l'épic tooling-fulfillment) : `bundles/base/CLAUDE.md` promet `codemap`/`docsmap`/`frontmap`/`taskmap`/
-`node`/`ruff`… mais le wheel n'expose que `cockpit` (`codemap` n'est qu'un module `-m codemap`), les
-cartes voisines ne sont que *clonées* (jamais pip-installées), Node n'est provisionné nulle part, et le
-worker spawn en `env=None` (PATH systemd minimal, hérité passif) — même présents, il ne les verrait pas.
+l'épic tooling-fulfillment) : `bundles/base/CLAUDE.md` promet `codemap`/`docsmap`/`frontmap`/`node`/`ruff`…
+mais le wheel n'expose que `cockpit` (`codemap` n'est qu'un module `-m codemap`), les cartes voisines ne sont
+que *clonées* (jamais pip-installées), Node n'est provisionné nulle part, et le worker spawn en `env=None`
+(PATH systemd minimal, hérité passif) — même présents, il ne les verrait pas.
+
+`taskmap` n'est PAS provisionné ici : ce n'est pas une carte de contenu par-projet (comme codemap/docsmap/
+frontmap) mais le **moteur d'ordonnancement central** (`taskmap.core`), importé en-process par
+`roadmap/resolver.py`. La lib est fournie autrement (vendorée au wheel par `deploy/build-wheel.sh` ; editable
+en dev via `webbuild.ensure_maps`) ; aucun projet n'a de task-graph local à mapper → pas de CLI host exposé.
 
 Conception (mêmes conventions que `dispatch`/`codemap`) : des seams **PURS** testables sans subprocess —
 `tools_bin`/`tools_env` (composition PATH), `install_plan` (quels paquets, quel venv, quels symlinks : les
@@ -38,13 +43,13 @@ class ToolPreflightError(RuntimeError):
     """Un binaire déclaré par la facette active (`allowedTools`) ne résout pas sur le PATH du worker.
     Levé AVANT le spawn (fail-loud, actionnable) : le worker ne découvre plus l'absence à l'usage."""
 
-# Les 4 cartes du framework, packagées (console_scripts codemap/docsmap/frontmap/taskmap). Installées depuis
+# Les 3 cartes de contenu par-projet, packagées (console_scripts codemap/docsmap/frontmap). Installées depuis
 # leur repo GitHub à une réf suivie — token de lecture partagé si privé (aujourd'hui), anonyme quand publiées.
+# (task-map exclu : moteur central importé en-process, pas une carte host — cf. docstring du module.)
 MAP_REPOS: dict[str, str] = {
     "code-map": "https://github.com/Avadis7860/code-map.git",
     "docs-map": "https://github.com/Avadis7860/docs-map.git",
     "front-map": "https://github.com/Avadis7860/front-map.git",
-    "task-map": "https://github.com/Avadis7860/task-map.git",
 }
 MAP_REF = "main"
 # Outils qualité Python (extra `cockpit[dev]`, NON tirés par `pip install <wheel>` — deps runtime seules).
@@ -53,7 +58,7 @@ PY_QUALITY: tuple[str, ...] = ("ruff", "pytest", "mypy")
 NODE_VERSION = "lts"
 # Exécutables exposés sur tools/bin — ceux que le worker et le gate résolvent (par-type : le worker n'utilise
 # que ceux de sa facette, mais on expose tout une fois ; le preflight P1 vérifie la présence par-facette).
-_VENV_BINS: tuple[str, ...] = ("codemap", "docsmap", "frontmap", "taskmap", "ruff", "pytest", "mypy")
+_VENV_BINS: tuple[str, ...] = ("codemap", "docsmap", "frontmap", "ruff", "pytest", "mypy")
 _NODE_BINS: tuple[str, ...] = ("node", "npm", "npx")
 # Catalogue des outils que l'HÔTE provisionne (`cockpit tools install` → `tools/bin`) : ceux-là DOIVENT
 # préexister au dispatch → le preflight les gate. Les autres binaires qu'une facette déclare (`eslint`,
