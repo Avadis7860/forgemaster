@@ -123,11 +123,14 @@ la base écrite par le bootstrap doit lui appartenir) :
                   --token-file read-token.txt      # omets-le quand les dépôts sont publics
 ```
 
-Le script (idempotent, fail-loud, imprime chaque étape) : pose les **prérequis de base** (`python3-venv`, `git`,
-`curl` — absents d'une image cloud minimale) → crée un venv → installe le wheel → *(Claude, opt-in)*
-→ écrit l'unité systemd → dépose le manifeste sous `COCKPIT_HOME` → **`cockpit bootstrap`** (adopte les 5 outils
-via leur **vrai clone git**) → active le service. Résultat : `http://<hôte>:8700`, rail « Outils » peuplé au 1ᵉʳ
-chargement. Ré-exécuter la commande est sûr (venv réutilisé, outils déjà là *skippés*).
+Le script (idempotent, fail-loud, imprime chaque étape `[n/8]`) : `[1]` pose les **prérequis de base**
+(`python3-venv`, `git`, `curl` — absents d'une image cloud minimale) + crée un venv → `[2]` installe le wheel →
+`[3]` *(Claude, opt-in)* → `[4]` **`cockpit tools install`** — l'**outillage hôte-niveau** que les bundles
+DÉCLARENT (maps CLI + qualité py + **Node via nodeenv rootless**) rangé sous `$COCKPIT_HOME/tools/bin`, puis
+**`cockpit doctor`** qui **aborte fail-loud** si un outil déclaré manque (cf. § ci-dessous) → `[5]` écrit l'unité
+systemd → `[6]` dépose le manifeste sous `COCKPIT_HOME` → `[7]` **`cockpit bootstrap`** (adopte les 5 outils via
+leur **vrai clone git**) → `[8]` active le service. Résultat : `http://<hôte>:8700`, rail « Outils » peuplé au
+1ᵉʳ chargement. Ré-exécuter la commande est sûr (venv réutilisé, outils déjà là *skippés*).
 
 ### Claude Code dans le terminal web (`--with-claude`)
 
@@ -157,6 +160,30 @@ optionnel par entrée épingle un token dédié ; sinon le token partagé de `--
 Les dépôts sont privés aujourd'hui. Le jour où tu les publies (repos publics), le clone devient **anonyme** :
 retire simplement `--token-file` de la commande. Aucun changement du manifeste ni du code — l'auth au clone est
 optionnelle par conception.
+
+### Outillage hôte-niveau, preflight & câblage MCP
+
+Deux mécanismes **distincts** peuplent un hôte cockpit — ne pas les confondre :
+
+- **`cockpit tools install`** (étape `[4/8]`, ci-dessus) — le **toolchain hôte-niveau** que les bundles
+  *déclarent* (`allowedTools`) : maps CLI (`codemap`/`docsmap`/`frontmap`), qualité py (ruff/mypy/pytest) et
+  **Node via nodeenv rootless**, installés dans un venv d'outils dédié sous `$COCKPIT_HOME/tools/` (symlinks en
+  `tools/bin`). Idempotent, fail-loud. C'est ce qui rend le contrat d'outillage **réellement présent** sur l'hôte.
+- **`cockpit bootstrap`** (étape `[7/8]`) — l'**adoption des 5 dépôts-outils** du framework dans le rail
+  « Outils » via leur clone git (donnée du manifeste). Peuple la *surface*, pas le PATH du worker.
+
+**Le runtime HONORE le contrat, pas seulement l'install.** Au **dispatch**, le PATH d'outils (`tools/bin` +
+Node) est **injecté explicitement** dans l'env du worker (fini l'héritage passif), et un **preflight fail-loud**
+refuse un dispatch dont un binaire déclaré manque — **avant** le spawn, avec un remède nommé (`cockpit tools
+install`) — plutôt que laisser le worker mourir à mi-course. La sonde jumelle **hors-ligne** est `cockpit
+doctor` (rc 0/1), rejouée à l'étape `[4/8]` et disponible à tout moment.
+
+**Câbler le corpus MCP (capital possédé).** Le câblage du serveur `mcp-catalogs` n'est **pas** posé par
+`provision-ct.sh` : il se fait au **wizard `/setup`** (1ᵉʳ démarrage) ou à la main via **`cockpit mcp wire`**
+(`--secret-file <f>` si on possède la valeur, ou `--secret-ref <uuid>` en BYO). Il pose dans `cockpit.env` une
+**référence opaque** au secret + l'endpoint (jamais le secret en clair) ; le prochain dispatch injecte alors un
+`.mcp.json` valide. Sans câblage, l'injection est un **no-op honnête** (le cockpit tourne, la doc tierce n'est
+juste pas atteignable). Un `systemctl restart cockpit` recharge l'`EnvironmentFile`. Détail : `docs/runbooks/provision.md`.
 
 ## Coffre de secrets
 
