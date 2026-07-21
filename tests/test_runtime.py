@@ -59,7 +59,9 @@ class FakeBackend:
                  log_lines: list[str] | None = None) -> None:
         self.calls: list[tuple] = []
         self.fail_up = fail_up
-        self.ps_rows = ps_rows or []
+        # None → un conteneur vivant par défaut (up réussi = service en marche, cas nominal). Un `ps_rows=[]`
+        # EXPLICITE modèle « up a retourné 0 mais aucun conteneur monté » (le faux-vert à détecter).
+        self.ps_rows = [{"State": "running"}] if ps_rows is None else ps_rows
         self.log_lines = log_lines or []
 
     def up(self, name: str, workdir: Path, *, env: dict | None = None) -> None:
@@ -332,6 +334,36 @@ def test_deploy_failure_sets_unhealthy_and_raises(ctx):
     assert _dep(conn, "svc")["status"] == "unhealthy"       # jamais un faux-vert
 
 
+@pytest.mark.parametrize("dead_rows", [[], [{"State": "exited"}], [{"Status": "Exited (1)"}]])
+def test_deploy_false_green_fails_close_when_no_container_running(ctx, dead_rows):
+    """Faux-vert : `podman-compose up --build` retourne exit 0 même quand le BUILD échoue (ou que le
+    conteneur sort aussitôt) → `up()` ne lève pas. `deploy` DOIT sonder l'état réel (`ps`) et fail-close en
+    `unhealthy` + lever, jamais poser `running` sur un déploiement mort (cf. deploy-up-false-green)."""
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="svc")
+    be = FakeBackend(ps_rows=dead_rows)                     # up « réussit » (exit 0), 0 conteneur vivant
+    with pytest.raises(ValueError, match="aucun conteneur en marche"):
+        engine.deploy(conn, settings, slug="svc", branch="dev", git=FakeGit(), backend=be)
+    assert _dep(conn, "svc")["status"] == "unhealthy"       # jamais un faux-vert
+    assert be.calls[0][0] == "up" and any(c[0] == "ps" for c in be.calls)   # up tenté, PUIS état réel sondé
+
+
+def test_deploy_unhealthy_when_ps_introspection_fails(ctx):
+    """Si l'introspection post-`up` échoue (`ps` lève ComposeError), `deploy` fail-close en `unhealthy` +
+    lève, plutôt que de poser `running` en aveugle."""
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="svc")
+
+    class _PsBoom(FakeBackend):
+        def ps(self, name: Path, workdir: Path, *, env: dict | None = None) -> list[dict]:
+            self.calls.append(("ps", name, str(workdir), dict(env or {})))
+            raise backend_mod.ComposeError("ps injoignable")
+
+    with pytest.raises(ValueError, match="inintrospectable"):
+        engine.deploy(conn, settings, slug="svc", branch="dev", git=FakeGit(), backend=_PsBoom())
+    assert _dep(conn, "svc")["status"] == "unhealthy"
+
+
 def test_stop_downs_and_marks_stopped_keeping_port(ctx):
     settings, conn = ctx
     registry.create_project(conn, settings, slug="svc")
@@ -370,8 +402,9 @@ def test_status_running_when_a_container_is_up(ctx):
 def test_status_stopped_when_no_container_is_up(ctx):
     settings, conn = ctx
     registry.create_project(conn, settings, slug="svc")
-    be = FakeBackend(ps_rows=[])
+    be = FakeBackend()                                     # deploy nominal (conteneur vivant)
     engine.deploy(conn, settings, slug="svc", branch="dev", git=FakeGit(), backend=be)
+    be.ps_rows = []                                        # puis le conteneur meurt → status réconcilie
     assert engine.status(conn, settings, slug="svc", branch="dev", backend=be)["status"] == "stopped"
 
 

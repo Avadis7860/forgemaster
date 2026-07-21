@@ -99,6 +99,19 @@ def deploy(conn: sqlite3.Connection, settings: Settings, *, slug: str, branch: s
         set_deployment(conn, project_id, branch, status="unhealthy")
         raise ValueError(f"deploy échoué ({slug}/{branch}) : {exc}") from exc
 
+    # `podman-compose up --build` retourne exit 0 même quand le BUILD échoue (aucun conteneur créé) → `up` ne
+    # lève pas. On confirme l'état RÉEL (même sonde que `status`) avant de poser `running` : un `up` sans
+    # conteneur en marche est un faux-vert (cf. deploy-up-false-green). Fail-close → `unhealthy`.
+    try:
+        rows = backend.ps(name, workdir, env={"COMPOSE_PROJECT_NAME": name})
+    except ComposeError as exc:
+        set_deployment(conn, project_id, branch, status="unhealthy")
+        raise ValueError(f"deploy échoué ({slug}/{branch}) : conteneur inintrospectable ({exc})") from exc
+    if not any(is_running(r) for r in rows):
+        set_deployment(conn, project_id, branch, status="unhealthy")
+        raise ValueError(f"deploy échoué ({slug}/{branch}) : aucun conteneur en marche après `up` "
+                         "(build probablement échoué malgré un exit 0 de compose)")
+
     return set_deployment(conn, project_id, branch, status="running", port=port,
                           url=f"http://127.0.0.1:{port}", last_deploy_sha=sha, compose_ref=name)
 
