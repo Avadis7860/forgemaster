@@ -466,7 +466,7 @@ def test_run_merge_holds_without_go_then_merges_and_cleans_up(ctx):
     assert not (settings.projects_root / "proj" / "worktrees" / "feat").exists()          # worktree retiré
     with pytest.raises(GitOpError):
         git.feature_sha(sot, "feature/feat")             # branche supprimée APRÈS le worktree
-    assert ports.list_reservations(conn) == [] and worktree.audit(conn, settings) == []          # 0 orphelin
+    assert ports.list_reservations(conn) == [] and worktree.audit(conn, settings, git) == []      # 0 orphelin
     feat = conn.execute("SELECT status FROM features WHERE slug = 'feat'").fetchone()
     task = conn.execute("SELECT status FROM tasks WHERE slug = 'schema'").fetchone()
     assert feat["status"] == "merged" and task["status"] == "done" and done["closed_tasks"] == ["schema"]

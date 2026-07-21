@@ -85,9 +85,11 @@ def release(conn: sqlite3.Connection, settings: Settings, git: GitBackend, *,
         conn.commit()
 
 
-def audit(conn: sqlite3.Connection, settings: Settings) -> list[dict]:
-    """Audit d'orphelins (doit rester à 0 après merge/reset) : port réservé sans worktree sur disque, ou
-    worktree sur disque sans réservation de port. Retourne la liste des anomalies `{kind, project, …}`."""
+def audit(conn: sqlite3.Connection, settings: Settings, git: GitBackend) -> list[dict]:
+    """Audit d'orphelins (doit rester à 0 après merge/reset) : port réservé sans worktree sur disque,
+    worktree sur disque sans réservation de port, **ou worktree sur base périmée** (`dev` n'est plus ancêtre
+    de `feature/<x>` — un run interrompu avant l'avancée de `dev`, que `reserve` ne réaligne qu'au prochain
+    passage : ici la détection est **proactive**). Retourne la liste des anomalies `{kind, project, …}`."""
     orphans: list[dict] = []
     reserved = ports.list_reservations(conn)
     reserved_keys = {(r["project"], r["purpose"]) for r in reserved}
@@ -97,11 +99,18 @@ def audit(conn: sqlite3.Connection, settings: Settings) -> list[dict]:
         if not wt.exists():
             orphans.append({"kind": "port-sans-worktree", "project": r["project"],
                             "feature": feature, "port": r["port"]})
-    # worktrees sur disque sans réservation de port
+    # worktrees sur disque : réservation de port manquante et/ou base divergée de `dev`
     for proj_dir in _iter_worktree_dirs(settings):
         project, feature = proj_dir
         if (project, _purpose(feature)) not in reserved_keys:
             orphans.append({"kind": "worktree-sans-port", "project": project, "feature": feature})
+        try:
+            feat = model.resolve_feature(conn, f"{project}/{feature}")
+        except KeyError:
+            continue                                  # worktree sans feature DB → déjà couvert (sans-port)
+        sot = sot_path_for(settings, project)
+        if not git.is_ancestor(sot, WORKTREE_BASE, feat["branch"]):
+            orphans.append({"kind": "worktree-base-perimee", "project": project, "feature": feature})
     return orphans
 
 

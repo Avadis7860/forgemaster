@@ -104,12 +104,12 @@ def test_worktree_reserve_release_audit(ctx):
     assert git.current_branch(res["path"]) == "feature/feat"
     again = worktree.reserve(conn, settings, git, project="proj", feature="feat", probe=None)
     assert again["port"] == res["port"]                      # idempotent
-    assert worktree.audit(conn, settings) == []             # pas d'orphelin
+    assert worktree.audit(conn, settings, git) == []             # pas d'orphelin
     # release : worktree retiré + port relâché
     worktree.release(conn, settings, git, project="proj", feature="feat")
     assert not res["path"].exists()
     assert ports.list_reservations(conn) == []
-    assert worktree.audit(conn, settings) == []
+    assert worktree.audit(conn, settings, git) == []
 
 
 def test_two_features_reserve_isolated_worktrees_and_ports(ctx):
@@ -129,12 +129,12 @@ def test_two_features_reserve_isolated_worktrees_and_ports(ctx):
     assert {a["branch"], b["branch"]} == {"feature/feat-a", "feature/feat-b"}
     assert git.current_branch(a["path"]) == "feature/feat-a"
     assert git.current_branch(b["path"]) == "feature/feat-b"
-    assert worktree.audit(conn, settings) == []
+    assert worktree.audit(conn, settings, git) == []
     # release de feat-a : feat-b survit intacte, aucun orphelin
     worktree.release(conn, settings, git, project="proj", feature="feat-a")
     assert not a["path"].exists() and b["path"].is_dir()
     assert {r["purpose"] for r in ports.list_reservations(conn)} == {"worktree:feat-b"}
-    assert worktree.audit(conn, settings) == []
+    assert worktree.audit(conn, settings, git) == []
 
 
 def test_reserve_realigns_stale_base(ctx):
@@ -167,6 +167,36 @@ def test_reserve_realigns_stale_base(ctx):
     assert again["port"] == res["port"]                        # toujours idempotent (port stable)
     assert git.is_ancestor(sot, "dev", "feature/feat")         # RÉALIGNÉ
     assert (res["path"] / "worker.txt").read_text() == "work\n"   # commit worker préservé
+
+
+def test_audit_flags_stale_base(ctx):
+    """Détection PROACTIVE : `audit` flague un worktree dont `dev` n'est plus ancêtre de `feature/<x>` (base
+    périmée), sans attendre le prochain `reserve` (qui, lui, réaligne). Complémentaire du fix de reserve
+    (`test_reserve_realigns_stale_base`) : ici l'audit voit la divergence AVANT tout re-reserve."""
+    settings, conn = ctx
+    git = InternalGit()
+    sot = registry.sot_path_for(settings, "proj")
+    _seed_project(conn, settings)                              # proj/feat
+    model.add_feature(conn, project_slug="proj", slug="sib")   # sibling pour faire avancer dev
+    model.add_task(conn, feature_ref="proj/sib", slug="t")
+    ident = resolve_identity("proj", "dev", role="worker")
+
+    res = worktree.reserve(conn, settings, git, project="proj", feature="feat", probe=None)
+    (res["path"] / "worker.txt").write_text("work\n", encoding="utf-8")
+    git.commit_worktree(res["path"], message="feat: worker", identity=ident)
+    # base fraîche → aucune anomalie de base périmée (non-régression)
+    assert not [o for o in worktree.audit(conn, settings, git) if o["kind"] == "worktree-base-perimee"]
+
+    # faire avancer `dev` via un sibling mergé → feature/feat devient périmée
+    sib = worktree.reserve(conn, settings, git, project="proj", feature="sib", probe=None)
+    (sib["path"] / "sib.txt").write_text("sib\n", encoding="utf-8")
+    git.commit_worktree(sib["path"], message="sib: worker", identity=ident)
+    git.merge_ff(sot, into="dev", source="feature/sib")
+    assert not git.is_ancestor(sot, "dev", "feature/feat")     # précondition : base périmée
+
+    # audit signale la base périmée de feat (sib, mergé ff, est à jour → pas flaggé)
+    stale = [o for o in worktree.audit(conn, settings, git) if o["kind"] == "worktree-base-perimee"]
+    assert stale == [{"kind": "worktree-base-perimee", "project": "proj", "feature": "feat"}]
 
 
 def test_reserve_stale_base_conflict_surfaces_not_overwrites(ctx):
