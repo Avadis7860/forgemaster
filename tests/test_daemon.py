@@ -696,6 +696,38 @@ def test_git_tree_and_blob_read_only_over_http(client):
     assert c.get("/api/projects/ghost/git/tree", params={"ref": "dev"}).status_code == 404
 
 
+def test_git_raw_and_download_serve_bytes_with_safe_headers(client, monkeypatch):
+    c, _ = client
+    c.post("/api/projects", json={"slug": "proj"})   # SoT neuf : CLAUDE.md est un fichier texte du payload
+    # raw : type coercé text/plain (anti-XSS same-origin) + nosniff + inline ; octets réels servis
+    raw = c.get("/api/projects/proj/git/raw", params={"ref": "dev", "path": "CLAUDE.md"})
+    assert raw.status_code == 200
+    assert raw.headers["content-type"] == "text/plain; charset=utf-8"
+    assert raw.headers["x-content-type-options"] == "nosniff"
+    assert raw.headers["content-disposition"] == 'inline; filename="CLAUDE.md"'
+    # octets réels servis (round-trip vs le contenu texte de git/blob, qui décode le même blob)
+    blob = c.get("/api/projects/proj/git/blob", params={"ref": "dev", "path": "CLAUDE.md"}).json()
+    assert raw.content and raw.content.decode() == blob["content"]
+    # download : octet-stream + attachment (jamais rendu inline), mêmes octets
+    dl = c.get("/api/projects/proj/git/download", params={"ref": "dev", "path": "CLAUDE.md"})
+    assert dl.status_code == 200
+    assert dl.headers["content-type"] == "application/octet-stream"
+    assert dl.headers["content-disposition"] == 'attachment; filename="CLAUDE.md"'
+    assert dl.headers["x-content-type-options"] == "nosniff" and dl.content == raw.content
+    # 404 : chemin introuvable, dossier (non-blob), projet absent
+    assert c.get("/api/projects/proj/git/raw",
+                 params={"ref": "dev", "path": "nope.txt"}).status_code == 404
+    assert c.get("/api/projects/proj/git/download",
+                 params={"ref": "dev", "path": ".claude"}).status_code == 404
+    assert c.get("/api/projects/ghost/git/raw",
+                 params={"ref": "dev", "path": "CLAUDE.md"}).status_code == 404
+    # 413 SIGNALÉ au-delà du plafond (jamais un flux tronqué en silence)
+    from cockpit.git import internal
+    monkeypatch.setattr(internal, "_MAX_BLOB_READ", 4)
+    assert c.get("/api/projects/proj/git/raw",
+                 params={"ref": "dev", "path": "CLAUDE.md"}).status_code == 413
+
+
 def test_git_intelligence_commit_diff_history_over_http(client):
     c, _ = client
     c.post("/api/projects", json={"slug": "proj"})   # SoT neuf : dev == main sur « root: cockpit seed »

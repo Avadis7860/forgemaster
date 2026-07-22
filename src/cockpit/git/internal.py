@@ -43,6 +43,12 @@ class GitOpError(RuntimeError):
     """Échec dur d'une op git (le message porte stderr). Les échecs best-effort ne lèvent pas."""
 
 
+class BlobTooLargeError(GitOpError):
+    """Blob au-delà du plafond de lecture brute (`_MAX_BLOB_READ`) : refus **signalé** (jamais un flux
+    tronqué en silence). Sous-classe de `GitOpError` → l'appelant qui distingue (413 vs 404) l'attrape en
+    premier ; sinon il retombe dans la gestion générique."""
+
+
 def _git(repo: str | Path, *args: str, env: Mapping[str, str] | None = None) -> run.RunResult:
     """`git -C <repo> <args>` local, sans shell. Ne lève pas (l'appelant inspecte `.ok`/classifie)."""
     return run.run(["git", "-C", str(repo), *args], env=env)
@@ -736,6 +742,22 @@ class InternalGit:
         truncated = len(raw) > _MAX_BLOB_DISPLAY
         content = raw[:_MAX_BLOB_DISPLAY].decode("utf-8", errors="replace")
         return {**base, "binary": False, "truncated": truncated, "too_large": False, "content": content}
+
+    def read_blob_raw(self, sot: Path, ref: str, path: str) -> bytes:
+        """Octets **bruts** d'un fichier à une réf — sert binaire ET texte **tels quels** (là où `read_blob`
+        blanchit binaire/too_large pour son JSON). Même ordre de gardes : `cat-file -t` (non-blob →
+        `GitOpError`) → `-s` (taille) → au-delà de `_MAX_BLOB_READ` **lève** `BlobTooLargeError` (refus
+        signalé, jamais un flux tronqué en silence) → sinon les octets via `_blob_bytes`. Read-only,
+        bare-safe. Lève (`GitOpError`) si la réf/chemin est introuvable ou n'est pas un blob."""
+        treeish = f"{ref}:{path.strip('/')}"
+        kind = _checked(sot, "cat-file", "-t", treeish).stdout.strip()
+        if kind != "blob":
+            raise GitOpError(f"{path!r} @ {ref} n'est pas un fichier (type git : {kind or 'inconnu'})")
+        size = int(_checked(sot, "cat-file", "-s", treeish).stdout.strip() or 0)
+        if size > _MAX_BLOB_READ:
+            raise BlobTooLargeError(
+                f"{path!r} @ {ref} : {size} octets > plafond {_MAX_BLOB_READ} (téléchargement refusé)")
+        return self._blob_bytes(sot, treeish)
 
     def archive(self, sot: Path, ref: str, dest_dir: Path) -> None:
         """Matérialise l'**arbre complet** d'une réf dans `dest_dir`, **sans working-tree** : `git archive`

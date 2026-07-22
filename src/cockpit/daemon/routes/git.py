@@ -6,16 +6,34 @@ développement (worktree → gate → merge) vit dans `gate/merge`. Sert « où 
 jour vs GitHub ? » ET « voyager dans les fichiers du dépôt »."""
 from __future__ import annotations
 
+import mimetypes
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from cockpit.daemon.deps import Deps, get_deps
-from cockpit.git.internal import GitOpError, InternalGit
+from cockpit.git.internal import BlobTooLargeError, GitOpError, InternalGit
 from cockpit.projects.registry import get_project
 from cockpit.secrets import cred_resolver
 
 _LOG_N = 20  # profondeur du log par réf (récents d'abord)
+
+# Anti-XSS same-origin (le daemon sert l'app ET les octets) : seuls quelques types réellement inertes gardent
+# leur Content-Type en affichage « raw » inline ; tout le reste (text/*, html, svg, inconnu) est coercé en
+# text/plain pour qu'aucun HTML/JS/SVG du dépôt ne s'exécute dans notre origine.
+_INLINE_SAFE = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"})
+
+
+def _raw_media_type(path: str) -> str:
+    """Content-Type sûr pour un affichage inline : type deviné s'il est inerte, sinon text/plain."""
+    guessed, _ = mimetypes.guess_type(path)
+    return guessed if guessed in _INLINE_SAFE else "text/plain; charset=utf-8"
+
+
+def _download_filename(path: str) -> str:
+    """Basename assaini pour un en-tête `Content-Disposition` (retire CR/LF/guillemets → pas d'injection)."""
+    name = path.strip("/").rsplit("/", 1)[-1]
+    return name.translate({0x0D: None, 0x0A: None, 0x22: None}) or "download"
 
 
 def make_git_router() -> APIRouter:
@@ -130,6 +148,42 @@ def make_git_router() -> APIRouter:
             raise HTTPException(
                 status_code=404, detail=f"fichier introuvable ({ref}:{path}) : {exc}") from exc
         return {"project": project, **blob}
+
+    def _raw_bytes(sot: Path, ref: str, path: str) -> bytes:
+        """Octets bruts pour raw/download, avec la sémantique HTTP : cap dépassé → 413 (signalé),
+        introuvable/non-blob → 404. `BlobTooLargeError` (sous-classe) attrapé AVANT `GitOpError`."""
+        try:
+            return InternalGit().read_blob_raw(sot, ref, path)
+        except BlobTooLargeError as exc:
+            raise HTTPException(status_code=413, detail=str(exc)) from exc
+        except GitOpError as exc:
+            raise HTTPException(
+                status_code=404, detail=f"fichier introuvable ({ref}:{path}) : {exc}") from exc
+
+    @router.get("/api/projects/{project}/git/raw")
+    def git_raw(project: str, ref: str, path: str, deps: Deps = Depends(get_deps)) -> Response:
+        """Octets **bruts** d'un fichier à une réf, pour affichage **inline** (bouton « Raw »). Content-Type
+        deviné mais coercé en `text/plain` pour tout type actif (anti-XSS same-origin) + `X-Content-Type-
+        Options: nosniff`. Read-only, idempotent. Projet absent / réf-chemin introuvable / non-blob → 404 ;
+        au-delà de 10 Mo → **413** (jamais tronqué en silence)."""
+        sot = _sot(deps, project)
+        data = _raw_bytes(sot, ref, path)
+        return Response(
+            content=data, media_type=_raw_media_type(path),
+            headers={"X-Content-Type-Options": "nosniff",
+                     "Content-Disposition": f'inline; filename="{_download_filename(path)}"'})
+
+    @router.get("/api/projects/{project}/git/download")
+    def git_download(project: str, ref: str, path: str, deps: Deps = Depends(get_deps)) -> Response:
+        """Octets **bruts** d'un fichier en **pièce jointe** (bouton « Download ») : `application/octet-
+        stream` + `Content-Disposition: attachment` (jamais rendu inline) + `nosniff`. Read-only,
+        idempotent. Mêmes 404 (introuvable/non-blob) et **413** (> 10 Mo) que `raw`."""
+        sot = _sot(deps, project)
+        data = _raw_bytes(sot, ref, path)
+        return Response(
+            content=data, media_type="application/octet-stream",
+            headers={"X-Content-Type-Options": "nosniff",
+                     "Content-Disposition": f'attachment; filename="{_download_filename(path)}"'})
 
     @router.get("/api/projects/{project}/git/commit/{sha}")
     def git_commit(project: str, sha: str, deps: Deps = Depends(get_deps)) -> dict:

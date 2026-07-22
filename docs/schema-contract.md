@@ -237,6 +237,13 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   truncated, too_large, content}` ; gardes L4 : `too_large` si > 10 Mo (aucune lecture), `binary` si NUL
   détecté, `truncated` si > 512 Ko — **jamais d'octets bruts émis**, `content=""` pour binaire/too_large).
   Idempotent (goto-only safe) ; **404** projet absent OU réf/chemin introuvable OU `path` du mauvais type.
+  · `GET /api/projects/{p}/git/raw?ref=&path=` et `.../git/download?ref=&path=` (**octets bruts** d'un fichier
+  — servent binaire ET texte **tels quels**, là où `blob` blanchit binaire/too_large). `raw` = affichage
+  **inline** : Content-Type deviné mais **coercé en `text/plain; charset=utf-8`** pour tout type actif (text/*,
+  html, svg, inconnu) — seuls png/jpeg/gif/webp/pdf gardent leur type — + `X-Content-Type-Options: nosniff`
+  (anti-XSS same-origin). `download` = `application/octet-stream` + `Content-Disposition: attachment` (`filename`
+  = basename assaini, anti-injection d'en-tête). Read-only, idempotents ; **404** projet absent OU réf/chemin
+  introuvable OU non-blob ; **413** au-delà de 10 Mo (refus **signalé**, jamais tronqué en silence).
   · `GET /api/projects/{p}/git/commit/{sha}` (intelligence git : détail d'un commit → `{project, sha, short,
   author, email, date, subject, body, files:[{path, binary, additions, deletions}]}` ; `additions`/`deletions`
   `null` pour un binaire ; **404** sha/réf introuvable). · `GET /api/projects/{p}/git/diff?base=&head=` (diff

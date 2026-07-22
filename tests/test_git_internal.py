@@ -10,6 +10,7 @@ import pytest
 from cockpit.core import run
 from cockpit.git.backend import GitBackend
 from cockpit.git.internal import (
+    BlobTooLargeError,
     GitOpError,
     InternalGit,
     classify_push_error,
@@ -692,6 +693,34 @@ def test_read_blob_too_large_reads_nothing(tmp_path: Path, monkeypatch):
     sot = _seed_bare_rich(tmp_path)
     blob = git.read_blob(sot, "dev", "README.md")
     assert blob["too_large"] is True and blob["content"] == "" and blob["truncated"] is True
+
+
+def test_read_blob_raw_serves_binary_and_text_bytes_verbatim(tmp_path: Path):
+    git = InternalGit()
+    sot = _seed_bare_rich(tmp_path)
+    # là où read_blob blanchit un binaire (content=""), read_blob_raw sert les octets exacts
+    assert git.read_blob_raw(sot, "dev", "data.bin") == b"\x00\x01\x02binaire\x00"
+    assert git.read_blob_raw(sot, "dev", "README.md") == b"# projet\nligne 2\n"
+
+
+def test_read_blob_raw_bad_ref_or_dir_raises(tmp_path: Path):
+    git = InternalGit()
+    sot = _seed_bare_rich(tmp_path)
+    with pytest.raises(GitOpError):
+        git.read_blob_raw(sot, "nexiste-pas", "README.md")
+    with pytest.raises(GitOpError):        # src est un arbre, pas un fichier
+        git.read_blob_raw(sot, "dev", "src")
+
+
+def test_read_blob_raw_too_large_raises_signaled(tmp_path: Path, monkeypatch):
+    from cockpit.git import internal
+    monkeypatch.setattr(internal, "_MAX_BLOB_READ", 4)   # README fait 17 octets > 4
+    git = InternalGit()
+    sot = _seed_bare_rich(tmp_path)
+    # refus SIGNALÉ (jamais un flux tronqué) ; BlobTooLargeError EST un GitOpError
+    with pytest.raises(BlobTooLargeError):
+        git.read_blob_raw(sot, "dev", "README.md")
+    assert issubclass(BlobTooLargeError, GitOpError)
 
 
 # -- intelligence git : détail de commit + historique fichier (commit_detail / file_history) --------

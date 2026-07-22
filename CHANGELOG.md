@@ -5,6 +5,21 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Git/API — endpoints `raw` + `download` d'octets bruts (bouton Raw/Download, parité fichier GitHub) — pas de bump
+- `GET /api/projects/{p}/git/raw?ref=&path=` et `.../git/download?ref=&path=` servent les **octets bruts** d'un
+  fichier (binaire ET texte tels quels), comblant le trou de `git/blob` (qui blanchit binaire/too_large,
+  `content=""`). `raw` = inline pour « voir le brut » ; `download` = pièce jointe pour enregistrer. Deux
+  **nouvelles routes** additives (aucune existante changée) → **pas de bump `SCHEMA_VERSION`** (une route HTTP
+  neuve n'a pas de déclencheur de migration, cf. §Politique de versionnage).
+- **Sécurité** (le daemon sert l'app ET les octets, même origine) : `raw` coerce le Content-Type deviné en
+  `text/plain; charset=utf-8` pour tout type actif (text/*, html, svg, inconnu) — seuls png/jpeg/gif/webp/pdf
+  gardent leur type — + `X-Content-Type-Options: nosniff` (aucun HTML/JS/SVG du dépôt n'exécute dans notre
+  origine) ; `download` force `application/octet-stream` + `Content-Disposition: attachment` ; `filename`
+  assaini (strip CR/LF/`"`, anti-injection d'en-tête).
+- Primitive read-only `InternalGit.read_blob_raw` (`git internal-first`) : mêmes gardes que `read_blob` mais
+  **sert** les octets ; au-delà de 10 Mo (`_MAX_BLOB_READ`) lève `BlobTooLargeError` → **413 signalé** (jamais
+  un flux tronqué en silence). Introuvable/non-blob → 404.
+
 ### Git/API — dernier-commit par entrée + « latest commit » sur `git/tree` (parité liste GitHub) — pas de bump
 - `GET /api/projects/{p}/git/tree` enrichit chaque entrée d'un `last_commit:{short, date, subject}|null`
   (dernier commit qui la touche) et coiffe la réponse d'un `latest_commit:{short, author, date, subject,
