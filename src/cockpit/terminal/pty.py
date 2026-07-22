@@ -19,6 +19,7 @@ import fcntl
 import json
 import logging
 import os
+import shlex
 import struct
 import termios
 
@@ -31,6 +32,16 @@ def local_shell_argv(shell: str = "/bin/bash") -> list[str]:
     """argv d'un **login shell local** (`bash -l`). PUR. Le cwd est posé par `pty_bridge` (Popen `cwd=`),
     pas par un `cd` embarqué — plus de couture ssh. `-l` charge le profil (PATH/nvm) comme un vrai term."""
     return [shell, "-l"]
+
+
+def interview_argv(project: str, shell: str = "/bin/bash") -> list[str]:
+    """argv d'une **session PTY dont le process EST l'interview de socle** (pas une commande tapée dans un
+    shell partagé). PUR. `bash -lc 'exec cockpit interview <project>'` : le `-l` charge le PATH (cockpit via
+    `/etc/profile.d/cockpit-path.sh`, cf. `shell_env`), puis `exec` **remplace** le shell par l'interview →
+    aucun prompt où une frappe pourrait se ré-router, et à la sortie de l'interview le PTY reçoit l'EOF → la
+    session se ferme d'elle-même. `cockpit interview` porte tout le cycle (worktree reserve → `claude`
+    interactif TTY-hérité → reconcile) et regate l'auth Claude côté CLI (affichée dans le PTY)."""
+    return [shell, "-lc", f"exec cockpit interview {shlex.quote(project)}"]
 
 
 def shell_env() -> dict[str, str]:
@@ -78,23 +89,25 @@ _EOF = "eof"                 # le shell a fermé le PTY → teardown final
 _REPLACED = "replaced"       # un nouveau client a pris la session → sortir sans y toucher
 
 
-async def serve_project_terminal(websocket, registry: PtySessionRegistry, *, project: str,
+async def serve_project_terminal(websocket, registry: PtySessionRegistry, *, session_key: str,
                                  argv: list[str], cwd: str | None, env: dict | None) -> None:
-    """Sert le terminal PTY d'un projet, **détachable** : réutilise la session vivante du registre
-    (ré-attache + rejeu du scrollback) ou en spawn une neuve. Le WebSocket est déjà `accept()` par le router.
-    À la déconnexion du client alors que le shell VIT, on **détache** (le shell continue, le reaper le TTL-e)
-    au lieu de le tuer — la feature même. Sur EOF réel (shell sorti), teardown final + retrait du
-    registre. Annonce d'abord une frame de contrôle `{"t":"session","fresh":…}` : le client ne rejoue son
-    `initialCommand` (handoff interview) que sur une session NEUVE, jamais sur une ré-attache."""
-    session = registry.get(project)
+    """Sert une session PTY **détachable**, indexée par `session_key` (le SEUL identifiant de registre — la
+    bannière est côté client). Réutilise la session vivante du registre (ré-attache + rejeu du scrollback) ou
+    en spawn une neuve avec `argv`. Le WebSocket est déjà `accept()` par le router. À la déconnexion du client
+    alors que le process VIT, on **détache** (il continue, le reaper le TTL-e) au lieu de le tuer — la feature
+    même. Sur EOF réel (process sorti), teardown final + retrait du registre. Annonce d'abord une frame de
+    contrôle `{"t":"session","fresh":…}` : `fresh` distingue une session NEUVE d'une ré-attache (le client
+    n'en fait qu'une bannière). Chaque flavor (shell `bash -l` du projet, interview `cockpit interview`) a sa
+    propre `session_key` → sessions distinctes, persistance et fraîcheur indépendantes, aucune collision."""
+    session = registry.get(session_key)
     if session is not None and not session.alive():
         session.close(registry.killer)                       # session morte résiduelle → on repart propre
-        registry.pop(project, session)
+        registry.pop(session_key, session)
         session = None
     fresh = session is None
     if session is None:
-        session = PtySession.spawn(project, argv, cwd=cwd, env=env, clock=registry.clock)
-        registry.put(project, session)
+        session = PtySession.spawn(session_key, argv, cwd=cwd, env=env, clock=registry.clock)
+        registry.put(session_key, session)
     epoch, cursor = session.attach()
 
     with contextlib.suppress(Exception):                     # contrôle TEXTE (bytes serveur→client = PTY)
@@ -104,10 +117,10 @@ async def serve_project_terminal(websocket, registry: PtySessionRegistry, *, pro
     if reason == _REPLACED:
         return                                               # un nouveau client possède la session
     if reason == _DISCONNECT and session.alive():
-        session.detach()                                     # le shell survit ; le reaper s'en chargera
+        session.detach()                                     # le process survit ; le reaper s'en chargera
         return
-    session.close(registry.killer)                           # EOF / shell mort → teardown final
-    registry.pop(project, session)
+    session.close(registry.killer)                           # EOF / process mort → teardown final
+    registry.pop(session_key, session)
     with contextlib.suppress(Exception):
         await websocket.close()
 

@@ -11,6 +11,15 @@ def test_local_shell_argv_is_login_bash():
     assert pty.local_shell_argv() == ["/bin/bash", "-l"]
 
 
+def test_interview_argv_execs_cockpit_interview_in_login_shell():
+    """L'interview est une session PTY DÉDIÉE dont le process EST `cockpit interview` : un login shell qui
+    `exec`-remplace vers la commande (PATH via `-l`, aucun prompt où une frappe se ré-router, EOF propre à la
+    sortie). Le projet est shell-quoté (défense en profondeur, même si les slugs sont kebab-case)."""
+    assert pty.interview_argv("void-runner") == ["/bin/bash", "-lc", "exec cockpit interview void-runner"]
+    # slug hypothétique à métacaractère → quoté, jamais d'injection shell
+    assert pty.interview_argv("a b;rm").count("exec cockpit interview 'a b;rm'") == 1
+
+
 def test_shell_env_forces_a_color_terminal():
     """Un service systemd n'a pas de TERM → le PTY doit l'INJECTER, sinon bash/ls/git rendent monochrome.
     xterm.js est un terminal xterm-256color. Le PATH du login shell, lui, N'est PAS posé ici (bash -l le

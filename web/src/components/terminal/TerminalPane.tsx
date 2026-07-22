@@ -6,7 +6,7 @@ import { SearchAddon } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 import { Badge, Button, Input } from '@/components/ui'
-import { wsUrl } from '@/lib/ws'
+import { ptyPath, wsUrl, type PtySession } from '@/lib/ws'
 import { buildTheme } from './theme'
 import { LeaveTerminalConfirm } from './LeaveTerminalConfirm'
 
@@ -62,20 +62,19 @@ export function parseSessionFrame(data: string): { fresh: boolean } | null {
   return null
 }
 
-/** Terminal PTY d'un projet : xterm.js (addons fit + search + web-links) ↔ `WS /ws/terminal/{project}`.
- *  Frames BINAIRES = frappes (envoyées telles quelles au PTY) ; frames TEXTE = contrôle
- *  `{"type":"resize",cols,rows}`. Le login shell (`bash -l`) tourne dans la racine du projet côté daemon ;
- *  à sa sortie le socket se ferme → « Relancer » recrée la session. Barre d'outils : recherche dans le
- *  scrollback, taille de police (persistée), effacer, lancer Claude. */
-export function TerminalPane({ project, initialCommand }: { project: string; initialCommand?: string }) {
+/** Terminal PTY d'un projet, `session` détermine le flavor et donc la route WS (`ptyPath`) :
+ *  `shell` → `/ws/terminal/{project}` (login `bash -l`, surface `claude login`) ; `interview` →
+ *  `/ws/interview/{project}` (session DÉDIÉE dont le process EST `cockpit interview` — plus de commande
+ *  tapée dans un shell partagé). xterm.js (addons fit + search + web-links). Frames BINAIRES = frappes ;
+ *  frames TEXTE = contrôle `{"type":"resize",cols,rows}`. Le process tourne dans la racine du projet côté
+ *  daemon ; à sa sortie le socket se ferme → « Relancer » recrée la session. Barre d'outils : recherche
+ *  dans le scrollback, taille de police (persistée), effacer, lancer Claude. */
+export function TerminalPane({ project, session = 'shell' }: { project: string; session?: PtySession }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const searchRef = useRef<SearchAddon | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
-  // `initialCommand` (ex. handoff interview) auto-lancé UNE fois par montage — pas à chaque reconnexion
-  // (`reconnectKey`) ni sur une reconnexion manuelle. Persiste tant que le projet ne change pas (`key`).
-  const sentInitialRef = useRef(false)
   const [status, setStatus] = useState<TermStatus>('connecting')
   const [fontSize, setFontSize] = useState<number>(readFontSize)
   const [reconnectKey, setReconnectKey] = useState(0)
@@ -112,7 +111,7 @@ export function TerminalPane({ project, initialCommand }: { project: string; ini
     }
     safeFit()
 
-    const ws = new WebSocket(wsUrl(`/ws/terminal/${encodeURIComponent(project)}`))
+    const ws = new WebSocket(wsUrl(ptyPath(project, session)))
     ws.binaryType = 'arraybuffer'
     wsRef.current = ws
     const enc = new TextEncoder()
@@ -124,8 +123,8 @@ export function TerminalPane({ project, initialCommand }: { project: string; ini
 
     ws.onopen = () => {
       setStatus('connected')
-      // Cale la taille du PTY sur celle d'xterm avant que le serveur ne (re)joue la sortie. La bannière et le
-      // handoff auto-run sont différés à la frame de session (le serveur dit d'abord si elle est neuve).
+      // Cale la taille du PTY sur celle d'xterm avant que le serveur ne (re)joue la sortie. La bannière est
+      // différée à la frame de session (le serveur dit d'abord si elle est neuve vs restaurée).
       safeFit()
       sendResize()
     }
@@ -143,17 +142,15 @@ export function TerminalPane({ project, initialCommand }: { project: string; ini
         return
       }
       // Bannière cliente (repère stable pour la boucle visuelle + « où suis-je »), fraîche vs restaurée.
+      // Le flavor de session pilote le libellé — l'interview est une session DÉDIÉE (son process EST
+      // `cockpit interview`), le shell est le `bash -l` de login du projet. Aucun handoff tapé : le process
+      // démarre de lui-même à la session neuve, et une ré-attache REPREND l'interview en cours.
+      const flavor = session === 'interview' ? 'interview' : 'bash -l'
       term.writeln(
         ctl.fresh
-          ? `\x1b[2m— session terminal · ${project} (bash -l) —\x1b[0m`
-          : `\x1b[2m— session restaurée · ${project} (scrollback rejoué) —\x1b[0m`,
+          ? `\x1b[2m— session ${flavor} · ${project} —\x1b[0m`
+          : `\x1b[2m— session ${flavor} restaurée · ${project} (scrollback rejoué) —\x1b[0m`,
       )
-      // Handoff auto-run : UNIQUEMENT sur une session NEUVE (jamais rejoué sur une ré-attache — sinon revenir
-      // sur l'onglet Ops relancerait `cockpit interview`), une seule fois.
-      if (ctl.fresh && initialCommand && !sentInitialRef.current) {
-        sentInitialRef.current = true
-        ws.send(enc.encode(`${initialCommand}\n`))
-      }
     }
     ws.onerror = () => setStatus('error')
     ws.onclose = () => setStatus((s) => (s === 'error' ? s : 'closed'))
@@ -181,7 +178,7 @@ export function TerminalPane({ project, initialCommand }: { project: string; ini
     }
     // fontSize hors deps : appliqué à chaud par l'effet dédié (pas de recréation du terminal à chaque cran).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project, reconnectKey])
+  }, [project, session, reconnectKey])
 
   // Taille de police appliquée À CHAUD (sans recréer le terminal) + persistée.
   useEffect(() => {

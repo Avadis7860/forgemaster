@@ -4,6 +4,7 @@ import { Button, Dialog, LoadingState } from '@/components/ui'
 import { RuntimeStrip } from '@/components/runtime/RuntimeStrip'
 import { FlowPanel } from '@/components/flow/FlowPanel'
 import { FrontmapPanel } from '@/components/frontmap/FrontmapPanel'
+import type { PtySession } from '@/lib/ws'
 
 // xterm (~290 kB) code-split hors du bundle principal, comme l'ex-onglet Terminal.
 const TerminalPane = lazy(() =>
@@ -21,9 +22,11 @@ export function OpsTab() {
   const project = useParams({ strict: false }).project ?? ''
   const { panel, run } = useSearch({ strict: false }) as { panel?: string; run?: string }
   const navigate = useNavigate()
-  // Handoff depuis le dispatch d'un socle interactif (`?run=interview`) : le terminal auto-lance la commande
-  // d'interview à l'ouverture. Le search param d'URL EST le canal (deep-linkable, capturable at-rest).
-  const initialCommand = run === 'interview' && project ? `cockpit interview ${project}` : undefined
+  // Handoff depuis le dispatch d'un socle interactif (`?run=interview`) : le pane se branche sur la session
+  // PTY **interview** (dédiée, son process EST `cockpit interview`), sinon sur le **shell** de login. Le
+  // search param d'URL EST le canal (deep-linkable, capturable at-rest) — il sélectionne la SESSION, plus
+  // aucune commande n'est tapée dans un shell partagé (l'ancien modèle cassait dès que le shell persistait).
+  const session: PtySession = run === 'interview' ? 'interview' : 'shell'
 
   // Redirection douce : le drawer Git a été retiré (promu en surface `/git`). Un ancien lien `?panel=git`
   // (bookmark) renvoie vers la destination de plein droit, en portant le projet courant.
@@ -54,7 +57,7 @@ export function OpsTab() {
       {/* Terminal = ancre, remplit le reste de la hauteur. */}
       <div className="min-h-0 flex-1">
         <Suspense fallback={<LoadingState label="Chargement du terminal…" />}>
-          <TerminalPane key={project} project={project} initialCommand={initialCommand} />
+          <TerminalPane key={`${project}:${session}`} project={project} session={session} />
         </Suspense>
       </div>
 

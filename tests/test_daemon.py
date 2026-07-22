@@ -917,13 +917,13 @@ async def _until(pred, *, timeout: float = 5.0) -> None:
 
 def test_terminal_detaches_on_disconnect_and_shell_survives(tmp_path):
     """La feature : à la déconnexion WS, le shell SURVIT (détaché au registre), il n'est PAS tué. La 1ʳᵉ
-    connexion s'annonce `fresh:true` (le client y rejoue son initialCommand)."""
+    connexion s'annonce `fresh:true` (le client n'en fait qu'une bannière « session neuve »)."""
     async def scenario():
         reg = term_reg.PtySessionRegistry()
         ws = _ScriptWS()
         argv = ["/bin/sh", "-c", "sleep 30"]
         task = asyncio.create_task(pty.serve_project_terminal(
-            ws, reg, project="p", argv=argv, cwd=str(tmp_path), env=None))
+            ws, reg, session_key="p", argv=argv, cwd=str(tmp_path), env=None))
         await _until(lambda: bool(ws.texts))                 # la frame de session est partie
         ws.disconnect()
         await task
@@ -938,20 +938,20 @@ def test_terminal_detaches_on_disconnect_and_shell_survives(tmp_path):
 
 def test_terminal_reattach_replays_scrollback(tmp_path):
     """Reconnexion → ré-attache la même session : le scrollback est REJOUÉ dans le xterm recréé, et la frame
-    s'annonce `fresh:false` (le client NE re-lance PAS l'initialCommand)."""
+    s'annonce `fresh:false` (bannière « session restaurée » — la ré-attache REPREND le process en cours)."""
     async def scenario():
         reg = term_reg.PtySessionRegistry()
         argv = ["/bin/sh", "-c", "printf MARKER123; sleep 30"]
         ws1 = _ScriptWS()
         t1 = asyncio.create_task(pty.serve_project_terminal(
-            ws1, reg, project="p", argv=argv, cwd=str(tmp_path), env=None))
+            ws1, reg, session_key="p", argv=argv, cwd=str(tmp_path), env=None))
         await _until(lambda: b"MARKER123" in ws1.sent)
         ws1.disconnect()
         await t1
         assert reg.get("p").detached_at is not None          # détachée, pas tuée
         ws2 = _ScriptWS()
         t2 = asyncio.create_task(pty.serve_project_terminal(
-            ws2, reg, project="p", argv=argv, cwd=str(tmp_path), env=None))
+            ws2, reg, session_key="p", argv=argv, cwd=str(tmp_path), env=None))
         await _until(lambda: b"MARKER123" in ws2.sent)       # scrollback REJOUÉ sur la ré-attache
         assert json.loads(ws2.texts[0])["fresh"] is False    # ré-attache → pas de re-run
         ws2.disconnect()
@@ -967,7 +967,7 @@ def test_terminal_eof_tears_down_and_deregisters(tmp_path):
         reg = term_reg.PtySessionRegistry()
         ws = _ScriptWS()                                     # ne déconnecte jamais → seul l'EOF sort
         await pty.serve_project_terminal(
-            ws, reg, project="p", argv=["/bin/sh", "-c", "printf DONE"], cwd=str(tmp_path), env=None)
+            ws, reg, session_key="p", argv=["/bin/sh", "-c", "printf DONE"], cwd=str(tmp_path), env=None)
         assert b"DONE" in ws.sent and ws.closed is True
         assert reg.get("p") is None                          # session morte retirée du registre
     asyncio.run(scenario())
@@ -988,7 +988,7 @@ def test_reaper_terminates_detached_session_past_ttl(tmp_path):
         ws = _ScriptWS()
         ws.disconnect()                                      # déconnexion immédiate → détach à t=0
         await pty.serve_project_terminal(
-            ws, reg, project="p", argv=["/bin/sh", "-c", "sleep 30"], cwd=str(tmp_path), env=None)
+            ws, reg, session_key="p", argv=["/bin/sh", "-c", "sleep 30"], cwd=str(tmp_path), env=None)
         sess = reg.get("p")
         assert sess is not None and sess.detached_at == 0.0
         assert reg.reap() == []                              # pas encore expirée
@@ -1031,6 +1031,43 @@ def test_terminal_ws_opens_when_host_unauthenticated(client, monkeypatch):
     monkeypatch.setattr("cockpit.terminal.pty.serve_project_terminal", _fake_serve)
     with c.websocket_connect("/ws/terminal/real") as ws:   # accept réussi (pas de WebSocketDisconnect)
         assert json.loads(ws.receive_text()) == {"t": "session", "fresh": True}
+
+
+def test_terminal_and_interview_ws_are_distinct_sessions(client, monkeypatch):
+    """L'interview est une session PTY DÉDIÉE : /ws/interview/{p} sert avec la clé `interview:{p}` et l'argv
+    `cockpit interview`, DISTINCTE de la session shell /ws/terminal/{p} (clé `{p}`, argv `bash -l`). C'est le
+    cœur du fix : les deux flavors coexistent sans collision → la session interview a sa propre fraîcheur, le
+    shell de login persistant ne la bloque plus (fini le handoff tapé gaté sur `fresh`)."""
+    c, _ = client
+    c.post("/api/projects", json={"slug": "real"})
+    c.app.state.terminals = term_reg.PtySessionRegistry()
+    seen: list[tuple[str, list[str]]] = []
+
+    async def _fake_serve(websocket, registry, *, session_key, argv, cwd, env):
+        seen.append((session_key, argv))
+        await websocket.send_text(json.dumps({"t": "session", "fresh": True}))
+
+    monkeypatch.setattr("cockpit.terminal.pty.serve_project_terminal", _fake_serve)
+    with c.websocket_connect("/ws/terminal/real") as ws:
+        assert json.loads(ws.receive_text())["t"] == "session"
+    with c.websocket_connect("/ws/interview/real") as ws:
+        assert json.loads(ws.receive_text())["t"] == "session"
+
+    assert seen == [
+        ("real", pty.local_shell_argv()),
+        ("interview:real", pty.interview_argv("real")),
+    ]
+
+
+def test_interview_ws_refuses_unknown_project_before_accept(client, monkeypatch):
+    """Même garde projet que le shell : un projet inexistant est refusé (1008) AVANT `accept()` (sinon
+    `Popen(cwd=absent)` crashe post-accept). Prouvé sans auth (le WS interview ne gate pas l'auth ; c'est
+    `cockpit interview` côté CLI qui la regate dans le PTY)."""
+    c, _ = client
+    monkeypatch.setattr("cockpit.auth.claude_auth_status",
+                        lambda *a, **k: {"authenticated": False, "source": None})
+    with pytest.raises(WebSocketDisconnect), c.websocket_connect("/ws/interview/does-not-exist"):
+        pass
 
 
 # -- fail-loud UI : dist absente → page d'aide, jamais un 404 muet ----------------------------------

@@ -1,15 +1,19 @@
-"""routes/terminal — router du terminal web (WebSocket → PTY LOCAL **détachable**). Ordre : résout le
-workdir borné du projet (`pty.resolve_workdir`, #4 anti-traversal), **valide qu'il existe** avant `accept()`
-(sinon `bash -l` dans un dir absent crash post-accept), puis délègue à `pty.serve_project_terminal` — qui
-ré-attache la session vivante du registre (rejeu scrollback) ou en spawn une neuve.
+"""routes/terminal — router des sessions PTY web **détachables** (WebSocket → PTY LOCAL). Deux flavors,
+même garde, **clés de registre distinctes** (aucune collision) :
 
-**Pas de gate `claude_auth` ici** (retiré) : ce WS ouvre un **shell local** (`bash -l`), il ne **spawne
-jamais** un worker `claude` — c'est justement la surface où l'utilisateur lance son `claude login`
-d'onboarding (cf. `auth.AUTH_HINT` / `CLAUDE_LOGIN_HINT` : « dans le terminal »). Le gater sur l'auth Claude
-déjà présente était une **erreur de catégorie** : deadlock poule-et-œuf (login impossible car pas encore
-loggé). Le gate d'auth reste sur les **chemins de spawn réels** (`dispatch`/`orchestrator`/`worker`/
-`reviewer`/`interview` + routes `dispatch`/`gate`), pas ici. La frontière **client** (qui peut joindre ce
-shell) reste la frontière **réseau** (LAN/VPN), assurée hors process — l'auth host ne l'a jamais fournie."""
+- `/ws/terminal/{project}` → **shell** de projet (`bash -l`, clé `<project>`). C'est la surface où
+  l'utilisateur lance son `claude login` d'onboarding — **pas de gate `claude_auth`** ici (le shell ne spawne
+  pas de worker `claude` ; gater serait un deadlock poule-et-œuf, cf. `auth.AUTH_HINT`). Le gate d'auth reste
+  sur les chemins de spawn réels (`dispatch`/`orchestrator`/`worker`/`reviewer`/`interview` CLI + routes).
+- `/ws/interview/{project}` → **interview de socle** (`bash -lc 'exec cockpit interview <project>'`, clé
+  `interview:<project>`). Le process du PTY **EST** l'interview (plus de commande tapée dans un shell partagé
+  gaté sur `fresh` — l'ancien modèle cassait dès que le shell du projet persistait). `cockpit interview`
+  regate l'auth côté CLI et l'affiche dans le PTY. Session **distincte** du shell → persistance/reprise
+  propres, indépendantes.
+
+Garde commune (avant `accept()`) : `pty.resolve_workdir` (#4 anti-traversal) + `is_dir` (sinon `bash` dans un
+dir absent crash post-accept). La frontière **client** reste la frontière **réseau** (LAN/VPN), hors
+process."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -19,23 +23,42 @@ from fastapi import APIRouter, WebSocket
 from cockpit.terminal import pty
 
 
+async def _accept_project_pty(websocket: WebSocket, project: str) -> str | None:
+    """Garde partagée : résout le workdir borné du projet et `accept()` le WS s'il existe. Retourne le
+    workdir (accepté), ou `None` après avoir fermé le WS (`1008`) sur traversal / projet inexistant — refus
+    AVANT `accept()` pour ne jamais `Popen(cwd=absent)`."""
+    deps = websocket.app.state.deps
+    try:
+        workdir = pty.resolve_workdir(deps.settings, project)   # borné au dossier du projet
+    except ValueError:
+        await websocket.close(code=1008)                        # chemin hors racine → refus policy
+        return None
+    if not Path(workdir).is_dir():                              # projet inexistant → refus AVANT accept
+        await websocket.close(code=1008)
+        return None
+    await websocket.accept()
+    return workdir
+
+
 def make_terminal_router() -> APIRouter:
     router = APIRouter()
 
     @router.websocket("/ws/terminal/{project}")
     async def terminal_ws(websocket: WebSocket, project: str) -> None:
-        deps = websocket.app.state.deps
-        try:
-            workdir = pty.resolve_workdir(deps.settings, project)   # borné au dossier du projet
-        except ValueError:
-            await websocket.close(code=1008)                        # chemin hors racine → refus policy
+        workdir = await _accept_project_pty(websocket, project)
+        if workdir is None:
             return
-        if not Path(workdir).is_dir():                 # projet inexistant → refus AVANT accept (sinon
-            await websocket.close(code=1008)           # Popen(cwd=absent) crash post-accept)
-            return
-        await websocket.accept()
         registry = websocket.app.state.terminals
-        await pty.serve_project_terminal(websocket, registry, project=project,
+        await pty.serve_project_terminal(websocket, registry, session_key=project,
                                          argv=pty.local_shell_argv(), cwd=workdir, env=pty.shell_env())
+
+    @router.websocket("/ws/interview/{project}")
+    async def interview_ws(websocket: WebSocket, project: str) -> None:
+        workdir = await _accept_project_pty(websocket, project)
+        if workdir is None:
+            return
+        registry = websocket.app.state.terminals
+        await pty.serve_project_terminal(websocket, registry, session_key=f"interview:{project}",
+                                         argv=pty.interview_argv(project), cwd=workdir, env=pty.shell_env())
 
     return router
