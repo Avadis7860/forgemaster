@@ -1001,25 +1001,36 @@ def test_reaper_terminates_detached_session_past_ttl(tmp_path):
 
 def test_terminal_ws_refuses_unknown_project_before_accept(client, monkeypatch):
     """Correctif F2 : un projet inexistant est refusé (1008) AVANT `accept()` — plus de `bash -l` spawné
-    dans un dir absent qui crashait post-accept. HERMÉTIQUE : on force l'hôte authentifié pour que le refus
-    soit attribué au **gate projet**, pas au gate auth quand l'hôte n'a pas de credentials."""
+    dans un dir absent qui crashait post-accept. C'est désormais le **seul** gate du WS terminal (le gate
+    `claude_auth` a été retiré : le terminal ouvre un shell, il ne spawne pas de worker `claude`). On force
+    l'hôte **non authentifié** pour prouver que le refus vient bien du **gate projet**, pas d'un gate d'auth
+    (qui n'existe plus ici)."""
     c, _ = client
     monkeypatch.setattr("cockpit.auth.claude_auth_status",
-                        lambda *a, **k: {"authenticated": True, "source": "test"})
+                        lambda *a, **k: {"authenticated": False, "source": None})
     # fermé avant accept → disconnect levé au connect
     with pytest.raises(WebSocketDisconnect), c.websocket_connect("/ws/terminal/does-not-exist"):
         pass
 
 
-def test_terminal_ws_refused_when_host_unauthenticated(client, monkeypatch):
-    """Garde d'auth du WS terminal (parité routes mutantes) : hôte NON authentifié → refus 1008 AVANT
-    `accept()`, même pour un projet **valide** (prouve que c'est l'auth qui refuse, pas l'existence)."""
+def test_terminal_ws_opens_when_host_unauthenticated(client, monkeypatch):
+    """Fix deadlock d'onboarding : hôte NON authentifié + projet **valide** → le WS **s'ouvre** (plus de
+    refus). Le terminal est la surface où l'utilisateur lance son `claude login` ; le gater sur l'auth déjà
+    présente était un deadlock poule-et-œuf. On prouve que le routeur a passé sa décision (gate projet OK →
+    `accept()` → délègue) : on reçoit la frame de contrôle de session `{"t":"session", ...}`. `serve` est
+    faké (le vrai est couvert par les tests de détache/ré-attache) pour isoler la décision du routeur."""
     c, _ = client
-    c.post("/api/projects", json={"slug": "real"})       # projet existant → seul l'auth peut refuser
+    c.post("/api/projects", json={"slug": "real"})       # projet existant → gate projet passe
+    c.app.state.terminals = term_reg.PtySessionRegistry()  # normalement posé par le lifespan (app.py:96)
     monkeypatch.setattr("cockpit.auth.claude_auth_status",
                         lambda *a, **k: {"authenticated": False, "source": None})
-    with pytest.raises(WebSocketDisconnect), c.websocket_connect("/ws/terminal/real"):
-        pass
+
+    async def _fake_serve(websocket, registry, **kwargs):
+        await websocket.send_text(json.dumps({"t": "session", "fresh": True}))
+
+    monkeypatch.setattr("cockpit.terminal.pty.serve_project_terminal", _fake_serve)
+    with c.websocket_connect("/ws/terminal/real") as ws:   # accept réussi (pas de WebSocketDisconnect)
+        assert json.loads(ws.receive_text()) == {"t": "session", "fresh": True}
 
 
 # -- fail-loud UI : dist absente → page d'aide, jamais un 404 muet ----------------------------------
