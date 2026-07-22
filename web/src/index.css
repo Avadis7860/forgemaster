@@ -108,3 +108,26 @@ body {
   border: 2px solid transparent;
   background-clip: content-box;
 }
+
+/* Coloration syntaxique (highlight.js / lowlight) — mappée sur la rampe ANSI `term-bright-*` du @theme, le
+   jeu de tokens déjà prévu pour le code (cf. §rampe bright). Valeurs de thème brutes en var() (comme les
+   scrollbars), ZÉRO hex magique : la palette reste pilotée par @theme. Sert DocView (fences Markdown, via
+   rehype-highlight) ET la visionneuse de fichiers du repo-browser (via lowlight). Dark-first. */
+.hljs { color: var(--color-fg); }
+.hljs-comment, .hljs-quote { color: var(--color-faint); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag, .hljs-section, .hljs-type {
+  color: var(--color-term-bright-magenta);
+}
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-meta .hljs-string { color: var(--color-term-bright-green); }
+.hljs-number, .hljs-bullet, .hljs-symbol, .hljs-link { color: var(--color-term-bright-yellow); }
+.hljs-title, .hljs-title.function_, .hljs-built_in, .hljs-selector-id, .hljs-selector-class {
+  color: var(--color-term-bright-blue);
+}
+.hljs-attr, .hljs-attribute, .hljs-variable, .hljs-template-variable, .hljs-name {
+  color: var(--color-term-bright-cyan);
+}
+.hljs-tag { color: var(--color-faint); }
+.hljs-meta, .hljs-comment .hljs-doctag { color: var(--color-term-bright-black); }
+.hljs-deletion { color: var(--color-danger-500); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }

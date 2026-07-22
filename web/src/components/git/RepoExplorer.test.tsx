@@ -40,10 +40,10 @@ describe('RepoExplorer', () => {
         { name: 'src', type: 'tree', size: null, sha: 't1' },
         { name: 'notes.txt', type: 'blob', size: 12, sha: 'b1' },
       ],
-      src: [{ name: 'app.py', type: 'blob', size: 20, sha: 'b2' }],
+      src: [{ name: 'app.txt', type: 'blob', size: 20, sha: 'b2' }],
     }
     h.blobs = {
-      'src/app.py': { project: 'p', path: 'src/app.py', ref: 'dev', size: 20,
+      'src/app.txt': { project: 'p', path: 'src/app.txt', ref: 'dev', size: 20,
         binary: false, truncated: false, too_large: false, content: "print('hi')\nx = 1\n" },
     }
     render(<RepoExplorer project="p" branches={BRANCHES} />)
@@ -54,12 +54,12 @@ describe('RepoExplorer', () => {
     // aucun fichier sélectionné au départ
     expect(screen.getByText('Aucun fichier')).toBeInTheDocument()
 
-    // descente dans src → app.py visible
+    // descente dans src → app.txt visible
     fireEvent.click(screen.getByText('src'))
-    expect(await screen.findByText('app.py')).toBeInTheDocument()
+    expect(await screen.findByText('app.txt')).toBeInTheDocument()
 
     // ouverture du fichier → contenu + n° de ligne (gutter 1 et 2)
-    fireEvent.click(screen.getByText('app.py'))
+    fireEvent.click(screen.getByText('app.txt'))
     expect(await screen.findByText("print('hi')")).toBeInTheDocument()
     expect(screen.getByText('1')).toBeInTheDocument()
     expect(screen.getByText('2')).toBeInTheDocument()
@@ -80,6 +80,21 @@ describe('RepoExplorer', () => {
     // Le README mène : plus d'invite « Aucun fichier », et le `#` est rendu en <h1> (DocView), pas laissé brut.
     expect(screen.queryByText('Aucun fichier')).not.toBeInTheDocument()
     expect(await screen.findByRole('heading', { name: 'Titre' })).toBeInTheDocument()
+  })
+
+  it('colore un fichier de code reconnu (lowlight) en préservant la grille n° de ligne', async () => {
+    h.trees = { '': [{ name: 'main.py', type: 'blob', size: 30, sha: 'bp' }] }
+    h.blobs = {
+      'main.py': { project: 'p', path: 'main.py', ref: 'dev', size: 30,
+        binary: false, truncated: false, too_large: false, content: 'import os\nx = 1\n' },
+    }
+    render(<RepoExplorer project="p" branches={BRANCHES} />)
+    fireEvent.click(screen.getByRole('button', { name: /main\.py/ }))
+    // `.py` reconnu → lowlight : `import` devient un token coloré (span .hljs-keyword), dans un conteneur `hljs`
+    // qui garde la grille n°-de-ligne (chunk lazy résolu par le Suspense).
+    const kw = await screen.findByText('import')
+    expect(kw).toHaveClass('hljs-keyword')
+    expect(kw.closest('code')).toHaveClass('hljs')
   })
 
   it('signale un fichier binaire sans émettre d\'octets', async () => {

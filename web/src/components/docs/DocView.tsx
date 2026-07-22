@@ -1,6 +1,7 @@
 import type { ComponentPropsWithoutRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import rehypeHighlight from 'rehype-highlight'
 import { stripMdxDirectives } from './mdx'
 
 /** DocView — rendu Markdown d'une carte docs, avec un **rythme typographique de vraie page de doc**.
@@ -19,6 +20,9 @@ export function DocView({ content, variant = 'inline' }: { content: string; vari
     <article className={`${base} text-muted`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        // Coloration des fences ```lang (lowlight → spans .hljs-*, thémés via index.css). `ignoreMissing` :
+        // une fence à langage inconnu retombe en texte nu au lieu de casser le rendu.
+        rehypePlugins={[[rehypeHighlight, { ignoreMissing: true }]]}
         components={{
           h1: ({ children }) => (
             <h1 className="mb-3 text-3xl font-bold tracking-tight text-fg">{children}</h1>

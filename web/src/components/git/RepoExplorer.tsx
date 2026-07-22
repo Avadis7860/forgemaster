@@ -7,6 +7,9 @@ import type { GitBlob, GitBranch, GitTreeEntry } from '@/lib/schemas'
 // DocView (react-markdown + remark-gfm) en chunk séparé — même économie que Bundles/Docs (lazy, hors bundle
 // initial). Un `.md` du dépôt (fichier sélectionné ou README auto d'un dossier) est rendu en vraie page.
 const DocView = lazy(() => import('@/components/docs/DocView').then((m) => ({ default: m.DocView })))
+// Visionneuse de code colorée (lowlight) — chunk séparé, ne charge lowlight que quand on ouvre un fichier
+// de code dont l'extension est reconnue (cf. extToLang).
+const HighlightedCode = lazy(() => import('./HighlightedCode'))
 
 /** Explorateur de dépôt read-only : sélecteur de réf + arbre navigable (dossiers d'abord, breadcrumb) +
  *  visionneuse de fichier (n° de ligne). Zéro mutation — deux GET idempotents (arbre, blob) servent la vue,
@@ -301,6 +304,20 @@ function FileBody({ blob }: { blob: GitBlob }) {
       </div>
     )
   }
+  const lang = extToLang(blob.path)
+  if (lang) {
+    // Fichier de code à extension reconnue → coloration lowlight (chunk lazy). Never-silent-cap : troncature signalée.
+    return (
+      <div className="flex flex-col">
+        {blob.truncated && (
+          <div className="px-4 py-2"><Badge tone="warn" dot>Aperçu tronqué</Badge></div>
+        )}
+        <Suspense fallback={<div className="p-4"><LoadingState label="Coloration…" /></div>}>
+          <HighlightedCode content={blob.content} lang={lang} />
+        </Suspense>
+      </div>
+    )
+  }
   const lines = blob.content.split('\n')
   return (
     <div className="flex flex-col">
@@ -323,6 +340,25 @@ function FileBody({ blob }: { blob: GitBlob }) {
       </div>
     </div>
   )
+}
+
+/** Extension de fichier → langage lowlight (sous-ensemble `common`). Inconnu → '' : rendu texte nu, lowlight
+ *  non chargé (les fichiers sans langage reconnu ne tirent pas le chunk de coloration). */
+function extToLang(path: string): string {
+  const ext = path.slice(path.lastIndexOf('.') + 1).toLowerCase()
+  const map: Record<string, string> = {
+    ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript',
+    js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript',
+    py: 'python', rb: 'ruby', go: 'go', rs: 'rust', java: 'java', cs: 'csharp',
+    c: 'c', h: 'c', cpp: 'cpp', cc: 'cpp', hpp: 'cpp',
+    php: 'php', swift: 'swift', kt: 'kotlin', lua: 'lua', r: 'r', pl: 'perl',
+    sh: 'bash', bash: 'bash', zsh: 'bash',
+    json: 'json', yml: 'yaml', yaml: 'yaml', toml: 'ini', ini: 'ini', cfg: 'ini',
+    css: 'css', scss: 'scss', less: 'less',
+    html: 'xml', htm: 'xml', xml: 'xml', svg: 'xml',
+    sql: 'sql', graphql: 'graphql', gql: 'graphql', diff: 'diff', patch: 'diff',
+  }
+  return map[ext] ?? ''
 }
 
 /** Taille lisible : octets sous 1 Ko, sinon Ko/Mo à une décimale. */
