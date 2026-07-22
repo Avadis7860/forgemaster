@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import {
   Alert, Badge, Button, Card, EmptyState, LoadingState, SectionTitle, Select,
@@ -8,6 +8,7 @@ import {
   useCapitalBody, useCapitalCollections, useCapitalSections, useCapitalStatus, useCapitalTypes,
 } from '@/lib/queries'
 import type { CapitalSection, CapitalType } from '@/lib/schemas'
+import { DocReaderOverlay } from '@/components/docs/DocReader'
 
 // DocView (react-markdown + remark-gfm) en chunk séparé — le corps servi (blueprint `body` / tech `content`)
 // est du Markdown ; on le rend comme une vraie page de doc. Lazy → hors du bundle initial de l'accueil.
@@ -272,6 +273,7 @@ function SectionRow({ section, typeId, active, onClick }: {
  *  tech) → on prend le premier présent, sinon un pretty-JSON de secours (jamais rien d'inventé). */
 function BodyPane({ type, refToRead }: { type: string; refToRead: string | null }) {
   const { data, isLoading, isError, error } = useCapitalBody(type, refToRead ?? '', !!refToRead)
+  const [readerOpen, setReaderOpen] = useState(false)
 
   if (!refToRead) {
     return (
@@ -292,17 +294,25 @@ function BodyPane({ type, refToRead }: { type: string; refToRead: string | null 
     )
   }
   const prose = data.body ?? data.content ?? JSON.stringify(data, null, 2)
+  const docTitle = data.ref.split('/').pop() || data.ref
   return (
     <Card className="flex min-h-48 flex-col overflow-hidden p-0">
       <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2">
         <code className="min-w-0 flex-1 truncate font-mono text-xs text-fg" title={data.ref}>{data.ref}</code>
         <span className="shrink-0 text-xs text-faint">{data.type}</span>
+        {/* « Lire en grand » → lecteur focus large (mesure ~72ch, grande typo). L'inline reste l'aperçu.
+            Bouton LABELLÉ (pas une icône nue) : c'est le geste central du chantier, il doit se voir. */}
+        <Button variant="secondary" size="sm" className="shrink-0" onClick={() => setReaderOpen(true)}>
+          ⤢ Lire en grand
+        </Button>
       </div>
       <div className="overflow-auto p-5">
         <Suspense fallback={<LoadingState label="Rendu Markdown…" />}>
           <DocView content={prose} />
         </Suspense>
       </div>
+      <DocReaderOverlay open={readerOpen} onOpenChange={setReaderOpen}
+        title={docTitle} meta={`${data.ref} · ${data.type}`} content={prose} />
     </Card>
   )
 }

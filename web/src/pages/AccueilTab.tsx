@@ -1,8 +1,9 @@
-import { Suspense, lazy } from 'react'
+import { Suspense, lazy, useState } from 'react'
 import { Link, useParams } from '@tanstack/react-router'
 import { Alert, Badge, Button, Card, Eyebrow, LoadingState } from '@/components/ui'
 import { CostStrip } from '@/components/cost/CostStrip'
 import { LaunchCycle } from '@/components/dispatch/LaunchCycle'
+import { DocReaderOverlay } from '@/components/docs/DocReader'
 import { useDeployments, useDocs, useRoadmap } from '@/lib/queries'
 
 // react-markdown est lourd → code-split : le renderer ne se charge QUE quand la carte docs a du contenu.
@@ -17,6 +18,7 @@ export function AccueilTab() {
   const docs = useDocs(project)
   const roadmap = useRoadmap(project)
   const deployments = useDeployments(project)
+  const [readerOpen, setReaderOpen] = useState(false)
 
   const features = roadmap.data?.features ?? []
   const nFeatures = features.length
@@ -40,7 +42,14 @@ export function AccueilTab() {
 
       {/* « Ce que c'est » = la carte docs FONDUE (ex-onglet Docs). Lue depuis le repo (SoT-and-derive) ; 4 états. */}
       <Card className="space-y-4 p-6">
-        <Eyebrow>Documentation · {project}</Eyebrow>
+        <div className="flex items-center justify-between gap-2">
+          <Eyebrow>Documentation · {project}</Eyebrow>
+          {docs.data?.found && (
+            <Button variant="secondary" size="sm" className="shrink-0" onClick={() => setReaderOpen(true)}>
+              ⤢ Lire en grand
+            </Button>
+          )}
+        </div>
         {docs.isLoading ? (
           <LoadingState label="Chargement de la doc…" />
         ) : docs.isError ? (
@@ -58,6 +67,8 @@ export function AccueilTab() {
             <Suspense fallback={<LoadingState label="Rendu de la doc…" />}>
               <DocView content={docs.data.content} />
             </Suspense>
+            <DocReaderOverlay open={readerOpen} onOpenChange={setReaderOpen}
+              title={`Documentation · ${project}`} content={docs.data.content} />
           </>
         )}
       </Card>

@@ -1,15 +1,22 @@
 import type { ComponentPropsWithoutRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { stripMdxDirectives } from './mdx'
 
 /** DocView — rendu Markdown d'une carte docs, avec un **rythme typographique de vraie page de doc**.
  *  `react-markdown` (SÛR : React elements, jamais `dangerouslySetInnerHTML`) + `remark-gfm` (tables, code,
  *  autoliens). Chaque bloc est mappé aux tokens `@theme` (source unique) et porte ses propres marges → une
  *  hiérarchie claire et une mesure de lecture confortable (le parent centre la colonne). Lazy-chargé par
- *  `DocsTab` (chunk séparé, comme xterm). */
-export function DocView({ content }: { content: string }) {
+ *  `DocsTab` (chunk séparé, comme xterm).
+ *
+ *  `variant` : `inline` (défaut, aperçu compact dans un volet) vs `reader` (mode lecture immersif du
+ *  `DocReaderOverlay` — base plus grande + interligne aéré pour lire une page entière confortablement). Seule
+ *  l'échelle de base du corps change ; les blocs (titres/code/tables) gardent leur mapping. */
+export function DocView({ content, variant = 'inline' }: { content: string; variant?: 'inline' | 'reader' }) {
+  const base = variant === 'reader' ? 'text-[1.02rem] leading-8' : 'text-[0.95rem] leading-7'
+  const clean = stripMdxDirectives(content)   // pas de boilerplate MDX en tête de lecture
   return (
-    <article className="text-[0.95rem] leading-7 text-muted">
+    <article className={`${base} text-muted`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -64,7 +71,7 @@ export function DocView({ content }: { content: string }) {
           td: ({ children }) => <td className="border-b border-border/60 px-3 py-2">{children}</td>,
         }}
       >
-        {content}
+        {clean}
       </ReactMarkdown>
     </article>
   )

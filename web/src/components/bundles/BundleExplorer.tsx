@@ -8,6 +8,7 @@ import { ApiError } from '@/lib/api'
 import { useBundleFile, useBundleTree, useTypes } from '@/lib/queries'
 import type { BundleFile, BundleFileEntry } from '@/lib/schemas'
 import type { Tone } from '@/lib/statusTone'
+import { DocReaderOverlay } from '@/components/docs/DocReader'
 
 // DocView (react-markdown + remark-gfm) en chunk séparé — mêmes économies que DocsTab (lazy, pas dans le
 // bundle initial de l'accueil). Un fichier .md du bundle est rendu comme une vraie page ; le reste en mono.
@@ -339,6 +340,7 @@ function FileRow({
  *  (calque de la visionneuse du RepoExplorer). Vide → invite à choisir ; erreur (404 fichier absent) → Alert. */
 function BundleFilePane({ type, file }: { type: string; file: string | null }) {
   const { data, isLoading, isError, error } = useBundleFile(type, file ?? '')
+  const [readerOpen, setReaderOpen] = useState(false)
 
   if (!file) {
     // Message nu (pas d'EmptyState bordé) : le volet EST déjà une carte bordée — un cadre interne ferait une
@@ -360,13 +362,23 @@ function BundleFilePane({ type, file }: { type: string; file: string | null }) {
       </Card>
     )
   }
+  const isMd = data.path.endsWith('.md')
   return (
     <Card className="flex min-h-48 flex-col overflow-hidden p-0">
       <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2">
         <code className="min-w-0 flex-1 truncate font-mono text-xs text-fg" title={data.path}>{data.path}</code>
         <span className="shrink-0 text-xs text-faint">{data.content.split('\n').length} lignes</span>
+        {isMd && (
+          <Button variant="secondary" size="sm" className="shrink-0" onClick={() => setReaderOpen(true)}>
+            ⤢ Lire en grand
+          </Button>
+        )}
       </div>
       <BundleFileBody file={data} />
+      {isMd && (
+        <DocReaderOverlay open={readerOpen} onOpenChange={setReaderOpen}
+          title={data.path.split('/').pop() || data.path} meta={data.path} content={data.content} />
+      )}
     </Card>
   )
 }
