@@ -21,11 +21,13 @@ from pathlib import Path
 
 from cockpit import auth
 from cockpit.config import Settings
+from cockpit.core import ids
 from cockpit.db import store
 from cockpit.dispatch import worktree
 from cockpit.git.backend import GitBackend
 from cockpit.git.identity import resolve_identity
 from cockpit.git.internal import InternalGit
+from cockpit.projects import registry
 from cockpit.projects.registry import get_project, sot_path_for
 from cockpit.roadmap import check, model, resolver
 from cockpit.tools import cli_env
@@ -36,12 +38,16 @@ from cockpit.tools import cli_env
 Launcher = Callable[..., int]
 
 
-def build_interview_argv(prompt: str, *, model_name: str | None = None) -> list[str]:
+def build_interview_argv(prompt: str, *, model_name: str | None = None,
+                         session_id: str | None = None) -> list[str]:
     """Argv d'un `claude` **interactif** (jamais `-p`) seedé du `prompt` comme premier message. Interactif par
-    défaut (le TTY est hérité au lancement). PUR."""
+    défaut (le TTY est hérité au lancement). `session_id` (v14) épingle l'id de session (`--session-id`) →
+    transcript déterministe `~/.claude/projects/…/<session_id>.jsonl` pour sommer son coût token. PUR."""
     argv = ["claude"]
     if model_name:
         argv += ["--model", model_name]
+    if session_id:
+        argv += ["--session-id", session_id]
     argv.append(prompt)                 # positionnel = premier message ; démarre la session interactive
     return argv
 
@@ -232,7 +238,11 @@ def run_interview(conn, settings: Settings, *, project: str, git: GitBackend | N
     auth.trust_workspace(sot_path_for(settings, project))
     res = worktree.reserve(conn, settings, git, project=project, feature=feature["slug"])
     prompt = build_interview_prompt(get_project(conn, project), feature, task)
-    argv = build_interview_argv(prompt)
+    # Épingle l'id de session AVANT le lancement (v14) : `--session-id` rend le transcript déterministe et
+    # persiste l'id même si la session est interrompue (PTY tué) → son coût token reste sommable après coup.
+    session_id = ids.new_id()
+    registry.record_interview_session(conn, project, session_id)
+    argv = build_interview_argv(prompt, session_id=session_id)
     launch = launcher or _default_launcher
     launch(argv, cwd=res["path"], env=interview_env(settings))
     # Réconciliation / vérification à la sortie : la doc éditée + la roadmap authorée sont dans worktree/DB.

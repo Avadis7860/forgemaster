@@ -164,6 +164,20 @@ _DEMO_REVIEW_TRANSCRIPT = [
         "usage": {"output_tokens": 620}}},
 ]
 
+# Transcript d'une session d'INTERVIEW (`claude` interactif) : PAS d'event `result` (donc pas de $), usage PAR
+# TOUR (`message.usage`, mêmes noms que le stream-json). Sommé tokens-only en ligne « interview · cadrage ».
+_DEMO_INTERVIEW_TRANSCRIPT = [
+    {"type": "user", "message": {"role": "user", "content": "Cadrons le projet."}},
+    {"type": "assistant", "message": {"model": "claude-opus-4-8", "content": [
+        {"type": "text", "text": "Quel est le périmètre jouable du premier jalon ?"}],
+        "usage": {"input_tokens": 6, "output_tokens": 220000,
+                  "cache_read_input_tokens": 900000, "cache_creation_input_tokens": 60000}}},
+    {"type": "assistant", "message": {"model": "claude-opus-4-8", "content": [
+        {"type": "text", "text": "Je dérive la roadmap de travail depuis le design."}],
+        "usage": {"input_tokens": 4, "output_tokens": 180000,
+                  "cache_read_input_tokens": 1200000, "cache_creation_input_tokens": 12000}}},
+]
+
 
 def _seed(port: int, slugs: list[str], *, home: Path) -> None:
     """Crée les projets démo + une roadmap dans le premier (graphe), et un JOB terminé avec transcript pour
@@ -184,6 +198,7 @@ def _seed(port: int, slugs: list[str], *, home: Path) -> None:
             _post(port, f"/api/features/{proj}/{feature}/tasks",
                   {"slug": task, "title": title, "depends_on": deps})
     _seed_dispatch_job(home, proj)
+    _seed_interview_cost(home, proj)
     _seed_interview_socle(home, proj)
     _seed_gate_states(home, proj)
     _seed_git_state(home, proj)
@@ -240,6 +255,32 @@ def _seed_dispatch_job(home: Path, proj: str) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def _seed_interview_cost(home: Path, proj: str) -> None:
+    """Seede une interview COMPTABILISÉE : enregistre un `session_id` sur le projet + écrit son transcript
+    interactif sous `<HOME>/.claude/projects/…` (là où `Path.home()` de la route le résout — d'où le
+    `HOME=<temp>` sur le daemon). Rend VOYANTE la ligne « interview · cadrage » (tokens-only, $ = « — »)."""
+    try:
+        from cockpit.config import Settings
+        from cockpit.db import store
+        from cockpit.projects import registry
+    except ImportError:
+        return  # build-only → pas de seed interview (screenshot non cassé)
+    settings = Settings.resolve(home=home / "home", projects_root=home / "projects")
+    sid = "demo-interview"
+    conn = store.open_db(settings)
+    try:
+        try:
+            registry.record_interview_session(conn, proj, sid)
+        except KeyError:
+            return
+    finally:
+        conn.close()
+    tdir = home / ".claude" / "projects" / "-demo-interview-cwd"   # nom de dossier indifférent (glob sur sid)
+    tdir.mkdir(parents=True, exist_ok=True)
+    (tdir / f"{sid}.jsonl").write_text(
+        "".join(json.dumps(o) + "\n" for o in _DEMO_INTERVIEW_TRANSCRIPT), encoding="utf-8")
 
 
 def _seed_interview_socle(home: Path, proj: str) -> None:
@@ -427,7 +468,10 @@ def shoot(routes: list[str], *, port: int, viewport: dict | None, full_page: boo
     # défaut. Sans cet override, `web_dist_dir()` tombe sur la dist empaquetée (`cockpit/_web_dist`) ou le
     # layout source du repo de l'install éditable — soit, depuis une WORKTREE, la dist du repo PRINCIPAL, pas
     # celle du worktree → on screenshoterait une UI PÉRIMÉE (faux-vert visuel). L'override ferme ce trou.
-    env = {**os.environ, "COCKPIT_HOME": str(home / "home"),
+    # HOME=<temp> : `dispatch/cost.py` résout les transcripts d'interview sous `Path.home()/.claude/projects/`
+    # (là où `claude` les écrit en prod). Le caler sur le temp jetable garde le seed self-contained (le daemon
+    # serve-only ne spawn pas de `claude` → aucun besoin du vrai ~).
+    env = {**os.environ, "HOME": str(home), "COCKPIT_HOME": str(home / "home"),
            "COCKPIT_PROJECTS_ROOT": str(home / "projects"),
            "COCKPIT_WEB_DIST": str(DIST)}
     proc = subprocess.Popen(

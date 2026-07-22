@@ -249,11 +249,27 @@ const CostFeatureSchema = CostAccSchema.extend({
 })
 export type CostFeature = z.infer<typeof CostFeatureSchema>
 
+// Interview de socle (v14) : TOKENS-ONLY. Une session `claude` interactive n'émet pas d'event `result` → pas de
+// $ (Claude ne price pas l'interactif). `cost_usd` est donc `null` (jamais un $, distinct d'un $0). Ses tokens
+// grossissent `total.tokens` mais PAS `total.cost_usd`.
+const CostInterviewSchema = z.object({
+  cost_usd: z.null(),
+  input: z.number(),
+  output: z.number(),
+  cache_read: z.number(),
+  cache_creation: z.number(),
+  tokens: z.number(),
+  model: z.string().nullish(),
+  n_sessions: z.number(),
+})
+export type CostInterview = z.infer<typeof CostInterviewSchema>
+
 export const ProjectCostSchema = z.object({
   project: z.string(),
   total: CostAccSchema.extend({ model: z.string().nullish(), n_models: z.number() }),
   features: z.array(CostFeatureSchema),
   nonwork: CostAccSchema,           // overhead review/outillage (compté au total, hors travail)
+  interview: CostInterviewSchema.nullable(),   // v14 : coût interview tokens-only ($ = null), ou null si aucune
 })
 export type ProjectCost = z.infer<typeof ProjectCostSchema>
 

@@ -32,6 +32,13 @@ const POPULATED = {
       steps: [{ task_slug: 'signup', ...acc(0.48, 270_000) }], fix: acc(0.21, 130_000) },
   ],
   nonwork: acc(0.35, 150_000),
+  interview: null,
+}
+
+// Interview de socle : tokens-only, cost_usd null (l'interactif n'est pas pricé par Claude).
+const INTERVIEW = {
+  cost_usd: null, input: 5, output: 2500, cache_read: 60_000, cache_creation: 5800,
+  tokens: 68_305, model: 'claude-opus-4-8', n_sessions: 1,
 }
 
 describe('CostStrip', () => {
@@ -69,6 +76,17 @@ describe('CostStrip', () => {
     render(<CostStrip project="atlas" />)
     expect(screen.getByText(/Aucun coût encore/)).toBeInTheDocument()
     expect(screen.queryByRole('img', { name: /répartition/ })).not.toBeInTheDocument()
+  })
+
+  it('interview présente → ligne « cadrage » tokens-only ($ = —), header qualifié, tooltip + note', () => {
+    h.result = ok({ ...POPULATED, interview: INTERVIEW })
+    render(<CostStrip project="atlas" />)
+    expect(screen.getByText('interview · cadrage')).toBeInTheDocument()   // modèle NON répété sur la ligne
+    // header désambiguïsé : les tokens incluent l'interview, hors du $ (drain-seul)
+    expect(screen.getByText(/dont 68k interactifs \(hors \$\)/)).toBeInTheDocument()
+    // honnêteté du « — » : tooltip « non pricé » + note en pied de bande
+    expect(screen.getByTitle(/non pricé/)).toBeInTheDocument()
+    expect(screen.getByText(/n'est pas pricée par Claude/)).toBeInTheDocument()
   })
 
   it('erreur → Alert (jamais un faux-vert)', () => {

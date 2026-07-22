@@ -63,12 +63,17 @@ function CostBody({ data }: { data: ProjectCost }) {
           <span className="text-lg font-semibold tabular-nums text-fg">{fmtUsd(total.cost_usd)}</span>
           <span className="text-sm text-muted">
             {fmtTokens(total.tokens)} tokens
+            {/* Désambiguïse le header : le $ est drain-seul, les tokens incluent l'interview (non pricée). Sans
+                ce qualificatif, la ligne-relief laisserait lire un ratio $/token de deux périmètres mélangés. */}
+            {data.interview && (
+              <span className="text-faint"> · dont {fmtTokens(data.interview.tokens)} interactifs (hors $)</span>
+            )}
             <span className="text-faint" title={total.model ?? undefined}>{model}{nModels}</span>
           </span>
         </div>
         <ProportionBar total={total} />
       </div>
-      {/* Rangées feature (tissu, drill-down par step) + overhead review/outillage. */}
+      {/* Rangées feature (tissu, drill-down par step) + overhead review/outillage + interview (tokens-only). */}
       <div className="divide-y divide-border border-t border-border">
         {data.features.map((f) => <FeatureRow key={f.slug} feature={f} />)}
         {data.nonwork.n_jobs > 0 && (
@@ -77,7 +82,25 @@ function CostBody({ data }: { data: ProjectCost }) {
             <span className="tabular-nums text-muted">{rowMoney(data.nonwork)}</span>
           </div>
         )}
+        {data.interview && (
+          <div className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+            {/* Modèle NON répété ici (le header le porte déjà) → pas de redondance, et pas de wrap à 390px. */}
+            <span className="text-muted">interview · cadrage</span>
+            {/* $ = « — » (tooltip) : l'interactif n'est pas pricé par Claude ; seuls les tokens comptent (doctrine
+                « tokens = vérité, $ = repère »). `whitespace-nowrap` garde « — · 2.57M » insécable à 390px. */}
+            <span className="whitespace-nowrap tabular-nums text-muted">
+              <span title="non pricé — session interactive, seuls les tokens comptent">—</span>
+              {' · '}{fmtTokens(data.interview.tokens)}
+            </span>
+          </div>
+        )}
       </div>
+      {data.interview && (
+        <p className="border-t border-border px-3 py-2 text-xs text-faint">
+          Le $ total est celui du drain — l'interview (interactive) n'est pas pricée par Claude, seuls ses
+          tokens comptent dans le total.
+        </p>
+      )}
     </div>
   )
 }

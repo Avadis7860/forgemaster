@@ -14,14 +14,22 @@ Règles d'attribution (cf. spec cockpit-token-cost-per-project-and-step) :
 - **review/toolchain** (`kind`) : overhead PROJET (« review · outillage »), compté dans le total mais **hors**
   du coût par step de travail.
 - jobs `failed`/`killed` sans usage → cost/token NULL → contribuent **0** (jamais un faux zéro synthétisé).
+- **interview de socle** (v14) : une session `cockpit interview` est un `claude` INTERACTIF → **pas d'event
+  `result`, donc pas de $** (Claude ne price pas l'interactif). Son transcript (`…/<sid>.jsonl`, ids sur
+  `projects.interview_session_ids`) porte l'usage token par-tour → sommé (cumulatif, comme un `result`
+  headless) en une ligne « interview / cadrage » **tokens-only** (`cost_usd=None`). On ne recalcule pas son
+  $ (une table de prix périmerait — cf. la doctrine).
 
-Réconciliation garantie : `total == Σ(features) + nonwork` et `feature == Σ(steps) + fix`.
+Réconciliation garantie : `total.cost_usd == Σ(features) + nonwork` (l'interview ne price pas) et
+`total.tokens == Σ(features) + nonwork + interview` (les tokens interview grossissent le total) ;
+`feature == Σ(steps) + fix`.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import sqlite3
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from cockpit.db import store
@@ -56,11 +64,85 @@ def _add(acc: dict, row: sqlite3.Row) -> None:
     acc["n_jobs"] += 1
 
 
-def project_cost(conn: sqlite3.Connection, slug: str) -> dict:
+def _tok(v: object) -> int:
+    """Un compte de tokens d'un transcript → int sûr (bool exclu, non-int → 0)."""
+    return v if isinstance(v, int) and not isinstance(v, bool) else 0
+
+
+def _blank_interview() -> dict:
+    """Accumulateur interview : `cost_usd=None` (NON pricé — pas de $, distinct d'un $0)."""
+    return {"cost_usd": None, "input": 0, "output": 0, "cache_read": 0, "cache_creation": 0,
+            "tokens": 0, "model": None, "n_sessions": 0}
+
+
+def _sum_interview_transcript(path: Path, acc: dict, model_out: dict[str, int]) -> None:
+    """Somme l'usage token d'UN transcript d'interview (`~/.claude/projects/…/<sid>.jsonl`) dans `acc`. Une
+    session interactive n'a pas d'event `result` : on somme `message.usage` PAR TOUR (cumulatif, comme le
+    `result` headless). Modèle dominant = celui au plus d'`output` (`model_out`). Fail-soft ligne/ligne."""
+    try:
+        with path.open() as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                msg = obj.get("message")
+                if not (isinstance(msg, dict) and isinstance(msg.get("usage"), dict)):
+                    continue
+                u = msg["usage"]
+                i, o = _tok(u.get("input_tokens")), _tok(u.get("output_tokens"))
+                cr, cc = _tok(u.get("cache_read_input_tokens")), _tok(u.get("cache_creation_input_tokens"))
+                acc["input"] += i
+                acc["output"] += o
+                acc["cache_read"] += cr
+                acc["cache_creation"] += cc
+                acc["tokens"] += i + o + cr + cc
+                m = msg.get("model")
+                if isinstance(m, str) and m:
+                    model_out[m] = model_out.get(m, 0) + o
+    except OSError:
+        return
+
+
+def _interview_cost(conn: sqlite3.Connection, slug: str, *, home: Path | None = None) -> dict | None:
+    """Coût token (tokens-only) des interviews de socle d'un projet, ou `None` si aucune session persistée /
+    aucun transcript trouvé (honnête-vide). Résout chaque transcript par glob sur le `session_id` (robuste au
+    teardown du worktree : l'encodage exact du cwd est indifférent)."""
+    row = conn.execute("SELECT interview_session_ids FROM projects WHERE slug = ?", (slug,)).fetchone()
+    raw = row[0] if row else None
+    try:
+        session_ids = json.loads(raw) if raw else []
+    except (json.JSONDecodeError, TypeError):
+        session_ids = []
+    if not session_ids:
+        return None
+    base = (home or Path.home()) / ".claude" / "projects"
+    acc = _blank_interview()
+    model_out: dict[str, int] = {}
+    if base.is_dir():
+        for sid in session_ids:
+            hit = next(base.glob(f"*/{sid}.jsonl"), None)
+            if hit is None:
+                continue
+            acc["n_sessions"] += 1
+            _sum_interview_transcript(hit, acc, model_out)
+    if acc["n_sessions"] == 0:
+        return None                      # ids persistés mais transcripts absents (machine sans les .jsonl)
+    acc["model"] = max(model_out, key=lambda m: model_out[m]) if model_out else None
+    return acc
+
+
+def project_cost(conn: sqlite3.Connection, slug: str, *, home: Path | None = None) -> dict:
     """Coût token agrégé d'un projet. `KeyError` si le projet n'existe pas. Un projet sans job → total à 0 +
-    `features: []` + `nonwork` à 0 (honnête-vide, jamais une erreur). Structure :
+    `features: []` + `nonwork` à 0 (honnête-vide, jamais une erreur). `home` (injectable en test) = racine où
+    résoudre les transcripts d'interview (défaut `~`). Structure :
     `{project, total:{cost_usd,input,output,cache_read,cache_creation,tokens,n_jobs,model,n_models},
-      features:[{slug, …acc, steps:[{task_slug, …acc}], fix:{…acc}|None}], nonwork:{…acc}}`."""
+      features:[{slug, …acc, steps:[{task_slug, …acc}], fix:{…acc}|None}], nonwork:{…acc},
+      interview:{cost_usd:None,input,output,cache_read,cache_creation,tokens,model,n_sessions}|None}`.
+    L'interview (tokens-only, non pricé) grossit `total.tokens` mais PAS `total.cost_usd`."""
     if conn.execute("SELECT 1 FROM projects WHERE slug = ?", (slug,)).fetchone() is None:
         raise KeyError(slug)
     rows = conn.execute(
@@ -106,17 +188,28 @@ def project_cost(conn: sqlite3.Connection, slug: str) -> dict:
     total["model"] = max(model_cost, key=lambda m: model_cost[m]) if model_cost else None
     total["n_models"] = len(model_cost)
 
+    # Interview de socle (v14) : tokens-only (pas de $). Grossit le total EN TOKENS (in/out/cache + tokens),
+    # jamais en $ (cost_usd/n_jobs intacts : pas un job pricé). None si aucune interview → total inchangé.
+    interview = _interview_cost(conn, slug, home=home)
+    if interview is not None:
+        for k in ("input", "output", "cache_read", "cache_creation", "tokens"):
+            total[k] += interview[k]
+
     features = [{"slug": fs, **feats[fs]["acc"],
                  "steps": [{"task_slug": ts, **feats[fs]["steps"][ts]} for ts in feats[fs]["step_order"]],
                  "fix": feats[fs]["fix"]}
                 for fs in order]
-    return {"project": slug, "total": total, "features": features, "nonwork": nonwork}
+    return {"project": slug, "total": total, "features": features, "nonwork": nonwork,
+            "interview": interview}
 
 
 # -- surface CLI ------------------------------------------------------------------------------------
 
-def _fmt_usd(v: float) -> str:
-    """$ lisible : 2 décimales dès $0.01 (repère de coût projet), 4 en dessous (jobs bon marché)."""
+def _fmt_usd(v: float | None) -> str:
+    """$ lisible : 2 déc. dès $0.01 (repère projet), 4 en dessous (jobs bon marché). `None` = « — »
+    (non pricé : l'interactif n'émet pas de $)."""
+    if v is None:
+        return "—"
     return f"${v:.2f}" if v >= 0.01 else f"${v:.4f}"
 
 
@@ -151,6 +244,11 @@ def _print_human(data: dict, *, by_step: bool) -> None:
     nw = data["nonwork"]
     if nw["n_jobs"]:
         print(f"  {'review · outillage':<28} {_line(nw)}")
+    iv = data.get("interview")
+    if iv:
+        model = f" · {iv['model']}" if iv.get("model") else ""
+        print(f"  {'interview · cadrage':<28} {_line(iv)}{model}")
+        print("  (interview : tokens seuls — Claude ne price pas l'interactif ; le $ total reste le drain)")
 
 
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:

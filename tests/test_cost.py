@@ -191,3 +191,85 @@ def test_empty_project_is_honest_zero(conn):
 def test_unknown_project_raises_keyerror(conn):
     with pytest.raises(KeyError):
         cost.project_cost(conn, "nope")
+
+
+# -- (4) interview de socle (v14) : tokens-only, pas de $ -------------------------------------------
+
+# Transcript d'un `claude` INTERACTIF : PAS d'event `result` (donc pas de $), usage PAR TOUR (message.usage).
+# Une ligne non-JSON + une ligne sans usage → doivent être ignorées (fail-soft). Sommes attendues :
+# input 5 · output 2500 · cache_read 60000 · cache_creation 5800 → tokens 68305 ; modèle = opus.
+_INTERVIEW_TRANSCRIPT = (
+    '{"type":"user","message":{"role":"user","content":"salut"}}\n'
+    '{"type":"assistant","message":{"model":"claude-opus-4-8","usage":'
+    '{"input_tokens":2,"output_tokens":1000,"cache_read_input_tokens":20000,'
+    '"cache_creation_input_tokens":5000}}}\n'
+    '{"type":"assistant","message":{"model":"claude-opus-4-8","usage":'
+    '{"input_tokens":3,"output_tokens":1500,"cache_read_input_tokens":40000,'
+    '"cache_creation_input_tokens":800}}}\n'
+    'ceci-nest-pas-du-json\n'
+)
+
+
+def _write_transcript(home: Path, session_id: str, body: str) -> None:
+    d = home / ".claude" / "projects" / "-home-encoded-cwd"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{session_id}.jsonl").write_text(body)
+
+
+def test_record_interview_session_appends_and_dedups(conn):
+    from cockpit.projects import registry
+    conn.execute("INSERT INTO projects (id,slug,name,sot_path,created_at) VALUES ('p','atlas','A','/x',?)",
+                 (_NOW,))
+    conn.commit()
+    registry.record_interview_session(conn, "atlas", "sid-a")
+    registry.record_interview_session(conn, "atlas", "sid-b")
+    registry.record_interview_session(conn, "atlas", "sid-a")           # doublon → ignoré
+    row = conn.execute("SELECT interview_session_ids FROM projects WHERE slug='atlas'").fetchone()
+    import json
+    assert json.loads(row[0]) == ["sid-a", "sid-b"]
+
+
+def test_interview_summed_tokens_only_and_folded_into_total(conn, tmp_path):
+    from cockpit.projects import registry
+    home = tmp_path / "claude_home"
+    _seed_graph(conn)
+    # un job de travail (le drain) : $ + tokens
+    _finish(conn, task_id="t1", kind="task", cost_usd=0.10, usage=_u(100, 200, 1000, 50))
+    # une interview de socle : session persistée + transcript interactif (tokens, pas de $)
+    registry.record_interview_session(conn, "atlas", "iv-1")
+    _write_transcript(home, "iv-1", _INTERVIEW_TRANSCRIPT)
+
+    d = cost.project_cost(conn, "atlas", home=home)
+    iv = d["interview"]
+    assert iv is not None
+    assert iv["cost_usd"] is None                       # interactif non pricé — jamais un faux $
+    assert (iv["input"], iv["output"]) == (5, 2500)
+    assert (iv["cache_read"], iv["cache_creation"]) == (60000, 5800)
+    assert iv["tokens"] == 68305 and iv["model"] == "claude-opus-4-8" and iv["n_sessions"] == 1
+
+    # les tokens interview GROSSISSENT le total ; le $ total reste celui du drain (interview non pricé)
+    assert d["total"]["tokens"] == 1350 + 68305         # job (100+200+1000+50) + interview 68305
+    assert d["total"]["cost_usd"] == pytest.approx(0.10)
+    # réconciliation v14 : tokens == Σfeatures + nonwork + interview ; $ == Σfeatures + nonwork
+    assert d["total"]["tokens"] == (sum(f["tokens"] for f in d["features"])
+                                    + d["nonwork"]["tokens"] + iv["tokens"])
+    assert d["total"]["cost_usd"] == pytest.approx(
+        sum(f["cost_usd"] for f in d["features"]) + d["nonwork"]["cost_usd"])
+
+
+def test_no_interview_is_none_and_total_unchanged(conn, tmp_path):
+    _seed_graph(conn)
+    _finish(conn, task_id="t1", kind="task", cost_usd=0.10, usage=_u(100, 200, 1000, 50))
+    d = cost.project_cost(conn, "atlas", home=tmp_path / "empty_home")
+    assert d["interview"] is None
+    assert d["total"]["tokens"] == 1350 and d["total"]["cost_usd"] == pytest.approx(0.10)
+
+
+def test_interview_session_persisted_but_transcript_missing_is_none(conn, tmp_path):
+    from cockpit.projects import registry
+    conn.execute("INSERT INTO projects (id,slug,name,sot_path,created_at) VALUES ('p','atlas','A','/x',?)",
+                 (_NOW,))
+    conn.commit()
+    registry.record_interview_session(conn, "atlas", "ghost")          # id persisté, aucun .jsonl
+    d = cost.project_cost(conn, "atlas", home=tmp_path / "claude_home")
+    assert d["interview"] is None                        # honnête-vide (pas de transcript trouvé)

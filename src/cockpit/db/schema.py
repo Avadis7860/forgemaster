@@ -54,12 +54,17 @@ max) — extraits de l'event `result` du stream-json par `parse_headless_result`
 Tous **nullables, aucun défaut** → ALTER-safe, NULL pour l'existant ET pour un run raté/killed (pas d'usage →
 jamais un faux zéro). `cost_usd` (v2) porte déjà le `total_cost_usd` de Claude → on ne recalcule PAS le $ (pas
 de table de prix locale qui périmerait). Sert l'agrégation coût step→feature→projet (`dispatch/cost.py`).
+v14 (cost-includes-interview) = `projects` gagne `interview_session_ids` (TEXT, nullable) : liste JSON des
+`session_id` des interviews de socle (`cockpit interview`, un `claude` INTERACTIF). Une session interactive
+n'émet PAS d'event `result` (donc **pas de $** : `total_cost_usd`/`modelUsage` absents) mais son transcript
+(`~/.claude/projects/…/<sid>.jsonl`) porte l'usage token par-tour → `dispatch/cost.py` le somme en une ligne
+« interview / cadrage » **tokens-only** (le $ reste celui du drain). ALTER-safe ; NULL = aucune interview.
 """
 from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 # Ordre = ordre de création (les FK pointent vers des tables déjà créées). Chaque table porte les
 # invariants durs en contraintes SQL (NOT NULL, UNIQUE, FK, CHECK sur les enums de statut).
@@ -79,6 +84,7 @@ DDL: tuple[str, ...] = (
         credential_ref TEXT,                           -- réf opaque vers le token du store (v4, nullable)
         source_url    TEXT,                            -- URL adoptée (v5) : provenance (jamais un secret)
         project_type  TEXT NOT NULL DEFAULT 'generic',  -- bundle semé (v6) ; CHECK retiré en v8
+        interview_session_ids TEXT,                    -- JSON: session_id des interviews (v14, nullable)
         created_at    TEXT NOT NULL
     )
     """,
@@ -226,9 +232,12 @@ _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
     # CHECK figé a été retiré (rebuild de table, `_migrate_v8_drop_project_type_check`) → l'enum est désormais
     # registre-driven, tenu par `provision.validate_bundle`. `features.facet`/`tasks.acceptance` : nullables.
     # v9 : `features.blueprint` (nullable, aucun défaut → NULL pour l'existant) = ref STAMP résolue au read.
+    # v14 : `interview_session_ids` (nullable, NULL pour l'existant) = liste JSON de session_id d'interviews
+    # (transcript interactif → usage token tokens-only, cf. dispatch/cost.py).
     "projects": (("kind", "TEXT NOT NULL DEFAULT 'project'"), ("owner", "TEXT"),
                  ("credential_ref", "TEXT"), ("source_url", "TEXT"),
-                 ("project_type", "TEXT NOT NULL DEFAULT 'generic'")),
+                 ("project_type", "TEXT NOT NULL DEFAULT 'generic'"),
+                 ("interview_session_ids", "TEXT")),
     # v10 : `features.depends_on` (NOT NULL, défaut littéral '[]' — ALTER exige un défaut littéral) = DAG
     # INTER-feature (liste JSON de slugs de features prérequises). Symétrique de `tasks.depends_on` ;
     # ALTER-safe (pas de CHECK). Invariant « prérequis satisfait = merged » tenu par resolver/orchestrator.

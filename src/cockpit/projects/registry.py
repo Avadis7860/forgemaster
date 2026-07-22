@@ -177,6 +177,25 @@ def set_mirror_remote(conn: sqlite3.Connection, slug: str, mirror_remote: str | 
     return proj
 
 
+def record_interview_session(conn: sqlite3.Connection, slug: str, session_id: str) -> dict:
+    """APPEND le `session_id` d'une session d'interview de socle à `projects.interview_session_ids` (liste
+    JSON, v14). Idempotent sur un même id (pas de doublon). Écrit AVANT le lancement de `claude` (la session
+    peut être interrompue : on veut son transcript même si la clôture est perdue). Lève `KeyError` si le
+    projet n'existe pas. Le coût de ces sessions est sommé (tokens-only) par `dispatch/cost.py`."""
+    proj = get_project(conn, slug)                     # KeyError si absent
+    raw = proj.get("interview_session_ids")
+    try:
+        ids_list = json.loads(raw) if raw else []
+    except (json.JSONDecodeError, TypeError):
+        ids_list = []
+    if session_id not in ids_list:
+        ids_list.append(session_id)
+    conn.execute("UPDATE projects SET interview_session_ids = ? WHERE slug = ?",
+                 (json.dumps(ids_list), slug))
+    conn.commit()
+    return get_project(conn, slug)
+
+
 def list_projects(conn: sqlite3.Connection) -> list[dict]:
     """Tous les projets, triés par slug."""
     return [dict(r) for r in conn.execute("SELECT * FROM projects ORDER BY slug")]
