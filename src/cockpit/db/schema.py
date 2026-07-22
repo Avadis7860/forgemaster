@@ -47,13 +47,19 @@ headless (une interview / un cadrage ne se mène pas en headless — cf. task co
 Le hint est posé par la GRAINE (le socle semé marque ses tasks `cadrage`/`interview`), lu par le dispatch
 générique — zéro heuristique métier dans le moteur. CHECK côté DDL (base neuve) ; l'invariant
 `mode∈{headless,interactive}` est tenu par le code qui écrit (SQLite n'ALTER pas un CHECK). Les tasks pré-v12
-sont toutes des runs headless → `'headless'` est exact pour l'existant.
+sont toutes des runs headless → `'headless'` est exact pour l'existant. v13 (token-cost-per-project) =
+`dispatch_jobs` gagne l'**usage token** du run — `input_tokens`, `output_tokens`, `cache_read_tokens`,
+`cache_creation_tokens` (INTEGER) et `model` (TEXT, modèle DOMINANT du run = clé `modelUsage` au `costUSD`
+max) — extraits de l'event `result` du stream-json par `parse_headless_result`, persistés par `record_finish`.
+Tous **nullables, aucun défaut** → ALTER-safe, NULL pour l'existant ET pour un run raté/killed (pas d'usage →
+jamais un faux zéro). `cost_usd` (v2) porte déjà le `total_cost_usd` de Claude → on ne recalcule PAS le $ (pas
+de table de prix locale qui périmerait). Sert l'agrégation coût step→feature→projet (`dispatch/cost.py`).
 """
 from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 # Ordre = ordre de création (les FK pointent vers des tables déjà créées). Chaque table porte les
 # invariants durs en contraintes SQL (NOT NULL, UNIQUE, FK, CHECK sur les enums de statut).
@@ -125,9 +131,14 @@ DDL: tuple[str, ...] = (
         log_path      TEXT,                          -- transcript JSONL local (dérivé de session_id)
         session_id    TEXT,                          -- session `claude -p` = LE handle de suivi live (v2)
         num_turns     INTEGER,                       -- métriques du run (v2)
-        cost_usd      REAL,
+        cost_usd      REAL,                          -- total_cost_usd de Claude (v2) : $ jamais recalculé
         wall_s        REAL,
         engine        TEXT,
+        input_tokens          INTEGER,               -- usage token du run (v13), extrait de result.usage
+        output_tokens         INTEGER,
+        cache_read_tokens     INTEGER,
+        cache_creation_tokens INTEGER,
+        model         TEXT,                           -- modèle dominant (v13 : clé modelUsage au costUSD max)
         error         TEXT,                          -- raison d'échec courte (v11 ; raw sur log_path)
         started_at    TEXT,
         ended_at      TEXT
@@ -194,10 +205,15 @@ _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
     # re-portable par ALTER en SQLite → l'invariant `kind∈{task,review,toolchain,fix}` est tenu côté DDL (base
     # neuve) ET par le code qui écrit — jamais un kind hors-enum inséré). Les jobs pré-v11 sont tous des runs
     # d'ouvrier → 'task' est exact pour l'existant. `error` (nullable, aucun défaut → NULL pour l'existant).
+    # v13 : usage token du run + modèle dominant, tous nullables SANS défaut → ALTER-safe (NULL pour
+    # l'existant : les jobs pré-v13 n'ont pas d'usage extrait ; un run raté/killed non plus). Le $ reste
+    # `cost_usd` (v2, = total_cost_usd de Claude) — pas de recalcul, pas de table de prix locale.
     "dispatch_jobs": (
         ("session_id", "TEXT"), ("num_turns", "INTEGER"), ("cost_usd", "REAL"),
         ("wall_s", "REAL"), ("engine", "TEXT"),
         ("kind", "TEXT NOT NULL DEFAULT 'task'"), ("error", "TEXT"),
+        ("input_tokens", "INTEGER"), ("output_tokens", "INTEGER"),
+        ("cache_read_tokens", "INTEGER"), ("cache_creation_tokens", "INTEGER"), ("model", "TEXT"),
     ),
     # v3 : ALTER exige un défaut LITTÉRAL pour une colonne NOT NULL (d'où 'project'). La contrainte CHECK
     # n'est pas re-portable par ALTER en SQLite → l'invariant `kind∈{project,tool}` est tenu côté DDL (base

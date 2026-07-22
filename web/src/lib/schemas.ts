@@ -226,6 +226,37 @@ export type Job = z.infer<typeof JobSchema>
 
 export const JobsListSchema = z.object({ jobs: z.array(JobSchema) })
 
+// -- coût token par step→feature→projet (GET /api/projects/{slug}/cost, dispatch/cost.py) --
+// Le $ (`cost_usd`) est celui de Claude (`total_cost_usd`), jamais recalculé côté front. Les tokens sont la
+// vérité affichée, le $ le repère. Un accumulateur = les 4 types de tokens + leur somme + le $ + le nb de jobs.
+const CostAccSchema = z.object({
+  cost_usd: z.number(),
+  input: z.number(),
+  output: z.number(),
+  cache_read: z.number(),
+  cache_creation: z.number(),
+  tokens: z.number(),          // somme des 4 types (la métrique globale)
+  n_jobs: z.number(),
+})
+export type CostAcc = z.infer<typeof CostAccSchema>
+
+const CostStepSchema = CostAccSchema.extend({ task_slug: z.string() })
+
+const CostFeatureSchema = CostAccSchema.extend({
+  slug: z.string(),
+  steps: z.array(CostStepSchema),   // jobs `task` roulés par task (retries sommés)
+  fix: CostAccSchema.nullable(),    // jobs `fix` de la feature (ancre arbitraire → niveau feature, pas step)
+})
+export type CostFeature = z.infer<typeof CostFeatureSchema>
+
+export const ProjectCostSchema = z.object({
+  project: z.string(),
+  total: CostAccSchema.extend({ model: z.string().nullish(), n_models: z.number() }),
+  features: z.array(CostFeatureSchema),
+  nonwork: CostAccSchema,           // overhead review/outillage (compté au total, hors travail)
+})
+export type ProjectCost = z.infer<typeof ProjectCostSchema>
+
 // Rapport agrégé du POST dispatch (orchestrator.run_feature) : DRAINE la feature (DAG intra-feature) PUIS
 // la FINALISE (Tier-0 + review Tier-1) — bloquant, rendu à la FIN. Même forme que le rapport CLI (`cockpit
 // run`) : `dispatched`/`ok`/`failed` = COMPTEURS de runs, `finalizations` = review produite par feature.

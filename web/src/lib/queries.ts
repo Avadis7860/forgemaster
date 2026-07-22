@@ -18,6 +18,7 @@ export const qk = {
   capitalBody: (type: string, ref: string) => ['capital-body', type, ref] as const,
   projects: ['projects'] as const,
   project: (slug: string) => ['projects', slug] as const,
+  cost: (project: string) => ['cost', project] as const,
   roadmap: (project: string) => ['roadmap', project] as const,
   roadmapCheck: (project: string) => ['roadmap-check', project] as const,
   git: (project: string) => ['git', project] as const,
@@ -140,6 +141,14 @@ export function useCapitalBody(type: string, ref: string, enabled: boolean) {
 
 export function useProject(slug: string) {
   return useQuery({ queryKey: qk.project(slug), queryFn: () => api.getProject(slug), enabled: Boolean(slug) })
+}
+
+// Coût token agrégé du projet (total + par feature/step + overhead review). GET idempotent, pas de poll —
+// le refresh manuel (RefreshButton) réconcilie après un drain. Le $ vient de Claude, pas recalculé.
+export function useProjectCost(project: string) {
+  return useQuery({
+    queryKey: qk.cost(project), queryFn: () => api.projectCost(project), enabled: Boolean(project),
+  })
 }
 
 export function useCreateProject() {

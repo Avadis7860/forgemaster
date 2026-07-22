@@ -63,12 +63,17 @@ def record_finish(conn: sqlite3.Connection, job_id: str, parsed: dict, *,
     run (num_turns, coût) et la raison d'échec `error` (v11 : le snippet calculé par `parse_headless_result`,
     persisté au lieu d'être jeté dans le retour HTTP). La garde `AND status='running'` est **essentielle** :
     si un abort concurrent a déjà posé `killed` (course `record_finish` vs abort), on ne le **clobbe pas** en
-    `failed` — un job déjà finalisé ne se re-finalise jamais."""
+    `failed` — un job déjà finalisé ne se re-finalise jamais. L'usage token (v13 : input/output/cache + modèle
+    dominant, extrait par `parse_headless_result`) est persisté ici — NULL sur un run raté (parsed sans
+    usage), jamais un faux zéro. Le $ reste `cost_usd` (= total_cost_usd de Claude), non recalculé."""
     final = status or ("done" if parsed.get("ok") else "failed")
     conn.execute(
         "UPDATE dispatch_jobs SET status = ?, num_turns = ?, cost_usd = ?, wall_s = ?, "
+        "input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, cache_creation_tokens = ?, model = ?, "
         "session_id = COALESCE(?, session_id), error = ?, ended_at = ? WHERE id = ? AND status = 'running'",
         (final, parsed.get("num_turns"), parsed.get("cost_usd"), wall_s,
+         parsed.get("input_tokens"), parsed.get("output_tokens"), parsed.get("cache_read_tokens"),
+         parsed.get("cache_creation_tokens"), parsed.get("model"),
          parsed.get("session_id"), parsed.get("error"), _now(), job_id))
     conn.commit()
 

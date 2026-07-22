@@ -13,6 +13,11 @@ vi.mock('@/lib/queries', () => ({
   useDocs: () => ({ data: h.docs, isLoading: false, isError: false, error: null }),
   useRoadmap: () => ({ data: { features: h.features }, isLoading: false, isError: false, error: null }),
   useDeployments: () => ({ data: { deployments: h.deployments }, isLoading: false, isError: false, error: null }),
+  // CostStrip (rendu par l'Accueil) : fixture honnête-vide → rend une ligne muted, n'interfère pas.
+  useProjectCost: () => ({
+    data: { total: { n_jobs: 0 } }, isLoading: false, isError: false, error: null,
+    refetch: vi.fn(), isFetching: false,
+  }),
   // LaunchCycle (rendu par l'Accueil) consomme ces deux hooks ; ici les fixtures n'ont pas de socle interactif
   // (tasks vides) → LaunchCycle rend `null` et n'interfère pas avec les assertions de l'Accueil.
   useRoadmapCheck: () => ({ data: { ok: false } }),

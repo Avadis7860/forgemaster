@@ -1,6 +1,7 @@
 import { Suspense, lazy } from 'react'
 import { Link, useParams } from '@tanstack/react-router'
 import { Alert, Badge, Button, Card, Eyebrow, LoadingState } from '@/components/ui'
+import { CostStrip } from '@/components/cost/CostStrip'
 import { LaunchCycle } from '@/components/dispatch/LaunchCycle'
 import { useDeployments, useDocs, useRoadmap } from '@/lib/queries'
 
@@ -64,6 +65,9 @@ export function AccueilTab() {
       {/* Cycle de lancement : frise d'état + action nommée par son résultat (« Valider l'interview & clôturer
           le socle »). Ne se rend que pour un projet à socle interactif — invisible pour un projet mûr. */}
       {roadmap.data && <LaunchCycle project={project} roadmap={roadmap.data} />}
+
+      {/* Coût token du projet : total + répartition + drill-down feature→step (honnête-vide tant qu'aucun drain). */}
+      <CostStrip project={project} />
 
       {/* Points d'entrée à scent : où aller ensuite, avec un aperçu d'état (badge dérivé, pas d'endpoint neuf). */}
       <section className="space-y-3">

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from cockpit.daemon.deps import Deps, get_deps
+from cockpit.dispatch import cost
 from cockpit.projects import registry
 from cockpit.secrets import cred_resolver
 
@@ -54,6 +55,16 @@ def make_projects_router() -> APIRouter:
         conn = deps.open_db()
         try:
             return registry.get_project(conn, slug)     # KeyError → 404 (handler global)
+        finally:
+            conn.close()
+
+    @router.get("/{slug}/cost")
+    def project_cost(slug: str, deps: Deps = Depends(get_deps)) -> dict:
+        """Coût token agrégé du projet (total + par feature/step + overhead review/outillage). Le $ est celui
+        de Claude (`total_cost_usd`), pas un recalcul. Projet absent → 404 (handler global)."""
+        conn = deps.open_db()
+        try:
+            return cost.project_cost(conn, slug)        # KeyError → 404 (handler global)
         finally:
             conn.close()
 

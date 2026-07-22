@@ -120,6 +120,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_dispatch = sub.add_parser("dispatch", parents=[common], help="dispatcher un worker sur la NEXT task")
     p_dispatch.add_argument("feature")
 
+    # -- cost ---------------------------------------------------------------------------------------
+    p_cost = sub.add_parser("cost", parents=[common],
+                            help="coût token d'un projet (agrégé + par feature/step)")
+    p_cost.add_argument("project")
+    p_cost.add_argument("--by-step", action="store_true", help="détailler par step (task) et fix de feature")
+    p_cost.add_argument("--json", action="store_true", help="JSON brut de l'agrégation")
+
     # -- run ----------------------------------------------------------------------------------------
     p_run = sub.add_parser("run", parents=[common],
                            help="drainer la roadmap d'un projet en parallèle (features indépendantes)")
@@ -292,6 +299,11 @@ def _h_task(settings: Settings, args: argparse.Namespace) -> int:
     return resolver.cli_dispatch(settings, args)
 
 
+def _h_cost(settings: Settings, args: argparse.Namespace) -> int:
+    from cockpit.dispatch import cost
+    return cost.cli_dispatch(settings, args)
+
+
 def _h_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     from cockpit.dispatch import worker
     return worker.cli_dispatch(settings, args)
@@ -397,6 +409,7 @@ _HANDLERS = {
     "roadmap": _h_roadmap,
     "task": _h_task,
     "dispatch": _h_dispatch,
+    "cost": _h_cost,
     "run": _h_run,
     "abort": _h_abort,
     "refix": _h_refix,

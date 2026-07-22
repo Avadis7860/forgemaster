@@ -218,15 +218,21 @@ def _seed_dispatch_job(home: Path, proj: str) -> None:
         if row is None:
             return
         task_id = row[0]
+        # Usage token réaliste (cache-dominant) posé sur les runs `done` → la bande Coût de l'Accueil rend une
+        # barre de répartition VOYANTE + un drill-down chiffré (précondition d'une UI action-gated). Le run
+        # `failed` reste sans usage (un run raté n'en a pas → +0, jamais un faux zéro). Modèles distincts
+        # (opus pour le worker, haiku pour le reviewer) → « modèle dominant + N modèles » visible.
         done = jobs.record_start(conn, task_id=task_id, worktree=str(home / "wt"), session_id="demo-sess",
                                  log_path=_write("demo-transcript.jsonl", _DEMO_TRANSCRIPT))
-        conn.execute("UPDATE dispatch_jobs SET status = 'done', num_turns = 5, cost_usd = 0.1421 "
-                     "WHERE id = ?", (done,))
+        conn.execute("UPDATE dispatch_jobs SET status = 'done', num_turns = 5, cost_usd = 0.1421, "
+                     "input_tokens = 1200, output_tokens = 3400, cache_read_tokens = 145000, "
+                     "cache_creation_tokens = 22000, model = 'claude-opus-4-8' WHERE id = ?", (done,))
         review = jobs.record_start(conn, task_id=task_id, worktree="(review)", kind="review",
                                    session_id="demo-review",
                                    log_path=_write("demo-review.jsonl", _DEMO_REVIEW_TRANSCRIPT))
-        conn.execute("UPDATE dispatch_jobs SET status = 'done', num_turns = 3, cost_usd = 0.0209 "
-                     "WHERE id = ?", (review,))
+        conn.execute("UPDATE dispatch_jobs SET status = 'done', num_turns = 3, cost_usd = 0.0209, "
+                     "input_tokens = 800, output_tokens = 1500, cache_read_tokens = 60000, "
+                     "cache_creation_tokens = 8000, model = 'claude-haiku-4-5' WHERE id = ?", (review,))
         failed = jobs.record_start(conn, task_id=task_id, worktree=str(home / "wt"), session_id="demo-fail",
                                    log_path=_write("demo-fail.jsonl", _DEMO_TRANSCRIPT))
         conn.execute("UPDATE dispatch_jobs SET status = 'failed', error = ? WHERE id = ?",

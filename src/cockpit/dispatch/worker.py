@@ -123,13 +123,45 @@ def _result_event(text: str) -> dict | None:
     return result_ev or last or _trailing_json_object(text)
 
 
+# Clés d'usage token à persister (v13). Toujours présentes dans le dict retourné (None si absent) → un run
+# raté ne fabrique jamais un faux zéro ; `record_finish` les lit par `.get()`.
+_USAGE_KEYS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens", "model")
+
+
+def _usage_fields(obj: dict) -> dict:
+    """Extrait de l'event `result` l'usage token CUMULÉ (`usage`) + le modèle DOMINANT (`modelUsage`, clé au
+    `costUSD` max ; à défaut de coût, la 1ʳᵉ clé). PUR. Chaque champ absent/mal typé → None : on ne synthétise
+    pas de zéro (l'absence d'usage est honnête, distincte d'un run à 0 token). Le $ n'est PAS relu ici — il
+    reste `total_cost_usd` (cf. `cost_usd`), pas de table de prix locale."""
+    usage = obj.get("usage")
+    u: dict = usage if isinstance(usage, dict) else {}
+
+    def _int(v: object) -> int | None:
+        return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+    model: str | None = None
+    mu = obj.get("modelUsage")
+    if isinstance(mu, dict) and mu:
+        priced = [(k, v["costUSD"]) for k, v in mu.items()
+                  if isinstance(v, dict) and isinstance(v.get("costUSD"), (int, float))
+                  and not isinstance(v.get("costUSD"), bool)]
+        model = max(priced, key=lambda kv: kv[1])[0] if priced else next(iter(mu))
+    return {"input_tokens": _int(u.get("input_tokens")),
+            "output_tokens": _int(u.get("output_tokens")),
+            "cache_read_tokens": _int(u.get("cache_read_input_tokens")),
+            "cache_creation_tokens": _int(u.get("cache_creation_input_tokens")),
+            "model": model}
+
+
 def parse_headless_result(stdout: str, returncode: int = 0) -> dict:
     """Normalise la sortie de `claude -p` (`--output-format json` OU `stream-json` NDJSON → event `result`).
     PUR. Fail-LOUD : rc≠0, sortie vide, JSON illisible, `is_error`/`api_error_status` → `ok=False` + `error`
     (jamais de faux-vert). Tolérant au préambule. Retour : {ok, is_error, result, session_id, cost_usd,
-    num_turns, error, raw}."""
+    num_turns, error, raw} + l'usage token (`input_tokens`/`output_tokens`/`cache_read_tokens`/
+    `cache_creation_tokens`/`model`, cf. `_usage_fields`)."""
+    none_usage = dict.fromkeys(_USAGE_KEYS)
     base = {"ok": False, "is_error": True, "result": None, "session_id": None,
-            "cost_usd": None, "num_turns": None, "error": None, "raw": stdout}
+            "cost_usd": None, "num_turns": None, "error": None, "raw": stdout, **none_usage}
     if returncode != 0:
         snippet = (stdout or "").strip()[:200] or "(vide)"
         return {**base, "error": f"claude -p rc={returncode} : {snippet}"}
@@ -147,7 +179,8 @@ def parse_headless_result(stdout: str, returncode: int = 0) -> dict:
         err = obj.get("api_error_status") or obj.get("subtype") or "claude a signalé is_error"
     return {"ok": not is_error, "is_error": is_error, "result": obj.get("result"),
             "session_id": obj.get("session_id"), "cost_usd": obj.get("total_cost_usd"),
-            "num_turns": obj.get("num_turns"), "error": err, "raw": stdout}
+            "num_turns": obj.get("num_turns"), "error": err, "raw": stdout,
+            **_usage_fields(obj)}
 
 
 def write_decision_doc(worktree: Path, task_slug: str, result: str | None, *,

@@ -40,6 +40,7 @@ import {
   MergeReportSchema,
   NextSchema,
   OnboardingStatusSchema,
+  ProjectCostSchema,
   ProjectSchema,
   ProjectsListSchema,
   RoadmapSchema,
@@ -142,6 +143,8 @@ export const api = {
 
   listProjects: () => request('/api/projects', ProjectsListSchema).then((r) => r.projects),
   getProject: (slug: string) => request(`/api/projects/${encodeURIComponent(slug)}`, ProjectSchema),
+  projectCost: (slug: string) =>
+    request(`/api/projects/${encodeURIComponent(slug)}/cost`, ProjectCostSchema),
   createProject: (input: CreateProjectInput) =>
     request('/api/projects', ProjectSchema, { method: 'POST', body: JSON.stringify(input) }),
   // PATCH partiel : édite le miroir GitHub (rendre GitHub-backed). `null` retire le miroir.
