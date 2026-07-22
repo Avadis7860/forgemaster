@@ -105,11 +105,18 @@ def make_git_router() -> APIRouter:
         racine. Read-only, idempotent (goto-only safe). Projet absent → 404 ; réf/chemin introuvable ou
         `path` non-dossier → 404 (la ressource demandée n'existe pas à cette réf)."""
         sot = _sot(deps, project)
+        git = InternalGit()
         try:
-            entries = InternalGit().ls_tree(sot, ref, path)
+            entries = git.ls_tree(sot, ref, path)
         except GitOpError as exc:
             raise HTTPException(status_code=404, detail=f"arbre introuvable ({ref}:{path}) : {exc}") from exc
-        return {"project": project, "ref": ref, "path": path, "entries": entries}
+        # Enrichissement façon GitHub : dernier commit par entrée + « latest commit » du dossier. La réf est
+        # déjà validée par ls_tree ; ls_tree reste pur (le chemin codemap/archive n'est pas ralenti).
+        last = git.entry_last_commits(sot, ref, path, [e["name"] for e in entries])
+        for e in entries:
+            e["last_commit"] = last.get(e["name"])
+        return {"project": project, "ref": ref, "path": path, "entries": entries,
+                "latest_commit": git.latest_commit(sot, ref, path)}
 
     @router.get("/api/projects/{project}/git/blob")
     def git_blob(project: str, ref: str, path: str, deps: Deps = Depends(get_deps)) -> dict:

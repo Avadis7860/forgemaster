@@ -675,6 +675,12 @@ def test_git_tree_and_blob_read_only_over_http(client):
     assert entries["CLAUDE.md"]["type"] == "blob" and entries["CLAUDE.md"]["size"] > 0
     types = [e["type"] for e in body["entries"]]
     assert types == sorted(types, key=lambda t: t != "tree")  # tous les arbres avant les blobs
+    # enrichissement Phase B : dernier commit par entrée + « latest commit » du dossier (SoT neuf = 1 commit)
+    assert entries["CLAUDE.md"]["last_commit"]["subject"] == "root: cockpit seed"
+    assert entries[".claude"]["last_commit"]["short"] and entries[".claude"]["last_commit"]["date"]
+    latest = body["latest_commit"]
+    assert latest["subject"] == "root: cockpit seed" and latest["author"] == "cockpit"
+    assert latest["count"] == 1
     # descente dans un sous-dossier
     sub = c.get("/api/projects/proj/git/tree", params={"ref": "dev", "path": ".claude"})
     assert sub.status_code == 200 and "settings.json" in {e["name"] for e in sub.json()["entries"]}

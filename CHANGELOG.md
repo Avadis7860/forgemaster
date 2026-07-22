@@ -5,6 +5,16 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Git/API — dernier-commit par entrée + « latest commit » sur `git/tree` (parité liste GitHub) — pas de bump
+- `GET /api/projects/{p}/git/tree` enrichit chaque entrée d'un `last_commit:{short, date, subject}|null`
+  (dernier commit qui la touche) et coiffe la réponse d'un `latest_commit:{short, author, date, subject,
+  count}|null` (dernier commit du dossier courant + nb total de commits). Champs **additifs, rétro-compatibles**
+  (`null` honnête si aucun commit) → **pas de bump `SCHEMA_VERSION`** (une extension de payload HTTP n'a pas de
+  déclencheur de migration, cf. §Politique de versionnage).
+- Deux primitives read-only sur `InternalGit` (`entry_last_commits`, `latest_commit`) — `git internal-first`,
+  `log -1`/`rev-list` bornés (chaque `log -1 -- <path>` s'arrête au 1ᵉʳ commit ; aucun cap silencieux).
+  `ls_tree` **reste pur** (l'enrichissement vit dans la route, le chemin codemap/archive n'est pas ralenti).
+
 ### Gate — preuve Tier-1.5 DEUX-TEMPS (jalon jouable) + bump `feature-verify-v1 → v2` (`gate/verify.py`)
 - **Bump du contrat de verdict** `feature-verify-v1 → feature-verify-v2` : la sémantique d'un vert Tier-1.5 se
   **renforce** (présence at-rest → **transition observable après un geste**). `is_fresh` traite désormais un

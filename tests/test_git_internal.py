@@ -738,6 +738,59 @@ def test_file_history_tracks_a_path_across_commits(tmp_path: Path):
     assert git.file_history(sot, "dev", "n-existe-pas.txt") == []
 
 
+def test_entry_last_commits_maps_each_entry_to_its_last_touching_commit(tmp_path: Path):
+    git = InternalGit()
+    sot = _seed_bare_rich(tmp_path)
+    # un 2e commit qui ne touche QUE README.md → son dernier commit diffère de celui de src/data.bin
+    wt = tmp_path / "wt"
+    git.add_worktree(sot, wt, branch="feature/x", base="dev")
+    (wt / "README.md").write_text("# projet\nligne 2\nligne 3\n", encoding="utf-8")
+    _run("add", "-A", cwd=wt)
+    _run("commit", "-q", "-m", "doc: 3e ligne", cwd=wt)
+    git.merge_ff(sot, into="dev", source="feature/x")
+
+    root = git.ls_tree(sot, "dev")
+    last = git.entry_last_commits(sot, "dev", "", [e["name"] for e in root])
+    assert last["README.md"]["subject"] == "doc: 3e ligne"   # touché par le 2e commit
+    assert last["src"]["subject"] == "rich seed"             # sous-dossier figé au seed
+    assert last["data.bin"]["subject"] == "rich seed"
+    assert all(v["short"] and v["date"] for v in last.values())
+    # scopé à un sous-dossier : le dernier commit de app.py
+    sub = git.entry_last_commits(sot, "dev", "src", ["app.py"])
+    assert sub["app.py"]["subject"] == "rich seed"
+    # aucun nom → dict vide, aucun appel git (pas d'erreur même sans entrée)
+    assert git.entry_last_commits(sot, "dev", "", []) == {}
+
+
+def test_latest_commit_head_and_count_scoped_to_path(tmp_path: Path):
+    git = InternalGit()
+    sot = _seed_bare_rich(tmp_path)
+    wt = tmp_path / "wt"
+    git.add_worktree(sot, wt, branch="feature/x", base="dev")
+    (wt / "README.md").write_text("# projet\nligne 2\nligne 3\n", encoding="utf-8")
+    _run("add", "-A", cwd=wt)
+    _run("commit", "-q", "-m", "doc: 3e ligne", cwd=wt)
+    git.merge_ff(sot, into="dev", source="feature/x")
+
+    head = git.feature_sha(sot, "dev")
+    latest = git.latest_commit(sot, "dev")
+    assert latest is not None
+    assert latest["subject"] == "doc: 3e ligne" and head.startswith(latest["short"])
+    assert latest["author"] == "Test" and latest["date"] and latest["count"] == 2
+    # scopé à src/ : dernier commit = le seed, 1 seul commit y touche
+    scoped = git.latest_commit(sot, "dev", "src")
+    assert scoped is not None and scoped["subject"] == "rich seed" and scoped["count"] == 1
+    # un chemin sans historique → None (réponse valide, pas d'erreur)
+    assert git.latest_commit(sot, "dev", "n-existe-pas") is None
+
+
+def test_latest_commit_bad_ref_raises(tmp_path: Path):
+    git = InternalGit()
+    sot = _seed_bare_rich(tmp_path)
+    with pytest.raises(GitOpError):
+        git.latest_commit(sot, "nexiste-pas")
+
+
 def test_file_history_bad_ref_raises(tmp_path: Path):
     git = InternalGit()
     sot = _seed_bare_rich(tmp_path)

@@ -827,6 +827,40 @@ class InternalGit:
                          "date": cols[3], "subject": cols[4]})
         return rows
 
+    def entry_last_commits(self, sot: Path, ref: str, path: str, names: list[str]) -> dict[str, dict]:
+        """Dernier commit touchant CHAQUE entrée d'un dossier (`log -1 --format <ref> -- <path/name>`),
+        pour peupler la liste de fichiers façon GitHub. Renvoie `{name: {short, date, subject}}`. Read-only,
+        bare-safe. `log -1 -- <path>` **s'arrête au premier commit** (borné : ne lit pas tout l'historique) ;
+        une entrée sans commit à cette réf (edge) est simplement absente du dict (pas une erreur). O(N) appels
+        bornés, N = entrées du dossier — aucun cap, rien de tronqué. Lève (`GitOpError`) si la réf est
+        introuvable."""
+        fmt = "%h%x00%aI%x00%s"
+        prefix = path.strip("/")
+        out: dict[str, dict] = {}
+        for name in names:
+            entry_path = f"{prefix}/{name}" if prefix else name
+            meta = _checked(sot, "log", "-1", f"--format={fmt}", ref, "--", entry_path).stdout
+            cols = meta.strip().split("\x00")
+            if len(cols) < 3 or not cols[0]:
+                continue
+            out[name] = {"short": cols[0], "date": cols[1], "subject": cols[2]}
+        return out
+
+    def latest_commit(self, sot: Path, ref: str, path: str = "") -> dict | None:
+        """Dernier commit de la réf (scopé au `path` si fourni) + nombre total de commits — coiffe la liste de
+        fichiers (barre « latest commit » façon GitHub). Renvoie `{short, author, date, subject, count}`, ou
+        `None` si aucun commit ne matche (réf/dossier vide à cette réf). Read-only, bare-safe. Lève
+        (`GitOpError`) si la réf est introuvable."""
+        fmt = "%h%x00%an%x00%aI%x00%s"
+        pathspec = ["--", path.strip("/")] if path.strip("/") else []
+        meta = _checked(sot, "log", "-1", f"--format={fmt}", ref, *pathspec).stdout
+        cols = meta.strip().split("\x00")
+        if len(cols) < 4 or not cols[0]:
+            return None
+        count = _checked(sot, "rev-list", "--count", ref, *pathspec).stdout.strip()
+        return {"short": cols[0], "author": cols[1], "date": cols[2], "subject": cols[3],
+                "count": int(count or 0)}
+
     def commit_worktree(self, worktree: Path, *, message: str, identity: tuple[str, str]) -> str | None:
         """Committe le travail de l'ouvrier dans son worktree (`add -A` puis `commit`). Le worker `claude -p`
         écrit le code mais **ne touche pas au cycle git** (mandat) : la forge committe après son run. Identité

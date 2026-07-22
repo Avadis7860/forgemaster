@@ -229,7 +229,10 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   mutation (le cycle git vit dans `gate/merge`) ; **404** projet absent, **422** SoT illisible.
   · `GET /api/projects/{p}/git/tree?ref=&path=` (exploration read-only : entrées d'un dossier à une réf,
   `ref` défaut `dev`, `path` vide = racine → `{project, ref, path, entries:[{name, type:blob|tree|commit,
-  size, sha}]}`, **dossiers d'abord** ; `size=null` pour un arbre). · `GET /api/projects/{p}/git/blob?ref=&
+  size, sha, last_commit:{short, date, subject}|null}], latest_commit:{short, author, date, subject, count}|
+  null}`, **dossiers d'abord** ; `size=null` pour un arbre. `last_commit` = dernier commit touchant l'entrée
+  (façon GitHub ; `null` si aucun) ; `latest_commit` = dernier commit du dossier courant + nb total de commits
+  (`count`), `null` si la réf/dossier est vide de commits). · `GET /api/projects/{p}/git/blob?ref=&
   path=` (contenu d'un fichier à une réf, `ref`+`path` **requis** → `{project, path, ref, size, binary,
   truncated, too_large, content}` ; gardes L4 : `too_large` si > 10 Mo (aucune lecture), `binary` si NUL
   détecté, `truncated` si > 512 Ko — **jamais d'octets bruts émis**, `content=""` pour binaire/too_large).
