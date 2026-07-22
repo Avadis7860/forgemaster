@@ -230,9 +230,10 @@ def _seed_dispatch_job(home: Path, proj: str) -> None:
 
 
 def _seed_interview_socle(home: Path, proj: str) -> None:
-    """Seed une feature de SOCLE dont la NEXT task est `interactive` (mode v12) → rend VOYANT at-rest le bouton
-    « Lancer l'interview » du DispatchPanel (action primaire gated sur la ROADMAP, pas sur une mutation). En
-    direct-DB car l'API task-add n'expose pas `mode`. Le voir : `…/atlas-demo/travail?feature=socle-design`."""
+    """Seed une feature de SOCLE dont la NEXT task est `interactive` (mode v12) → rend VOYANT at-rest le
+    bouton « Lancer l'interview » du DispatchPanel (action primaire gated sur la ROADMAP, pas sur une
+    mutation). En direct-DB car l'API task-add n'expose pas `mode`. Le voir :
+    `…/atlas-demo/travail?feature=socle-design`."""
     try:
         from cockpit.config import Settings
         from cockpit.db import store

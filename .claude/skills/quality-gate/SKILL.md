@@ -18,12 +18,15 @@ ce qu'un humain review.
 
 ```bash
 VENV=.venv/bin        # activer le venv du projet d'abord si besoin
-$VENV/ruff check src tests      # 1. lint + imports
+$VENV/ruff check .              # 1. lint + imports (TOUT le first-party ; bundles exclus via config)
 $VENV/mypy                      # 2. types (config dans pyproject)
 $VENV/pytest -q                 # 3. tests (socle + câblage)
 ```
 
-1. **Lint** (`ruff check`) — style + imports + bugs simples. Rouge → corriger, jamais `# noqa` sans motif.
+1. **Lint** (`ruff check .`) — style + imports + bugs simples, sur **tout le Python first-party** (racine
+   `hatch_build.py`, `web/tools/`, `src`, `tests`), les payloads bundles étant exclus par `extend-exclude`
+   (règle négative, pas d'allowlist énumérée qui laisse dériver du code load-bearing hors `src`). Rouge →
+   corriger, jamais `# noqa` sans motif.
 2. **Types** (`mypy`) — le package doit typer proprement. Une dép serveur non typée (`fastapi`/`uvicorn`)
    est déjà `ignore_missing_imports` — ne pas l'élargir sans motif.
 3. **Tests** (`pytest`) — tout vert. Un test qui n'existe pas pour une capacité livrée = capacité non livrée.

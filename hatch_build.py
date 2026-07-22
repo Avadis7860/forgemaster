@@ -51,9 +51,11 @@ def plan_force_includes(root: Path) -> tuple[dict[str, str], list[str]]:
         tombe (`No module named codemap`) ;
       • package `build/vendor/taskmap` (stagé par `deploy/build-wheel.sh`) → top-level `taskmap`, importé par
         `roadmap/resolver.py` (`taskmap.core`) — vendoré pour que le wheel soit auto-contenu (plus de dép git
-        privée `task-map @ git+…` à cloner au `pip install`) ; sans lui le daemon tombe (`No module named taskmap`).
+        privée `task-map @ git+…` à cloner au `pip install`) ; sans lui le daemon tombe
+        (`No module named taskmap`).
     Chaque artefact absent → un warning (dégradation gracieuse ; en dev/editable les stagings sont absents et
-    l'on skippe proprement : la SPA vient de `cockpit setup`, code-map/task-map sont déjà éditable-installés)."""
+    l'on skippe proprement : la SPA vient de `cockpit setup`, code-map/task-map sont déjà
+    éditable-installés)."""
     root = Path(root)
     force: dict[str, str] = {}
     warnings: list[str] = []
