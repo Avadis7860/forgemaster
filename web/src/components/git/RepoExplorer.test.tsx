@@ -34,10 +34,11 @@ const BRANCHES: GitBranch[] = [
 
 describe('RepoExplorer', () => {
   it('liste l\'arbre, descend dans un dossier, ouvre un fichier avec n° de ligne', async () => {
+    // Racine SANS README → l'invite « Aucun fichier » reste l'état par défaut (le README-auto a son test dédié).
     h.trees = {
       '': [
         { name: 'src', type: 'tree', size: null, sha: 't1' },
-        { name: 'README.md', type: 'blob', size: 12, sha: 'b1' },
+        { name: 'notes.txt', type: 'blob', size: 12, sha: 'b1' },
       ],
       src: [{ name: 'app.py', type: 'blob', size: 20, sha: 'b2' }],
     }
@@ -49,7 +50,7 @@ describe('RepoExplorer', () => {
 
     // arbre racine : dossier + fichier présents
     expect(screen.getByText('src')).toBeInTheDocument()
-    expect(screen.getByText('README.md')).toBeInTheDocument()
+    expect(screen.getByText('notes.txt')).toBeInTheDocument()
     // aucun fichier sélectionné au départ
     expect(screen.getByText('Aucun fichier')).toBeInTheDocument()
 
@@ -62,6 +63,23 @@ describe('RepoExplorer', () => {
     expect(await screen.findByText("print('hi')")).toBeInTheDocument()
     expect(screen.getByText('1')).toBeInTheDocument()
     expect(screen.getByText('2')).toBeInTheDocument()
+  })
+
+  it('auto-rend le README.md du dossier en Markdown (aucune sélection requise, façon GitHub)', async () => {
+    h.trees = {
+      '': [
+        { name: 'src', type: 'tree', size: null, sha: 't1' },
+        { name: 'README.md', type: 'blob', size: 22, sha: 'b1' },
+      ],
+    }
+    h.blobs = {
+      'README.md': { project: 'p', path: 'README.md', ref: 'dev', size: 22,
+        binary: false, truncated: false, too_large: false, content: '# Titre\n\nCorps du readme.' },
+    }
+    render(<RepoExplorer project="p" branches={BRANCHES} />)
+    // Le README mène : plus d'invite « Aucun fichier », et le `#` est rendu en <h1> (DocView), pas laissé brut.
+    expect(screen.queryByText('Aucun fichier')).not.toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Titre' })).toBeInTheDocument()
   })
 
   it('signale un fichier binaire sans émettre d\'octets', async () => {
@@ -97,8 +115,13 @@ describe('RepoExplorer', () => {
       { sha: 'c1full', short: 'c1', author: 'Bob', date: '2026-07-01T10:00:00Z', subject: 'init' },
     ]
     render(<RepoExplorer project="p" branches={BRANCHES} />)
-    fireEvent.click(screen.getByText('README.md'))
-    expect(await screen.findByText('# projet')).toBeInTheDocument()      // corps par défaut
+    // Racine = README seul → il s'auto-rend (ReadmePane) : pas de bascule Historique tant qu'aucun fichier
+    // n'est sélectionné. On clique le bouton d'ARBRE (pas l'en-tête du README auto) pour ouvrir la visionneuse.
+    expect(screen.queryByText('Historique')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /README\.md/ }))
+    // fichier sélectionné → visionneuse avec bascule Historique ; le `.md` est rendu en Markdown (<h1>projet</h1>).
+    expect(await screen.findByText('Historique')).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'projet' })).toBeInTheDocument()
     // basculer vers l'historique : les 2 commits récents d'abord apparaissent
     fireEvent.click(screen.getByText('Historique'))
     expect(await screen.findByText('doc: maj')).toBeInTheDocument()

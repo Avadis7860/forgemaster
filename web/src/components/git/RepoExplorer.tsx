@@ -1,8 +1,12 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { Alert, Badge, Button, Card, EmptyState, LoadingState } from '@/components/ui'
 import { ApiError } from '@/lib/api'
 import { useGitBlob, useGitHistory, useGitTree } from '@/lib/queries'
 import type { GitBlob, GitBranch, GitTreeEntry } from '@/lib/schemas'
+
+// DocView (react-markdown + remark-gfm) en chunk séparé — même économie que Bundles/Docs (lazy, hors bundle
+// initial). Un `.md` du dépôt (fichier sélectionné ou README auto d'un dossier) est rendu en vraie page.
+const DocView = lazy(() => import('@/components/docs/DocView').then((m) => ({ default: m.DocView })))
 
 /** Explorateur de dépôt read-only : sélecteur de réf + arbre navigable (dossiers d'abord, breadcrumb) +
  *  visionneuse de fichier (n° de ligne). Zéro mutation — deux GET idempotents (arbre, blob) servent la vue,
@@ -22,6 +26,12 @@ export function RepoExplorer({ project, branches }: { project: string; branches:
   }
 
   const join = (dir: string, name: string) => (dir ? `${dir}/${name}` : name)
+
+  // README auto du dossier courant (façon GitHub : mener par le contenu quand aucun fichier n'est sélectionné).
+  // `useGitTree` partage la clé React-Query de TreePane → aucun fetch de plus. Détection insensible à la casse.
+  const { data: tree } = useGitTree(project, ref, path)
+  const readmeEntry = tree?.entries.find((e) => e.type === 'blob' && e.name.toLowerCase() === 'readme.md')
+  const readmePath = readmeEntry ? join(path, readmeEntry.name) : null
 
   return (
     <Card className="space-y-4 p-5">
@@ -50,7 +60,9 @@ export function RepoExplorer({ project, branches }: { project: string; branches:
           onOpenDir={(name) => { setPath(join(path, name)); setFile(null) }}
           onOpenFile={(name) => setFile(join(path, name))}
         />
-        <FilePane project={project} gitRef={ref} file={file} />
+        {file == null && readmePath
+          ? <ReadmePane project={project} gitRef={ref} readmePath={readmePath} />
+          : <FilePane project={project} gitRef={ref} file={file} />}
       </div>
     </Card>
   )
@@ -179,6 +191,51 @@ function FilePane({ project, gitRef, file }: { project: string; gitRef: string; 
   )
 }
 
+/** README auto-rendu du dossier courant quand aucun fichier n'est sélectionné (façon GitHub : le contenu
+ *  mène, pas un vide). GET blob idempotent → Markdown via DocView (lazy). Un README non affichable
+ *  (binaire / trop-gros / vide) retombe silencieusement sur l'invite standard — jamais un écran d'erreur. */
+function ReadmePane({ project, gitRef, readmePath }: { project: string; gitRef: string; readmePath: string }) {
+  const { data, isLoading, isError, error } = useGitBlob(project, gitRef, readmePath)
+
+  if (isLoading) {
+    return <div className="flex min-h-40 items-center justify-center"><LoadingState label="Lecture du README…" /></div>
+  }
+  if (isError || !data) {
+    return (
+      <div className="min-h-40">
+        <Alert tone="danger" title="README indisponible">
+          {error instanceof ApiError ? error.detail : String(error)}
+        </Alert>
+      </div>
+    )
+  }
+  if (data.too_large || data.binary || !data.content.trim()) {
+    return (
+      <div className="flex min-h-40 items-center justify-center">
+        <EmptyState title="Aucun fichier" description="Choisis un fichier dans l'arbre pour l'afficher." />
+      </div>
+    )
+  }
+  return (
+    <Card className="flex min-h-40 flex-col overflow-hidden p-0">
+      <div className="flex items-center gap-2 border-b border-border px-4 py-2">
+        <span className="w-4 shrink-0 text-center text-muted">📄</span>
+        <code className="min-w-0 flex-1 truncate font-mono text-xs text-fg" title={readmePath}>
+          {readmePath.split('/').pop()}
+        </code>
+      </div>
+      {data.truncated && (
+        <div className="px-4 py-2"><Badge tone="warn" dot>Aperçu tronqué</Badge></div>
+      )}
+      <div className="overflow-auto p-5">
+        <Suspense fallback={<LoadingState label="Rendu Markdown…" />}>
+          <DocView content={data.content} />
+        </Suspense>
+      </div>
+    </Card>
+  )
+}
+
 /** Historique des commits touchant le fichier ouvert (récents d'abord). Un GET idempotent (`useGitHistory`)
  *  activé seulement quand le panneau est déplié — n° court + auteur + date + sujet. */
 function FileHistory({ project, gitRef, file }: { project: string; gitRef: string; file: string }) {
@@ -225,6 +282,22 @@ function FileBody({ blob }: { blob: GitBlob }) {
     return (
       <div className="p-5">
         <EmptyState title="Fichier binaire" description={`${fmtSize(blob.size)} — pas d'aperçu texte.`} />
+      </div>
+    )
+  }
+  if (blob.path.endsWith('.md')) {
+    // `.md` → Markdown en réutilisant DocView (calque BundleFileBody, pas de 2ᵉ renderer). Never-silent-cap :
+    // un aperçu tronqué reste signalé au-dessus du rendu.
+    return (
+      <div className="flex flex-col">
+        {blob.truncated && (
+          <div className="px-4 py-2"><Badge tone="warn" dot>Aperçu tronqué</Badge></div>
+        )}
+        <div className="overflow-auto p-5">
+          <Suspense fallback={<LoadingState label="Rendu Markdown…" />}>
+            <DocView content={blob.content} />
+          </Suspense>
+        </div>
       </div>
     )
   }
