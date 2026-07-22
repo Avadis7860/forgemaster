@@ -22,6 +22,24 @@ CONTEXT_DOCS: tuple[tuple[str, str], ...] = (
 _EXCERPT_MAX = 1200   # caractères d'aperçu par doc (le worker lit le fichier entier au besoin)
 
 
+def _hygiene_note() -> str:
+    """Consignes d'HYGIÈNE partagées worker/fix (DRY) : (1) worktree propre au gate — nettoyer le scratch
+    (`rm` de tes fichiers temporaires est AUTORISÉ et attendu, aucun `_preview.tsx`/temp résiduel) ; (2)
+    preuve de rendu UI **sans navigateur** — rendu HTML statique via le renderer du projet, pas de page de
+    preview scaffoldée ni de dev-server. Résout les frictions de la boucle headless (permissions scratch +
+    tours gaspillés à bricoler un preview)."""
+    return (
+        "HYGIÈNE. Nettoie tes fichiers temporaires avant de finir : le worktree doit être PROPRE au gate "
+        "(aucun scratch/preview résiduel) — le `rm` de tes fichiers de travail temporaires est autorisé et "
+        "attendu. Si ta task produit un composant ou un écran d'UI, NE scaffolde PAS de page `_preview.tsx` "
+        "ni ne lance de dev-server pour te vérifier : rends le composant en **HTML statique** via le "
+        "renderer du projet (React : `renderToStaticMarkup` de `react-dom/server`) via un mini-entry lancé "
+        "par la toolchain du projet (`npx tsx <entry>`, ou l'équivalent de ton stack), inspecte le HTML "
+        "produit, puis supprime l'entry — preuve de rendu en 1-2 tours, sans navigateur. Si ton projet n'a "
+        "pas de renderer SSR, dis-le et appuie-toi sur le type-check (`tsc --noEmit`)."
+    )
+
+
 def _mandate() -> str:
     """Mandat autonome générique (adapté de `_code_autonomous_mandate`) : le worker implémente la task dans
     son worktree, sans piloter le cycle git (branche/commit/push = la machinerie de dispatch s'en charge)."""
@@ -32,7 +50,7 @@ def _mandate() -> str:
         "headless : aucun interlocuteur). Le projet porte sa propre doc dans `docs/` — interroge-la avec "
         "`docsmap where \"<intention>\"` (→ fichier:lignes de la section pertinente) plutôt que de tout lire "
         "en bloc. NE touche PAS au cycle git (pas de branch/commit/push) — la forge s'en charge après ton "
-        "run. Reste STRICTEMENT dans le périmètre de la task ; ne déborde pas. "
+        "run. Reste STRICTEMENT dans le périmètre de la task ; ne déborde pas. " + _hygiene_note() + " "
         "TERMINE ton message final par une section `## Décisions prises` : les choix que tu as retenus, "
         "les alternatives que tu as écartées (et pourquoi), et les contraintes que tu as découvertes. La "
         "forge récolte ce bloc en minerai durable (`docs/decisions/`) — sois concret, pas de remplissage."
@@ -87,7 +105,7 @@ def _fix_mandate() -> str:
         "en échec) : lis le contexte, applique le fix minimal, vérifie qu'il passe. Travaille SANS poser de "
         "question (headless). Interroge la doc du repo avec `docsmap where \"<intention>\"`. NE touche PAS "
         "au cycle git (pas de branch/commit/push) — la forge committe ton travail après ton run. Reste "
-        "STRICTEMENT dans le périmètre des défauts cités ; ne refactore pas au-delà. "
+        "STRICTEMENT dans le périmètre des défauts cités ; ne refactore pas au-delà. " + _hygiene_note() + " "
         "TERMINE ton message final par une section `## Décisions prises` : ce que tu as corrigé et pourquoi."
     )
 

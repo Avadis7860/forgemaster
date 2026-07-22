@@ -242,3 +242,62 @@ def test_non_run_journal_is_best_effort(ctx):
     report = reviewer.dispatch_reviewer(conn, settings, feature_ref="proj/feat",
                                         runner=_reviewer_runner('{"findings":[]}'))
     assert report["reviewed"] is False and "inachevé" in report["reason"]   # le résultat métier survit
+
+
+# -- P1a : allowlist read-only ÉLARGIE (fin du spin Bash) -------------------------------------------
+
+def test_reviewer_argv_carries_readonly_bash_allowlist(ctx):
+    """Le reviewer dispatche avec `--allowedTools = REVIEW_TOOLS` : Read/Grep/Glob + `Bash` git-lecture +
+    maps `where`. Fin du spin (avant : `Read,Grep,Glob` sans aucun Bash → tout `git diff`/`codemap` hang en
+    headless). Reste read-only : Bash SCOPÉ (jamais de `Bash` nu mutant) et `DENY_DESTRUCTIVE` prime."""
+    settings, conn = ctx
+    _seed(conn, settings)
+    _dispatch_worker_and_complete(conn, settings)
+    captured: dict = {}
+
+    def _capture(argv, *, cwd, input_text, timeout, env=None):
+        captured["argv"] = list(argv)
+        sid = argv[argv.index("--session-id") + 1]
+        out = json.dumps({"is_error": False, "result": '{"base":"dev","findings":[]}',
+                          "session_id": sid, "num_turns": 1})
+        return run.RunResult(argv=list(argv), returncode=0, stdout=out, stderr="")
+
+    reviewer.dispatch_reviewer(conn, settings, feature_ref="proj/feat", runner=_capture)
+    argv = captured["argv"]
+    allow = argv[argv.index("--allowedTools") + 1]
+    assert allow == reviewer.REVIEW_TOOLS
+    assert "Bash(git diff *)" in allow and "Bash(codemap *)" in allow    # git-lecture + maps sanctionnés
+    assert "Bash," not in allow and not allow.endswith("Bash")           # jamais de `Bash` nu (read-only)
+    assert argv[argv.index("--disallowedTools") + 1] == worker.DENY_DESTRUCTIVE   # bornage prime sur allow
+
+
+# -- P2 : transcript du reviewer PERSISTÉ (parité worker, zéro duplication) --------------------------
+
+def test_reviewer_default_runner_streams_transcript_and_writes_verdict(ctx, monkeypatch):
+    """Sans runner injecté, le reviewer utilise le MÊME primitive streaming que le worker
+    (`worker._make_default_runner`) → son `log_path` est ÉCRIT (transcript persisté ; avant, `run.run` ne
+    l'écrivait jamais → job review au `log_path` vide) et le pid est enregistré (parité abort). Le verdict
+    reste écrit : `run_streaming` rend le stdout complet → parsing du résultat final intact."""
+    settings, conn = ctx
+    _seed(conn, settings)
+    _dispatch_worker_and_complete(conn, settings)
+    ndjson = ('{"type":"result","is_error":false,'
+              '"result":"{\\"base\\":\\"dev\\",\\"findings\\":[]}","session_id":"rev"}\n')
+    spawned: dict = {}
+
+    def _fake_streaming(argv, *, cwd, env=None, timeout=None, input_text=None, out_path=None,
+                        new_session=False, on_spawn=None):
+        spawned["out_path"] = out_path
+        if on_spawn is not None:
+            on_spawn(4321)                                  # exerce record_pid (le reviewer devient killable)
+        Path(out_path).write_text(ndjson, encoding="utf-8")  # streame le transcript vers log_path
+        return run.RunResult(argv=list(argv), returncode=0, stdout=ndjson, stderr="")
+
+    monkeypatch.setattr(run, "run_streaming", _fake_streaming)
+    report = reviewer.dispatch_reviewer(conn, settings, feature_ref="proj/feat")   # pas de runner → streaming
+    assert report["reviewed"] is True
+    row = conn.execute("SELECT log_path, pid FROM dispatch_jobs WHERE kind = 'review'").fetchone()
+    assert spawned["out_path"] == row["log_path"]                     # le stream vise bien le log_path du job
+    assert Path(row["log_path"]).read_text(encoding="utf-8").strip()  # transcript NON-VIDE (persisté)
+    assert row["pid"] == 4321                                         # pid enregistré (parité abort)
+    assert review.read_verdict(settings, "proj", "feat") is not None  # verdict écrit (parsing intact)

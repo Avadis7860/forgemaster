@@ -462,6 +462,32 @@ def test_build_headless_argv_stream_json_requires_verbose():
     assert "--verbose" not in worker.build_headless_argv(session_id="s")
 
 
+def test_build_headless_argv_allowed_tools_override():
+    """`allowed_tools`, si fourni, OVERRIDE le choix work/readonly (le reviewer y injecte son allowlist
+    élargie) ; sans lui, on retombe sur WRITE_CODE_TOOLS (work) / READONLY_TOOLS (read-only)."""
+    over = worker.build_headless_argv(session_id="s", work=False, allowed_tools="Read,Bash(git diff *)")
+    assert over[over.index("--allowedTools") + 1] == "Read,Bash(git diff *)"
+    assert worker.build_headless_argv(session_id="s", work=True)[
+        worker.build_headless_argv(session_id="s", work=True).index("--allowedTools") + 1
+    ] == worker.WRITE_CODE_TOOLS
+    ro = worker.build_headless_argv(session_id="s", work=False)
+    assert ro[ro.index("--allowedTools") + 1] == worker.READONLY_TOOLS
+
+
+def test_deny_destructive_borders_reliable_forms_not_scratch_rm():
+    """DENY rescopé (2026-07-22) : borne les formes que le NOMMAGE rend fiables (push/reset/sudo) et NE
+    bloque PLUS `rm` — le blanket `Bash(rm *)` était théâtre (bypass Node) qui interdisait le nettoyage de
+    scratch légitime ; les `rm` catastrophiques relèvent du circuit-breaker intrinsèque de `claude`. Le DENY
+    est posé dans l'argv worker (deny prime sur allow)."""
+    deny = worker.DENY_DESTRUCTIVE
+    # bornage conservé : refused-expected
+    assert "Bash(git push *)" in deny and "Bash(git reset *)" in deny and "Bash(sudo *)" in deny
+    # friction levée : plus aucune règle `rm` → un `rm _preview.tsx` de scratch n'est plus refusé
+    assert "rm" not in deny
+    argv = worker.build_headless_argv(session_id="s", work=True)
+    assert argv[argv.index("--disallowedTools") + 1] == deny
+
+
 def test_parse_headless_result_extracts_result_event_from_stream_json():
     """stream-json = NDJSON : le parseur retrouve l'événement `result` (verdict final) parmi les lignes
     system/assistant/result, sans se faire piéger par un objet intermédiaire (assistant)."""
@@ -583,6 +609,21 @@ def test_build_worker_prompt_uses_project_docs(tmp_path: Path):
     # projet sans docs → fallback explicite, jamais un crash
     bare = prompt.build_worker_prompt(project, feature, task, root=tmp_path / "empty")
     assert "aucun `docs/`" in bare
+
+
+def test_worker_and_fix_prompts_carry_hygiene_and_render_recipe(tmp_path: Path):
+    """P1b+P3 : le prompt (worker ET fix) porte la note d'HYGIÈNE partagée — worktree propre au gate (`rm`
+    scratch autorisé) + recette de render-preview STATIQUE (`renderToStaticMarkup`, pas de `_preview.tsx` ni
+    de dev-server) → fin des tours gaspillés à bricoler un preview."""
+    project = {"slug": "proj", "name": "Proj"}
+    feature = {"slug": "feat", "title": "Feature", "branch": "feature/feat"}
+    task = {"slug": "ui", "title": "Bouton", "priority": "P1"}
+    wp = prompt.build_worker_prompt(project, feature, task, root=tmp_path / "wt")
+    fp = prompt.build_fix_prompt(project, feature, findings={}, root=tmp_path / "wt")
+    for text in (wp, fp):
+        assert "PROPRE au gate" in text                       # worktree propre (scratch nettoyé)
+        assert "renderToStaticMarkup" in text and "_preview.tsx" in text   # recette render, sans dev-server
+        assert "sans navigateur" in text                      # P3-light : aucune dépendance headless
 
 
 # -- facette : activation dans la worktree + injection dans le prompt (Phase 3) ---------------------

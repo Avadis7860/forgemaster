@@ -234,9 +234,14 @@ def test_web_dispatch_drains_and_produces_review(client, monkeypatch, fake_tools
         out = json.dumps({"is_error": False, "result": '{"findings":[]}', "session_id": sid, "num_turns": 1})
         return run.RunResult(argv=list(argv), returncode=0, stdout=out, stderr="")
 
-    monkeypatch.setattr("cockpit.dispatch.worker._make_default_runner",
-                        lambda out_path, *a, **k: _worker)   # signature élargie (out_path, conn, job_id)
-    monkeypatch.setattr("cockpit.dispatch.reviewer._default_runner", _reviewer)
+    # Worker ET reviewer passent désormais par `worker._make_default_runner` (le reviewer réutilise le
+    # primitive streaming). On route par l'allowlist : le worker porte `WebSearch`, le reviewer non.
+    def _route(argv, *, cwd, input_text, timeout, env=None):
+        allow = argv[argv.index("--allowedTools") + 1]
+        fn = _worker if "WebSearch" in allow else _reviewer
+        return fn(argv, cwd=cwd, input_text=input_text, timeout=timeout, env=env)
+
+    monkeypatch.setattr("cockpit.dispatch.worker._make_default_runner", lambda *a, **k: _route)
 
     conn = store.open_db(settings)                          # seed projet/feature/task (todo) en direct
     registry.create_project(conn, settings, slug="proj")

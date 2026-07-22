@@ -17,7 +17,7 @@ import logging
 import shutil
 import sqlite3
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from cockpit import auth
@@ -37,13 +37,19 @@ REVIEW_FACET = "review"
 REVIEW_BASE = "dev"                 # base du diff reviewé (main-suit-dev)
 REVIEW_TIMEOUT = 900.0              # s ; une review lit un diff borné — plus court qu'un run de travail
 
-# runner(argv, *, cwd, input_text, timeout, env) -> RunResult. Défaut = subprocess local ; injecté en test.
+# Allowlist read-only ÉLARGIE du reviewer (override de `worker.READONLY_TOOLS`). Le reviewer n'a PAS de
+# `--permission-mode` (posé seulement pour le worker `work=True`) → en headless, tout outil HORS allowlist
+# **hang** (le prompt de permission ne trouve aucun interlocuteur) : c'était la cause du spin sur `Bash`
+# refusé. On lui donne donc explicitement le Bash **read-only** que son prompt sanctionne — git-lecture +
+# maps `where` — pour qu'il SITUE le diff sans jamais hang. Il RESTE read-only : aucun Write/Edit, `Bash`
+# scopé (pas de `Bash` nu qui laisserait muter via `echo >`) ; `DENY_DESTRUCTIVE` prime par-dessus.
+REVIEW_TOOLS = ("Read,Grep,Glob,"
+                "Bash(git diff *),Bash(git log *),Bash(git show *),Bash(git status *),"
+                "Bash(codemap *),Bash(docsmap *),Bash(frontmap *)")
+
+# runner(argv, *, cwd, input_text, timeout, env) -> RunResult. Défaut = streaming vers `log_path` (parité
+# worker, `worker._make_default_runner`, résolu au spawn) ; injecté en test.
 Runner = Callable[..., run.RunResult]
-
-
-def _default_runner(argv: list[str], *, cwd: object, input_text: str, timeout: float,
-                    env: Mapping[str, str] | None = None) -> run.RunResult:
-    return run.run(argv, cwd=cwd, input_text=input_text, timeout=timeout, env=env)   # type: ignore[arg-type]
 
 
 # -- prompt du reviewer (commission-only, porté de la doctrine /diff-review) -------------------------
@@ -59,7 +65,10 @@ def build_review_prompt(worktree_root: object, feature: dict, tasks: list[dict],
                     for t in tasks)
     mandate = (
         "Tu es un **reviewer Tier-1** dispatché en headless (aucun interlocuteur). Tu JUGES un diff, tu ne "
-        "modifies RIEN (lecture seule : `Read`/`Grep`/`Glob`, `codemap where` pour situer). Doctrine "
+        "modifies RIEN (lecture seule). Outils autorisés pour SITUER : `Read`/`Grep`/`Glob`, "
+        "`git diff`/`git log`/`git show` (lecture), et `codemap`/`docsmap`/`frontmap where`. N'appelle "
+        "AUCUN autre outil (pas de `Write`/`Edit`, pas de `Bash` mutant) : en headless il n'y a personne "
+        "pour l'approuver → tu resterais bloqué. Doctrine "
         "**commission-only** : un 🔴 ne porte QUE sur une **commission** — une ligne AJOUTÉE par le diff, "
         "citée **verbatim**, qui est fausse/cassée (y compris une suppression qui casse l'existant). Une "
         "**omission** (code pas encore câblé, DoD partielle car la suite est une autre task) = 🟡 au plus, "
@@ -180,7 +189,6 @@ def dispatch_reviewer(conn: sqlite3.Connection, settings: Settings, *, feature_r
     tasks inachevées / feature jamais dispatchée / diff vide) ; **idempotent** (verdict déjà frais → skip) ;
     **best-effort** (reviewer échoué → pas de verdict → le gate de merge bloque proprement en aval)."""
     git = git or InternalGit()
-    runner = runner or _default_runner
     project, feature = feature_ref.split("/", 1)
     feat = model.resolve_feature(conn, feature_ref)          # KeyError/ValueError si absent
 
@@ -214,7 +222,8 @@ def dispatch_reviewer(conn: sqlite3.Connection, settings: Settings, *, feature_r
     mcp_path = inject_mcp_config(wt, settings, slug=project)   # le reviewer peut vérifier un pattern (MCP)
     session_id = ids.new_id()
     argv = worker.build_headless_argv(session_id=session_id, work=False, mcp_config=mcp_path,
-                                      output_format="stream-json")   # work=False → read-only (ne code pas)
+                                      output_format="stream-json",   # work=False → read-only (ne code pas)
+                                      allowed_tools=REVIEW_TOOLS)     # + git-lecture/maps (fin du spin Bash)
     env = tools_env(settings)
     log_path = jobs.dispatch_log_path(settings, session_id)   # transcript suivable (plomberie du worker)
     # Bascule le worktree sur la facette `review` (settings.local.json READ-ONLY) : sans ça, la facette de
@@ -239,9 +248,15 @@ def dispatch_reviewer(conn: sqlite3.Connection, settings: Settings, *, feature_r
         return _skip("feature sans task d'ancrage — run reviewer non journalisable comme job")
     job_id = jobs.record_start(conn, task_id=anchor["id"], worktree="(review)", session_id=session_id,
                                log_path=str(log_path), engine="reviewer-tier1", kind="review")
+    # Runner par défaut = le MÊME primitive streaming que le worker (`_make_default_runner`) : streame le
+    # stdout `stream-json` dans `log_path` au fil de l'eau → transcript du reviewer PERSISTÉ + suivable live
+    # (parité worker ; avant, `run.run` ne l'écrivait jamais → `log_path` vide). Le stdout complet reste rendu
+    # dans le `RunResult` → parsing du verdict intact. `on_spawn`→`record_pid` rend le reviewer killable.
+    # Un runner injecté (test) override et ne streame pas. Résolu ICI : `log_path`/`job_id` prêts.
+    active_runner = runner or worker._make_default_runner(str(log_path), conn, job_id)
     started = time.monotonic()
     try:
-        proc = runner(argv, cwd=wt, input_text=prompt, timeout=REVIEW_TIMEOUT, env=env)
+        proc = active_runner(argv, cwd=wt, input_text=prompt, timeout=REVIEW_TIMEOUT, env=env)
     except run.RunTimeout as exc:              # le run a DÉMARRÉ puis timeout → job `failed`, pas non-run
         jobs.record_finish(conn, job_id, {"ok": False, "error": f"timeout {REVIEW_TIMEOUT:.0f}s : {exc}"},
                            wall_s=time.monotonic() - started, status="failed")

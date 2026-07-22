@@ -7,9 +7,10 @@ construisait un snippet shell `cd <wd> && claude …` livré base64 via `ssh dev
 construit un **argv liste** exécuté par `core.run` en local, `cwd=worktree`, **prompt sur stdin** (parade
 E2BIG). Le transport (runner) est **injectable** → les tests ne spawnent jamais un vrai `claude`.
 
-Constantes de politique portées **verbatim** (prouvées live void-runner 2026-06) : `acceptEdits` est
-obligatoire pour écrire en headless ; l'allowlist code est large (toolchain), le bornage tient par le DENY
-destructif (`rm`/`git push`/`git reset`/`sudo`, prime en tout mode).
+Constantes de politique (base prouvée void-runner 2026-06, `rm` retiré du DENY 2026-07-22) : `acceptEdits`
+requis pour écrire en headless ; l'allowlist code est large (toolchain), le bornage tient par le DENY
+destructif (`git push`/`git reset`/`sudo`, prime en tout mode) + l'isolation du worktree jetable ; les `rm`
+catastrophiques relèvent du circuit-breaker intrinsèque de `claude` (cf. `DENY_DESTRUCTIVE`).
 """
 from __future__ import annotations
 
@@ -38,9 +39,17 @@ from cockpit.tools import ToolPreflightError, preflight_tools, tools_env
 
 # -- politique d'outils (verbatim de worker_dispatch.py) --------------------------------------------
 WRITE_PERMISSION_MODE = "acceptEdits"   # sans lui, `claude -p` refuse Write/Edit (aucun interlocuteur)
-READONLY_TOOLS = "Read,Grep,Glob"
+READONLY_TOOLS = "Read,Grep,Glob"       # baseline lecture-seule (preuve de canal) ; le reviewer l'ÉLARGIT
 WRITE_CODE_TOOLS = "Bash,WebSearch,WebFetch"
-DENY_DESTRUCTIVE = "Bash(rm *),Bash(git push *),Bash(git reset *),Bash(sudo *)"
+# DENY destructif — deny PRIME sur allow (précédence deny>ask>allow), posé dans tous les modes. On borne les
+# formes que le nommage rend fiables : push (remote), reset (réécriture d'historique), sudo (élévation). On NE
+# borne PLUS `rm` : le blanket `Bash(rm *)` était du théâtre (contournable en 1 ligne Node) qui bloquait le
+# nettoyage de scratch LÉGITIME (`rm _preview.tsx`) — un deny qui s'allume sur du normal est défaillant. Les
+# `rm` catastrophiques sont couverts INTRINSÈQUEMENT par le circuit-breaker de `claude` (`rm -rf /` et
+# `rm -rf ~` promptent toujours, même en bypass et même obfusqués `$(...)`) ; borner l'argument d'un `rm` par
+# pattern est de toute façon fragile/incomplet (doc Claude Code). Le vrai bornage du repo DURABLE = SoT bare
+# hors worktree + push/reset refusés ; le worktree lui-même est jetable (re-réservable).
+DENY_DESTRUCTIVE = "Bash(git push *),Bash(git reset *),Bash(sudo *)"
 
 DISPATCH_TIMEOUT = 1800.0   # s ; un worker qui pend ne bloque pas la forge (→ RunTimeout)
 
@@ -49,18 +58,21 @@ Runner = Callable[..., run.RunResult]
 
 
 def build_headless_argv(*, session_id: str, work: bool = True, model: str | None = None,
-                        output_format: str = "json", mcp_config: Path | None = None) -> list[str]:
+                        output_format: str = "json", mcp_config: Path | None = None,
+                        allowed_tools: str | None = None) -> list[str]:
     """Argv de `claude -p` **local** (le prompt part sur le stdin, jamais l'argv). `--session-id` fixe le
     transcript à un chemin déterministe (suivi live). `work=True` → allowlist code + `acceptEdits` ;
-    `work=False` → lecture seule (preuve de canal). Le DENY destructif est posé dans tous les cas. Si
-    `mcp_config` est fourni, `--mcp-config <f>` charge le MCP de corpus injecté (non-strict : garde les autres
-    configs). PUR."""
+    `work=False` → lecture seule (preuve de canal). `allowed_tools`, si fourni, **override** le choix
+    `WRITE_CODE_TOOLS`/`READONLY_TOOLS` (le reviewer y injecte son allowlist read-only ÉLARGIE : git-lecture +
+    maps, cf. `reviewer.REVIEW_TOOLS`). Le DENY destructif est posé dans tous les cas et **prime** sur l'allow
+    (précédence deny>ask>allow). Si `mcp_config` est fourni, `--mcp-config <f>` charge le MCP de corpus
+    injecté (non-strict : garde les autres configs). PUR."""
     argv = ["claude", "-p", "--output-format", output_format, "--session-id", session_id]
     if output_format == "stream-json":
         argv += ["--verbose"]            # `claude -p --output-format stream-json` EXIGE --verbose
     if model:
         argv += ["--model", model]
-    argv += ["--allowedTools", WRITE_CODE_TOOLS if work else READONLY_TOOLS]
+    argv += ["--allowedTools", allowed_tools or (WRITE_CODE_TOOLS if work else READONLY_TOOLS)]
     argv += ["--disallowedTools", DENY_DESTRUCTIVE]
     if work:
         argv += ["--permission-mode", WRITE_PERMISSION_MODE]
