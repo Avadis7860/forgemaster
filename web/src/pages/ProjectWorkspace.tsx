@@ -21,6 +21,13 @@ export function ProjectWorkspace() {
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <h1 className="text-lg font-semibold text-fg">{data?.name ?? project}</h1>
             {data && <Badge tone="accent">{data.backend}</Badge>}
+            {/* Type de bundle : lu depuis `project_type` déjà dans le payload (jamais une 2ᵉ source). Rendu
+                SEULEMENT si distinctif — `generic` (défaut + projets adoptés `--from`, sans provenance) n'a
+                pas de badge : absence honnête, jamais un faux type. Ton `neutral` (métadonnée), distinct du
+                badge backend `accent`. */}
+            {data && data.project_type && data.project_type !== 'generic' && (
+              <Badge tone="neutral" title={`bundle : ${data.project_type}`}>{data.project_type}</Badge>
+            )}
             {data && <code className="text-xs text-faint">{data.sot_path}</code>}
           </div>
         )}

@@ -41,6 +41,10 @@ DEFAULT_RUNNER = Path(
     )
 )
 DEMO_PROJECTS = ["atlas-demo", "nebula-demo"]           # slugs FICTIFS (jamais un vrai basename)
+# Type de bundle par projet démo : atlas-demo typé → rend le badge de bundle VOYANT sur l'entête ;
+# nebula-demo reste `generic` (défaut) → PAS de badge (état vide honnête). Le contraste des deux montre la
+# règle « badge ssi type distinctif » d'un seul coup d'œil.
+DEMO_TYPES = {"atlas-demo": "service-api"}
 # Outils démo (kind='tool') — rendent la 2ᵉ section « Outils » du rail VOYANTE (miroir des repos framework).
 DEMO_TOOLS = ["docsmap-tool", "codemap-tool"]           # slugs FICTIFS
 _SLUG = re.compile(r"[^a-z0-9]+")
@@ -166,7 +170,10 @@ def _seed(port: int, slugs: list[str], *, home: Path) -> None:
     rendre l'onglet Dispatch (transcript live). Le job est inséré EN DIRECT dans la DB jetable du daemon
     (mêmes settings via l'env COCKPIT_HOME) — aucune API ne fabrique un run sans spawner un vrai `claude`."""
     for slug in slugs:
-        _post(port, "/api/projects", {"slug": slug, "name": slug.replace("-", " ").title()})
+        body = {"slug": slug, "name": slug.replace("-", " ").title()}
+        if slug in DEMO_TYPES:                         # projet typé → badge de bundle sur l'entête
+            body["project_type"] = DEMO_TYPES[slug]
+        _post(port, "/api/projects", body)
     for slug in DEMO_TOOLS:            # rail 2 sections : les outils peuplent la section « Outils »
         _post(port, "/api/projects", {"slug": slug, "name": slug.replace("-", " ").title(),
                                       "kind": "tool"})
@@ -410,8 +417,13 @@ def shoot(routes: list[str], *, port: int, viewport: dict | None, full_page: boo
           clicks: list[dict] | None = None) -> list[dict]:
     out_dir.mkdir(parents=True, exist_ok=True)
     home = Path(tempfile.mkdtemp(prefix="cockpit-uishot-"))
+    # Sers EXACTEMENT la dist qu'on vient de bâtir/valider (`DIST`), pas celle que le daemon résoudrait par
+    # défaut. Sans cet override, `web_dist_dir()` tombe sur la dist empaquetée (`cockpit/_web_dist`) ou le
+    # layout source du repo de l'install éditable — soit, depuis une WORKTREE, la dist du repo PRINCIPAL, pas
+    # celle du worktree → on screenshoterait une UI PÉRIMÉE (faux-vert visuel). L'override ferme ce trou.
     env = {**os.environ, "COCKPIT_HOME": str(home / "home"),
-           "COCKPIT_PROJECTS_ROOT": str(home / "projects")}
+           "COCKPIT_PROJECTS_ROOT": str(home / "projects"),
+           "COCKPIT_WEB_DIST": str(DIST)}
     proc = subprocess.Popen(
         [str(VENV_COCKPIT), "serve", "--host", "127.0.0.1", "--port", str(port)],
         env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
