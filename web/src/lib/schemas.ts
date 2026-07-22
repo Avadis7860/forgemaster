@@ -138,8 +138,11 @@ export const CapitalCollectionSchema = z
   .object({
     name: z.string(),
     completeness: z.string().optional(),  // 'full' | 'partial' — annotation d'état de la source (silo tech)
-    pages_count: z.number().optional(),
-    chunks_count: z.number().optional(),
+    // nullish (pas juste optional) : un silo d'un type `path-derived` (templates, unit=file) n'a NI pages NI
+    // chunks → le serveur renvoie `null` explicite (valeur honnête, pas 0). `.optional()` seul rejetterait ce
+    // null → « Collections indisponibles ». Même traitement que `last_synced` ci-dessous.
+    pages_count: z.number().nullish(),
+    chunks_count: z.number().nullish(),
     last_synced: z.string().nullish(),
   })
   .passthrough()
