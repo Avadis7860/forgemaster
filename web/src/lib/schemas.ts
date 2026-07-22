@@ -569,15 +569,33 @@ export const GitReconcileSchema = z.object({
 })
 export type GitReconcile = z.infer<typeof GitReconcileSchema>
 
+// Dernier commit touchant une entrée d'arbre (façon GitHub : sujet + âge en tête de liste). `.nullish()` sur
+// l'entrée = résilient à un daemon antérieur à Phase B.1 (champ absent) ou une entrée sans commit (null).
+export const GitEntryCommitSchema = z.object({
+  short: z.string(),
+  date: z.string(),
+  subject: z.string(),
+})
+
 // Une entrée d'arbre (dossier du dépôt à une réf) : blob (fichier), tree (dossier) ou commit (sous-module).
-// `size` = null pour un arbre.
+// `size` = null pour un arbre. `last_commit` = dernier commit qui la touche (Phase B.1).
 export const GitTreeEntrySchema = z.object({
   name: z.string(),
   type: z.enum(['blob', 'tree', 'commit']),
   size: z.number().nullable(),
   sha: z.string(),
+  last_commit: GitEntryCommitSchema.nullish(),
 })
 export type GitTreeEntry = z.infer<typeof GitTreeEntrySchema>
+
+// « latest commit » du dossier courant (barre en tête d'arbre) : auteur · sha · âge · nb total de commits.
+export const GitLatestCommitSchema = z.object({
+  short: z.string(),
+  author: z.string(),
+  date: z.string(),
+  subject: z.string(),
+  count: z.number(),
+})
 
 // GET /api/projects/{p}/git/tree?ref=&path= : entrées d'un dossier (dossiers d'abord). Read-only idempotent.
 export const GitTreeSchema = z.object({
@@ -585,6 +603,7 @@ export const GitTreeSchema = z.object({
   ref: z.string(),
   path: z.string(),
   entries: z.array(GitTreeEntrySchema),
+  latest_commit: GitLatestCommitSchema.nullish(),
 })
 export type GitTree = z.infer<typeof GitTreeSchema>
 

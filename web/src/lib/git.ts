@@ -77,6 +77,26 @@ export function reconcileActionLabel(action: GitReconcileAction): string {
   return RECONCILE_LABELS[action]
 }
 
+/** Âge relatif FR compact (« il y a 3 j ») d'une date ISO — pour dater la liste de fichiers et l'historique
+ *  façon GitHub. `now` injectable = testable déterministe. Date non parsable → l'ISO brut (jamais un faux
+ *  « à l'instant »). Seuils au plancher (`floor`) : « il y a 3 j » = au moins 3 jours écoulés. Pur. */
+export function timeAgo(iso: string, now: number = Date.now()): string {
+  const t = new Date(iso).getTime()
+  if (Number.isNaN(t)) return iso
+  const sec = Math.max(0, Math.floor((now - t) / 1000))
+  if (sec < 60) return "à l'instant"
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `il y a ${min} min`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `il y a ${hr} h`
+  const day = Math.floor(hr / 24)
+  if (day < 30) return `il y a ${day} j`
+  const mon = Math.floor(day / 30)
+  if (mon < 12) return `il y a ${mon} mois`
+  const yr = Math.floor(day / 365)
+  return `il y a ${yr} an${yr > 1 ? 's' : ''}`
+}
+
 /** Résumé lisible du résultat d'une réconciliation (post-POST) : ce qui a bougé, ce qui reste bloqué. Pur. */
 export function reconcileOutcome(rep: GitReconcile): string {
   if (!rep.fetched) return rep.state === 'no_mirror' ? 'pas de miroir' : 'miroir injoignable'

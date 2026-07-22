@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Alert, Badge, Button, Card, EmptyState, LoadingState } from '@/components/ui'
 import { ApiError } from '@/lib/api'
+import { timeAgo } from '@/lib/git'
 import { useGitCommit, useGitDiff } from '@/lib/queries'
 import type { GitBranch, GitCommitFile } from '@/lib/schemas'
 
@@ -34,7 +35,7 @@ export function CommitDetailCard({ project, sha, onClose }: {
               <code className="font-mono text-faint">{data.short}</code>
               <span>{data.author}</span>
               <span className="text-faint">·</span>
-              <span>{fmtDate(data.date)}</span>
+              <span title={fmtDate(data.date)}>{timeAgo(data.date)}</span>
             </div>
           </div>
           {data.body && (

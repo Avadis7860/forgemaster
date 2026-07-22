@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   isLogUnified, isReconcilable, needsReconcile, reconcileActionLabel, reconcileOutcome, reconcilePlan,
-  syncSummary,
+  syncSummary, timeAgo,
 } from './git'
 import type { GitAheadBehind, GitReconcile, GitSync } from './schemas'
 
@@ -103,5 +103,31 @@ describe('reconcileOutcome / reconcileActionLabel (résultat post-POST honnête)
   it('nomme chaque action appliquée', () => {
     expect(reconcileActionLabel('fast_forward')).toBe('rattrapé (ff)')
     expect(reconcileActionLabel('blocked_worktree')).toBe('bloqué (worktree actif)')
+  })
+})
+
+describe('timeAgo', () => {
+  const now = Date.parse('2026-07-23T12:00:00Z')
+  const S = 1000, M = 60 * S, H = 60 * M, D = 24 * H
+  const ago = (ms: number) => new Date(now - ms).toISOString()
+
+  it('« à l\'instant » sous 60 s', () => {
+    expect(timeAgo(ago(30 * S), now)).toBe("à l'instant")
+  })
+
+  it('minutes / heures / jours au plancher', () => {
+    expect(timeAgo(ago(5 * M), now)).toBe('il y a 5 min')
+    expect(timeAgo(ago(3 * H), now)).toBe('il y a 3 h')
+    expect(timeAgo(ago(3 * D), now)).toBe('il y a 3 j')
+  })
+
+  it('mois puis années, pluriel correct', () => {
+    expect(timeAgo(ago(65 * D), now)).toBe('il y a 2 mois')
+    expect(timeAgo(ago(400 * D), now)).toBe('il y a 1 an')
+    expect(timeAgo(ago(800 * D), now)).toBe('il y a 2 ans')
+  })
+
+  it('date non parsable → ISO brut (jamais un faux « à l\'instant »)', () => {
+    expect(timeAgo('pas-une-date', now)).toBe('pas-une-date')
   })
 })

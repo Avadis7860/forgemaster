@@ -1,8 +1,9 @@
 import { lazy, Suspense, useState } from 'react'
 import { Alert, Badge, Button, Card, EmptyState, LoadingState } from '@/components/ui'
 import { ApiError } from '@/lib/api'
+import { timeAgo } from '@/lib/git'
 import { useGitBlob, useGitHistory, useGitTree } from '@/lib/queries'
-import type { GitBlob, GitBranch, GitTreeEntry } from '@/lib/schemas'
+import type { GitBlob, GitBranch, GitTree, GitTreeEntry } from '@/lib/schemas'
 
 // DocView (react-markdown + remark-gfm) en chunk séparé — même économie que Bundles/Docs (lazy, hors bundle
 // initial). Un `.md` du dépôt (fichier sélectionné ou README auto d'un dossier) est rendu en vraie page.
@@ -117,24 +118,47 @@ function TreePane(props: {
   }
   const full = (name: string) => (path ? `${path}/${name}` : name)
   return (
-    <ul className="space-y-0.5">
-      {data.entries.map((e) => (
-        <li key={e.name}>
-          <EntryRow
-            entry={e}
-            active={e.type === 'blob' && selected === full(e.name)}
-            onClick={() => (e.type === 'tree' ? onOpenDir(e.name) : e.type === 'blob' && onOpenFile(e.name))}
-          />
-        </li>
-      ))}
-    </ul>
+    <div className="space-y-2">
+      {data.latest_commit && <LatestCommitBar latest={data.latest_commit} />}
+      <ul className="space-y-0.5">
+        {data.entries.map((e) => (
+          <li key={e.name}>
+            <EntryRow
+              entry={e}
+              active={e.type === 'blob' && selected === full(e.name)}
+              onClick={() => (e.type === 'tree' ? onOpenDir(e.name) : e.type === 'blob' && onOpenFile(e.name))}
+            />
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }
 
-/** Une ligne d'entrée : icône de type + nom + taille (fichiers). Sous-modules (commit) non navigables. */
+/** Barre « latest commit » au-dessus de l'arbre (façon GitHub) : auteur · sha court · sujet · âge · nb commits.
+ *  Coiffe la liste — elle mène le dossier au lieu d'un vide. Calque la ligne méta commit de GitIntelligence. */
+function LatestCommitBar({ latest }: { latest: NonNullable<GitTree['latest_commit']> }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md bg-surface-raised px-3 py-2 text-xs text-muted">
+      <span className="font-medium text-fg">{latest.author}</span>
+      <code className="font-mono text-faint">{latest.short}</code>
+      <span className="min-w-0 flex-1 truncate" title={latest.subject}>{latest.subject}</span>
+      <span className="shrink-0 text-faint" title={new Date(latest.date).toLocaleString()}>
+        {timeAgo(latest.date)}
+      </span>
+      <span className="shrink-0 text-faint">· {latest.count} commit{latest.count > 1 ? 's' : ''}</span>
+    </div>
+  )
+}
+
+/** Une ligne d'entrée façon GitHub, 3 colonnes : `icône+nom · sujet du dernier commit · âge relatif`. La ligne
+ *  reste un `Button` (surface cliquable, R1) ; une grille interne aligne les colonnes d'une rangée à l'autre.
+ *  La taille quitte la liste (parité GitHub — elle vit dans l'en-tête de la vue fichier). Sous-modules (commit)
+ *  non navigables. `last_commit` peut manquer (daemon ancien / entrée sans commit) → colonnes vides. */
 function EntryRow({ entry, active, onClick }: { entry: GitTreeEntry; active: boolean; onClick: () => void }) {
   const isDir = entry.type === 'tree'
   const isSub = entry.type === 'commit'
+  const lc = entry.last_commit
   return (
     <Button
       variant="ghost"
@@ -143,11 +167,18 @@ function EntryRow({ entry, active, onClick }: { entry: GitTreeEntry; active: boo
       disabled={isSub}
       className={active ? 'w-full justify-start bg-surface-raised text-fg' : 'w-full justify-start'}
     >
-      <span className="w-4 shrink-0 text-center text-muted">{isDir ? '📁' : isSub ? '↪' : '📄'}</span>
-      <span className="truncate">{entry.name}</span>
-      {entry.type === 'blob' && entry.size != null && (
-        <span className="ml-auto shrink-0 pl-2 text-xs text-faint">{fmtSize(entry.size)}</span>
-      )}
+      <span className="grid w-full grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)_auto] items-center gap-3">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="w-4 shrink-0 text-center text-muted">{isDir ? '📁' : isSub ? '↪' : '📄'}</span>
+          <span className="truncate">{entry.name}</span>
+        </span>
+        <span className="truncate text-left text-xs text-muted" title={lc?.subject}>{lc?.subject ?? ''}</span>
+        {lc?.date
+          ? <span className="shrink-0 text-xs text-faint" title={new Date(lc.date).toLocaleString()}>
+              {timeAgo(lc.date)}
+            </span>
+          : <span />}
+      </span>
     </Button>
   )
 }
@@ -265,6 +296,9 @@ function FileHistory({ project, gitRef, file }: { project: string; gitRef: strin
           <code className="shrink-0 font-mono text-xs text-muted">{c.short}</code>
           <span className="min-w-0 flex-1 truncate text-sm text-fg" title={c.subject}>{c.subject}</span>
           <span className="shrink-0 text-xs text-faint">{c.author}</span>
+          <span className="shrink-0 text-xs text-faint" title={new Date(c.date).toLocaleString()}>
+            {timeAgo(c.date)}
+          </span>
         </li>
       ))}
     </ol>
