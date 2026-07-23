@@ -44,8 +44,8 @@ Ce que couvre chaque doc (cibles de `docsmap where`) :
 - `docs/architecture.md` — la spine (cœur / daemon / web), les couches, frontières.
 - `docs/specs/*.md` — les **décisions distillées** portées comme specs (contraintes verrouillées +
   invariants de test) : forge-merge, worktree-cleanup, writeback-creds, task-next DAG, sot-local split,
-  feature-verified, tier0-native-toolchain, web-cockpit-spa, template-ui-application-lifecycle,
-  ws-origin-token-boundary.
+  feature-verified, tier0-native-toolchain, review-readiness-gate, web-cockpit-spa, runtime-seed-deploy-config,
+  bundle-crash-test, template-ui-application-lifecycle, ws-origin-token-boundary.
 - `docs/schema-contract.md` — SQLite / `roadmap.yaml` / API HTTP, **figés** inter-couches.
 - `docs/weak-points.md` — dettes legacy **refusées** (god-module, couplage proxmox/ssh, monolithe) + refactor.
 - `docs/multi-os.md` — déterminisme WSL / Debian / macOS.
