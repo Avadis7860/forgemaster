@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  isLogUnified, isReconcilable, needsReconcile, reconcileActionLabel, reconcileOutcome, reconcilePlan,
-  syncSummary, timeAgo,
+  fuzzyFilter, isLogUnified, isReconcilable, needsReconcile, reconcileActionLabel, reconcileOutcome,
+  reconcilePlan, syncSummary, timeAgo,
 } from './git'
 import type { GitAheadBehind, GitReconcile, GitSync } from './schemas'
 
@@ -129,5 +129,31 @@ describe('timeAgo', () => {
 
   it('date non parsable → ISO brut (jamais un faux « à l\'instant »)', () => {
     expect(timeAgo('pas-une-date', now)).toBe('pas-une-date')
+  })
+})
+
+describe('fuzzyFilter (palette « go to file »)', () => {
+  const paths = ['src/app.py', 'src/lib/util.py', 'README.md', 'docs/architecture.md', 'tests/test_app.py']
+
+  it('matche en subsequence (caractères dans l\'ordre, insensible à la casse)', () => {
+    const r = fuzzyFilter(paths, 'apppy')
+    expect(r).toContain('src/app.py')
+    expect(r).toContain('tests/test_app.py')
+    expect(r).not.toContain('README.md')   // pas de subsequence 'apppy'
+  })
+
+  it('un match compact remonte avant un match dispersé', () => {
+    // 'appy' est plus contigu dans 'src/app.py' que dispersé dans 'tests/test_app.py'
+    const r = fuzzyFilter(paths, 'appy')
+    expect(r.indexOf('src/app.py')).toBeLessThan(r.indexOf('tests/test_app.py'))
+  })
+
+  it('requête vide → tous les chemins (bornés par limit)', () => {
+    expect(fuzzyFilter(paths, '')).toHaveLength(paths.length)
+    expect(fuzzyFilter(paths, '', 2)).toHaveLength(2)
+  })
+
+  it('aucun match → liste vide', () => {
+    expect(fuzzyFilter(paths, 'zzzzz')).toEqual([])
   })
 })

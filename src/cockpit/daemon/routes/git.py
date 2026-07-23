@@ -230,4 +230,16 @@ def make_git_router() -> APIRouter:
                 status_code=404, detail=f"historique introuvable ({ref}:{path}) : {exc}") from exc
         return {"project": project, "ref": ref, "path": path, "commits": commits}
 
+    @router.get("/api/projects/{project}/git/paths")
+    def git_paths(project: str, ref: str, deps: Deps = Depends(get_deps)) -> dict:
+        """Liste plate récursive des fichiers d'une réf (palette « go to file », fuzzy client-side).
+        Read-only, idempotent. `truncated=True` si la liste dépasse le cap (**signalé**, jamais silencieux).
+        Projet absent → 404 ; réf introuvable → 404."""
+        sot = _sot(deps, project)
+        try:
+            result = InternalGit().list_paths(sot, ref)
+        except GitOpError as exc:
+            raise HTTPException(status_code=404, detail=f"réf introuvable ({ref}) : {exc}") from exc
+        return {"project": project, "ref": ref, **result}
+
     return router

@@ -37,6 +37,9 @@ _LOCK_NAME = "cockpit-worktree.lock"
 _MAX_BLOB_READ = 10 * 1024 * 1024
 _MAX_BLOB_DISPLAY = 512 * 1024
 _BINARY_SNIFF = 8000  # octets sondés pour un NUL (heuristique git-like « fichier binaire »)
+# Cap de la liste plate des chemins (palette « go to file ») : au-delà on tronque et on le SIGNALE
+# (`truncated`), jamais de cap silencieux. Un dépôt de code réel reste très en-deçà.
+_MAX_TREE_PATHS = 10_000
 
 
 class GitOpError(RuntimeError):
@@ -735,6 +738,15 @@ class InternalGit:
                          "size": None if osize == "-" else int(osize)})
         rows.sort(key=lambda e: (e["type"] != "tree", e["name"]))
         return rows
+
+    def list_paths(self, sot: Path, ref: str) -> dict:
+        """Liste **plate et récursive** de tous les fichiers (blobs) d'une réf : `git ls-tree -r --name-only
+        <ref>` → `{paths: [...], truncated}`, pour la palette « go to file » (filtrage fuzzy client-side).
+        **Cap signalé** : au-delà de `_MAX_TREE_PATHS` on tronque ET on DIT `truncated=True` (jamais de cap
+        silencieux, invariant). Read-only, bare-safe. Lève (`GitOpError`) si la réf est introuvable."""
+        out = _checked(sot, "ls-tree", "-r", "--name-only", ref).stdout
+        paths = [line for line in out.splitlines() if line.strip()]
+        return {"paths": paths[:_MAX_TREE_PATHS], "truncated": len(paths) > _MAX_TREE_PATHS}
 
     def read_blob(self, sot: Path, ref: str, path: str) -> dict:
         """Contenu d'un fichier du dépôt à une réf, **sans working-tree** : type + taille via `cat-file`,

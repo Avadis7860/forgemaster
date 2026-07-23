@@ -24,6 +24,7 @@ import {
   GitCommitDetailSchema,
   GitDiffSchema,
   GitHistorySchema,
+  GitPathsSchema,
   GitTreeSchema,
   GitViewSchema,
   GitSyncSchema,
@@ -227,6 +228,12 @@ export const api = {
       `/api/projects/${encodeURIComponent(project)}/git/history` +
         `?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent(path)}`,
       GitHistorySchema,
+    ),
+  // Liste plate récursive des fichiers d'une réf (palette « go to file », fuzzy client-side).
+  getGitPaths: (project: string, ref: string) =>
+    request(
+      `/api/projects/${encodeURIComponent(project)}/git/paths?ref=${encodeURIComponent(ref)}`,
+      GitPathsSchema,
     ),
   // Flow (flot d'exécution) : opérations découvertes (routes + verbes CLI) + sous-graphe d'appels d'une
   // opération. GET idempotents (index bâti au 1ᵉʳ accès, caché par SHA — aucun effet observable, goto-safe).

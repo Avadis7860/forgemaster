@@ -1,9 +1,9 @@
 import { lazy, Suspense, useState } from 'react'
 import { useNavigate, useSearch } from '@tanstack/react-router'
-import { Alert, Badge, Button, Card, EmptyState, LoadingState } from '@/components/ui'
+import { Alert, Badge, Button, Card, Dialog, EmptyState, Input, LoadingState } from '@/components/ui'
 import { ApiError, gitDownloadUrl, gitRawUrl } from '@/lib/api'
-import { timeAgo } from '@/lib/git'
-import { useGitBlob, useGitHistory, useGitTree } from '@/lib/queries'
+import { fuzzyFilter, timeAgo } from '@/lib/git'
+import { useGitBlob, useGitHistory, useGitPaths, useGitTree } from '@/lib/queries'
 import type { GitBlob, GitBranch, GitTree, GitTreeEntry } from '@/lib/schemas'
 
 // DocView (react-markdown + remark-gfm) en chunk séparé — même économie que Bundles/Docs (lazy, hors bundle
@@ -47,6 +47,11 @@ export function RepoExplorer(
     navigate({ to: '/git', search: (p) => ({ ...p, path: next || undefined, file: undefined }) })
   const openFile = (next: string) =>
     navigate({ to: '/git', search: (p) => ({ ...p, file: next }) })
+  // Palette « go to file » : ouvre un fichier ET aligne l'arbre sur son dossier (path=dir, file=chemin complet).
+  const openFileAt = (full: string) => {
+    const dir = full.includes('/') ? full.slice(0, full.lastIndexOf('/')) : ''
+    navigate({ to: '/git', search: (p) => ({ ...p, path: dir || undefined, file: full }) })
+  }
 
   const join = (dir: string, name: string) => (dir ? `${dir}/${name}` : name)
 
@@ -59,7 +64,10 @@ export function RepoExplorer(
   return (
     <Card className="space-y-4 p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm font-medium text-fg">Fichiers</p>
+        <div className="flex items-center gap-3">
+          <p className="text-sm font-medium text-fg">Fichiers</p>
+          <GoToFilePalette project={project} gitRef={ref} onPick={openFileAt} />
+        </div>
         <label className="flex items-center gap-2 text-sm text-muted">
           <span>Réf</span>
           <select
@@ -95,6 +103,61 @@ export function RepoExplorer(
           : <FilePane project={project} gitRef={ref} file={file} headSha={headSha} />}
       </div>
     </Card>
+  )
+}
+
+/** Palette « go to file » (façon GitHub `t`) : ouvre un Dialog avec un champ de filtre fuzzy sur la liste
+ *  plate des fichiers de la réf (tirée paresseusement à l'ouverture). Sélectionner un résultat ouvre le
+ *  fichier (deep-link). `truncated` du serveur (cap signalé) est affiché — jamais un « tout » trompeur. */
+function GoToFilePalette(
+  { project, gitRef, onPick }: { project: string; gitRef: string; onPick: (path: string) => void },
+) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const { data, isLoading } = useGitPaths(project, gitRef, open)
+  const results = data ? fuzzyFilter(data.paths, query) : []
+  const pick = (path: string) => { onPick(path); setOpen(false); setQuery('') }
+
+  return (
+    <>
+      <Button variant="ghost" size="sm" onClick={() => { setQuery(''); setOpen(true) }}>Go to file</Button>
+      <Dialog open={open} onOpenChange={setOpen} title="Aller au fichier">
+        <div className="space-y-3">
+          <Input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filtrer les fichiers…"
+            aria-label="Filtrer les fichiers"
+          />
+          {isLoading ? (
+            <LoadingState label="Lecture de l'arbre…" />
+          ) : results.length === 0 ? (
+            <EmptyState title="Aucun fichier" description="Aucun chemin ne correspond à ce filtre." />
+          ) : (
+            <ul className="max-h-[50vh] space-y-0.5 overflow-auto">
+              {data?.truncated && (
+                <li className="px-2 py-1">
+                  <Badge tone="warn">liste tronquée au cap serveur — affine le filtre</Badge>
+                </li>
+              )}
+              {results.map((path) => (
+                <li key={path}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full justify-start truncate font-mono text-xs"
+                    onClick={() => pick(path)}
+                  >
+                    {path}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </Dialog>
+    </>
   )
 }
 

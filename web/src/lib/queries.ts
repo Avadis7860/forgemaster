@@ -29,6 +29,7 @@ export const qk = {
   gitDiff: (project: string, base: string, head: string) => ['git-diff', project, base, head] as const,
   gitHistory: (project: string, ref: string, path: string) =>
     ['git-history', project, ref, path] as const,
+  gitPaths: (project: string, ref: string) => ['git-paths', project, ref] as const,
   docs: (project: string) => ['docs', project] as const,
   deployments: (project: string) => ['deployments', project] as const,
   deploymentLogs: (project: string, branch: string, tail: number) =>
@@ -331,6 +332,16 @@ export function useGitHistory(project: string, ref: string, path: string) {
     queryKey: qk.gitHistory(project, ref, path),
     queryFn: () => api.getGitHistory(project, ref, path),
     enabled: Boolean(project && ref && path),
+  })
+}
+
+// Liste plate des fichiers d'une réf (palette « go to file »). `enabled` = paresseux : on ne tire la liste
+// que lorsque la palette est ouverte (pas au montage de l'explorateur). SHA-bound (change au commit).
+export function useGitPaths(project: string, ref: string, enabled: boolean) {
+  return useQuery({
+    queryKey: qk.gitPaths(project, ref),
+    queryFn: () => api.getGitPaths(project, ref),
+    enabled: Boolean(project && ref && enabled),
   })
 }
 

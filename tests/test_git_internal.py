@@ -670,6 +670,21 @@ def test_tags_lists_refs_tags_with_subjects(tmp_path: Path):
     assert lightweight["subject"] == "rich seed"               # sujet du commit pointé (tag léger)
 
 
+def test_list_paths_flat_recursive_with_signaled_cap(tmp_path: Path, monkeypatch):
+    git = InternalGit()
+    sot = _seed_bare_rich(tmp_path)
+    result = git.list_paths(sot, "dev")
+    assert set(result["paths"]) == {"README.md", "data.bin", "src/app.py"}   # plate + récursive
+    assert result["truncated"] is False
+    # cap SIGNALÉ : au-delà du seuil, on tronque ET on le dit (jamais silencieux)
+    from cockpit.git import internal
+    monkeypatch.setattr(internal, "_MAX_TREE_PATHS", 2)
+    capped = git.list_paths(sot, "dev")
+    assert len(capped["paths"]) == 2 and capped["truncated"] is True
+    with pytest.raises(GitOpError):                            # réf inconnue → lève (appelant → 404)
+        git.list_paths(sot, "nexiste-pas")
+
+
 def test_read_blob_text(tmp_path: Path):
     git = InternalGit()
     sot = _seed_bare_rich(tmp_path)

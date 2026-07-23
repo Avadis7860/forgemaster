@@ -253,7 +253,10 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   réfs sont alignées (200, pas une erreur) ; **404** une réf introuvable). · `GET /api/projects/{p}/git/
   history?ref=&path=` (commits touchant un fichier, récents d'abord → `{project, ref, path, commits:[{sha,
   short, author, date, subject}]}` ; fichier sans historique → `commits=[]` (200) ; **404** réf introuvable).
-  Tous read-only, idempotents (goto-only safe). · `GET /api/projects/{p}/git/sync` (**écart SoT↔miroir
+  · `GET /api/projects/{p}/git/paths?ref=` (liste **plate récursive** de tous les fichiers d'une réf, pour la
+  palette « go to file » — filtrage fuzzy client-side → `{project, ref, paths:[…], truncated}` ; `truncated=
+  true` si la liste dépasse le cap `_MAX_TREE_PATHS` (**signalé, jamais silencieux** — invariant) ; **404**
+  réf introuvable). Tous read-only, idempotents (goto-only safe). · `GET /api/projects/{p}/git/sync` (**écart SoT↔miroir
   GitHub** : **RÉSEAU, non-idempotent** — fait un `git fetch` du miroir, donc **SÉPARÉ** des lectures
   idempotentes ci-dessus, l'UI le rattache au refresh manuel, jamais au polling/goto-only → `{project, remote,
   fetched, branches:{<b>:{ahead, behind, state}}, state}`, rollup `state` et par-branche `state ∈

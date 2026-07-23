@@ -608,6 +608,16 @@ export const GitTreeSchema = z.object({
 })
 export type GitTree = z.infer<typeof GitTreeSchema>
 
+// GET /api/projects/{p}/git/paths?ref= : liste plate récursive des fichiers d'une réf (palette « go to
+// file »). `truncated` = la liste dépasse le cap serveur (signalé, jamais silencieux).
+export const GitPathsSchema = z.object({
+  project: z.string(),
+  ref: z.string(),
+  paths: z.array(z.string()),
+  truncated: z.boolean(),
+})
+export type GitPaths = z.infer<typeof GitPathsSchema>
+
 // GET /api/projects/{p}/git/blob?ref=&path= : contenu d'un fichier. Gardes L4 : `binary`/`too_large`
 // → `content` vide (jamais d'octets bruts) ; `truncated` si le contenu affiché a été coupé.
 export const GitBlobSchema = z.object({

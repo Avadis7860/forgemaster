@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   trees: {} as Record<string, { name: string; type: string; size: number | null; sha: string }[]>,
   blobs: {} as Record<string, unknown>,
   history: [] as { sha: string; short: string; author: string; date: string; subject: string }[],
+  paths: [] as string[],
 }))
 
 vi.mock('@tanstack/react-router', () => ({
@@ -35,6 +36,10 @@ vi.mock('@/lib/queries', () => ({
     data: file ? { project: 'p', ref: 'dev', path: file, commits: h.history } : undefined,
     isLoading: false, isError: false, error: null,
   }),
+  useGitPaths: (_p: string, _r: string, enabled: boolean) => ({
+    data: enabled ? { project: 'p', ref: 'dev', paths: h.paths, truncated: false } : undefined,
+    isLoading: false, isError: false, error: null,
+  }),
 }))
 
 const BRANCHES: GitBranch[] = [
@@ -47,6 +52,7 @@ const TAGS: GitBranch[] = [{ name: 'v1.0', sha: 'ttt', subject: 'release 1.0' }]
 beforeEach(() => {
   h.search = {}
   h.history = []
+  h.paths = []
 })
 
 describe('RepoExplorer', () => {
@@ -178,5 +184,24 @@ describe('RepoExplorer', () => {
     // sélectionner le tag écrit ?ref=v1.0 (et remet path/file à zéro), via l'updater d'URL simulé
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'v1.0' } })
     expect(h.search).toEqual({ ref: 'v1.0', path: undefined, file: undefined })
+  })
+
+  it('palette « go to file » : ouvre, filtre en fuzzy, et un pick aligne l\'arbre + ouvre le fichier', () => {
+    h.trees = { '': [{ name: 'README.md', type: 'blob', size: 3, sha: 'b1' }] }
+    h.paths = ['src/app.py', 'docs/architecture.md', 'README.md']
+    render(<RepoExplorer project="p" branches={BRANCHES} tags={[]} />)
+    // palette fermée → pas de champ de filtre
+    expect(screen.queryByLabelText('Filtrer les fichiers')).not.toBeInTheDocument()
+    // ouverture (le hook devient enabled → liste servie)
+    fireEvent.click(screen.getByRole('button', { name: 'Go to file' }))
+    const input = screen.getByLabelText('Filtrer les fichiers')
+    expect(screen.getByRole('button', { name: 'src/app.py' })).toBeInTheDocument()
+    // filtre fuzzy « arch » → ne garde que docs/architecture.md
+    fireEvent.change(input, { target: { value: 'arch' } })
+    expect(screen.getByRole('button', { name: 'docs/architecture.md' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'src/app.py' })).not.toBeInTheDocument()
+    // pick → écrit ?path=docs&file=docs/architecture.md (arbre aligné sur le dossier du fichier)
+    fireEvent.click(screen.getByRole('button', { name: 'docs/architecture.md' }))
+    expect(h.search).toEqual({ path: 'docs', file: 'docs/architecture.md' })
   })
 })

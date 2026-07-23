@@ -97,6 +97,38 @@ export function timeAgo(iso: string, now: number = Date.now()): string {
   return `il y a ${yr} an${yr > 1 ? 's' : ''}`
 }
 
+/** Score « subsequence » d'un chemin vs une requête (insensible à la casse) : les caractères de la requête
+ *  doivent apparaître DANS L'ORDRE dans le texte. Plus petit = meilleur (0 = caractères contigus). `null` si
+ *  pas de match. Pénalise les trous entre caractères → un match compact remonte. Requête vide → 0 (tout matche). */
+function fuzzyScore(text: string, query: string): number | null {
+  const t = text.toLowerCase()
+  const q = query.toLowerCase()
+  let from = 0
+  let score = 0
+  let prev = -1
+  for (const ch of q) {
+    const idx = t.indexOf(ch, from)
+    if (idx === -1) return null
+    if (prev !== -1) score += idx - prev - 1   // trou entre deux caractères consécutifs (0 si contigus)
+    prev = idx
+    from = idx + 1
+  }
+  return score
+}
+
+/** Filtre fuzzy « go to file » : garde les chemins qui matchent la requête en subsequence, triés par
+ *  compacité du match puis par longueur puis alpha (déterministe). Requête vide → tous (bornés). `limit`
+ *  borne l'affichage — la palette n'a pas à peindre des milliers de lignes. Pur, sans dépendance. */
+export function fuzzyFilter(paths: string[], query: string, limit = 50): string[] {
+  const scored: { path: string; score: number }[] = []
+  for (const path of paths) {
+    const score = fuzzyScore(path, query)
+    if (score !== null) scored.push({ path, score })
+  }
+  scored.sort((a, b) => a.score - b.score || a.path.length - b.path.length || a.path.localeCompare(b.path))
+  return scored.slice(0, limit).map((s) => s.path)
+}
+
 /** Résumé lisible du résultat d'une réconciliation (post-POST) : ce qui a bougé, ce qui reste bloqué. Pur. */
 export function reconcileOutcome(rep: GitReconcile): string {
   if (!rep.fetched) return rep.state === 'no_mirror' ? 'pas de miroir' : 'miroir injoignable'

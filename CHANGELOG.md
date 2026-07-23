@@ -5,6 +5,16 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Git/API — endpoint `paths` + palette « go to file » (parité GitHub) — pas de bump
+- `GET /api/projects/{p}/git/paths?ref=` rend la liste **plate récursive** de tous les fichiers d'une réf
+  (`{project, ref, paths, truncated}`), servant la palette « go to file » (filtrage fuzzy client-side). **Cap
+  signalé** : `truncated=true` au-delà de `_MAX_TREE_PATHS` (10 000) — jamais de cap silencieux (invariant).
+  **Nouvelle route** additive → **pas de bump `SCHEMA_VERSION`** (une route HTTP neuve n'a pas de déclencheur
+  de migration, cf. §Politique de versionnage).
+- Primitive read-only `InternalGit.list_paths` (`git internal-first`, `ls-tree -r --name-only`). Côté front :
+  palette `Dialog` + `Input` + fuzzy subsequence client-side (aucune lib, aucune dép) ouverte par un bouton
+  « Go to file » ; chaque résultat écrit l'URL du fichier (deep-link).
+
 ### Git/API — `tags` dans la vue git (sélecteur de réf branches + tags, parité GitHub) — pas de bump
 - `GET /api/projects/{p}/git` expose désormais `tags: [{name, sha, subject}]` (même forme que `branches`,
   triés par date de création décroissante ; `subject` = message du tag annoté, ou sujet du commit pointé pour

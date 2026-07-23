@@ -543,6 +543,20 @@ def test_git_view_read_only_over_http(client):
     assert c.get("/api/projects/ghost/git").status_code == 404
 
 
+def test_git_paths_lists_files_over_http(client):
+    c, _ = client
+    c.post("/api/projects", json={"slug": "proj"})   # SoT neuf auto-seedé (fichiers du scaffold)
+    r = c.get("/api/projects/proj/git/paths", params={"ref": "dev"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["project"] == "proj" and body["ref"] == "dev"
+    assert body["paths"] and all(isinstance(p, str) for p in body["paths"])   # liste plate non vide
+    assert body["truncated"] is False
+    # réf inconnue → 404 ; projet inconnu → 404 (jamais un demi-état inventé)
+    assert c.get("/api/projects/proj/git/paths", params={"ref": "nope"}).status_code == 404
+    assert c.get("/api/projects/ghost/git/paths", params={"ref": "dev"}).status_code == 404
+
+
 def test_git_sync_endpoint_reports_divergence_and_degrades(client, tmp_path: Path):
     """`GET .../git/sync` (réseau, séparé du `/git` idempotent) rend l'écart SoT↔miroir par branche + rollup,
     avec dégradation honnête : pas de miroir → `no_mirror` ; miroir en avance → `remote_ahead`. Jamais un
