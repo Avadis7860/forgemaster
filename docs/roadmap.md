@@ -66,6 +66,11 @@ Ne pas re-débattre (distillées en [`specs/`](specs/) quand elles portent des i
 - **Ne jamais committer `web/dist`** — la dist voyage dans le wheel (build mainteneur, Node) ; la
   provision cible est Python-seul (spec [`web-cockpit-spa`](specs/web-cockpit-spa.md)). `cockpit serve`
   n'auto-build **jamais** : build (mainteneur) et provision (cible) restent séparés.
+- **Maison du capital visuel = vendored/cockpit, MCP différé** — les templates UI de référence vivent
+  côté cockpit (`web/dist/templates/`), pas dans un index MCP `ui-kit`. Données terrain : N=1 template,
+  0 application → bâtir un genre MCP maintenant serait un forward-feature. On livre le **mécanisme
+  d'application** (`inspire`, opérateur → worker customise) ; le MCP gradue sur réutilisation cross-projet
+  **prouvée** (spec [`template-ui-application-lifecycle`](specs/template-ui-application-lifecycle.md)).
 
 ## Horizons (non planifiés — ouverts)
 
