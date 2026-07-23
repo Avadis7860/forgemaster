@@ -97,6 +97,17 @@ function deploymentAction(project: string, branch: string, action: 'up' | 'down'
   )
 }
 
+// URL (relative, same-origin) d'un flux d'octets bruts d'un fichier — pour un `<a href>` (raw = affichage
+// inline, download = pièce jointe). PAS de fetch/validation : le navigateur consomme le flux directement, le
+// backend pose le Content-Type/Content-Disposition (cf. endpoints git/raw & git/download). Même moule d'URL
+// encodée que `getGitBlob`.
+export const gitRawUrl = (project: string, ref: string, path: string): string =>
+  `/api/projects/${encodeURIComponent(project)}/git/raw` +
+  `?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent(path)}`
+export const gitDownloadUrl = (project: string, ref: string, path: string): string =>
+  `/api/projects/${encodeURIComponent(project)}/git/download` +
+  `?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent(path)}`
+
 export const api = {
   health: () => request('/health', HealthSchema),
 

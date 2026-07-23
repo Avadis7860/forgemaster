@@ -1,6 +1,7 @@
 import { lazy, Suspense, useState } from 'react'
+import { useNavigate, useSearch } from '@tanstack/react-router'
 import { Alert, Badge, Button, Card, EmptyState, LoadingState } from '@/components/ui'
-import { ApiError } from '@/lib/api'
+import { ApiError, gitDownloadUrl, gitRawUrl } from '@/lib/api'
 import { timeAgo } from '@/lib/git'
 import { useGitBlob, useGitHistory, useGitTree } from '@/lib/queries'
 import type { GitBlob, GitBranch, GitTree, GitTreeEntry } from '@/lib/schemas'
@@ -16,18 +17,31 @@ const HighlightedCode = lazy(() => import('./HighlightedCode'))
  *  visionneuse de fichier (n° de ligne). Zéro mutation — deux GET idempotents (arbre, blob) servent la vue,
  *  atteignables par le runner de boucle visuelle goto-only sans risque. Greffé sous la vue synchro de l'onglet
  *  Git. `branches` est réutilisé de la vue parente (aucune requête de plus pour peupler le sélecteur). */
+type Search = { ref?: string; path?: string; file?: string }
+
 export function RepoExplorer({ project, branches }: { project: string; branches: GitBranch[] }) {
   const refs = branches.map((b) => b.name)
-  const [ref, setRef] = useState(refs.includes('dev') ? 'dev' : (refs[0] ?? 'dev'))
-  const [path, setPath] = useState('')          // dossier courant ('' = racine)
-  const [file, setFile] = useState<string | null>(null)  // fichier sélectionné (chemin complet)
+  const search = useSearch({ strict: false }) as Search
+  const navigate = useNavigate()
 
-  // Changer de réf remet la navigation à zéro (un chemin peut ne pas exister à une autre réf).
-  function pickRef(next: string) {
-    setRef(next)
-    setPath('')
-    setFile(null)
-  }
+  // État {ref, path, file} porté par l'URL (deep-linkable, calque BundleExplorer/GitSurface) → chaque vue
+  // fichier est partageable et self-verifiable. Défaut de réf : `dev` sinon la 1ʳᵉ (jamais une réf absente).
+  const ref = search.ref && refs.includes(search.ref)
+    ? search.ref
+    : (refs.includes('dev') ? 'dev' : (refs[0] ?? 'dev'))
+  const path = search.path ?? ''                 // dossier courant ('' = racine)
+  const file = search.file ?? null               // fichier sélectionné (chemin complet)
+  // SHA de HEAD de la réf courante → permalink épinglé au commit (immuable, façon « y » de GitHub).
+  const headSha = branches.find((b) => b.name === ref)?.sha
+
+  // Setters via l'URL (updater fonctionnel → préserve project/view/sha) : changer de réf remet path+file à zéro
+  // (un chemin peut ne pas exister à une autre réf) ; changer de dossier déselectionne le fichier.
+  const pickRef = (next: string) =>
+    navigate({ to: '/git', search: (p) => ({ ...p, ref: next, path: undefined, file: undefined }) })
+  const goPath = (next: string) =>
+    navigate({ to: '/git', search: (p) => ({ ...p, path: next || undefined, file: undefined }) })
+  const openFile = (next: string) =>
+    navigate({ to: '/git', search: (p) => ({ ...p, file: next }) })
 
   const join = (dir: string, name: string) => (dir ? `${dir}/${name}` : name)
 
@@ -53,7 +67,7 @@ export function RepoExplorer({ project, branches }: { project: string; branches:
         </label>
       </div>
 
-      <Breadcrumb path={path} onGo={(p) => { setPath(p); setFile(null) }} />
+      <Breadcrumb path={path} onGo={goPath} />
 
       <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         <TreePane
@@ -61,12 +75,12 @@ export function RepoExplorer({ project, branches }: { project: string; branches:
           gitRef={ref}
           path={path}
           selected={file}
-          onOpenDir={(name) => { setPath(join(path, name)); setFile(null) }}
-          onOpenFile={(name) => setFile(join(path, name))}
+          onOpenDir={(name) => goPath(join(path, name))}
+          onOpenFile={(name) => openFile(join(path, name))}
         />
         {file == null && readmePath
           ? <ReadmePane project={project} gitRef={ref} readmePath={readmePath} />
-          : <FilePane project={project} gitRef={ref} file={file} />}
+          : <FilePane project={project} gitRef={ref} file={file} headSha={headSha} />}
       </div>
     </Card>
   )
@@ -185,8 +199,12 @@ function EntryRow({ entry, active, onClick }: { entry: GitTreeEntry; active: boo
 
 /** Visionneuse du fichier sélectionné : contenu texte avec n° de ligne, ou état binaire / trop-gros / vide.
  *  Un basculeur « Historique » ouvre les commits touchant ce fichier (intelligence git P3). */
-function FilePane({ project, gitRef, file }: { project: string; gitRef: string; file: string | null }) {
+function FilePane({ project, gitRef, file, headSha }: {
+  project: string; gitRef: string; file: string | null; headSha?: string
+}) {
   const [showHistory, setShowHistory] = useState(false)
+  const [contentCopied, copyContent] = useCopy()
+  const [linkCopied, copyLink] = useCopy()
   const { data, isLoading, isError, error } = useGitBlob(project, gitRef, file ?? '')
 
   // Vide/chargement = TISSU, pas un carton dans le carton « Fichiers » (gate tissu > panneau) : la cellule
@@ -210,13 +228,39 @@ function FilePane({ project, gitRef, file }: { project: string; gitRef: string; 
       </div>
     )
   }
+  // Nb de lignes : dérivé du contenu (indispo pour un binaire/trop-gros, où content est vide) — pas de faux 0.
+  const lineCount = !data.binary && !data.too_large && data.content ? data.content.split('\n').length : null
+  const rawUrl = gitRawUrl(project, gitRef, file)
+  const downloadUrl = gitDownloadUrl(project, gitRef, file)
+  const permalink = filePermalink(project, headSha ?? gitRef, file)
+
   return (
     <Card className="flex min-h-40 flex-col overflow-hidden p-0">
-      <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2">
-        <code className="min-w-0 flex-1 truncate font-mono text-xs text-fg" title={file}>{file}</code>
-        <Button variant="ghost" size="sm" onClick={() => setShowHistory((v) => !v)}
-          className={showHistory ? 'shrink-0 bg-surface-raised text-fg' : 'shrink-0'}>Historique</Button>
-        <span className="shrink-0 text-xs text-faint">{fmtSize(data.size)}</span>
+      {/* En-tête 2 rangées (façon GitHub) : le chemin en pleine largeur (ne s'écrase pas sous les actions),
+          puis méta (taille · lignes) + barre d'actions. */}
+      <div className="flex flex-col gap-1.5 border-b border-border px-4 py-2">
+        <code className="truncate font-mono text-xs text-fg" title={file}>{file}</code>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="text-xs text-faint">
+            {fmtSize(data.size)}{lineCount != null ? ` · ${lineCount} ligne${lineCount > 1 ? 's' : ''}` : ''}
+          </span>
+          {/* Actions façon GitHub : Historique · Raw · Copy · Download · Permalink. Toutes en primitive
+              Button (R1/R2, zéro `<a>` stylé) — Raw ouvre le flux inline dans un onglet, Download déclenche
+              l'enregistrement (Content-Disposition backend), Copy/Permalink passent par le presse-papier. */}
+          <div className="ml-auto flex flex-wrap items-center gap-1">
+            <Button variant="ghost" size="sm" onClick={() => setShowHistory((v) => !v)}
+              className={showHistory ? 'bg-surface-raised text-fg' : undefined}>Historique</Button>
+            <Button variant="ghost" size="sm" title="Ouvrir le contenu brut dans un onglet"
+              onClick={() => window.open(rawUrl, '_blank', 'noopener,noreferrer')}>Raw</Button>
+            <Button variant="ghost" size="sm" title="Copier le contenu du fichier"
+              disabled={data.binary || data.too_large}
+              onClick={() => copyContent(data.content)}>{contentCopied ? 'Copié' : 'Copy'}</Button>
+            <Button variant="ghost" size="sm" title="Télécharger le fichier"
+              onClick={() => triggerDownload(downloadUrl)}>Download</Button>
+            <Button variant="ghost" size="sm" title="Copier un lien permanent (épinglé au commit)"
+              onClick={() => copyLink(permalink)}>{linkCopied ? 'Lien copié' : 'Permalink'}</Button>
+          </div>
+        </div>
       </div>
       {showHistory
         ? <FileHistory project={project} gitRef={gitRef} file={file} />
@@ -393,6 +437,46 @@ function extToLang(path: string): string {
     sql: 'sql', graphql: 'graphql', gql: 'graphql', diff: 'diff', patch: 'diff',
   }
   return map[ext] ?? ''
+}
+
+/** Copie dans le presse-papier avec accusé transitoire (patron TemplateExplorer) : dégrade en silence si
+ *  l'API clipboard est indisponible (contexte non sécurisé). Retourne `[copied, copy]`. */
+function useCopy(): [boolean, (text: string) => void] {
+  const [copied, setCopied] = useState(false)
+  const copy = (text: string) => {
+    void (async () => {
+      try {
+        await navigator.clipboard.writeText(text)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1600)
+      } catch {
+        /* clipboard indisponible (contexte non sécurisé) — no-op silencieux */
+      }
+    })()
+  }
+  return [copied, copy]
+}
+
+/** Déclenche le téléchargement d'une URL (le backend force `Content-Disposition: attachment`) via un ancrage
+ *  transitoire — évite un `<a>` stylé (R2) tout en gardant la sémantique « enregistrer le fichier ». */
+function triggerDownload(url: string) {
+  const a = document.createElement('a')
+  a.href = url
+  a.rel = 'noopener'
+  a.click()
+}
+
+/** Permalink absolu épinglé au SHA (immuable, façon « y » de GitHub) : reproduit la vue fichiers courante avec
+ *  la réf résolue en commit → copiable/partageable tel quel. Le dossier est dérivé du chemin du fichier. */
+function filePermalink(project: string, pinnedRef: string, file: string): string {
+  const dir = file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : ''
+  const u = new URL(`${window.location.origin}/git`)
+  u.searchParams.set('project', project)
+  u.searchParams.set('view', 'fichiers')
+  u.searchParams.set('ref', pinnedRef)
+  if (dir) u.searchParams.set('path', dir)
+  u.searchParams.set('file', file)
+  return u.toString()
 }
 
 /** Taille lisible : octets sous 1 Ko, sinon Ko/Mo à une décimale. */
