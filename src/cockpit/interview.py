@@ -29,6 +29,7 @@ from cockpit.git.identity import resolve_identity
 from cockpit.git.internal import InternalGit
 from cockpit.projects import registry
 from cockpit.projects.registry import get_project, sot_path_for
+from cockpit.provision.mcp import inject_mcp_config
 from cockpit.roadmap import check, model, resolver
 from cockpit.tools import cli_env
 
@@ -237,6 +238,9 @@ def run_interview(conn, settings: Settings, *, project: str, git: GitBackend | N
     # Confiance du workspace : le SoT bare du projet (comme le worker) — sinon `claude` ignore les allowed*.
     auth.trust_workspace(sot_path_for(settings, project))
     res = worktree.reserve(conn, settings, git, project=project, feature=feature["slug"])
+    # Câble le MCP de corpus dans le worktree où `claude` interactif tourne (miroir du dispatch headless
+    # `worker._run_worker`) → l'interview DÉCOUVRE le MCP (`/mcp`, solve-mode). No-op honnête si non câblé.
+    inject_mcp_config(res["path"], settings, slug=project)
     prompt = build_interview_prompt(get_project(conn, project), feature, task)
     # Épingle l'id de session AVANT le lancement (v14) : `--session-id` rend le transcript déterministe et
     # persiste l'id même si la session est interrompue (PTY tué) → son coût token reste sommable après coup.

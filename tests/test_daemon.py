@@ -1150,6 +1150,45 @@ def test_terminal_and_interview_ws_are_distinct_sessions(client, monkeypatch):
     ]
 
 
+def test_terminal_ws_injects_mcp_config_at_project_cwd_when_wired(client, monkeypatch):
+    """MCP câblé → ouvrir un terminal projet écrit un `.mcp.json` au cwd du PTY (racine projet) : un `claude`
+    lancé dans ce terminal DÉCOUVRE le MCP (`/mcp` le liste, solve-mode). Ferme le trou « /mcp vide en
+    terminal interactif » (l'infra MCP ne visait que le worker headless)."""
+    c, settings = client
+    c.post("/api/projects", json={"slug": "real"})
+    c.app.state.terminals = term_reg.PtySessionRegistry()
+    monkeypatch.setenv("COCKPIT_MCP_JWT_SECRET_REF", "ref")           # MCP câblé
+    monkeypatch.setattr("cockpit.provision.mcp.cred_resolver", lambda s: (lambda r: "k" * 40))
+
+    async def _fake_serve(websocket, registry, **kwargs):
+        await websocket.send_text(json.dumps({"t": "session", "fresh": True}))
+
+    monkeypatch.setattr("cockpit.terminal.pty.serve_project_terminal", _fake_serve)
+    with c.websocket_connect("/ws/terminal/real") as ws:
+        ws.receive_text()
+    mcp_json = settings.projects_root / "real" / ".mcp.json"
+    assert mcp_json.is_file()
+    cfg = json.loads(mcp_json.read_text(encoding="utf-8"))
+    assert cfg["mcpServers"]["vault-catalogs"]["headers"]["Authorization"].startswith("Bearer ")
+
+
+def test_terminal_ws_mcp_injection_is_honest_noop_when_not_wired(client, monkeypatch):
+    """MCP non câblé (install sans corpus privé) → aucun `.mcp.json` écrit : l'injection est un no-op honnête,
+    le terminal s'ouvre normalement (jamais de crash sur le câblage MCP)."""
+    c, settings = client
+    c.post("/api/projects", json={"slug": "real"})
+    c.app.state.terminals = term_reg.PtySessionRegistry()
+    monkeypatch.delenv("COCKPIT_MCP_JWT_SECRET_REF", raising=False)   # MCP non câblé
+
+    async def _fake_serve(websocket, registry, **kwargs):
+        await websocket.send_text(json.dumps({"t": "session", "fresh": True}))
+
+    monkeypatch.setattr("cockpit.terminal.pty.serve_project_terminal", _fake_serve)
+    with c.websocket_connect("/ws/terminal/real") as ws:
+        assert json.loads(ws.receive_text())["t"] == "session"       # ouverture normale
+    assert not (settings.projects_root / "real" / ".mcp.json").exists()
+
+
 def test_interview_ws_refuses_unknown_project_before_accept(client, monkeypatch):
     """Même garde projet que le shell : un projet inexistant est refusé (1008) AVANT `accept()` (sinon
     `Popen(cwd=absent)` crashe post-accept). Prouvé sans auth (le WS interview ne gate pas l'auth ; c'est

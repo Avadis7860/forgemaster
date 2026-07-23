@@ -20,13 +20,20 @@ from pathlib import Path
 
 from fastapi import APIRouter, WebSocket
 
+from cockpit.provision.mcp import inject_mcp_config
 from cockpit.terminal import pty
 
 
 async def _accept_project_pty(websocket: WebSocket, project: str) -> str | None:
-    """Garde partagée : résout le workdir borné du projet et `accept()` le WS s'il existe. Retourne le
-    workdir (accepté), ou `None` après avoir fermé le WS (`1008`) sur traversal / projet inexistant — refus
-    AVANT `accept()` pour ne jamais `Popen(cwd=absent)`."""
+    """Garde partagée : résout le workdir borné du projet, câble le MCP de corpus dans ce cwd, et `accept()`
+    le WS s'il existe. Retourne le workdir (accepté), ou `None` après avoir fermé le WS (`1008`) sur traversal
+    / projet inexistant — refus AVANT `accept()` pour ne jamais `Popen(cwd=absent)`.
+
+    Injection MCP (miroir du dispatch headless `worker._run_worker`) : un `.mcp.json` frais (JWT minté
+    just-in-time, chmod 600, gitignoré) est écrit au cwd du PTY → un `claude` lancé dans le terminal
+    DÉCOUVRE le MCP `mcp-catalogs` (`/mcp` le liste, solve-mode disponible pour un travail jamais fait).
+    No-op honnête si le MCP n'est pas câblé (install sans corpus privé). Le cwd n'est pas un working-tree
+    (racine projet = `sot.git` bare + `worktrees/`) → le Bearer n'est jamais committé."""
     deps = websocket.app.state.deps
     try:
         workdir = pty.resolve_workdir(deps.settings, project)   # borné au dossier du projet
@@ -36,6 +43,7 @@ async def _accept_project_pty(websocket: WebSocket, project: str) -> str | None:
     if not Path(workdir).is_dir():                              # projet inexistant → refus AVANT accept
         await websocket.close(code=1008)
         return None
+    inject_mcp_config(Path(workdir), deps.settings, slug=project)   # câble le MCP au cwd (no-op si non câblé)
     await websocket.accept()
     return workdir
 

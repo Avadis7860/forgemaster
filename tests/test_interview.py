@@ -64,6 +64,39 @@ def test_interview_resolves_launches_interactive_and_completes(ctx):
     assert statuses == {"cadrage": "done"}                                        # socle clôturé (verified)
 
 
+def test_interview_wires_mcp_in_worktree_before_launch(ctx, monkeypatch):
+    """MCP câblé → `run_interview` injecte un `.mcp.json` dans le worktree réservé AVANT de lancer `claude`
+    interactif : l'interview (1ʳᵉ session d'un travail jamais fait) DÉCOUVRE le MCP (`/mcp`, solve-mode),
+    comme le worker headless. Miroir de l'injection du dispatch."""
+    settings, conn = ctx
+    _socle_project(conn, settings)
+    monkeypatch.setenv("COCKPIT_MCP_JWT_SECRET_REF", "ref")           # MCP câblé
+    monkeypatch.setattr("cockpit.provision.mcp.cred_resolver", lambda s: (lambda r: "k" * 40))
+    seen: dict = {}
+
+    def launcher(argv, *, cwd, env=None):
+        seen["mcp_present_at_launch"] = (Path(cwd) / ".mcp.json").is_file()   # injecté AVANT le launch
+        return 0
+
+    interview.run_interview(conn, settings, project="proj", git=InternalGit(), launcher=launcher)
+    assert seen["mcp_present_at_launch"] is True
+
+
+def test_interview_mcp_injection_is_honest_noop_when_not_wired(ctx, monkeypatch):
+    """MCP non câblé → aucun `.mcp.json` dans le worktree ; l'interview se lance normalement (no-op)."""
+    settings, conn = ctx
+    _socle_project(conn, settings)
+    monkeypatch.delenv("COCKPIT_MCP_JWT_SECRET_REF", raising=False)   # MCP non câblé
+    seen: dict = {}
+
+    def launcher(argv, *, cwd, env=None):
+        seen["mcp_present_at_launch"] = (Path(cwd) / ".mcp.json").is_file()
+        return 0
+
+    report = interview.run_interview(conn, settings, project="proj", git=InternalGit(), launcher=launcher)
+    assert report["ran"] is True and seen["mcp_present_at_launch"] is False
+
+
 def test_interview_reconcile_only_after_interruption(ctx):
     """Interview interrompue AVANT sa clôture (PTY tué : SIGHUP navigation d'onglet, Ctrl-C, crash) : le
     travail EST produit (feature authorée) mais `verify_and_complete` ne tourne jamais → socle resté ouvert.
