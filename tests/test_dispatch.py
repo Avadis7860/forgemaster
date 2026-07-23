@@ -829,6 +829,72 @@ def test_decisions_capital_is_budget_bounded_with_pointer(tmp_path: Path):
     assert "2026-07-12--dec.md" in block and "2026-07-01--dec.md" not in block
 
 
+# -- cible visuelle projet-local : docs/design/<slug>/brief.md relu (template UI appliqué) ----------
+
+def _design_root(tmp_path: Path, briefs: dict[str, str]) -> Path:
+    """Un faux worktree portant des templates UI appliqués (`docs/design/<slug>/brief.md`)."""
+    root = tmp_path / "wt"
+    for slug, body in briefs.items():
+        d = root / "docs" / "design" / slug
+        d.mkdir(parents=True)
+        (d / "brief.md").write_text(body, encoding="utf-8")
+    return root
+
+
+def test_worker_prompt_reinjects_applied_design_target(tmp_path: Path):
+    """Un worker qui attaque l'UI relit la cible visuelle appliquée par le dirigeant
+    (`docs/design/*/brief.md`) → il s'en inspire au lieu de coder en aveugle. Preuve : le bloc est présent,
+    porte les briefs et leurs chemins, avec la consigne de customisation, déterministe."""
+    root = _design_root(tmp_path, {
+        "browser-game-spatial": "# Cible visuelle\nHUD glass, deep-space, token-driven.",
+        "dashboard-copper": "# Cible visuelle\nCharte cuivre, dense, sobre.",
+    })
+    project = {"slug": "vr", "name": "VR"}
+    feature = {"slug": "f", "title": "F", "branch": "feature/f"}
+    task = {"slug": "t", "title": "T", "priority": "P1"}
+    text = prompt.build_worker_prompt(project, feature, task, root=root)
+    assert "Cible visuelle du projet" in text                        # le bloc de relecture est présent
+    assert "HUD glass, deep-space" in text and "Charte cuivre" in text    # les 2 templates appliqués relus
+    assert "docs/design/browser-game-spatial/brief.md" in text            # le chemin (frères lus au besoin)
+    assert "CUSTOMISE" in text                                            # consigne inspiration+customisation
+    assert prompt.build_worker_prompt(project, feature, task, root=root) == text   # déterministe
+
+
+def test_fix_prompt_also_reinjects_design_target(tmp_path: Path):
+    """La passe de fix relit aussi la cible visuelle (un fix d'UI reste ancré sur le template appliqué)."""
+    root = _design_root(tmp_path, {"tpl": "# Cible\nIdentité XYZ à reprendre."})
+    fp = prompt.build_fix_prompt({"slug": "p", "name": "P"},
+                                 {"slug": "f", "branch": "feature/f"}, findings={}, root=root)
+    assert "Cible visuelle du projet" in fp and "Identité XYZ" in fp
+
+
+def test_design_target_absent_is_failsoft(tmp_path: Path):
+    """Projet sans `docs/design/` → aucun bloc cible visuelle, aucun crash (le prompt se construit)."""
+    project = {"slug": "p", "name": "P"}
+    feature = {"slug": "f", "title": "F", "branch": "feature/f"}
+    task = {"slug": "t", "title": "T", "priority": "P1"}
+    text = prompt.build_worker_prompt(project, feature, task, root=tmp_path / "empty")
+    assert "Cible visuelle du projet" not in text                    # rien à relire → bloc omis
+    assert "worker autonome" in text                                 # le reste du prompt tient
+
+
+def test_design_target_is_budget_bounded_with_pointer(tmp_path: Path):
+    """Anti-explosion (DoD) : beaucoup de templates appliqués volumineux → borne totale respectée, les
+    débordants sont pointés (jamais un cap silencieux). Tri par chemin (slug) : premiers slugs injectés."""
+    big = "# Cible\n" + ("token " * 300)                  # ~1800 car. > l'aperçu → déborde vite
+    briefs = {f"tpl-{i:02d}": big for i in range(1, 13)}  # 12 templates appliqués
+    root = _design_root(tmp_path, briefs)
+    project = {"slug": "p", "name": "P"}
+    feature = {"slug": "f", "title": "F", "branch": "feature/f"}
+    task = {"slug": "t", "title": "T", "priority": "P1"}
+    text = prompt.build_worker_prompt(project, feature, task, root=root)
+    block = text.split("## Cible visuelle du projet", 1)[1]
+    assert len(block) < prompt._DESIGN_BUDGET + prompt._DESIGN_EXCERPT_MAX + 600   # borné
+    assert "d'autres templates appliqués" in block                   # pointeur explicite (pas de cap muet)
+    # tri par chemin : le 1er slug (tpl-01) injecté, un tardif (tpl-12) relégué au pointeur
+    assert "docs/design/tpl-01/brief.md" in block and "tpl-12/brief.md" not in block
+
+
 def test_record_finish_persists_error_on_failure(ctx):
     """`record_finish` écrit `error` (v11) : le snippet calculé par `parse_headless_result` atterrit en base
     au lieu de mourir dans le retour HTTP → un job `failed` n'est plus muet. Le job porte `kind='task'` (le

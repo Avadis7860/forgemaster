@@ -73,6 +73,20 @@ def _scan(root: Path) -> list[dict]:
     return out
 
 
+def known_template_slugs() -> set[str]:
+    """Slugs des templates de référence servis (noms de dossier valides). **Source de vérité** pour valider un
+    slug entrant (ex. `POST /inspire`) : seuls des noms de dossier réels passent → aucun path-traversal
+    possible, et un slug inconnu se refuse proprement (404) au lieu de fabriquer un chemin."""
+    return {t["slug"] for t in _scan(web_dist_dir())}
+
+
+def template_source_dir(slug: str) -> Path:
+    """Dossier servi d'un template : `web_dist_dir()/templates/<slug>/`. À n'appeler qu'APRÈS validation du
+    slug via `known_template_slugs` (le slug n'est que le dernier segment ; on ne construit jamais un chemin
+    à partir d'un input non validé)."""
+    return web_dist_dir() / _TEMPLATES_SUBDIR / slug
+
+
 def make_templates_router() -> APIRouter:
     router = APIRouter(prefix="/api/templates", tags=["templates"])
 

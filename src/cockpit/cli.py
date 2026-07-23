@@ -152,6 +152,12 @@ def build_parser() -> argparse.ArgumentParser:
                                  help="mener l'interview terminale interactive du socle (1ʳᵉ session)")
     p_interview.add_argument("project")
 
+    # -- inspire ------------------------------------------------------------------------------------
+    p_inspire = sub.add_parser("inspire", parents=[common],
+                               help="appliquer un template UI de référence à un projet (cible visuelle)")
+    p_inspire.add_argument("project")
+    p_inspire.add_argument("template", help="slug d'un template de la vitrine (cf. /templates)")
+
     # -- deploy -------------------------------------------------------------------------------------
     p_deploy = sub.add_parser("deploy", parents=[common],
                               help="cycle de vie du service d'un projet (backend compose, P2 runtime)")
@@ -329,6 +335,30 @@ def _h_interview(settings: Settings, args: argparse.Namespace) -> int:
     return interview.cli_dispatch(settings, args)
 
 
+def _h_inspire(settings: Settings, args: argparse.Namespace) -> int:
+    """Route `cockpit inspire <projet> <template>` : applique un template UI de référence servi comme cible
+    visuelle (crée la feature+task de customisation + sème la graine). Import fastapi-free (spine) : seul
+    `web_dist_dir` (résolveur de chemin pur) + le cœur `apply_template`."""
+    from cockpit.daemon.app import web_dist_dir
+    from cockpit.db import store
+    from cockpit.design.apply import apply_template
+    source = web_dist_dir() / "templates" / args.template
+    conn = store.open_db(settings)
+    try:
+        report = apply_template(conn, settings, project=args.project, template_slug=args.template,
+                                source_dir=source)
+    except (ValueError, KeyError) as exc:
+        print(f"erreur : {exc}")
+        return 1
+    finally:
+        conn.close()
+    files = ", ".join(report["files"]) or "(graine vide)"
+    print(f"template « {report['template']} » appliqué à {report['project']} → feature {report['feature']} "
+          f"(graine docs/design/{report['template']}/ : {files}). "
+          f"Dispatch la customisation : `cockpit dispatch {report['project']}/{report['feature']}`.")
+    return 0
+
+
 def _h_deploy(settings: Settings, args: argparse.Namespace) -> int:
     from cockpit.runtime import engine
     return engine.cli_dispatch(settings, args)
@@ -414,6 +444,7 @@ _HANDLERS = {
     "abort": _h_abort,
     "refix": _h_refix,
     "interview": _h_interview,
+    "inspire": _h_inspire,
     "deploy": _h_deploy,
     "gate": _h_gate,
     "merge": _h_merge,

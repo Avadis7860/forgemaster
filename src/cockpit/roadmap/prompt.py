@@ -7,8 +7,11 @@ propres à la couche *mémoire du vault* (blueprints, stacks, catalogs central, 
 spécialité) : elles n'ont pas de sens pour une forge générique, dont chaque projet porte son propre `docs/`.
 En revanche le **capital distillé PROPRE au projet** (`docs/decisions/`, écrit par un run passé via
 `worker.write_decision_doc`) EST relu ici (`_decisions_block`) : c'est le cliquet de compounding
-projet-local — sans quoi la forge écrirait un minerai qu'elle ne relit jamais. Déterministe (zéro LLM au
-build, zéro I/O réseau) — seul un `read_text` des docs présents du worktree."""
+projet-local — sans quoi la forge écrirait un minerai qu'elle ne relit jamais. De même, la **cible visuelle**
+propre au projet (`docs/design/<slug>/brief.md`, écrite par `design.apply_template` quand le dirigeant
+applique un template UI de référence) EST relue (`_design_block`) : le worker s'en inspire et la customise au
+lieu de coder l'UI en aveugle. Déterministe (zéro LLM au build, zéro I/O réseau) — seul un `read_text` des
+docs présents du worktree."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -24,6 +27,8 @@ CONTEXT_DOCS: tuple[tuple[str, str], ...] = (
 _EXCERPT_MAX = 1200   # caractères d'aperçu par doc (le worker lit le fichier entier au besoin)
 _DECISIONS_BUDGET = 2400     # budget total de caractères du capital distillé relu (borne anti-explosion)
 _DECISION_EXCERPT_MAX = 700  # aperçu par décision (le worker lit le fichier complet au besoin)
+_DESIGN_BUDGET = 2000        # budget total du bloc « cible visuelle » (templates appliqués — anti-explosion)
+_DESIGN_EXCERPT_MAX = 900    # aperçu par template appliqué (le worker lit brief + tokens/preview au besoin)
 
 
 def _hygiene_note() -> str:
@@ -115,6 +120,41 @@ def _decisions_block(root: Path) -> str:
             + "\n\n".join(lines))
 
 
+def _design_block(root: Path) -> str:
+    """Bloc « cible visuelle du projet » : relit les briefs des templates UI **appliqués** au projet
+    (`docs/design/<slug>/brief.md`, posés par `design.apply_template` quand le dirigeant applique un template
+    de référence de la vitrine) et les ré-injecte bornés. Chaque brief est une CIBLE d'inspiration — le worker
+    s'en inspire et la **customise** au projet (jamais une copie verbatim), et lit les fichiers frères
+    (`tokens.css` l'identité, `preview.png` le rendu-cible) au besoin. Symétrique de `_decisions_block` : côté
+    ÉCRITURE `design.apply_template` sème le brief, côté LECTURE ce bloc le ré-injecte → le worker qui attaque
+    l'UI voit « à quoi ça doit ressembler » au lieu de re-dériver une identité en aveugle. Sélection
+    déterministe (tri par chemin), aperçus bornés jusqu'à `_DESIGN_BUDGET`. Absent/vide ⇒ `""` (fail-soft,
+    filtré comme un facet absent). PUR (tri par nom → aucune horloge, testable)."""
+    design_dir = root / "docs" / "design"
+    if not design_dir.is_dir():
+        return ""
+    briefs = sorted((p for p in design_dir.glob("*/brief.md") if p.is_file()), key=str)
+    lines: list[str] = []
+    budget = _DESIGN_BUDGET
+    for brief in briefs:
+        if budget <= 0:   # budget épuisé, d'autres templates appliqués restent → pointeur, pas de corps
+            lines.append("- … (`docs/design/` porte d'autres templates appliqués — lis leurs `brief.md`)")
+            break
+        try:
+            text = brief.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        excerpt = text[:_DESIGN_EXCERPT_MAX] + ("…" if len(text) > _DESIGN_EXCERPT_MAX else "")
+        rel = brief.relative_to(root)
+        lines.append(f"### `{rel}` (lis le fichier complet + `tokens.css`/`preview.png` frères au besoin)\n"
+                     + excerpt)
+        budget -= len(excerpt)
+    if not lines:
+        return ""
+    return ("## Cible visuelle du projet (template UI appliqué par le dirigeant — inspire-t'en et CUSTOMISE "
+            "au projet, ne copie pas)\n" + "\n\n".join(lines))
+
+
 def _facet_block(root: Path, facet: str, leaf: str) -> str:
     """Contenu d'un `.md` de facette (`PERSONA.md`/`METHOD.md`) — porte déjà son propre titre markdown.
     Absent/illisible ⇒ `""` (fail-soft : facette sans persona/méthode = simplement non injectée)."""
@@ -198,6 +238,7 @@ def build_fix_prompt(project: dict, feature: dict, *, findings: dict, root: Path
         _facet_block(root, facet, "METHOD.md"),
         f"## Bloqueurs du gate à corriger\n{findings_block(findings)}",
         f"## Contexte du projet\n{_context_block(root)}",
+        _design_block(root),      # cible visuelle : template UI appliqué (customise, pas copie)
         _decisions_block(root),   # capital distillé d'un run passé (cliquet de compounding projet-local)
     ]
     return "\n\n".join(b for b in blocks if b) + "\n"
@@ -224,6 +265,7 @@ def build_worker_prompt(project: dict, feature: dict, task: dict, *, root: Path)
         _facet_block(root, facet, "METHOD.md"),         # la méthode de la facette
         _acceptance_block(task),                        # les critères requis (DoD)
         f"## Contexte du projet\n{_context_block(root)}",
+        _design_block(root),      # cible visuelle : template UI appliqué (customise, pas copie)
         _decisions_block(root),   # capital distillé d'un run passé (cliquet de compounding projet-local)
     ]
     return "\n\n".join(b for b in blocks if b) + "\n"

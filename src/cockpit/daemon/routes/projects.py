@@ -3,10 +3,12 @@ délègue à `projects.registry` (couche portée), lit `Deps` par injection expl
 Éclatement du monolithe orchestrator (#3) ; plus de `import server` (#1)."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from cockpit.daemon.deps import Deps, get_deps
+from cockpit.daemon.routes.templates import known_template_slugs, template_source_dir
+from cockpit.design.apply import apply_template
 from cockpit.dispatch import cost
 from cockpit.projects import registry
 from cockpit.secrets import cred_resolver
@@ -26,6 +28,10 @@ class ProjectPatch(BaseModel):
     # PATCH partiel : seul le miroir GitHub est éditable pour l'instant (rendre un projet GitHub-backed).
     # `None` explicite = retirer le miroir ; champ absent = ne pas toucher.
     mirror_remote: str | None = None
+
+
+class InspireRequest(BaseModel):
+    template: str                    # slug d'un template de référence servi (validé contre la vitrine)
 
 
 def make_projects_router() -> APIRouter:
@@ -65,6 +71,22 @@ def make_projects_router() -> APIRouter:
         conn = deps.open_db()
         try:
             return cost.project_cost(conn, slug)        # KeyError → 404 (handler global)
+        finally:
+            conn.close()
+
+    @router.post("/{slug}/inspire", status_code=201)
+    def inspire_project(slug: str, body: InspireRequest, deps: Deps = Depends(get_deps)) -> dict:
+        """Applique un template UI de référence de la vitrine à ce projet (« inspire mon projet de ce
+        template »). Forme A : crée la feature+task de customisation `design-<template>` et sème la graine
+        `docs/design/<template>/` (brief + tokens + preview) committée sur sa branche ; l'opérateur dispatch
+        ensuite un worker qui customise le vrai `web/` (merge = revue UI + GO humain). **Pas de gate d'auth**
+        (ne spawn pas `claude`). Template inconnu → 404 ; projet absent → 404 (KeyError, handler global)."""
+        if body.template not in known_template_slugs():
+            raise HTTPException(status_code=404, detail=f"template inconnu : {body.template!r}")
+        conn = deps.open_db()
+        try:
+            return apply_template(conn, deps.settings, project=slug, template_slug=body.template,
+                                  source_dir=template_source_dir(body.template))
         finally:
             conn.close()
 
