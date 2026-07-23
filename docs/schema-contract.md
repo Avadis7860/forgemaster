@@ -306,6 +306,13 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   `ref` optionnel (défaut : `main`→`dev`→1ʳᵉ branche). `found:false` (ni carte ni README) rendu tel quel —
   l'UI affiche un EmptyState, pas une erreur. Read-only, bare-safe (réutilise `read_blob`), idempotent. **404**
   projet absent ; **422** SoT illisible). SoT-and-derive : éditer la carte dans le repo met à jour l'affichage.
+- **capital** — parcours **read-only** du capital-token servi par le MCP `mcp-catalogs` (`GET /api/capital/status`
+  `{wired, endpoint}` — porte **sans réseau** ; `GET /api/capital/types` · `GET /api/capital/{type}/collections` ·
+  `GET /api/capital/{type}/sections?scope=` · `GET /api/capital/read?type=&ref=`). Corps **servis tels quels** (le
+  serveur MCP est SoT de la forme). Dégradation honnête **à 3 états** : (a) MCP non câblé / (b) injoignable →
+  **503** générique (« … non câblé ou injoignable ») ; (c) le MCP **répond mais échoue** sur la ressource (ref
+  cassée, silo en défaut) → **502** + le **détail serveur réel** (jamais repeint en « non câblé » — mislabel
+  corrigé) ; `collections:[]` d'un type plat = réponse **valide** (200, indispo ≠ vide). Tous idempotents (goto-safe).
 - **terminal** — `WS /ws/terminal/{project}` (PTY **local** `bash -l`, workdir borné).
 
 Un endpoint qui borne/tronque le **signale** dans sa réponse. `WS /ws/dispatch/{job}` (streaming live du

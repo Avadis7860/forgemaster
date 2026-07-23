@@ -3,7 +3,8 @@
 Aucun réseau : on injecte les seams du router (`browser_factory`, `status_fn`). Prouve (1) `/status` = porte
 sans réseau reflétant `wire_state` ; (2) les routes de parcours **passent** la sortie du browser telle quelle
 (pass-through — le serveur MCP est la SoT de la forme) ; (3) **503 honnête** quand le browser rend `None` (MCP
-non câblé/injoignable) ; (4) un corps `{...collections:[]}` reste une réponse valide (indispo ≠ vide).
+non câblé/injoignable) ; (4) un corps `{...collections:[]}` reste une réponse valide (indispo ≠ vide) ;
+(5) une **erreur d'outil serveur** (`CapitalServerError`) → **502** + détail réel, distinct du 503 (mislabel).
 """
 from __future__ import annotations
 
@@ -16,35 +17,44 @@ from fastapi.testclient import TestClient
 from cockpit.config import Settings
 from cockpit.daemon.deps import Deps
 from cockpit.daemon.routes.capital import make_capital_router
+from cockpit.mcp import CapitalServerError
 
 
 class _FakeBrowser:
-    """Browser factice : rend `data` pour toute méthode (ou None = indispo). Zéro réseau."""
+    """Browser factice : rend `data` pour toute méthode (ou None = indispo), OU **lève** `exc` (état (c) —
+    erreur d'outil serveur) pour prouver le 502 honnête. Zéro réseau."""
 
-    def __init__(self, data: object) -> None:
+    def __init__(self, data: object, *, exc: Exception | None = None) -> None:
         self._data = data
+        self._exc = exc
+
+    def _answer(self) -> object:
+        if self._exc is not None:
+            raise self._exc
+        return self._data
 
     def list_types(self) -> object:
-        return self._data
+        return self._answer()
 
     def list_collections(self, type: str) -> object:
-        return self._data
+        return self._answer()
 
     def list_sections(self, type: str, scope: str | None = None) -> object:
-        return self._data
+        return self._answer()
 
     def read(self, type: str, ref: str) -> object:
-        return self._data
+        return self._answer()
 
 
 @pytest.fixture
 def make_client(tmp_path: Path):
-    def _build(data: object = None, *, wired: bool = True) -> TestClient:
+    def _build(data: object = None, *, wired: bool = True,
+               exc: Exception | None = None) -> TestClient:
         settings = Settings.resolve(home=tmp_path / "home", projects_root=tmp_path / "projects")
         app = FastAPI()
         app.state.deps = Deps(settings)
         app.include_router(make_capital_router(
-            browser_factory=lambda _s: _FakeBrowser(data),  # type: ignore[arg-type]
+            browser_factory=lambda _s: _FakeBrowser(data, exc=exc),  # type: ignore[arg-type]
             status_fn=lambda: {"wired": wired, "endpoint": "http://mcp.test/mcp"},
         ))
         return TestClient(app)
@@ -118,6 +128,23 @@ def test_unavailable_browser_is_503_on_all_browse_routes(make_client):
     assert client.get("/api/capital/tech/collections").status_code == 503
     assert client.get("/api/capital/tech/sections", params={"scope": "fastapi"}).status_code == 503
     assert client.get("/api/capital/read", params={"type": "tech", "ref": "x"}).status_code == 503
+
+
+def test_server_error_is_502_with_real_detail_not_mislabel(make_client):
+    """État (c) : le MCP **répond mais échoue** sur la ressource (`CapitalServerError`) → **502** + le détail
+    serveur RÉEL, JAMAIS le mislabel « non câblé ou injoignable » (le bug corrigé). Distinct du 503 (a/b)."""
+    client = make_client(exc=CapitalServerError("silo templates cassé: ref invalide"))
+    r = client.get("/api/capital/templates/collections")
+    assert r.status_code == 502
+    detail = r.json()["detail"]
+    assert "silo templates cassé: ref invalide" in detail            # le vrai motif serveur remonte
+    assert "non câblé" not in detail and "injoignable" not in detail  # plus de mislabel générique
+
+
+def test_server_error_and_unavailable_are_distinct_states(make_client):
+    """Les 3 états sont bien séparés : (c) erreur serveur → 502, (a/b) indispo → 503 — statuts distincts."""
+    assert make_client(exc=CapitalServerError("boom")).get("/api/capital/types").status_code == 502
+    assert make_client(None).get("/api/capital/types").status_code == 503
 
 
 def test_get_is_idempotent(make_client):

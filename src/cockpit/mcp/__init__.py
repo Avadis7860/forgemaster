@@ -8,8 +8,15 @@ from __future__ import annotations
 from cockpit.mcp.client import (
     BlueprintResolver,
     CapitalBrowser,
+    CapitalServerError,
     blueprint_resolver,
     capital_browser,
 )
 
-__all__ = ["BlueprintResolver", "CapitalBrowser", "blueprint_resolver", "capital_browser"]
+__all__ = [
+    "BlueprintResolver",
+    "CapitalBrowser",
+    "CapitalServerError",
+    "blueprint_resolver",
+    "capital_browser",
+]

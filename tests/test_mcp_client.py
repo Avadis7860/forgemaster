@@ -1,7 +1,9 @@
 """Tests du client MCP runtime (`cockpit.mcp.blueprint_resolver`) — **aucun réseau**, seams injectés.
 
-Prouve la **dégradation honnête totale** (secret absent/court, MCP down, réponse vide → `None`, jamais
-d'exception) et le **hit** (dict rendu tel quel). Un dernier test branche le resolver au seam réel
+Prouve la **dégradation honnête** (secret absent/court, MCP down transport, réponse vide → `None`) et le
+**hit** (dict rendu tel quel) ; côté `capital_browser`, prouve aussi la **propagation typée** d'une erreur
+d'outil serveur (état (c) — `CapitalServerError`, détail réel), non avalée en None. Un dernier test branche
+le resolver au seam réel
 `taskmap.context._blueprint_verdict` (le contrat que consommera le board P3) : `resolved:true`+fusion sur hit,
 `resolved:false`+liaison morte sur down — le mint HS256 réel est exercé (secret factice ≥32).
 """
@@ -13,7 +15,7 @@ import pytest
 from taskmap.context import _blueprint_verdict
 
 from cockpit.config import Settings
-from cockpit.mcp import blueprint_resolver, capital_browser
+from cockpit.mcp import CapitalServerError, blueprint_resolver, capital_browser
 
 _SECRET = "x" * 40                      # ≥32 → le mint HS256 réel passe
 _FAKE_REF = "ref-opaque"
@@ -176,3 +178,27 @@ def test_capital_each_method_calls_the_right_tool_with_real_jwt(settings):
     assert seen[3]["arguments"] == {"type": "blueprint", "ref": "some-bp"}
     assert all(c["endpoint"] == "http://mcp.test/mcp" for c in seen)
     assert all(c["token"].count(".") == 2 for c in seen)     # un JWT (header.body.sig) réellement minté
+
+
+def test_capital_server_tool_error_propagates_typed(settings):
+    """État (c) : le MCP **répond** mais l'outil échoue serveur (`fastmcp.ToolError`) → **propagé typé**
+    `CapitalServerError` portant le détail réel, PAS avalé en None (contraste avec (b) transport ci-dessus).
+    C'est ce que la route transforme en 502 honnête au lieu du mislabel « non câblé »."""
+    from fastmcp.exceptions import ToolError
+
+    def caller(*a, **k):
+        raise ToolError("Error calling tool 'list_collections': silo templates cassé")
+
+    b = capital_browser(settings, secret_ref=_FAKE_REF, resolver=_ok_secret, caller=caller)
+    with pytest.raises(CapitalServerError, match="silo templates cassé"):
+        b.list_collections("templates")
+
+
+def test_capital_transport_error_stays_none_not_typed(settings):
+    """Garde-fou de la discrimination : une panne **transport** (`RuntimeError`, la forme réelle qu'émet
+    fastmcp 3.4.4 sur endpoint injoignable) reste `None` honnête — jamais confondue avec (c) erreur-outil."""
+    def caller(*a, **k):
+        raise RuntimeError("unhandled errors in a TaskGroup")
+
+    b = capital_browser(settings, secret_ref=_FAKE_REF, resolver=_ok_secret, caller=caller)
+    assert b.list_types() is None

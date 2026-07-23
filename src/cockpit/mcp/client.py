@@ -8,8 +8,11 @@
 Contrairement à `provision.mcp` (qui écrit un `.mcp.json` pour un *worker subprocess*), ici le daemon appelle
 en direct. Import `fastmcp` **paresseux** (le socle cockpit ne le tire pas au chargement).
 
-**Dégradation honnête, totale et silencieuse** (comme `secrets.cred_resolver`) : secret non câblé / trop
-court, MCP injoignable, réponse vide, toute exception → **`None`**. Jamais inventé, jamais propagé.
+**Dégradation honnête** (comme `secrets.cred_resolver`) : secret non câblé / trop court, MCP injoignable
+(transport), réponse vide → **`None`** (jamais inventé). **Exception** côté `capital_browser` : une erreur
+d'**outil serveur** (le MCP répond mais échoue sur la ressource — `fastmcp.ToolError`/`McpError`) est
+**propagée typée** (`CapitalServerError`, détail réel) au lieu d'être avalée en `None`, pour distinguer
+« injoignable » de « répond mais échoue ». `blueprint_resolver` garde son `None` total (contrat taskmap).
 
 Réutilise le **contrat serveur** déjà prouvé (`provision.mcp` : endpoint/aud/iss/ref) + le minteur HS256
 stdlib (`secrets.jwt`) + le résolveur de secret (`secrets.cred_resolver`) — zéro redéclaration.
@@ -32,6 +35,13 @@ from cockpit.secrets.jwt import mint_hs256
 
 BlueprintResolver = Callable[[str], "dict | None"]
 McpCaller = Callable[..., "dict | list | None"]
+
+
+class CapitalServerError(Exception):
+    """État (c) du parcours capital : le MCP a **répondu** mais l'outil a **échoué sur la ressource** (ref
+    cassée, silo en défaut, 5xx applicatif — `fastmcp` lève `ToolError`/`McpError`). Distinct de (a) non câblé
+    et (b) injoignable, qui restent des `None` honnêtes. Porte le **détail serveur réel** pour que la route le
+    surface (502) au lieu de le repeindre en « MCP non câblé ou injoignable » (le mislabel corrigé)."""
 
 _SUBJECT = "cockpit:board"        # sub du JWT pour la résolution blueprint (serveur valide aud/iss/signature)
 _SUBJECT_CAPITAL = "cockpit:capital"  # sub du JWT pour le parcours du capital-token (surface Landing)
@@ -105,12 +115,26 @@ def blueprint_resolver(settings: Settings, *, secret_ref: str | None = None,
     return resolve
 
 
+def _is_server_tool_error(exc: BaseException) -> bool:
+    """Discrimine l'état (c) — le MCP a **répondu** mais l'outil a échoué serveur (`fastmcp` lève `ToolError`,
+    et `McpError` au niveau protocole) — de (b) une panne **transport** (réseau/timeout : fastmcp lève un
+    `RuntimeError` ; httpx/`ConnectionError`/`TimeoutError` au seam de test), qui reste un `None` honnête.
+    Import fastmcp **paresseux** (le socle ne le tire pas au chargement) ; import KO (socle sans MCP) → non
+    classable → `False` (traité transport). Vérifié empiriquement sous fastmcp 3.4.4."""
+    try:
+        from fastmcp.exceptions import McpError, ToolError
+    except Exception:  # noqa: BLE001 — fastmcp absent → pas d'erreur-outil possible ici → (b) transport
+        return False
+    return isinstance(exc, (ToolError, McpError))
+
+
 class CapitalBrowser:
     """Client de **parcours read-only** du capital-token servi par `mcp-catalogs` (navigation
     `list_types → list_collections → list_sections → read`). Chaque méthode mint un JWT frais et appelle
-    l'outil MCP éponyme ; **dégradation honnête totale** — MCP non câblé / injoignable / réponse vide →
-    `None`, jamais d'exception propagée (contrat du module). Instancié via `capital_browser` (seams
-    injectés)."""
+    l'outil MCP éponyme ; **dégradation honnête** — MCP non câblé (a) / injoignable (b) / réponse vide →
+    `None`. **Exception** : une erreur d'**outil serveur** (c — le MCP répond mais échoue) est propagée en
+    `CapitalServerError` (détail réel), pour ne pas la repeindre en « injoignable ». Instancié via
+    `capital_browser` (seams injectés)."""
 
     def __init__(self, *, endpoint: str, resolve_secret: Callable[[str], str], secret_ref: str | None,
                  caller: McpCaller, timeout: float) -> None:
@@ -124,11 +148,15 @@ class CapitalBrowser:
         token = _mint_or_none(secret_ref=self._secret_ref, resolve_secret=self._resolve_secret,
                               subject=_SUBJECT_CAPITAL)
         if token is None:
-            return None                                    # MCP non câblé → None honnête (pas d'appel réseau)
+            return None                          # (a) non câblé → None honnête (pas d'appel réseau)
         try:
             return self._caller(self._endpoint, token, tool, arguments, timeout=self._timeout)
-        except Exception:  # noqa: BLE001 — panne MCP/réseau → None honnête, jamais propagée
-            return None
+        except CapitalServerError:
+            raise                                # (c) déjà classé par le caller → ne pas ré-avaler
+        except Exception as exc:  # noqa: BLE001
+            if _is_server_tool_error(exc):       # (c) le MCP répond mais échoue sur la ressource…
+                raise CapitalServerError(str(exc) or exc.__class__.__name__) from exc  # détail → 502
+            return None                          # (b) transport/injoignable → None honnête, non propagé
 
     def list_types(self) -> dict | list | None:
         """Les **types** servis (`tech`, `blueprint`, `templates`) + leur stratégie. `None` si MCP indispo."""

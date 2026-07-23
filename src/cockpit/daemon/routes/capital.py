@@ -7,10 +7,11 @@ introspecte le **capital-token** qu'il **loue/possède** (`tech`/`blueprint`/`te
 Read-only, idempotent (GET) : le corps servi vient du MCP en direct via `mcp.capital_browser` (mint JWT +
 `fastmcp`, dégradation honnête totale). Goto-safe : le runner goto-only de la boucle visuelle atteint ces GET.
 
-**Dégradation honnête** (le cœur) : le browser rend `None` dès que le MCP n'est pas câblé (pas de
-`COCKPIT_MCP_JWT_SECRET_REF`) OU injoignable — jamais inventé. La route en fait un **503** honnête. Le front
-ne tente PAS le parcours quand `/status` dit `wired:false` (il rend « non câblé ») ; le 503 couvre la panne
-réseau d'un MCP câblé-mais-down. `wire_state()` est la porte sans réseau (`{wired, endpoint}`).
+**Dégradation honnête, 3 états** (le cœur) : le browser rend `None` quand le MCP n'est pas câblé (pas de
+`COCKPIT_MCP_JWT_SECRET_REF`) ou injoignable → la route en fait un **503** générique ; une **erreur d'outil
+serveur** (MCP câblé qui répond mais échoue sur la ressource) remonte typée (`CapitalServerError`) → **502** +
+le détail serveur réel (plus de mislabel « non câblé »). Le front ne tente PAS le parcours quand `/status` dit
+`wired:false` ; `wire_state()` est la porte sans réseau (`{wired, endpoint}`).
 
 Seams injectés (`browser_factory`, `status_fn`) : test sans réseau, patron `test_mcp_client`.
 """
@@ -22,17 +23,22 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from cockpit.config import Settings
 from cockpit.daemon.deps import Deps, get_deps
-from cockpit.mcp import CapitalBrowser, capital_browser
+from cockpit.mcp import CapitalBrowser, CapitalServerError, capital_browser
 from cockpit.provision.mcp import wire_state
 
 _UNAVAILABLE = "capital-token indisponible : MCP non câblé ou injoignable"
 
 
-def _served(data: dict | list | None) -> dict | list:
-    """**Pass-through** honnête : les outils MCP rendent déjà des corps bien formés (`{types:[…]}`,
-    `{type,collections,…}`, `{type,scope,sections,…}`, `{type,ref,body/content,…}`) — on les sert tels quels
-    (le daemon = proxy authentifié fin, le serveur MCP est la SoT de la forme). `None` (MCP non câblé ou
-    injoignable) → **503** honnête, jamais un corps inventé ni un ré-emballage."""
+def _served(fetch: Callable[[], dict | list | None]) -> dict | list:
+    """Résout un parcours MCP en corps HTTP en distinguant **trois états** (le mislabel corrigé) : (c) le MCP
+    **répond mais échoue** sur la ressource (`CapitalServerError`) → **502** + le **détail serveur réel**
+    (jamais « non câblé ») ; (a/b) non câblé / injoignable → `None` → **503** générique ; sinon le corps
+    bien formé, servi tel quel (le serveur MCP est SoT de la forme, pas de ré-emballage). `fetch` est un
+    **thunk** : l'appel browser vit DANS le `try` pour capter (c) au bon endroit."""
+    try:
+        data = fetch()
+    except CapitalServerError as exc:
+        raise HTTPException(status_code=502, detail=f"MCP a répondu en erreur : {exc}") from exc
     if data is None:
         raise HTTPException(status_code=503, detail=_UNAVAILABLE)
     return data
@@ -53,23 +59,23 @@ def make_capital_router(
     @router.get("/types")
     def capital_types(deps: Deps = Depends(get_deps)) -> dict | list:
         """Les **types** servis (`tech`/`blueprint`/`templates`) + stratégie. MCP indispo → 503 honnête."""
-        return _served(browser_factory(deps.settings).list_types())
+        return _served(lambda: browser_factory(deps.settings).list_types())
 
     @router.get("/read")
     def capital_read(type: str, ref: str, deps: Deps = Depends(get_deps)) -> dict | list:
         """Le **corps** d'une ref (`<collection>/<path>` silo, ou `<id>` plat). MCP indispo → 503 honnête."""
-        return _served(browser_factory(deps.settings).read(type, ref))
+        return _served(lambda: browser_factory(deps.settings).read(type, ref))
 
     @router.get("/{type}/collections")
     def capital_collections(type: str, deps: Deps = Depends(get_deps)) -> dict | list:
         """Les **collections** (silos) d'un type. Type plat (blueprint) → `collections:[]`. Indispo → 503."""
-        return _served(browser_factory(deps.settings).list_collections(type))
+        return _served(lambda: browser_factory(deps.settings).list_collections(type))
 
     @router.get("/{type}/sections")
     def capital_sections(type: str, deps: Deps = Depends(get_deps),
                          scope: str | None = None) -> dict | list:
         """La **TOC** (sections) d'un type : `?scope=<silo>` requis pour un silo (`tech`), omis pour un corpus
         plat (`blueprint`). MCP indispo (ou silo sans scope côté serveur) → 503 honnête."""
-        return _served(browser_factory(deps.settings).list_sections(type, scope))
+        return _served(lambda: browser_factory(deps.settings).list_sections(type, scope))
 
     return router

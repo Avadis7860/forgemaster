@@ -5,6 +5,18 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### API/capital — erreur serveur MCP honnête : 502 (détail réel) ≠ 503 (indispo) — pas de bump
+- Les routes `GET /api/capital/*` distinguent désormais **3 états** au lieu de 2. Avant : toute défaillance du
+  parcours capital (y compris une **erreur d'outil serveur** — ref cassée, silo en défaut alors que le MCP
+  **répond**) était repeinte en **503** « MCP non câblé ou injoignable » — un **mislabel** (le MCP EST joignable).
+  Après : (a) non câblé / (b) injoignable → **503** générique ; (c) le MCP **répond mais échoue** sur la ressource
+  → **502** + le **détail serveur réel** (`ApiError.detail`, rendu tel quel par le front, zéro changement `web/`).
+- Cœur : `CapitalBrowser._invoke` (`mcp/client.py`) discrimine dans son `except` l'erreur d'outil serveur
+  (`fastmcp.ToolError`/`McpError`, propagée en `CapitalServerError` typée) du transport (`RuntimeError`/réseau →
+  `None` honnête inchangé) ; `routes/capital._served` mappe `CapitalServerError`→502, `None`→503. `blueprint_resolver`
+  **intouché** (garde son `None` total pour taskmap). Additif au contrat (`docs/schema-contract.md` §3, entrée
+  `capital`) → **pas de bump `SCHEMA_VERSION`** (règle API HTTP : CHANGELOG seul).
+
 ### Git/UI — palette « rechercher dans le code » (grep, parité GitHub) — pas de bump
 - Un bouton « Rechercher » (en-tête de l'explorateur, à côté de « Go to file ») ouvre une palette `Dialog` :
   la requête, **débouncée** (≈200 ms), interroge `GET …/git/search` (livré) ; chaque correspondance
