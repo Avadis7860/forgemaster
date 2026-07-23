@@ -71,6 +71,11 @@ Ne pas re-débattre (distillées en [`specs/`](specs/) quand elles portent des i
   0 application → bâtir un genre MCP maintenant serait un forward-feature. On livre le **mécanisme
   d'application** (`inspire`, opérateur → worker customise) ; le MCP gradue sur réutilisation cross-projet
   **prouvée** (spec [`template-ui-application-lifecycle`](specs/template-ui-application-lifecycle.md)).
+- **Frontière client WS = Origin + token serveur, PAS le réseau** — les handshakes WebSocket sont gardés
+  **côté serveur** (contrôle d'Origin same-origin/allowlist + token par-instance), **avant** `accept()`. Le
+  réseau (LAN/VPN) ne filtre pas le vecteur navigateur (CSWSH) ; le CORS ne couvre pas les WS. C'est un
+  **prérequis de distribution** — `--host 0.0.0.0` n'est sûr que grâce à cette garde (spec
+  [`ws-origin-token-boundary`](specs/ws-origin-token-boundary.md)).
 
 ## Horizons (non planifiés — ouverts)
 

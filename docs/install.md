@@ -93,8 +93,16 @@ La commande écrit aussi un `cockpit.env` (EnvironmentFile) sous `COCKPIT_HOME` 
 `COCKPIT_HOME`, le backend de coffre et le bind (jamais un secret). Gabarit manuel :
 [`deploy/cockpit.service`](../deploy/cockpit.service).
 
-**Réseau / TLS.** Le cockpit n'a **pas d'authentification** (outil mono-utilisateur, frontière de confiance =
-LAN/localhost). Ne l'expose pas nu sur Internet : mets-le derrière un reverse-proxy (TLS + auth) ou un VPN.
+**Réseau / TLS.** Le cockpit n'a **pas d'authentification HTTP** (outil mono-utilisateur, frontière de
+confiance = LAN/localhost). Ne l'expose pas nu sur Internet : mets-le derrière un reverse-proxy (TLS + auth)
+ou un VPN.
+
+**WebSockets (terminal / transcript).** Exposer hors loopback (`--host 0.0.0.0`) n'est sûr que **grâce à la
+garde côté serveur** des handshakes WS : contrôle d'**Origin** (same-origin automatique + allowlist) **et**
+**token par-instance** (`home/ws_token`, injecté de façon transparente par le front). Sans elle, une page web
+tierce dans ton navigateur pourrait détourner un terminal (CSWSH) — le réseau ne filtre pas ce vecteur, et le
+**CORS ne couvre pas les WS**. Derrière un reverse-proxy à nom public différent, déclare-le dans
+`COCKPIT_WS_ALLOWED_ORIGINS`. Détail : spec [`ws-origin-token-boundary`](specs/ws-origin-token-boundary.md).
 
 ## Édition maintainer — recette CT reproductible (batteries incluses)
 
