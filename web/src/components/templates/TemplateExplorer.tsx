@@ -4,7 +4,7 @@ import {
   Alert, Badge, Button, Card, EmptyState, LoadingState, SectionTitle, Select,
 } from '@/components/ui'
 import { ApiError } from '@/lib/api'
-import { useProjects, useTemplates } from '@/lib/queries'
+import { useInspireProject, useProjects, useTemplates } from '@/lib/queries'
 import type { TemplateSummary } from '@/lib/schemas'
 
 type Search = { tpl?: string }
@@ -13,13 +13,14 @@ type Search = { tpl?: string }
  *  à `/templates/<slug>/…` (jamais via l'API). Un seul point de vérité pour construire l'URL. */
 const asset = (slug: string, rel: string) => `/templates/${encodeURIComponent(slug)}/${rel}`
 
-/** Vitrine READ-ONLY des **templates de référence UI** — le capital-token *montrable* (le pendant visuel du
- *  blueprint) : des modèles d'UI qu'une session peut appliquer à un projet. Frère de `BundleExplorer` (ce que
- *  le cockpit sème) et `CapitalExplorer` (ce que le MCP loue), mais avec **une action** : matérialiser
- *  l'intention « applique le template X à mon projet Y » (l'application réelle est déléguée en aval).
+/** Vitrine des **templates de référence UI** — le capital-token *montrable* (le pendant visuel du blueprint) :
+ *  des modèles d'UI que le dirigeant applique à un projet. Frère de `BundleExplorer` (ce que le cockpit sème)
+ *  et `CapitalExplorer` (ce que le MCP loue), avec **une action réelle** : « inspirer un projet de ce
+ *  template » (POST /inspire) → crée la feature+task de customisation `design-<slug>` et sème la graine
+ *  `docs/design/<slug>/`, qu'un worker de customisation relira comme cible visuelle.
  *
  *  Piloté par l'URL (`?tpl=<slug>`) → deep-linkable, capturable at-rest. Grille de cards (vignette `preview.png`)
- *  → fiche (iframe LIVE du template, colorimétrie switchable) + bloc action (prompt copiable). Aucune mutation. */
+ *  → fiche (iframe LIVE du template, colorimétrie switchable) + bloc action (`ApplyBlock` : appliquer au projet). */
 export function TemplateExplorer() {
   const templates = useTemplates()
   const search = useSearch({ strict: false }) as Search
@@ -191,34 +192,23 @@ function TemplateDetail({ template, onBack }: { template: TemplateSummary; onBac
   )
 }
 
-/** Le bloc action « appliquer » : sélecteur de projet + prompt **traçable** copiable. **Aucune mutation** —
- *  la fiche matérialise l'intention (« applique le template X à mon projet Y ») ; l'application réelle est
- *  menée par une session Claude en aval. C'est l'unique action de la vitrine (goto-safe, read-only). */
+/** Le bloc action « inspirer » : sélecteur de projet + bouton qui APPLIQUE le template (POST /inspire) →
+ *  crée la feature+task de customisation `design-<slug>` et sème la graine `docs/design/<slug>/`. L'opérateur
+ *  dispatch ensuite un worker qui customise le vrai `web/` (cf. le compte-rendu de succès). Unique action de
+ *  la vitrine, portée sur les primitives DS (Select/Button/Alert), états honnêtes (busy/erreur/succès). */
 function ApplyBlock({ template }: { template: TemplateSummary }) {
   const projects = useProjects()
   const [project, setProject] = useState('')
-  const [copied, setCopied] = useState(false)
-
-  const target = project || '<projet>'
-  const prompt = `applique le template ${template.slug} à mon projet ${target}`
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(prompt)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1600)
-    } catch {
-      /* clipboard indisponible (contexte non sécurisé) — le prompt reste sélectionnable à la main */
-    }
-  }
+  const inspire = useInspireProject(project)
 
   const options = projects.data ?? []
+  const result = inspire.data
 
   return (
     <div className="space-y-3 rounded-card border border-border bg-surface-raised p-4">
       <div className="flex items-center justify-between gap-2">
-        <h4 className="text-sm font-medium text-fg">Appliquer à un projet</h4>
-        <Badge tone="neutral" className="whitespace-nowrap">intention · sans effet</Badge>
+        <h4 className="text-sm font-medium text-fg">Inspirer un projet de ce template</h4>
+        <Badge tone="neutral" className="whitespace-nowrap">crée une feature de customisation</Badge>
       </div>
 
       {projects.isError ? (
@@ -231,8 +221,8 @@ function ApplyBlock({ template }: { template: TemplateSummary }) {
         <Select
           aria-label="Projet cible"
           value={project}
-          onChange={(e) => setProject(e.target.value)}
-          disabled={projects.isLoading}
+          onChange={(e) => { setProject(e.target.value); inspire.reset() }}
+          disabled={projects.isLoading || inspire.isPending}
         >
           <option value="">— choisir un projet —</option>
           {options.map((p) => (
@@ -241,16 +231,27 @@ function ApplyBlock({ template }: { template: TemplateSummary }) {
         </Select>
       )}
 
-      {/* Le prompt traçable, en lecture (sélectionnable) + copie un clic. Une seule action primaire (axe 2). */}
-      <div className="flex items-stretch gap-2">
-        <code className="min-w-0 flex-1 truncate rounded-card border border-border bg-surface px-3 py-2 font-mono text-xs text-fg"
-          title={prompt}>
-          {prompt}
-        </code>
-        <Button variant="primary" size="sm" onClick={copy} className="shrink-0">
-          {copied ? 'Copié ✓' : 'Copier'}
-        </Button>
-      </div>
+      {/* Une seule action primaire (axe 2) : applique le template au projet choisi. Désactivée sans projet. */}
+      <Button
+        variant="primary"
+        busy={inspire.isPending}
+        disabled={!project}
+        onClick={() => inspire.mutate(template.slug)}
+        className="w-full"
+      >
+        Inspirer ce projet
+      </Button>
+
+      {inspire.isError ? (
+        <Alert tone="danger" title="Application impossible">
+          {inspire.error instanceof ApiError ? inspire.error.detail : String(inspire.error)}
+        </Alert>
+      ) : result ? (
+        <Alert tone="ok" title={`Template appliqué à ${result.project}`}>
+          Feature <code className="font-mono">{result.feature}</code> créée (graine : {result.files.join(', ')}).
+          Dispatch un worker pour customiser l'UI depuis l'onglet du projet (« Lancer »).
+        </Alert>
+      ) : null}
     </div>
   )
 }

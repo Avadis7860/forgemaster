@@ -209,6 +209,18 @@ export type TemplateSummary = z.infer<typeof TemplateSummarySchema>
 
 export const TemplatesListSchema = z.object({ templates: z.array(TemplateSummarySchema) })
 
+// Résultat de POST /api/projects/{p}/inspire : la feature+task de customisation créée + la graine posée
+// (`docs/design/<template>/{brief.md,tokens.css,preview.png}`). Un worker de customisation (à dispatcher)
+// relira le brief comme cible visuelle. Champs consommés déclarés (les extras — path/commit — ignorés).
+export const InspireResultSchema = z.object({
+  project: z.string(),
+  template: z.string(),
+  feature: z.string(),      // la feature de customisation créée (design-<template>)
+  task: z.string(),         // la task de customisation (customize-ui)
+  files: z.array(z.string()),   // fichiers de la graine posés (brief.md, tokens.css, preview.png)
+})
+export type InspireResult = z.infer<typeof InspireResultSchema>
+
 // -- V3 dispatch : job (run worker) + rapport de dispatch + événements de transcript (streamés en WS) --
 
 // Une ligne de `dispatch_jobs` enrichie du `task_slug` (join list_jobs). Champs consommés déclarés ;

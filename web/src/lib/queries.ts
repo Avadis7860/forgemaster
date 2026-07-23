@@ -194,6 +194,20 @@ export function useReconcileSocle(project: string) {
   })
 }
 
+// « Inspirer un projet de ce template » : applique un template UI de référence (crée la feature+task de
+// customisation `design-<template>` + sème la graine). À la résolution, invalide la roadmap du projet
+// (nouvelle feature) et la liste projets → l'UI reflète le travail créé, jamais un état deviné.
+export function useInspireProject(project: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (template: string) => api.inspire(project, template),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: qk.roadmap(project) })
+      qc.invalidateQueries({ queryKey: qk.projects })
+    },
+  })
+}
+
 // Vue Git read-only d'un projet (branches · ahead/behind · log). GET idempotent, pas de poll.
 export function useGit(project: string) {
   return useQuery({

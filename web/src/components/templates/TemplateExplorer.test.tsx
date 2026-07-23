@@ -9,11 +9,16 @@ const h = vi.hoisted(() => ({
   tpl: undefined as string | undefined,
   projects: [] as Array<{ id: string; slug: string }>,
   nav: [] as Array<{ to: string; search: unknown }>,
+  inspire: {
+    mutate: vi.fn(), reset: vi.fn(),
+    isPending: false, isError: false, error: null as unknown, data: null as unknown,
+  },
 }))
 
 vi.mock('@/lib/queries', () => ({
   useTemplates: () => ({ data: h.templates, isLoading: false, isError: false, error: null }),
   useProjects: () => ({ data: h.projects, isLoading: false, isError: false, error: null }),
+  useInspireProject: () => h.inspire,
 }))
 
 vi.mock('@tanstack/react-router', () => ({
@@ -44,6 +49,10 @@ describe('TemplateExplorer', () => {
     h.tpl = undefined
     h.projects = []
     h.nav = []
+    h.inspire = {
+      mutate: vi.fn(), reset: vi.fn(),
+      isPending: false, isError: false, error: null, data: null,
+    }
   })
 
   it('rend la grille de cards et deep-linke vers la fiche au clic', () => {
@@ -59,7 +68,7 @@ describe('TemplateExplorer', () => {
     expect(h.nav).toEqual([{ to: '/templates', search: { tpl: T.slug } }])
   })
 
-  it('rend la fiche (iframe live + prompt) quand ?tpl= pointe un template valide', () => {
+  it('rend la fiche (iframe live + action inspirer) quand ?tpl= pointe un template valide', () => {
     h.templates = [T]
     h.tpl = T.slug
     h.projects = [{ id: '1', slug: 'mon-projet' }]
@@ -67,17 +76,35 @@ describe('TemplateExplorer', () => {
     // iframe live du template servi
     const frame = screen.getByTitle(`Aperçu live du template ${T.name}`)
     expect(frame).toHaveAttribute('src', `/templates/${T.slug}/index.html`)
-    // prompt traçable par défaut (aucun projet choisi → placeholder)
-    expect(screen.getByText(`applique le template ${T.slug} à mon projet <projet>`)).toBeInTheDocument()
+    // l'action réelle : le bouton d'application (désactivé tant qu'aucun projet n'est choisi)
+    const btn = screen.getByRole('button', { name: 'Inspirer ce projet' })
+    expect(btn).toBeInTheDocument()
+    expect(btn).toBeDisabled()
   })
 
-  it('injecte le projet choisi dans le prompt copiable', () => {
+  it('applique le template au projet choisi (POST /inspire) au clic', () => {
     h.templates = [T]
     h.tpl = T.slug
     h.projects = [{ id: '1', slug: 'mon-projet' }]
     render(<TemplateExplorer />)
     fireEvent.change(screen.getByLabelText('Projet cible'), { target: { value: 'mon-projet' } })
-    expect(screen.getByText(`applique le template ${T.slug} à mon projet mon-projet`)).toBeInTheDocument()
+    const btn = screen.getByRole('button', { name: 'Inspirer ce projet' })
+    expect(btn).toBeEnabled()                                   // projet choisi → action débloquée
+    fireEvent.click(btn)
+    expect(h.inspire.mutate).toHaveBeenCalledWith(T.slug)       // applique CE template
+  })
+
+  it('affiche le compte-rendu de succès après application', () => {
+    h.templates = [T]
+    h.tpl = T.slug
+    h.projects = [{ id: '1', slug: 'mon-projet' }]
+    h.inspire.data = {
+      project: 'mon-projet', template: T.slug, feature: 'design-browser-game-spatial',
+      task: 'customize-ui', files: ['brief.md', 'tokens.css', 'preview.png'],
+    }
+    render(<TemplateExplorer />)
+    expect(screen.getByText('Template appliqué à mon-projet')).toBeInTheDocument()
+    expect(screen.getByText('design-browser-game-spatial')).toBeInTheDocument()
   })
 
   it('affiche un vide honnête quand aucun template n\'est servi', () => {

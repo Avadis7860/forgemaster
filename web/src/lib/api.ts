@@ -48,6 +48,7 @@ import {
   ProjectsListSchema,
   RoadmapSchema,
   RoadmapCheckSchema,
+  InspireResultSchema,
   ReconcileSocleResultSchema,
   RefixResultSchema,
   TemplatesListSchema,
@@ -122,6 +123,14 @@ export const api = {
   // par leur `template.toml`. GET idempotent (scan FS déterministe, fail-closed — goto-safe). Vide honnête si
   // aucun template (dev sans build). La preview/entry sont chargées en statique par le front, pas via l'API.
   listTemplates: () => request('/api/templates', TemplatesListSchema).then((r) => r.templates),
+
+  // « Inspirer un projet de ce template » : crée la feature+task de customisation `design-<template>` et sème
+  // la graine `docs/design/<template>/`. POST, corps = {template}. Idempotent côté serveur (ré-inspiration).
+  inspire: (project: string, template: string) =>
+    request(`/api/projects/${encodeURIComponent(project)}/inspire`, InspireResultSchema, {
+      method: 'POST',
+      body: JSON.stringify({ template }),
+    }),
 
   // Intérieur d'un bundle (explorer P5) : arbre curé (chemins + groupe) puis corps d'UN fichier. GET
   // idempotents (lecture du bundle composé vendoré — goto-safe). Fail-closed : type non offert / fichier
