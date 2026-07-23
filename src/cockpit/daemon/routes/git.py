@@ -256,4 +256,17 @@ def make_git_router() -> APIRouter:
             raise HTTPException(status_code=404, detail=f"blame indisponible ({ref}:{path}) : {exc}") from exc
         return {"project": project, "ref": ref, "path": path, "lines": lines}
 
+    @router.get("/api/projects/{project}/git/search")
+    def git_search(project: str, ref: str, q: str, deps: Deps = Depends(get_deps)) -> dict:
+        """Recherche plein-texte (grep fixed-string, insensible à la casse, binaires exclus) dans tous les
+        fichiers d'une réf → `{project, ref, q, results:[{path, line, text}], truncated, count}`. Read-only,
+        idempotent. `truncated=True` si le nb de correspondances dépasse le cap (**signalé**) ; `q` vide →
+        liste vide (200) ; projet absent / réf introuvable → 404."""
+        sot = _sot(deps, project)
+        try:
+            result = InternalGit().search(sot, ref, q)
+        except GitOpError as exc:
+            raise HTTPException(status_code=404, detail=f"recherche impossible ({ref}) : {exc}") from exc
+        return {"project": project, "ref": ref, "q": q, **result}
+
     return router

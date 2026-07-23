@@ -571,6 +571,23 @@ def test_git_blame_over_http(client):
     assert c.get(blame.format("ghost"), params={"ref": "dev", "path": "CLAUDE.md"}).status_code == 404
 
 
+def test_git_search_over_http(client):
+    c, _ = client
+    c.post("/api/projects", json={"slug": "proj"})   # SoT auto-seedé (CLAUDE.md scaffold porte « cockpit »)
+    search = "/api/projects/{}/git/search"
+    r = c.get(search.format("proj"), params={"ref": "dev", "q": "cockpit"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["project"] == "proj" and body["ref"] == "dev" and body["q"] == "cockpit"
+    assert body["results"] and all({"path", "line", "text"} <= m.keys() for m in body["results"])
+    assert body["truncated"] is False and body["count"] == len(body["results"])
+    # q vide → 200 vide (pas de match-tout) ; réf inconnue → 404 ; projet inconnu → 404
+    empty = c.get(search.format("proj"), params={"ref": "dev", "q": "   "})
+    assert empty.status_code == 200 and empty.json()["results"] == []
+    assert c.get(search.format("proj"), params={"ref": "nope", "q": "cockpit"}).status_code == 404
+    assert c.get(search.format("ghost"), params={"ref": "dev", "q": "cockpit"}).status_code == 404
+
+
 def test_git_sync_endpoint_reports_divergence_and_degrades(client, tmp_path: Path):
     """`GET .../git/sync` (réseau, séparé du `/git` idempotent) rend l'écart SoT↔miroir par branche + rollup,
     avec dégradation honnête : pas de miroir → `no_mirror` ; miroir en avance → `remote_ahead`. Jamais un

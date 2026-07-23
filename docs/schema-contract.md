@@ -259,8 +259,12 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   réf introuvable). · `GET /api/projects/{p}/git/blame?ref=&path=` (blame ligne-à-ligne d'un fichier →
   `{project, ref, path, lines:[{sha, author, date, summary}]}`, **une entrée par ligne** (sha court, date ISO
   du commit auteur) ; gardes calquées sur `blob` : **404** réf/chemin introuvable OU non-blob OU binaire
-  (blame indisponible), **413** au-delà de 10 Mo (refus signalé)). Tous read-only, idempotents (goto-only
-  safe). · `GET /api/projects/{p}/git/sync` (**écart SoT↔miroir
+  (blame indisponible), **413** au-delà de 10 Mo (refus signalé)). · `GET /api/projects/{p}/git/search?ref=&q=`
+  (recherche plein-texte `git grep` — **fixed-string, insensible à la casse, binaires exclus** — dans tous les
+  fichiers d'une réf → `{project, ref, q, results:[{path, line, text}], truncated, count}` ; `count` = total de
+  correspondances avant cap, `truncated=true` si > `_MAX_GREP_RESULTS` (**signalé, jamais silencieux** —
+  invariant) ; `q` vide → `results=[]` (200, pas de match-tout) ; **404** réf introuvable). Tous read-only,
+  idempotents (goto-only safe). · `GET /api/projects/{p}/git/sync` (**écart SoT↔miroir
   GitHub** : **RÉSEAU, non-idempotent** — fait un `git fetch` du miroir, donc **SÉPARÉ** des lectures
   idempotentes ci-dessus, l'UI le rattache au refresh manuel, jamais au polling/goto-only → `{project, remote,
   fetched, branches:{<b>:{ahead, behind, state}}, state}`, rollup `state` et par-branche `state ∈

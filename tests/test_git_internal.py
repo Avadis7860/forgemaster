@@ -726,6 +726,26 @@ def test_blame_refuses_binary_too_large_and_bad_path(tmp_path: Path, monkeypatch
         git.blame(sot, "dev", "README.md")
 
 
+def test_search_finds_matches_excludes_binary_and_signals_cap(tmp_path: Path):
+    git = InternalGit()
+    # _seed_bare_rich : README.md "# projet\nligne 2\n" · src/app.py "print('hi')\n" · data.bin binaire
+    sot = _seed_bare_rich(tmp_path)
+    res = git.search(sot, "dev", "projet")
+    assert res["count"] == 1 and res["truncated"] is False
+    assert res["results"] == [{"path": "README.md", "line": 1, "text": "# projet"}]
+    # fixed-string INSENSIBLE à la casse (-i) : "PRINT" retrouve src/app.py
+    assert git.search(sot, "dev", "PRINT")["results"][0]["path"] == "src/app.py"
+    # binaire EXCLU (-I) : "binaire" n'existe que dans data.bin → aucun résultat (pas de bruit)
+    assert git.search(sot, "dev", "binaire") == {"results": [], "truncated": False, "count": 0}
+    # requête vide/blanche → vide SANS exception (un motif vide matcherait toute ligne)
+    assert git.search(sot, "dev", "   ") == {"results": [], "truncated": False, "count": 0}
+    # cap SIGNALÉ : "i" matche plusieurs lignes ; max_results=1 tronque ET le dit (count = total avant cap)
+    capped = git.search(sot, "dev", "i", max_results=1)
+    assert len(capped["results"]) == 1 and capped["truncated"] is True and capped["count"] >= 2
+    with pytest.raises(GitOpError):                           # réf inconnue → lève (appelant → 404)
+        git.search(sot, "dev-nexiste-pas", "projet")
+
+
 def test_read_blob_text(tmp_path: Path):
     git = InternalGit()
     sot = _seed_bare_rich(tmp_path)

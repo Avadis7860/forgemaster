@@ -5,6 +5,16 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Git/API — endpoint `search` (recherche de code / grep, parité GitHub) — pas de bump
+- `GET /api/projects/{p}/git/search?ref=&q=` rend les correspondances plein-texte d'une réf
+  (`{project, ref, q, results:[{path, line, text}], truncated, count}`). **Nouvelle route** additive → **pas de
+  bump `SCHEMA_VERSION`** (une route HTTP neuve n'a pas de déclencheur de migration, cf. §Politique de versionnage).
+- Primitive read-only `InternalGit.search` (`git internal-first`, `git grep -z -n -I -F -i`) : **fixed-string,
+  insensible à la casse, binaires exclus**. **Cap signalé** : `truncated=true` au-delà de `_MAX_GREP_RESULTS`
+  (500), `count` = total avant cap — jamais de cap silencieux (invariant). `q` vide → `results=[]` (pas de
+  match-tout). Seule primitive à invoquer `_git` (pas `_checked`) : `git grep` sort en **code 1 quand il n'y a
+  aucun match** (vide légitime, pas une erreur) ; code ≥2 (réf introuvable) → 404.
+
 ### Git/API — endpoint `blame` + gouttière ligne-à-ligne (parité GitHub) — pas de bump
 - `GET /api/projects/{p}/git/blame?ref=&path=` rend le blame ligne-à-ligne d'un fichier (`{project, ref, path,
   lines:[{sha, author, date, summary}]}`, une entrée par ligne). **Nouvelle route** additive → **pas de bump

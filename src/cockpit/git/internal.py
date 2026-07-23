@@ -41,6 +41,10 @@ _BINARY_SNIFF = 8000  # octets sondés pour un NUL (heuristique git-like « fich
 # Cap de la liste plate des chemins (palette « go to file ») : au-delà on tronque et on le SIGNALE
 # (`truncated`), jamais de cap silencieux. Un dépôt de code réel reste très en-deçà.
 _MAX_TREE_PATHS = 10_000
+# Recherche de code (grep) : cap **signalé** du nombre de correspondances (`truncated`) et borne d'affichage
+# d'un extrait (lignes minifiées) — même doctrine anti-cap-silencieux que _MAX_TREE_PATHS.
+_MAX_GREP_RESULTS = 500
+_MAX_MATCH_LEN = 500
 
 
 class GitOpError(RuntimeError):
@@ -827,6 +831,33 @@ class InternalGit:
             elif line.startswith("summary "):
                 cur["summary"] = line[len("summary "):]
         return rows
+
+    def search(self, sot: Path, ref: str, query: str, *, max_results: int = _MAX_GREP_RESULTS) -> dict:
+        """Recherche plein-texte dans tous les fichiers d'une réf : `git grep -z -n -I -F -i` (fixed-string,
+        insensible à la casse, binaires exclus) → `{results: [{path, line, text}], truncated, count}`, pour la
+        palette « rechercher dans le code ». **Cap signalé** : au-delà de `max_results` on tronque ET on DIT
+        `truncated=True` (`count` = total avant cap ; jamais de cap silencieux, invariant). Requête
+        vide/blanche → résultat vide (un motif vide matcherait toute ligne). Seule primitive à invoquer `_git`
+        (PAS `_checked`) : `git grep` **sort en code 1 quand il n'y a AUCUN match** — un vide légitime, pas
+        une erreur ; un code ≥2 (réf introuvable, motif invalide) lève `GitOpError`. Read-only, bare-safe.
+        `-z` NUL-délimite lineno+contenu (le contenu, dernier champ, ne se confond plus avec un `:`)."""
+        if not query.strip():
+            return {"results": [], "truncated": False, "count": 0}
+        r = _git(sot, "grep", "-z", "-n", "-I", "-F", "-i", "--no-color", "-e", query, ref)
+        if r.returncode == 1:               # git grep : 1 = aucun match (résultat vide, pas une erreur)
+            return {"results": [], "truncated": False, "count": 0}
+        if r.returncode != 0:               # ≥2 = réf introuvable / motif invalide → erreur dure
+            raise GitOpError(f"git grep @ {ref}: {r.stderr.strip()[:200]}")
+        rows: list[dict] = []
+        for line in r.stdout.split("\n"):
+            if not line:
+                continue
+            prefix, _, rest = line.partition("\x00")   # prefix = "<ref>:<path>" (une réf git n'a pas de ':')
+            lineno, _, text = rest.partition("\x00")
+            path = prefix.split(":", 1)[1] if ":" in prefix else prefix
+            rows.append({"path": path, "line": int(lineno) if lineno.isdigit() else 0,
+                         "text": text[:_MAX_MATCH_LEN]})
+        return {"results": rows[:max_results], "truncated": len(rows) > max_results, "count": len(rows)}
 
     def archive(self, sot: Path, ref: str, dest_dir: Path) -> None:
         """Matérialise l'**arbre complet** d'une réf dans `dest_dir`, **sans working-tree** : `git archive`
