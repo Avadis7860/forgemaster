@@ -112,9 +112,10 @@ def validate_bundle(project_type: str = "generic") -> None:
     """Valide un bundle **avant toute copie** (fail-closed). Lève `BundleError` si : type hors registre ;
     manifeste absent/illisible ; `version` manquante ; `project_type` du manifeste ≠ nom du dossier ;
     `facets` vide ; `default_facet` ∉ `facets` ; une facette déclarée sans dossier `.claude/facets/<f>/`
-    de support dans le bundle composé ; un bloc `[bundle.mcp]` présent mais mal typé (`corpus` non-booléen,
-    `tech_scope` non-nom). Le bloc `mcp` est **optionnel** (absent ⇒ valide) : déclaration sèche du besoin
-    de corpus, jamais un secret ni un endpoint."""
+    de support dans le bundle composé ; un bloc `[bundle.mcp]` présent mais mal typé (`corpus` non-booléen).
+    Le bloc `mcp` est **optionnel** (absent ⇒ valide) : déclaration sèche du besoin de corpus (un booléen),
+    jamais un secret ni un endpoint. Les silos tech pertinents ne vivent PAS ici mais dans la prose du
+    `CLAUDE.md §4` (SoT unique, le lever réellement lu par le worker)."""
     files = load_bundle(project_type)                      # lève BundleError si type hors registre
     manifest = _parse_manifest(files, project_type)
     if not manifest.get("version"):
@@ -140,9 +141,6 @@ def validate_bundle(project_type: str = "generic") -> None:
         corpus = mcp_decl.get("corpus")
         if corpus is not None and not isinstance(corpus, bool):
             raise BundleError(f"bundle {project_type!r} : `mcp.corpus` doit être un booléen")
-        scope = mcp_decl.get("tech_scope")
-        if scope is not None and (not isinstance(scope, str) or not scope.strip()):
-            raise BundleError(f"bundle {project_type!r} : `mcp.tech_scope` doit être un nom de silo non vide")
 
 
 def list_valid_types() -> list[dict]:

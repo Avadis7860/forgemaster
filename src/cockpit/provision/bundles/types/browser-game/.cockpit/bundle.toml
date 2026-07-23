@@ -4,8 +4,9 @@ project_type = "browser-game"
 facets = ["frontend", "backend", "game-design", "doc"]
 default_facet = "backend"
 
-# Déclaration MCP sèche (sans secret). `corpus` = bénéficie du capital-token universel ; `tech_scope` =
-# silo tech dédié à ce type → un worker interroge `query(type=tech, scope=browser-game)` (cf. CLAUDE.md).
+# Déclaration MCP sèche (sans secret ni endpoint — ceux-là vivent au niveau instance). `corpus = true` =
+# ce type bénéficie du capital-token servi (blueprint/templates/tech). Les silos tech pertinents sont nommés
+# dans la prose du `CLAUDE.md §4` (le lever réellement lu par le worker), SoT unique — pas ici (un champ TOML
+# non consommé qui dupliquerait §4 dériverait en silence).
 [bundle.mcp]
 corpus = true
-tech_scope = "browser-game"

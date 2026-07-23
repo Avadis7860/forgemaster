@@ -143,16 +143,32 @@ def test_list_valid_types_returns_metadata():
     assert bg["version"] == "1"
     assert bg["default_facet"] == "backend"
     assert set(bg["facets"]) == {"frontend", "backend", "game-design", "doc"}
-    # Déclaration MCP sèche surfacée par entrée : browser-game pointe son silo tech dédié.
-    assert bg["mcp"] == {"corpus": True, "tech_scope": "browser-game"}
-    assert by_type["generic"]["mcp"] == {"corpus": True}   # universel, sans silo type-spécifique
+    # Déclaration MCP sèche surfacée par entrée : tout type bénéficie du corpus servi (`corpus = true`).
+    assert bg["mcp"] == {"corpus": True}
+    assert by_type["generic"]["mcp"] == {"corpus": True}   # universel
+    # Les overlays qui surchargent bundle.toml (whole-file) RE-déclarent `corpus` — sinon il serait perdu.
+    for t in ("cli-tool", "front-ts", "service-api"):
+        assert by_type[t]["mcp"] == {"corpus": True}, f"{t} : corpus perdu par l'override whole-file"
 
 
 def test_bundle_manifest_declares_mcp_corpus():
-    """DoD 1 : le manifeste porte une déclaration MCP **sèche** (jamais de secret ni d'endpoint) — `base`
-    (generic) marque l'universel `corpus = true` ; browser-game ajoute son `tech_scope`."""
-    assert read_bundle_manifest("generic")["mcp"] == {"corpus": True}
-    assert read_bundle_manifest("browser-game")["mcp"] == {"corpus": True, "tech_scope": "browser-game"}
+    """DoD 1 : le manifeste porte une déclaration MCP **sèche** (jamais de secret ni d'endpoint). TOUT type
+    marque `corpus = true` (bénéficie du capital-token servi) ; les silos tech pertinents vivent dans la prose
+    du `CLAUDE.md §4` (SoT unique, le lever réellement lu), PAS en champ TOML dupliqué qui dériverait."""
+    for t in discover_types():
+        assert read_bundle_manifest(t)["mcp"] == {"corpus": True}, f"{t} : corpus absent du manifeste"
+
+
+def test_bundles_wire_corpus_query_in_claude():
+    """Le **lever réel** du capital-token = la prose `CLAUDE.md §4` (le TOML `corpus`/`tech_scope` n'est
+    consommé nulle part — validation de type seule ; c'est le worker qui LIT le CLAUDE.md). Donc chaque type
+    câble la requête corpus dans son CLAUDE.md, et aucun ne pointe le scope mort historique (`browser-game`,
+    un archétype sans silo tech)."""
+    for t in discover_types():
+        claude = load_bundle(t)["CLAUDE.md"]
+        assert "query(type=tech, scope=" in claude, f"{t} : CLAUDE.md ne câble pas la requête corpus"
+        assert "cockpit mcp wire" in claude, f"{t} : CLAUDE.md ne mentionne pas le câblage MCP"
+        assert "scope=browser-game" not in claude, f"{t} : pointeur tech mort (scope=browser-game)"
 
 
 def test_validate_bundle_rejects_malformed_mcp(tmp_path, monkeypatch):

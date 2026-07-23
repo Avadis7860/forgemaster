@@ -13,6 +13,7 @@ default_facet = "doc"
 
 # Déclaration MCP sèche (jamais de secret ni d'endpoint — ceux-là vivent au niveau instance, câblés par
 # le wizard/provision). `corpus = true` = universel : toute instance bénéficie du capital-token
-# blueprint/templates. Un type peut ajouter `tech_scope = "<silo>"` (pointeur vers son silo tech dédié).
+# blueprint/templates. Les silos tech pertinents par type vivent dans la prose du `CLAUDE.md §4` (SoT unique,
+# le lever réellement lu par le worker) — jamais dupliqués en champ TOML non consommé.
 [bundle.mcp]
 corpus = true

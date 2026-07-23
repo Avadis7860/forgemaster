@@ -29,9 +29,12 @@
 
 - **Nommage** : `snake_case` (fonctions/variables), `PascalCase` (classes/modèles) ; `kebab-case` fichiers/slugs.
 - **Typage & principes** : **type hints stricts** (mypy vert), modèle d'entrée/sortie explicite, SOLID/DRY.
-- **Anti-patterns** (jamais) : signature d'API « de mémoire » (lis la doc/le code) ; endpoint qui masque un
-  échec (faux-vert) ; `grep` aveugle pour t'orienter (interroge `codemap where`) ; commit direct `main`/`dev` ;
-  merge/push **sans GO humain**.
+- **Anti-patterns** (jamais) : signature d'API « de mémoire » avant un import non trivial → **si un MCP de
+  corpus est câblé** (`cockpit mcp wire`), interroge le **silo tech pertinent** avec
+  `query(type=tech, scope=<silo>)` — `fastapi` · `pydantic` · `starlette` · `uvicorn` · `sqlalchemy` ·
+  `alembic` · `httpx` · `pytest` · `mypy` · `ruff` · `anyio` · `hypothesis` ; sinon lis la doc/le code —
+  n'invente pas ; endpoint qui masque un échec (faux-vert) ; `grep` aveugle pour t'orienter (interroge
+  `codemap where`) ; commit direct `main`/`dev` ; merge/push **sans GO humain**.
 
 ## 5. Format des réponses attendues
 

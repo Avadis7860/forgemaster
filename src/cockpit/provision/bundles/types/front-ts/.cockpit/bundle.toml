@@ -3,3 +3,10 @@ version = "1"
 project_type = "front-ts"
 facets = ["frontend", "backend", "doc"]
 default_facet = "frontend"
+
+# Déclaration MCP sèche (sans secret ni endpoint). `corpus = true` = ce type bénéficie du capital-token servi.
+# Un overlay surcharge `bundle.toml` en whole-file → sans ce bloc, le `corpus = true` de la base est PERDU.
+# Silos tech pertinents (react·vite·typescript·tailwind·zod·vitest·react-query·react-router·react-hook-form·
+# shadcn·radix-ui) : nommés dans la prose du `CLAUDE.md §4`.
+[bundle.mcp]
+corpus = true

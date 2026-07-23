@@ -31,8 +31,11 @@
 - **Typage & principes** : **strict** (`tsc` vert) ; réutiliser le design-system avant de créer du neuf ; état
   lisible d'un coup d'œil ; DRY.
 - **Anti-patterns** (jamais) : **livrer un écran sans l'avoir vu** (boucle visuelle screenshot + Read) ;
-  réinventer un primitive existant (`frontmap where` d'abord) ; signature d'API « de mémoire » ; `grep`
-  aveugle ; commit direct `main`/`dev` ; merge/push **sans GO humain**.
+  réinventer un primitive existant (`frontmap where` d'abord) ; signature d'API « de mémoire » avant un import
+  non trivial → **si un MCP de corpus est câblé** (`cockpit mcp wire`), interroge le **silo tech pertinent**
+  (`query(type=tech, scope=<silo>)` — `react` · `vite` · `typescript` · `tailwind` · `zod` · `vitest` ·
+  `react-query` · `react-router` · `react-hook-form` · `shadcn` · `radix-ui`) ; sinon lis la doc/le code —
+  n'invente pas ; `grep` aveugle ; commit direct `main`/`dev` ; merge/push **sans GO humain**.
 
 ## 5. Format des réponses attendues
 

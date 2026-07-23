@@ -41,10 +41,11 @@ Univers **TypeScript unique** :
   - **Simulation déterministe** (même seed + commandes → même état) ; la résolution se teste en pur avant l'UI.
   - **Échelle différée** — monolithe + SQLite (persistance câblée en É7) d'abord, pas de sur-architecture.
 - **Anti-patterns** (jamais) : signature d'API « de mémoire » avant un import non trivial (React Query / Hono /
-  Drizzle / Zod) → **si un MCP de corpus est câblé** (`cockpit mcp wire`), interroge-le
-  (`query(type=tech, scope=browser-game)`) ; sinon appuie-toi sur la doc et le code du projet — n'invente pas ;
-  `grep` aveugle pour t'orienter → `codemap where` d'abord ; commit direct `main`/`dev` ; merge/push **sans GO
-  humain** (fail-closed).
+  Drizzle / Zod) → **si un MCP de corpus est câblé** (`cockpit mcp wire`), interroge le **silo tech pertinent**
+  (`query(type=tech, scope=<silo>)` — `react` · `vite` · `typescript` · `tailwind` · `zod` · `vitest` ·
+  `react-query` · `drizzle` · `hono` selon l'API visée) ; sinon appuie-toi sur la doc et le code du projet —
+  n'invente pas ; `grep` aveugle pour t'orienter → `codemap where` d'abord ; commit direct `main`/`dev` ;
+  merge/push **sans GO humain** (fail-closed).
 
 ## 5. Format des réponses attendues
 

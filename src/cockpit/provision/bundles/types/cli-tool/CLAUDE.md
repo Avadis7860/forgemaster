@@ -32,8 +32,10 @@
 - **Typage & principes** : **type hints stricts** (mypy vert) ; **déterminisme** (même entrée → même sortie) ;
   cœur testable sans I/O ; SOLID/DRY.
 - **Anti-patterns** (jamais) : **casser le schéma de sortie en douce** (→ bump + CHANGELOG) ; faire de l'I/O
-  dans le cœur testable ; signature « de mémoire » ; `grep` aveugle (interroge `codemap where`) ; commit
-  direct `main`/`dev` ; merge/push **sans GO humain**.
+  dans le cœur testable ; signature d'API « de mémoire » avant un import non trivial → **si un MCP de corpus
+  est câblé** (`cockpit mcp wire`), interroge le **silo tech pertinent** (`query(type=tech, scope=<silo>)` —
+  `typer` · `rich` · `httpx` · `pytest` · `mypy` · `ruff`) ; sinon lis la doc/le code — n'invente pas ; `grep`
+  aveugle (interroge `codemap where`) ; commit direct `main`/`dev` ; merge/push **sans GO humain**.
 
 ## 5. Format des réponses attendues
 

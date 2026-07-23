@@ -30,7 +30,9 @@
 - **Nommage** : idiomatique au langage ; `kebab-case` pour fichiers et slugs.
 - **Typage & principes** : typage strict (mypy / tsc), SOLID/DRY, cœur testable sans I/O.
 - **Anti-patterns** (jamais) :
-  - inventer une signature d'API « de mémoire » → **lis** la doc/le code avant tout import non trivial ;
+  - inventer une signature d'API « de mémoire » avant un import non trivial → **si un MCP de corpus est câblé**
+    (`cockpit mcp wire`), interroge le silo de la lib (`query(type=tech, scope=<silo>)`) ; sinon **lis** la
+    doc/le code — n'invente pas ;
   - **fouiller à l'aveugle** (grep/lecture en bloc) pour t'orienter → interroge la **carte** d'abord ;
   - commit direct sur `main`/`dev` ; merge/push **sans GO humain** (fail-closed).
 
