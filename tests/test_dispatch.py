@@ -762,6 +762,73 @@ def test_build_worker_prompt_carries_real_vendored_game_design_persona(tmp_path:
     assert "game-designer" not in be and gd != be               # chaque facette porte SA casquette
 
 
+# -- capital distillé projet-local : docs/decisions/ relu (cliquet de compounding) -----------------
+
+def _decisions_root(tmp_path: Path, docs: dict[str, str]) -> Path:
+    """Un faux worktree portant du minerai déjà distillé (`docs/decisions/<name>.md`)."""
+    root = tmp_path / "wt"
+    ddir = root / "docs" / "decisions"
+    ddir.mkdir(parents=True)
+    for name, body in docs.items():
+        (ddir / name).write_text(body, encoding="utf-8")
+    return root
+
+
+def test_worker_prompt_reinjects_project_decisions_capital(tmp_path: Path):
+    """Trou B — un run RELIT ce qu'un run passé a distillé (`docs/decisions/`), sans dépendre de son
+    initiative libre. Preuve : le prompt worker porte les décisions présentes, le plus frais d'abord, chacune
+    avec son chemin (le worker lit le fichier entier au besoin)."""
+    root = _decisions_root(tmp_path, {
+        "2026-07-20--tick-cadence.md": "# Cadence du tick\nLe tick tourne à 20 Hz — verrouillé.",
+        "2026-07-22--persistence-drizzle.md": "# Persistance\nDrizzle+SQLite sur volume nommé.",
+    })
+    project = {"slug": "vr", "name": "VR"}
+    feature = {"slug": "f", "title": "F", "branch": "feature/f"}
+    task = {"slug": "t", "title": "T", "priority": "P1"}
+    text = prompt.build_worker_prompt(project, feature, task, root=root)
+    assert "Capital distillé du projet" in text                       # le bloc de relecture est présent
+    assert "Le tick tourne à 20 Hz" in text and "Drizzle+SQLite" in text   # les 2 décisions relues
+    assert "docs/decisions/2026-07-22--persistence-drizzle.md" in text     # le chemin (lecture complète)
+    # récence : le plus frais (2026-07-22) apparaît AVANT le plus ancien (2026-07-20)
+    assert text.index("Drizzle+SQLite") < text.index("Le tick tourne à 20 Hz")
+    assert prompt.build_worker_prompt(project, feature, task, root=root) == text   # déterministe
+
+
+def test_fix_prompt_also_reinjects_decisions_capital(tmp_path: Path):
+    """La passe de fix relit aussi le capital projet-local (un fix profite des décisions passées)."""
+    root = _decisions_root(tmp_path, {"2026-07-22--x.md": "# X\nContrainte porteuse ABC."})
+    fp = prompt.build_fix_prompt({"slug": "p", "name": "P"},
+                                 {"slug": "f", "branch": "feature/f"}, findings={}, root=root)
+    assert "Capital distillé du projet" in fp and "Contrainte porteuse ABC" in fp
+
+
+def test_decisions_capital_absent_is_failsoft(tmp_path: Path):
+    """Projet sans `docs/decisions/` → aucun bloc capital, aucun crash (le prompt se construit)."""
+    project = {"slug": "p", "name": "P"}
+    feature = {"slug": "f", "title": "F", "branch": "feature/f"}
+    task = {"slug": "t", "title": "T", "priority": "P1"}
+    text = prompt.build_worker_prompt(project, feature, task, root=tmp_path / "empty")
+    assert "Capital distillé du projet" not in text                  # rien à relire → bloc omis
+    assert "worker autonome" in text                                 # le reste du prompt tient
+
+
+def test_decisions_capital_is_budget_bounded_with_pointer(tmp_path: Path):
+    """Anti-explosion du prompt (DoD) : beaucoup de décisions volumineuses → borne totale respectée, les
+    plus anciennes non-injectées sont pointées (jamais un cap silencieux)."""
+    big = "# Grosse décision\n" + ("détail " * 300)   # ~2100 car. > budget à lui seul déborde vite
+    docs = {f"2026-07-{d:02d}--dec.md": big for d in range(1, 13)}   # 12 décisions datées
+    root = _decisions_root(tmp_path, docs)
+    project = {"slug": "p", "name": "P"}
+    feature = {"slug": "f", "title": "F", "branch": "feature/f"}
+    task = {"slug": "t", "title": "T", "priority": "P1"}
+    text = prompt.build_worker_prompt(project, feature, task, root=root)
+    block = text.split("## Capital distillé du projet", 1)[1]
+    assert len(block) < prompt._DECISIONS_BUDGET + prompt._DECISION_EXCERPT_MAX + 600   # borné
+    assert "d'autres décisions plus anciennes" in block              # pointeur explicite (pas de cap muet)
+    # récence : la plus récente (07-12) est injectée, une ancienne (07-01) est reléguée au pointeur
+    assert "2026-07-12--dec.md" in block and "2026-07-01--dec.md" not in block
+
+
 def test_record_finish_persists_error_on_failure(ctx):
     """`record_finish` écrit `error` (v11) : le snippet calculé par `parse_headless_result` atterrit en base
     au lieu de mourir dans le retour HTTP → un job `failed` n'est plus muet. Le job porte `kind='task'` (le

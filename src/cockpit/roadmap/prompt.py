@@ -3,10 +3,12 @@
 
 Port du **PATTERN** de `lib/plan_prompt.py` (gabarit générique + `PROJECT_*_HOME` : le prompt puise ses
 injections dans le repo du projet, rien codé en dur par projet). On **écarte délibérément** les injections
-propres à la couche *mémoire* du vault (blueprints, stacks, catalogs, décisions, zone-memory, profils de
+propres à la couche *mémoire du vault* (blueprints, stacks, catalogs central, zone-memory, profils de
 spécialité) : elles n'ont pas de sens pour une forge générique, dont chaque projet porte son propre `docs/`.
-Déterministe (zéro LLM au build, zéro I/O réseau) — seul un `read_text` des docs présents du worktree.
-"""
+En revanche le **capital distillé PROPRE au projet** (`docs/decisions/`, écrit par un run passé via
+`worker.write_decision_doc`) EST relu ici (`_decisions_block`) : c'est le cliquet de compounding
+projet-local — sans quoi la forge écrirait un minerai qu'elle ne relit jamais. Déterministe (zéro LLM au
+build, zéro I/O réseau) — seul un `read_text` des docs présents du worktree."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -20,6 +22,8 @@ CONTEXT_DOCS: tuple[tuple[str, str], ...] = (
     ("architecture", "docs/architecture.md"),
 )
 _EXCERPT_MAX = 1200   # caractères d'aperçu par doc (le worker lit le fichier entier au besoin)
+_DECISIONS_BUDGET = 2400     # budget total de caractères du capital distillé relu (borne anti-explosion)
+_DECISION_EXCERPT_MAX = 700  # aperçu par décision (le worker lit le fichier complet au besoin)
 
 
 def _hygiene_note() -> str:
@@ -74,6 +78,41 @@ def _context_block(root: Path) -> str:
         return ("### contexte projet\n(aucun `docs/` de contexte dans ce repo — "
                 "appuie-toi sur le code existant.)")
     return "\n\n".join(lines)
+
+
+def _decisions_block(root: Path) -> str:
+    """Bloc « capital distillé du projet » : relit `docs/decisions/` — le minerai qu'un run PASSÉ a distillé
+    (`worker.write_decision_doc`) — et le ré-injecte borné, pour fermer la boucle de compounding
+    projet-local. Sans lui, le cockpit **écrivait un capital qu'il ne relisait jamais** → pas d'effet
+    cliquet. Sélection **déterministe par récence** : les `.md` sont datés en tête de nom
+    (`<date>--<slug>.md`, cf. `worker.write_decision_doc`), triés décroissant (le plus frais d'abord) ; on
+    accumule des aperçus bornés jusqu'à `_DECISIONS_BUDGET`, chaque décision porte son chemin (le worker lit
+    le fichier entier / `docsmap where` au besoin). Absent/vide ⇒ `""` (fail-soft, filtré comme un facet
+    absent). PUR (tri par nom → aucune horloge, testable)."""
+    decisions_dir = root / "docs" / "decisions"
+    if not decisions_dir.is_dir():
+        return ""
+    docs = sorted((p for p in decisions_dir.glob("*.md") if p.is_file()),
+                  key=lambda p: p.name, reverse=True)
+    lines: list[str] = []
+    budget = _DECISIONS_BUDGET
+    for doc in docs:
+        if budget <= 0:   # budget épuisé et il reste des décisions plus anciennes → pointeur, pas de corps
+            lines.append("- … (`docs/decisions/` porte d'autres décisions plus anciennes — "
+                         "`docsmap where \"<intention>\"` pour les retrouver)")
+            break
+        try:
+            text = doc.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        excerpt = text[:_DECISION_EXCERPT_MAX] + ("…" if len(text) > _DECISION_EXCERPT_MAX else "")
+        rel = doc.relative_to(root)
+        lines.append(f"### `{rel}` (lis le fichier complet au besoin)\n{excerpt}")
+        budget -= len(excerpt)
+    if not lines:
+        return ""
+    return ("## Capital distillé du projet (décisions d'un run passé — relis-les avant de (re)décider)\n"
+            + "\n\n".join(lines))
 
 
 def _facet_block(root: Path, facet: str, leaf: str) -> str:
@@ -159,6 +198,7 @@ def build_fix_prompt(project: dict, feature: dict, *, findings: dict, root: Path
         _facet_block(root, facet, "METHOD.md"),
         f"## Bloqueurs du gate à corriger\n{findings_block(findings)}",
         f"## Contexte du projet\n{_context_block(root)}",
+        _decisions_block(root),   # capital distillé d'un run passé (cliquet de compounding projet-local)
     ]
     return "\n\n".join(b for b in blocks if b) + "\n"
 
@@ -184,5 +224,6 @@ def build_worker_prompt(project: dict, feature: dict, task: dict, *, root: Path)
         _facet_block(root, facet, "METHOD.md"),         # la méthode de la facette
         _acceptance_block(task),                        # les critères requis (DoD)
         f"## Contexte du projet\n{_context_block(root)}",
+        _decisions_block(root),   # capital distillé d'un run passé (cliquet de compounding projet-local)
     ]
     return "\n\n".join(b for b in blocks if b) + "\n"
