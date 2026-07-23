@@ -26,13 +26,16 @@ const dep = (over: Record<string, unknown>) =>
 describe('RuntimeStrip', () => {
   beforeEach(() => { h.deployments = [] })
 
-  it('déploiement running → lien health-gated ACTIF (href présent) + statut « en marche »', () => {
+  it('déploiement running → lien health-gated ACTIF, host VIEWER-RELATIF (jamais le loopback stocké)', () => {
+    // `url` stocké = loopback on-host ; le lien doit néanmoins se composer sur le hostname du viewer + port.
     h.deployments = [dep({ status: 'running', port: 5250, url: 'http://127.0.0.1:5250' })]
     render(<RuntimeStrip project="svc" />)
     expect(screen.getByText('en marche')).toBeInTheDocument()
     // Le nom de branche n'est plus répété dans le lien (axe 5 : porté par le badge) — libellé « ouvrir ↗ ».
     const link = screen.getByRole('link', { name: /ouvrir/ })
-    expect(link).toHaveAttribute('href', 'http://127.0.0.1:5250')
+    // jsdom sert la page en http://localhost → href = hostname courant + port, PAS le 127.0.0.1 du backend.
+    expect(link).toHaveAttribute('href', `http://${window.location.hostname}:5250`)
+    expect(link.getAttribute('href')).not.toContain('127.0.0.1')
   })
 
   it('déploiement stopped → lien INERTE (aucun href) + jamais un faux-vert', () => {

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Alert, Badge, Button, LoadingState, RefreshButton } from '@/components/ui'
 import { LogViewer } from '@/components/runtime/LogViewer'
 import { ApiError } from '@/lib/api'
+import { deployUrl } from '@/lib/deployUrl'
 import {
   useDeploy, useDeployments, useReconcileDeployments, useRestartDeployment, useStopDeployment,
 } from '@/lib/queries'
@@ -85,14 +86,16 @@ function DeploymentRow({ project, dep }: { project: string; dep: Deployment }) {
         </span>
       </div>
 
-      {/* Ligne 2 : méta discrète — port · sha · lien health-gated (jamais un faux-vert vers un service arrêté). */}
+      {/* Ligne 2 : méta discrète — port · sha · lien health-gated (jamais un faux-vert vers un service arrêté).
+          Le lien se compose VIEWER-RELATIF (hostname courant + port), pas depuis `dep.url` loopback : le
+          produit est joignable par le host qui a servi le cockpit, pas par le 127.0.0.1 du viewer (cf. deployUrl). */}
       <div className="flex flex-wrap items-center gap-2 text-xs text-faint">
         {dep.port != null && <code className="font-mono">:{dep.port}</code>}
         {dep.last_deploy_sha && (
           <code className="font-mono" title="sha du dernier deploy">{dep.last_deploy_sha.slice(0, 8)}</code>
         )}
-        {live && dep.url ? (
-          <a href={dep.url} target="_blank" rel="noreferrer"
+        {live && dep.port != null ? (
+          <a href={deployUrl(dep.port)} target="_blank" rel="noreferrer"
             className="font-medium text-accent-400 hover:underline">ouvrir ↗</a>
         ) : (
           <span title="service non démarré">non démarré</span>
