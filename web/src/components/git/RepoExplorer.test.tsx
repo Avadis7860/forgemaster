@@ -42,6 +42,8 @@ const BRANCHES: GitBranch[] = [
   { name: 'main', sha: 'bbb', subject: 's' },
 ]
 
+const TAGS: GitBranch[] = [{ name: 'v1.0', sha: 'ttt', subject: 'release 1.0' }]
+
 beforeEach(() => {
   h.search = {}
   h.history = []
@@ -61,7 +63,7 @@ describe('RepoExplorer', () => {
       'src/app.txt': { project: 'p', path: 'src/app.txt', ref: 'dev', size: 20,
         binary: false, truncated: false, too_large: false, content: "print('hi')\nx = 1\n" },
     }
-    const { rerender } = render(<RepoExplorer project="p" branches={BRANCHES} />)
+    const { rerender } = render(<RepoExplorer project="p" branches={BRANCHES} tags={[]} />)
 
     // arbre racine : dossier + fichier présents
     expect(screen.getByText('src')).toBeInTheDocument()
@@ -71,12 +73,12 @@ describe('RepoExplorer', () => {
 
     // descente dans src (navigation URL) → rerender pour refléter ?path=src → app.txt visible
     fireEvent.click(screen.getByText('src'))
-    rerender(<RepoExplorer project="p" branches={BRANCHES} />)
+    rerender(<RepoExplorer project="p" branches={BRANCHES} tags={[]} />)
     expect(await screen.findByText('app.txt')).toBeInTheDocument()
 
     // ouverture du fichier (navigation URL) → rerender → contenu + n° de ligne (gutter 1 et 2)
     fireEvent.click(screen.getByText('app.txt'))
-    rerender(<RepoExplorer project="p" branches={BRANCHES} />)
+    rerender(<RepoExplorer project="p" branches={BRANCHES} tags={[]} />)
     expect(await screen.findByText("print('hi')")).toBeInTheDocument()
     expect(screen.getByText('1')).toBeInTheDocument()
     expect(screen.getByText('2')).toBeInTheDocument()
@@ -93,7 +95,7 @@ describe('RepoExplorer', () => {
       'README.md': { project: 'p', path: 'README.md', ref: 'dev', size: 22,
         binary: false, truncated: false, too_large: false, content: '# Titre\n\nCorps du readme.' },
     }
-    render(<RepoExplorer project="p" branches={BRANCHES} />)
+    render(<RepoExplorer project="p" branches={BRANCHES} tags={[]} />)
     // Le README mène : plus d'invite « Aucun fichier », et le `#` est rendu en <h1> (DocView), pas laissé brut.
     expect(screen.queryByText('Aucun fichier')).not.toBeInTheDocument()
     expect(await screen.findByRole('heading', { name: 'Titre' })).toBeInTheDocument()
@@ -105,9 +107,9 @@ describe('RepoExplorer', () => {
       'main.py': { project: 'p', path: 'main.py', ref: 'dev', size: 30,
         binary: false, truncated: false, too_large: false, content: 'import os\nx = 1\n' },
     }
-    const { rerender } = render(<RepoExplorer project="p" branches={BRANCHES} />)
+    const { rerender } = render(<RepoExplorer project="p" branches={BRANCHES} tags={[]} />)
     fireEvent.click(screen.getByRole('button', { name: /main\.py/ }))
-    rerender(<RepoExplorer project="p" branches={BRANCHES} />)
+    rerender(<RepoExplorer project="p" branches={BRANCHES} tags={[]} />)
     // `.py` reconnu → lowlight : `import` devient un token coloré (span .hljs-keyword), dans un conteneur `hljs`
     // qui garde la grille n°-de-ligne (chunk lazy résolu par le Suspense).
     const kw = await screen.findByText('import')
@@ -121,9 +123,9 @@ describe('RepoExplorer', () => {
       'data.bin': { project: 'p', path: 'data.bin', ref: 'dev', size: 999,
         binary: true, truncated: false, too_large: false, content: '' },
     }
-    const { rerender } = render(<RepoExplorer project="p" branches={BRANCHES} />)
+    const { rerender } = render(<RepoExplorer project="p" branches={BRANCHES} tags={[]} />)
     fireEvent.click(screen.getByText('data.bin'))
-    rerender(<RepoExplorer project="p" branches={BRANCHES} />)
+    rerender(<RepoExplorer project="p" branches={BRANCHES} tags={[]} />)
     expect(await screen.findByText('Fichier binaire')).toBeInTheDocument()
   })
 
@@ -133,9 +135,9 @@ describe('RepoExplorer', () => {
       'big.log': { project: 'p', path: 'big.log', ref: 'dev', size: 20_000_000,
         binary: false, truncated: true, too_large: true, content: '' },
     }
-    const { rerender } = render(<RepoExplorer project="p" branches={BRANCHES} />)
+    const { rerender } = render(<RepoExplorer project="p" branches={BRANCHES} tags={[]} />)
     fireEvent.click(screen.getByText('big.log'))
-    rerender(<RepoExplorer project="p" branches={BRANCHES} />)
+    rerender(<RepoExplorer project="p" branches={BRANCHES} tags={[]} />)
     expect(await screen.findByText('Fichier trop volumineux')).toBeInTheDocument()
   })
 
@@ -149,12 +151,12 @@ describe('RepoExplorer', () => {
       { sha: 'c2full', short: 'c2', author: 'Alice', date: '2026-07-03T10:00:00Z', subject: 'doc: maj' },
       { sha: 'c1full', short: 'c1', author: 'Bob', date: '2026-07-01T10:00:00Z', subject: 'init' },
     ]
-    const { rerender } = render(<RepoExplorer project="p" branches={BRANCHES} />)
+    const { rerender } = render(<RepoExplorer project="p" branches={BRANCHES} tags={[]} />)
     // Racine = README seul → il s'auto-rend (ReadmePane) : pas de bascule Historique tant qu'aucun fichier
     // n'est sélectionné. On clique le bouton d'ARBRE (pas l'en-tête du README auto) pour ouvrir la visionneuse.
     expect(screen.queryByText('Historique')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /README\.md/ }))
-    rerender(<RepoExplorer project="p" branches={BRANCHES} />)
+    rerender(<RepoExplorer project="p" branches={BRANCHES} tags={[]} />)
     // fichier sélectionné → visionneuse avec bascule Historique ; le `.md` est rendu en Markdown (<h1>projet</h1>).
     expect(await screen.findByText('Historique')).toBeInTheDocument()
     expect(await screen.findByRole('heading', { name: 'projet' })).toBeInTheDocument()
@@ -163,5 +165,18 @@ describe('RepoExplorer', () => {
     expect(await screen.findByText('doc: maj')).toBeInTheDocument()
     expect(screen.getByText('init')).toBeInTheDocument()
     expect(screen.getByText('Alice')).toBeInTheDocument()
+  })
+
+  it('sépare branches et tags dans le sélecteur de réf (optgroups) et checkout d\'un tag', () => {
+    h.trees = { '': [{ name: 'notes.txt', type: 'blob', size: 3, sha: 'b1' }] }
+    render(<RepoExplorer project="p" branches={BRANCHES} tags={TAGS} />)
+    // deux optgroups distincts : Branches (dev/main) + Tags (v1.0)
+    const branchesGroup = screen.getByRole('group', { name: 'Branches' })
+    const tagsGroup = screen.getByRole('group', { name: 'Tags' })
+    expect(branchesGroup).toContainElement(screen.getByRole('option', { name: 'main' }))
+    expect(tagsGroup).toContainElement(screen.getByRole('option', { name: 'v1.0' }))
+    // sélectionner le tag écrit ?ref=v1.0 (et remet path/file à zéro), via l'updater d'URL simulé
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'v1.0' } })
+    expect(h.search).toEqual({ ref: 'v1.0', path: undefined, file: undefined })
   })
 })

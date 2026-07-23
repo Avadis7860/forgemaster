@@ -503,6 +503,21 @@ class InternalGit:
             rows.append({"name": name, "sha": sha, "subject": subject})
         return rows
 
+    def tags(self, sot: Path) -> list[dict]:
+        """Tags du SoT bare (`for-each-ref refs/tags`) → `[{name, sha, subject}]`, triés par date de création
+        décroissante (tags récents d'abord). Même forme que `branches` (le sélecteur de réf les unifie).
+        `subject` = message du tag annoté (vide pour un tag léger). Read-only, bare-safe."""
+        fmt = "%(refname:short)%09%(objectname:short)%09%(contents:subject)"
+        out = _checked(sot, "for-each-ref", "--sort=-creatordate", f"--format={fmt}", "refs/tags").stdout
+        rows: list[dict] = []
+        for line in out.splitlines():
+            if not line.strip():
+                continue
+            name, _, rest = line.partition("\t")
+            sha, _, subject = rest.partition("\t")
+            rows.append({"name": name, "sha": sha, "subject": subject})
+        return rows
+
     def log(self, sot: Path, ref: str, *, n: int = 20) -> list[dict]:
         """Log court d'une réf sur le SoT bare (`log --oneline -n <n> <ref>`, parsé PUR). Read-only,
         bare-safe. `--no-decorate` → sujet propre (pas de `(HEAD -> …)`). Lève si la réf est introuvable."""

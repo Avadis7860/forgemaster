@@ -49,14 +49,15 @@ def make_git_router() -> APIRouter:
 
     @router.get("/api/projects/{project}/git")
     def git_view(project: str, deps: Deps = Depends(get_deps)) -> dict:
-        """Vue git read-only du SoT bare : branches (nom·sha court·sujet), avance/retard `main` vs `dev`
-        (le signal « main rattrape dev »), et log court par réf protégée présente. Idempotent (aucune
+        """Vue git read-only du SoT bare : branches et tags (nom·sha court·sujet), avance/retard `main` vs
+        `dev` (le signal « main rattrape dev »), et log court par réf protégée présente. Idempotent (aucune
         mutation) — le runner de boucle visuelle *goto-only* l'atteint sans risque. Projet absent → 404 ;
         SoT illisible → 422 (jamais un demi-état inventé)."""
         sot = _sot(deps, project)
         git = InternalGit()
         try:
             branches = git.branches(sot)
+            tags = git.tags(sot)
             names = {b["name"] for b in branches}
             logs = {ref: git.log(sot, ref, n=_LOG_N) for ref in ("dev", "main") if ref in names}
             # ahead/behind seulement si les deux réfs protégées existent (un SoT neuf les a toutes deux).
@@ -65,7 +66,10 @@ def make_git_router() -> APIRouter:
             )
         except GitOpError as exc:
             raise HTTPException(status_code=422, detail=f"lecture git impossible : {exc}") from exc
-        return {"project": project, "branches": branches, "ahead_behind": ahead_behind, "logs": logs}
+        return {
+            "project": project, "branches": branches, "tags": tags,
+            "ahead_behind": ahead_behind, "logs": logs,
+        }
 
     @router.get("/api/projects/{project}/git/sync")
     def git_sync(project: str, deps: Deps = Depends(get_deps)) -> dict:

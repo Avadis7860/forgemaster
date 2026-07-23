@@ -654,6 +654,22 @@ def test_ls_tree_bad_ref_or_blob_path_raises(tmp_path: Path):
         git.ls_tree(sot, "dev", "README.md")
 
 
+def test_tags_lists_refs_tags_with_subjects(tmp_path: Path):
+    git = InternalGit()
+    sot = _seed_bare_rich(tmp_path)
+    assert git.tags(sot) == []                                  # aucun tag au départ
+    # tag annoté (sujet = message du tag) + tag léger (sujet = sujet du commit pointé), créés sur le SoT bare
+    _run("tag", "-a", "v1.0", "-m", "release 1.0", "dev", cwd=sot)
+    _run("tag", "v0.9-lw", "dev", cwd=sot)
+    tags = git.tags(sot)
+    assert {t["name"] for t in tags} == {"v1.0", "v0.9-lw"}     # les deux tags listés
+    assert all(t["sha"] for t in tags)
+    annotated = next(t for t in tags if t["name"] == "v1.0")
+    assert annotated["subject"] == "release 1.0"               # message du tag annoté
+    lightweight = next(t for t in tags if t["name"] == "v0.9-lw")
+    assert lightweight["subject"] == "rich seed"               # sujet du commit pointé (tag léger)
+
+
 def test_read_blob_text(tmp_path: Path):
     git = InternalGit()
     sot = _seed_bare_rich(tmp_path)

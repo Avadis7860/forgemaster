@@ -224,9 +224,11 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   qui a été rouge le reste + fait-de-merge) · `POST /api/merge/{p}/{f}` `{go, t1_override?, t15_override?}`
   (`run_merge` sous GO humain).
 - **git** — `GET /api/projects/{p}/git` (vue **read-only** du SoT bare : `branches` `[{name, sha, subject}]`,
-  `ahead_behind` `{base, head, ahead, behind}` de `main` vs `dev` — `ahead` = ce que main doit rattraper,
-  `null` si dev/main pas tous deux présents — et `logs` `{ref: [{sha, subject}]}` par réf protégée). Aucune
-  mutation (le cycle git vit dans `gate/merge`) ; **404** projet absent, **422** SoT illisible.
+  `tags` `[{name, sha, subject}]` (même forme, triés par date de création décroissante ; `subject` = message
+  du tag annoté, ou sujet du commit pointé pour un tag léger), `ahead_behind` `{base, head, ahead, behind}` de
+  `main` vs `dev` — `ahead` = ce que main doit
+  rattraper, `null` si dev/main pas tous deux présents — et `logs` `{ref: [{sha, subject}]}` par réf protégée).
+  Aucune mutation (le cycle git vit dans `gate/merge`) ; **404** projet absent, **422** SoT illisible.
   · `GET /api/projects/{p}/git/tree?ref=&path=` (exploration read-only : entrées d'un dossier à une réf,
   `ref` défaut `dev`, `path` vide = racine → `{project, ref, path, entries:[{name, type:blob|tree|commit,
   size, sha, last_commit:{short, date, subject}|null}], latest_commit:{short, author, date, subject, count}|

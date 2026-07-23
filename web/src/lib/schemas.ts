@@ -511,6 +511,7 @@ export type GitAheadBehind = z.infer<typeof GitAheadBehindSchema>
 export const GitViewSchema = z.object({
   project: z.string(),
   branches: z.array(GitBranchSchema),
+  tags: z.array(GitBranchSchema),   // même forme que branches ; le sélecteur de réf les unifie (optgroups)
   ahead_behind: GitAheadBehindSchema.nullable(),
   logs: z.record(z.string(), z.array(GitLogEntrySchema)),
 })

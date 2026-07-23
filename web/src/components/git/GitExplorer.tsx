@@ -229,7 +229,7 @@ function GitSurface({ project, view, sha }: { project: string; view: GitView; sh
 
       {view === 'fichiers' && (
         hasBranches ? (
-          <RepoExplorer project={project} branches={data.branches} />
+          <RepoExplorer project={project} branches={data.branches} tags={data.tags} />
         ) : (
           <EmptyState title="Aucun fichier" description="Le SoT ne porte encore aucune branche à explorer." />
         )

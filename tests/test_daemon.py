@@ -521,16 +521,24 @@ def test_gate_review_fails_closed_when_feature_never_dispatched(client):
 # -- vue git read-only -----------------------------------------------------------------------------
 
 def test_git_view_read_only_over_http(client):
-    c, _ = client
+    c, settings = client
     c.post("/api/projects", json={"slug": "proj"})   # SoT neuf : dev + main sur le commit racine seedé
     v = c.get("/api/projects/proj/git")
     assert v.status_code == 200
     body = v.json()
     assert {b["name"] for b in body["branches"]} == {"dev", "main"}
     assert all(b["sha"] and b["subject"] == "root: cockpit seed" for b in body["branches"])
+    assert body["tags"] == []                        # SoT neuf : aucun tag
     # dev == main sur un SoT neuf → 0 ahead / 0 behind (aucun merge encore)
     assert body["ahead_behind"] == {"base": "main", "head": "dev", "ahead": 0, "behind": 0}
     assert body["logs"]["dev"][0]["subject"] == "root: cockpit seed"
+
+    # tag posé sur le SoT bare → remonté par la vue git (câblage route bout-en-bout)
+    sot = registry.sot_path_for(settings, "proj")
+    assert run.run(["git", "-C", str(sot), "tag", "-a", "v1.0", "-m", "release 1.0", "dev"]).ok
+    tags = c.get("/api/projects/proj/git").json()["tags"]
+    assert [t["name"] for t in tags] == ["v1.0"]
+    assert tags[0]["sha"] and tags[0]["subject"] == "release 1.0"
     # projet inconnu → 404 (handler KeyError global), jamais un demi-état inventé
     assert c.get("/api/projects/ghost/git").status_code == 404
 

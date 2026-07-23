@@ -5,6 +5,14 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Git/API — `tags` dans la vue git (sélecteur de réf branches + tags, parité GitHub) — pas de bump
+- `GET /api/projects/{p}/git` expose désormais `tags: [{name, sha, subject}]` (même forme que `branches`,
+  triés par date de création décroissante ; `subject` = message du tag annoté, ou sujet du commit pointé pour
+  un tag léger) à côté de `branches`. Champ **additif, rétro-compatible** → **pas de bump `SCHEMA_VERSION`**
+  (une extension de payload HTTP n'a pas de déclencheur de migration, cf. §Politique de versionnage).
+- Primitive read-only `InternalGit.tags` (`git internal-first`, `for-each-ref refs/tags`) — calque exact de
+  `branches` sur les tags ; le sélecteur de réf du repo-browser unifie branches et tags (deux `<optgroup>`).
+
 ### Git/API — endpoints `raw` + `download` d'octets bruts (bouton Raw/Download, parité fichier GitHub) — pas de bump
 - `GET /api/projects/{p}/git/raw?ref=&path=` et `.../git/download?ref=&path=` servent les **octets bruts** d'un
   fichier (binaire ET texte tels quels), comblant le trou de `git/blob` (qui blanchit binaire/too_large,

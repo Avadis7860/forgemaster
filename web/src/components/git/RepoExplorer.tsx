@@ -16,23 +16,28 @@ const HighlightedCode = lazy(() => import('./HighlightedCode'))
 /** Explorateur de dépôt read-only : sélecteur de réf + arbre navigable (dossiers d'abord, breadcrumb) +
  *  visionneuse de fichier (n° de ligne). Zéro mutation — deux GET idempotents (arbre, blob) servent la vue,
  *  atteignables par le runner de boucle visuelle goto-only sans risque. Greffé sous la vue synchro de l'onglet
- *  Git. `branches` est réutilisé de la vue parente (aucune requête de plus pour peupler le sélecteur). */
+ *  Git. `branches`+`tags` sont réutilisés de la vue parente (aucune requête de plus pour peupler le sélecteur). */
 type Search = { ref?: string; path?: string; file?: string }
 
-export function RepoExplorer({ project, branches }: { project: string; branches: GitBranch[] }) {
-  const refs = branches.map((b) => b.name)
+export function RepoExplorer(
+  { project, branches, tags }: { project: string; branches: GitBranch[]; tags: GitBranch[] },
+) {
+  const branchNames = branches.map((b) => b.name)
+  const allRefs = [...branches, ...tags]          // branches ∪ tags : validité de réf + headSha (permalink)
+  const refNames = allRefs.map((b) => b.name)
   const search = useSearch({ strict: false }) as Search
   const navigate = useNavigate()
 
   // État {ref, path, file} porté par l'URL (deep-linkable, calque BundleExplorer/GitSurface) → chaque vue
-  // fichier est partageable et self-verifiable. Défaut de réf : `dev` sinon la 1ʳᵉ (jamais une réf absente).
-  const ref = search.ref && refs.includes(search.ref)
+  // fichier est partageable et self-verifiable. Défaut de réf : `dev` sinon la 1ʳᵉ branche (jamais un tag ni
+  // une réf absente).
+  const ref = search.ref && refNames.includes(search.ref)
     ? search.ref
-    : (refs.includes('dev') ? 'dev' : (refs[0] ?? 'dev'))
+    : (branchNames.includes('dev') ? 'dev' : (branchNames[0] ?? 'dev'))
   const path = search.path ?? ''                 // dossier courant ('' = racine)
   const file = search.file ?? null               // fichier sélectionné (chemin complet)
-  // SHA de HEAD de la réf courante → permalink épinglé au commit (immuable, façon « y » de GitHub).
-  const headSha = branches.find((b) => b.name === ref)?.sha
+  // SHA de HEAD de la réf courante (branche OU tag) → permalink épinglé au commit (immuable, façon « y »).
+  const headSha = allRefs.find((b) => b.name === ref)?.sha
 
   // Setters via l'URL (updater fonctionnel → préserve project/view/sha) : changer de réf remet path+file à zéro
   // (un chemin peut ne pas exister à une autre réf) ; changer de dossier déselectionne le fichier.
@@ -62,7 +67,14 @@ export function RepoExplorer({ project, branches }: { project: string; branches:
             onChange={(e) => pickRef(e.target.value)}
             className="h-8 rounded-card border border-border bg-surface-raised px-2 text-sm text-fg"
           >
-            {refs.map((r) => <option key={r} value={r}>{r}</option>)}
+            <optgroup label="Branches">
+              {branches.map((b) => <option key={b.name} value={b.name}>{b.name}</option>)}
+            </optgroup>
+            {tags.length > 0 && (
+              <optgroup label="Tags">
+                {tags.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
+              </optgroup>
+            )}
           </select>
         </label>
       </div>

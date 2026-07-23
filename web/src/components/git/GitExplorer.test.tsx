@@ -46,6 +46,7 @@ const GIT_VIEW = {
   project: 'alpha',
   // Sujet de branche ≠ sujet du commit de log → cliquer le second ne heurte pas le premier dans le test.
   branches: [{ name: 'dev', sha: 'abc1234', subject: 'tip de dev' }],
+  tags: [],
   ahead_behind: null,
   logs: { dev: [{ sha: 'abc1234', subject: 'feat: x' }] },
 }
