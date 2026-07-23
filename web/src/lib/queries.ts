@@ -30,6 +30,8 @@ export const qk = {
   gitHistory: (project: string, ref: string, path: string) =>
     ['git-history', project, ref, path] as const,
   gitPaths: (project: string, ref: string) => ['git-paths', project, ref] as const,
+  gitBlame: (project: string, ref: string, path: string) =>
+    ['git-blame', project, ref, path] as const,
   docs: (project: string) => ['docs', project] as const,
   deployments: (project: string) => ['deployments', project] as const,
   deploymentLogs: (project: string, branch: string, tail: number) =>
@@ -342,6 +344,15 @@ export function useGitPaths(project: string, ref: string, enabled: boolean) {
     queryKey: qk.gitPaths(project, ref),
     queryFn: () => api.getGitPaths(project, ref),
     enabled: Boolean(project && ref && enabled),
+  })
+}
+
+// Blame ligne-à-ligne d'un fichier. `enabled` = paresseux : tiré seulement quand le toggle Blame est actif.
+export function useGitBlame(project: string, ref: string, path: string, enabled: boolean) {
+  return useQuery({
+    queryKey: qk.gitBlame(project, ref, path),
+    queryFn: () => api.getGitBlame(project, ref, path),
+    enabled: Boolean(project && ref && path && enabled),
   })
 }
 

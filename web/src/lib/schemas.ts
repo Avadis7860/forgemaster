@@ -686,6 +686,24 @@ export const GitHistorySchema = z.object({
 })
 export type GitHistory = z.infer<typeof GitHistorySchema>
 
+// Une ligne de blame : le commit auteur qui a introduit la ligne (sha court, auteur, date ISO, résumé).
+export const BlameLineSchema = z.object({
+  sha: z.string(),
+  author: z.string(),
+  date: z.string(),
+  summary: z.string(),
+})
+export type BlameLine = z.infer<typeof BlameLineSchema>
+
+// GET /api/projects/{p}/git/blame?ref=&path= : blame ligne-à-ligne (une entrée par ligne du fichier).
+export const GitBlameSchema = z.object({
+  project: z.string(),
+  ref: z.string(),
+  path: z.string(),
+  lines: z.array(BlameLineSchema),
+})
+export type GitBlame = z.infer<typeof GitBlameSchema>
+
 // -- Flow (flot d'exécution) : opérations découvertes + sous-graphe d'appels d'une opération ---------
 
 // Une opération = un entry point découvert (route API ou verbe CLI). Alimente le sélecteur de l'onglet Flow.

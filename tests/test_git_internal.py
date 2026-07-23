@@ -685,6 +685,47 @@ def test_list_paths_flat_recursive_with_signaled_cap(tmp_path: Path, monkeypatch
         git.list_paths(sot, "nexiste-pas")
 
 
+def _seed_bare_blame(tmp: Path) -> Path:
+    """SoT bare : un fichier de 2 lignes écrites par 2 auteurs sur 2 commits (pour le blame ligne-à-ligne)."""
+    seed = tmp / "seed"
+    seed.mkdir()
+    _run("init", "-q", "-b", "dev", cwd=seed)
+    (seed / "f.txt").write_text("ligne alice\n", encoding="utf-8")
+    _run("add", "-A", cwd=seed)
+    _run("commit", "-q", "--author=Alice <alice@example.invalid>", "-m", "c1: alice", cwd=seed)
+    (seed / "f.txt").write_text("ligne alice\nligne bob\n", encoding="utf-8")
+    _run("add", "-A", cwd=seed)
+    _run("commit", "-q", "--author=Bob <bob@example.invalid>", "-m", "c2: bob", cwd=seed)
+    sot = tmp / "sot"
+    r = run.run(["git", "clone", "--bare", "-q", str(seed), str(sot)], env=_ENV)
+    assert r.ok, r.stderr
+    return sot
+
+
+def test_blame_attributes_lines_to_authors_and_commits(tmp_path: Path):
+    git = InternalGit()
+    sot = _seed_bare_blame(tmp_path)
+    lines = git.blame(sot, "dev", "f.txt")
+    assert len(lines) == 2                                     # une entrée par ligne de fichier
+    assert lines[0]["author"] == "Alice" and lines[0]["summary"] == "c1: alice"
+    assert lines[1]["author"] == "Bob" and lines[1]["summary"] == "c2: bob"
+    assert lines[0]["sha"] != lines[1]["sha"]                  # deux commits distincts
+    assert all(entry["date"] for entry in lines)              # date ISO présente
+
+
+def test_blame_refuses_binary_too_large_and_bad_path(tmp_path: Path, monkeypatch):
+    git = InternalGit()
+    sot = _seed_bare_rich(tmp_path)
+    with pytest.raises(GitOpError):                            # binaire → blame indisponible (signalé)
+        git.blame(sot, "dev", "data.bin")
+    with pytest.raises(GitOpError):                            # dossier / chemin absent
+        git.blame(sot, "dev", "src")
+    from cockpit.git import internal
+    monkeypatch.setattr(internal, "_MAX_BLOB_READ", 4)         # README > 4 → refus 413 signalé
+    with pytest.raises(BlobTooLargeError):
+        git.blame(sot, "dev", "README.md")
+
+
 def test_read_blob_text(tmp_path: Path):
     git = InternalGit()
     sot = _seed_bare_rich(tmp_path)

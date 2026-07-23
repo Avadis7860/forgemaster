@@ -24,6 +24,7 @@ import tarfile
 import tempfile
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 from cockpit.core import run
@@ -62,6 +63,13 @@ def _checked(repo: str | Path, *args: str, env: Mapping[str, str] | None = None)
     if not r.ok:
         raise GitOpError(f"git {' '.join(args)} @ {repo}: {r.stderr.strip()[:200]}")
     return r
+
+
+def _is_blame_header(line: str) -> bool:
+    """Vrai ssi `line` est l'en-tête d'un groupe blame porcelain : `<sha 40 hex> <orig> <final> [<n>]`
+    (détection structurelle, pas de regex — même style « split-de-champs » que le reste du module)."""
+    head = line.split(" ", 1)[0]
+    return len(head) == 40 and all(c in "0123456789abcdef" for c in head)
 
 
 # -- parsers PURS (portés verbatim de git_ops.py) ---------------------------------------------------
@@ -785,6 +793,40 @@ class InternalGit:
             raise BlobTooLargeError(
                 f"{path!r} @ {ref} : {size} octets > plafond {_MAX_BLOB_READ} (téléchargement refusé)")
         return self._blob_bytes(sot, treeish)
+
+    def blame(self, sot: Path, ref: str, path: str) -> list[dict]:
+        """Blame ligne-à-ligne d'un fichier à une réf (`git blame --line-porcelain`) → **une entrée par
+        ligne** `[{sha, author, date, summary}]` (sha court, date ISO UTC auteur). `--line-porcelain`
+        répète les métadonnées à chaque ligne (pas d'état à cacher). Gardes calquées sur `read_blob` :
+        non-blob → `GitOpError` ; au-delà de `_MAX_BLOB_READ` → `BlobTooLargeError` (413 signalé) ; binaire
+        (NUL) → `GitOpError` (blame d'un binaire = non-sens). Read-only, bare-safe."""
+        treeish = f"{ref}:{path.strip('/')}"
+        kind = _checked(sot, "cat-file", "-t", treeish).stdout.strip()
+        if kind != "blob":
+            raise GitOpError(f"{path!r} @ {ref} n'est pas un fichier (type git : {kind or 'inconnu'})")
+        size = int(_checked(sot, "cat-file", "-s", treeish).stdout.strip() or 0)
+        if size > _MAX_BLOB_READ:
+            raise BlobTooLargeError(
+                f"{path!r} @ {ref} : {size} octets > plafond {_MAX_BLOB_READ} (blame refusé)")
+        if b"\x00" in self._blob_bytes(sot, treeish)[:_BINARY_SNIFF]:
+            raise GitOpError(f"{path!r} @ {ref} est binaire — blame indisponible")
+        out = _checked(sot, "blame", "--line-porcelain", ref, "--", path.strip("/")).stdout
+        rows: list[dict] = []
+        cur: dict = {}
+        for line in out.split("\n"):
+            if line.startswith("\t"):          # ligne de contenu → clôt l'entrée courante
+                rows.append(cur)
+                cur = {}
+            elif _is_blame_header(line):        # <sha40> <orig> <final> [<n>] → nouvelle entrée
+                cur = {"sha": line[:10]}
+            elif line.startswith("author "):
+                cur["author"] = line[len("author "):]
+            elif line.startswith("author-time "):
+                cur["date"] = datetime.fromtimestamp(
+                    int(line[len("author-time "):] or 0), UTC).isoformat()
+            elif line.startswith("summary "):
+                cur["summary"] = line[len("summary "):]
+        return rows
 
     def archive(self, sot: Path, ref: str, dest_dir: Path) -> None:
         """Matérialise l'**arbre complet** d'une réf dans `dest_dir`, **sans working-tree** : `git archive`

@@ -23,6 +23,7 @@ import {
   GitBlobSchema,
   GitCommitDetailSchema,
   GitDiffSchema,
+  GitBlameSchema,
   GitHistorySchema,
   GitPathsSchema,
   GitTreeSchema,
@@ -234,6 +235,13 @@ export const api = {
     request(
       `/api/projects/${encodeURIComponent(project)}/git/paths?ref=${encodeURIComponent(ref)}`,
       GitPathsSchema,
+    ),
+  // Blame ligne-à-ligne d'un fichier à une réf (gouttière commit/auteur/âge).
+  getGitBlame: (project: string, ref: string, path: string) =>
+    request(
+      `/api/projects/${encodeURIComponent(project)}/git/blame` +
+        `?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent(path)}`,
+      GitBlameSchema,
     ),
   // Flow (flot d'exécution) : opérations découvertes (routes + verbes CLI) + sous-graphe d'appels d'une
   // opération. GET idempotents (index bâti au 1ᵉʳ accès, caché par SHA — aucun effet observable, goto-safe).

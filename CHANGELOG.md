@@ -5,6 +5,17 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Git/API — endpoint `blame` + gouttière ligne-à-ligne (parité GitHub) — pas de bump
+- `GET /api/projects/{p}/git/blame?ref=&path=` rend le blame ligne-à-ligne d'un fichier (`{project, ref, path,
+  lines:[{sha, author, date, summary}]}`, une entrée par ligne). **Nouvelle route** additive → **pas de bump
+  `SCHEMA_VERSION`** (une route HTTP neuve n'a pas de déclencheur de migration, cf. §Politique de versionnage).
+- Primitive read-only `InternalGit.blame` (`git internal-first`, `git blame --line-porcelain`). Gardes calquées
+  sur `read_blob` : non-blob/binaire → 404, au-delà de 10 Mo → **413 signalé** (blame d'un binaire/gros fichier
+  = non-sens, refusé plutôt que bruit).
+- Côté front : toggle « Blame » dans l'en-tête fichier → gouttière (sha court · âge) insérée dans les DEUX
+  grilles de ligne (texte nu ET code coloré), `sha`/âge affichés une fois par **run** de même commit (collapse
+  façon GitHub), auteur+résumé en infobulle.
+
 ### Git/API — endpoint `paths` + palette « go to file » (parité GitHub) — pas de bump
 - `GET /api/projects/{p}/git/paths?ref=` rend la liste **plate récursive** de tous les fichiers d'une réf
   (`{project, ref, paths, truncated}`), servant la palette « go to file » (filtrage fuzzy client-side). **Cap

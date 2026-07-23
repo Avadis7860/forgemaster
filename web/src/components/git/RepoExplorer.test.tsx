@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   blobs: {} as Record<string, unknown>,
   history: [] as { sha: string; short: string; author: string; date: string; subject: string }[],
   paths: [] as string[],
+  blame: [] as { sha: string; author: string; date: string; summary: string }[],
 }))
 
 vi.mock('@tanstack/react-router', () => ({
@@ -40,6 +41,10 @@ vi.mock('@/lib/queries', () => ({
     data: enabled ? { project: 'p', ref: 'dev', paths: h.paths, truncated: false } : undefined,
     isLoading: false, isError: false, error: null,
   }),
+  useGitBlame: (_p: string, _r: string, file: string, enabled: boolean) => ({
+    data: enabled && file ? { project: 'p', ref: 'dev', path: file, lines: h.blame } : undefined,
+    isLoading: false, isError: false, error: null,
+  }),
 }))
 
 const BRANCHES: GitBranch[] = [
@@ -53,6 +58,7 @@ beforeEach(() => {
   h.search = {}
   h.history = []
   h.paths = []
+  h.blame = []
 })
 
 describe('RepoExplorer', () => {
@@ -203,5 +209,29 @@ describe('RepoExplorer', () => {
     // pick → écrit ?path=docs&file=docs/architecture.md (arbre aligné sur le dossier du fichier)
     fireEvent.click(screen.getByRole('button', { name: 'docs/architecture.md' }))
     expect(h.search).toEqual({ path: 'docs', file: 'docs/architecture.md' })
+  })
+
+  it('toggle Blame : gouttière sha·âge par ligne, collapsée par run de commit', async () => {
+    h.trees = { '': [{ name: 'app.txt', type: 'blob', size: 9, sha: 'b1' }] }
+    h.blobs = {
+      'app.txt': { project: 'p', path: 'app.txt', ref: 'dev', size: 9,
+        binary: false, truncated: false, too_large: false, content: 'l1\nl2\nl3\n' },
+    }
+    // lignes 1-2 = même commit (a1b2c3d…) → collapse ; ligne 3 = autre commit (z9y8x7w…)
+    h.blame = [
+      { sha: 'a1b2c3d4e5', author: 'Alice', date: '2026-07-01T10:00:00Z', summary: 'c1' },
+      { sha: 'a1b2c3d4e5', author: 'Alice', date: '2026-07-01T10:00:00Z', summary: 'c1' },
+      { sha: 'z9y8x7w6v5', author: 'Bob', date: '2026-07-02T10:00:00Z', summary: 'c2' },
+    ]
+    const { rerender } = render(<RepoExplorer project="p" branches={BRANCHES} tags={[]} />)
+    fireEvent.click(screen.getByText('app.txt'))
+    rerender(<RepoExplorer project="p" branches={BRANCHES} tags={[]} />)
+    // fichier ouvert, blame OFF → aucune attribution de gouttière
+    expect(await screen.findByText('l1')).toBeInTheDocument()
+    expect(screen.queryByText(/a1b2c3d/)).not.toBeInTheDocument()
+    // activer Blame (état local → re-render auto) → gouttière visible, sha collapsé par run
+    fireEvent.click(screen.getByRole('button', { name: 'Blame' }))
+    expect(screen.getAllByText(/a1b2c3d/)).toHaveLength(1)   // 2 lignes même commit → 1 seule attribution
+    expect(screen.getAllByText(/z9y8x7w/)).toHaveLength(1)   // ligne 3 = autre commit
   })
 })

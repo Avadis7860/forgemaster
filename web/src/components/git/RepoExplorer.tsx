@@ -3,8 +3,8 @@ import { useNavigate, useSearch } from '@tanstack/react-router'
 import { Alert, Badge, Button, Card, Dialog, EmptyState, Input, LoadingState } from '@/components/ui'
 import { ApiError, gitDownloadUrl, gitRawUrl } from '@/lib/api'
 import { fuzzyFilter, timeAgo } from '@/lib/git'
-import { useGitBlob, useGitHistory, useGitPaths, useGitTree } from '@/lib/queries'
-import type { GitBlob, GitBranch, GitTree, GitTreeEntry } from '@/lib/schemas'
+import { useGitBlame, useGitBlob, useGitHistory, useGitPaths, useGitTree } from '@/lib/queries'
+import type { BlameLine, GitBlob, GitBranch, GitTree, GitTreeEntry } from '@/lib/schemas'
 
 // DocView (react-markdown + remark-gfm) en chunk séparé — même économie que Bundles/Docs (lazy, hors bundle
 // initial). Un `.md` du dépôt (fichier sélectionné ou README auto d'un dossier) est rendu en vraie page.
@@ -278,9 +278,12 @@ function FilePane({ project, gitRef, file, headSha }: {
   project: string; gitRef: string; file: string | null; headSha?: string
 }) {
   const [showHistory, setShowHistory] = useState(false)
+  const [showBlame, setShowBlame] = useState(false)
   const [contentCopied, copyContent] = useCopy()
   const [linkCopied, copyLink] = useCopy()
   const { data, isLoading, isError, error } = useGitBlob(project, gitRef, file ?? '')
+  // Blame paresseux : tiré seulement quand le toggle est actif. History et Blame sont des vues exclusives.
+  const { data: blame } = useGitBlame(project, gitRef, file ?? '', showBlame)
 
   // Vide/chargement = TISSU, pas un carton dans le carton « Fichiers » (gate tissu > panneau) : la cellule
   // droite reste un espace, pas un panneau bordé. Le relief (Card) est réservé au CONTENU réel du fichier.
@@ -323,8 +326,12 @@ function FilePane({ project, gitRef, file, headSha }: {
               Button (R1/R2, zéro `<a>` stylé) — Raw ouvre le flux inline dans un onglet, Download déclenche
               l'enregistrement (Content-Disposition backend), Copy/Permalink passent par le presse-papier. */}
           <div className="ml-auto flex flex-wrap items-center gap-1">
-            <Button variant="ghost" size="sm" onClick={() => setShowHistory((v) => !v)}
+            <Button variant="ghost" size="sm"
+              onClick={() => { setShowHistory((v) => !v); setShowBlame(false) }}
               className={showHistory ? 'bg-surface-raised text-fg' : undefined}>Historique</Button>
+            <Button variant="ghost" size="sm" title="Attribuer chaque ligne à son commit (blame)"
+              onClick={() => { setShowBlame((v) => !v); setShowHistory(false) }}
+              className={showBlame ? 'bg-surface-raised text-fg' : undefined}>Blame</Button>
             <Button variant="ghost" size="sm" title="Ouvrir le contenu brut dans un onglet"
               onClick={() => window.open(rawUrl, '_blank', 'noopener,noreferrer')}>Raw</Button>
             <Button variant="ghost" size="sm" title="Copier le contenu du fichier"
@@ -339,7 +346,7 @@ function FilePane({ project, gitRef, file, headSha }: {
       </div>
       {showHistory
         ? <FileHistory project={project} gitRef={gitRef} file={file} />
-        : <FileBody blob={data} />}
+        : <FileBody blob={data} blame={showBlame ? blame?.lines : undefined} />}
     </Card>
   )
 }
@@ -424,8 +431,26 @@ function FileHistory({ project, gitRef, file }: { project: string; gitRef: strin
   )
 }
 
-/** Corps de la visionneuse : les gardes L4 d'abord (binaire / trop gros), sinon le texte numéroté. */
-function FileBody({ blob }: { blob: GitBlob }) {
+/** Cellule de gouttière blame d'une ligne : `sha court · âge` affichés UNE fois par run de même commit
+ *  (collapse façon GitHub) ; auteur + résumé en infobulle. Vide si la ligne n'a pas de blame (ex. dernière
+ *  ligne vide d'un fichier terminé par `\n`). */
+function BlameCell({ line, prev }: { line?: BlameLine; prev?: BlameLine }) {
+  if (!line) return <span aria-hidden className="select-none" />
+  const first = line.sha !== prev?.sha        // 1ʳᵉ ligne d'un run de même commit → on montre l'attribution
+  return (
+    <span
+      className="select-none truncate pr-2 text-faint"
+      title={first ? `${line.author} · ${line.summary}` : undefined}
+    >
+      {first ? `${line.sha.slice(0, 7)} · ${timeAgo(line.date)}` : ''}
+    </span>
+  )
+}
+
+/** Corps de la visionneuse : les gardes L4 d'abord (binaire / trop gros), puis — si `blame` est fourni — les
+ *  lignes brutes numérotées avec gouttière blame (façon GitHub : le blame prime sur la coloration, non coloré),
+ *  sinon le rendu normal (Markdown / code coloré / texte numéroté). */
+function FileBody({ blob, blame }: { blob: GitBlob; blame?: BlameLine[] }) {
   if (blob.too_large) {
     return (
       <div className="p-5">
@@ -438,6 +463,30 @@ function FileBody({ blob }: { blob: GitBlob }) {
     return (
       <div className="p-5">
         <EmptyState title="Fichier binaire" description={`${fmtSize(blob.size)} — pas d'aperçu texte.`} />
+      </div>
+    )
+  }
+  if (blame) {
+    // Mode blame : lignes brutes numérotées + gouttière (sha court · âge, collapsé par run de commit).
+    const blameLines = blob.content.split('\n')
+    return (
+      <div className="flex flex-col">
+        {blob.truncated && (
+          <div className="px-4 py-2"><Badge tone="warn" dot>Aperçu tronqué</Badge></div>
+        )}
+        <div className="overflow-auto">
+          <pre className="min-w-full text-xs leading-relaxed">
+            <code className="grid font-mono">
+              {blameLines.map((line, i) => (
+                <span key={i} className="grid grid-cols-[10rem_auto_1fr] gap-4 px-4 hover:bg-surface-raised">
+                  <BlameCell line={blame[i]} prev={blame[i - 1]} />
+                  <span className="select-none text-right text-faint">{i + 1}</span>
+                  <span className="whitespace-pre text-fg">{line || ' '}</span>
+                </span>
+              ))}
+            </code>
+          </pre>
+        </div>
       </div>
     )
   }

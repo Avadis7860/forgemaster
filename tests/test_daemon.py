@@ -557,6 +557,20 @@ def test_git_paths_lists_files_over_http(client):
     assert c.get("/api/projects/ghost/git/paths", params={"ref": "dev"}).status_code == 404
 
 
+def test_git_blame_over_http(client):
+    c, _ = client
+    c.post("/api/projects", json={"slug": "proj"})   # SoT neuf auto-seedé (1 commit racine)
+    r = c.get("/api/projects/proj/git/blame", params={"ref": "dev", "path": "CLAUDE.md"})
+    assert r.status_code == 200
+    lines = r.json()["lines"]
+    assert lines and all(x["sha"] and x["author"] and x["date"] for x in lines)   # une entrée par ligne
+    # réf/chemin invalide → 404 ; dossier → 404 (non-blob) ; projet inconnu → 404
+    blame = "/api/projects/{}/git/blame"
+    assert c.get(blame.format("proj"), params={"ref": "nope", "path": "CLAUDE.md"}).status_code == 404
+    assert c.get(blame.format("proj"), params={"ref": "dev", "path": "docs"}).status_code == 404
+    assert c.get(blame.format("ghost"), params={"ref": "dev", "path": "CLAUDE.md"}).status_code == 404
+
+
 def test_git_sync_endpoint_reports_divergence_and_degrades(client, tmp_path: Path):
     """`GET .../git/sync` (réseau, séparé du `/git` idempotent) rend l'écart SoT↔miroir par branche + rollup,
     avec dégradation honnête : pas de miroir → `no_mirror` ; miroir en avance → `remote_ahead`. Jamais un

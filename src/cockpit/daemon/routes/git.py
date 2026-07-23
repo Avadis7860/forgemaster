@@ -242,4 +242,18 @@ def make_git_router() -> APIRouter:
             raise HTTPException(status_code=404, detail=f"réf introuvable ({ref}) : {exc}") from exc
         return {"project": project, "ref": ref, **result}
 
+    @router.get("/api/projects/{project}/git/blame")
+    def git_blame(project: str, ref: str, path: str, deps: Deps = Depends(get_deps)) -> dict:
+        """Blame ligne-à-ligne d'un fichier à une réf → `{project, ref, path, lines:[{sha, author, date,
+        summary}]}` (une entrée par ligne). Read-only, idempotent. Projet/réf/chemin introuvable → 404 ;
+        fichier au-delà de 10 Mo → **413 signalé** ; binaire → 404 (blame indisponible)."""
+        sot = _sot(deps, project)
+        try:
+            lines = InternalGit().blame(sot, ref, path)
+        except BlobTooLargeError as exc:
+            raise HTTPException(status_code=413, detail=str(exc)) from exc
+        except GitOpError as exc:
+            raise HTTPException(status_code=404, detail=f"blame indisponible ({ref}:{path}) : {exc}") from exc
+        return {"project": project, "ref": ref, "path": path, "lines": lines}
+
     return router
