@@ -5,6 +5,15 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Git/UI — ouvrir un fichier à une ligne (surbrillance + scroll, permalink épinglé) — pas de bump
+- La vue git accepte un paramètre d'URL `line` (`?file=…&line=N`) : la ligne ciblée est **surlignée** et
+  **défilée au centre** (deep-link depuis la recherche de code, à venir, ou un permalink). Le bouton
+  « Permalink » épingle désormais aussi la ligne. Front-only (état d'URL + rendu) → **pas de bump ni de
+  changement d'API**. Ancré dans les DEUX rendus par défaut (code coloré `HighlightedCode` + texte nu) ;
+  un `.md` ciblé par une ligne retombe sur le rendu source (une ligne n'a de sens que dans la source). Toute
+  navigation autre qu'un ciblage explicite efface la surbrillance (pas de ligne fantôme). Surbrillance via
+  token `@theme` (`bg-accent-500/15`), scroll via `useScrollToLine` (no-op propre sous jsdom).
+
 ### Git/API — endpoint `search` (recherche de code / grep, parité GitHub) — pas de bump
 - `GET /api/projects/{p}/git/search?ref=&q=` rend les correspondances plein-texte d'une réf
   (`{project, ref, q, results:[{path, line, text}], truncated, count}`). **Nouvelle route** additive → **pas de

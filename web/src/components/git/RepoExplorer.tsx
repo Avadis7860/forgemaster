@@ -3,6 +3,7 @@ import { useNavigate, useSearch } from '@tanstack/react-router'
 import { Alert, Badge, Button, Card, Dialog, EmptyState, Input, LoadingState } from '@/components/ui'
 import { ApiError, gitDownloadUrl, gitRawUrl } from '@/lib/api'
 import { fuzzyFilter, timeAgo } from '@/lib/git'
+import { useScrollToLine } from '@/lib/useScrollToLine'
 import { useGitBlame, useGitBlob, useGitHistory, useGitPaths, useGitTree } from '@/lib/queries'
 import type { BlameLine, GitBlob, GitBranch, GitTree, GitTreeEntry } from '@/lib/schemas'
 
@@ -17,7 +18,7 @@ const HighlightedCode = lazy(() => import('./HighlightedCode'))
  *  visionneuse de fichier (n° de ligne). Zéro mutation — deux GET idempotents (arbre, blob) servent la vue,
  *  atteignables par le runner de boucle visuelle goto-only sans risque. Greffé sous la vue synchro de l'onglet
  *  Git. `branches`+`tags` sont réutilisés de la vue parente (aucune requête de plus pour peupler le sélecteur). */
-type Search = { ref?: string; path?: string; file?: string }
+type Search = { ref?: string; path?: string; file?: string; line?: number }
 
 export function RepoExplorer(
   { project, branches, tags }: { project: string; branches: GitBranch[]; tags: GitBranch[] },
@@ -36,21 +37,29 @@ export function RepoExplorer(
     : (branchNames.includes('dev') ? 'dev' : (branchNames[0] ?? 'dev'))
   const path = search.path ?? ''                 // dossier courant ('' = racine)
   const file = search.file ?? null               // fichier sélectionné (chemin complet)
+  // Ligne à mettre en avant (deep-link depuis la recherche / permalink) : 1-based, coercée depuis l'URL
+  // (sans `validateSearch`, la valeur peut revenir en chaîne au rechargement). NaN/≤0 → aucune ligne.
+  const line = search.line != null && Number.isFinite(Number(search.line)) && Number(search.line) > 0
+    ? Number(search.line)
+    : undefined
   // SHA de HEAD de la réf courante (branche OU tag) → permalink épinglé au commit (immuable, façon « y »).
   const headSha = allRefs.find((b) => b.name === ref)?.sha
 
   // Setters via l'URL (updater fonctionnel → préserve project/view/sha) : changer de réf remet path+file à zéro
-  // (un chemin peut ne pas exister à une autre réf) ; changer de dossier déselectionne le fichier.
+  // (un chemin peut ne pas exister à une autre réf) ; changer de dossier déselectionne le fichier. `line` ne
+  // survit qu'à un ciblage explicite (recherche) — toute autre navigation la remet à zéro (pas de surbrillance
+  // fantôme sur un fichier ouvert autrement).
   const pickRef = (next: string) =>
-    navigate({ to: '/git', search: (p) => ({ ...p, ref: next, path: undefined, file: undefined }) })
+    navigate({ to: '/git', search: (p) => ({ ...p, ref: next, path: undefined, file: undefined, line: undefined }) })
   const goPath = (next: string) =>
-    navigate({ to: '/git', search: (p) => ({ ...p, path: next || undefined, file: undefined }) })
+    navigate({ to: '/git', search: (p) => ({ ...p, path: next || undefined, file: undefined, line: undefined }) })
   const openFile = (next: string) =>
-    navigate({ to: '/git', search: (p) => ({ ...p, file: next }) })
-  // Palette « go to file » : ouvre un fichier ET aligne l'arbre sur son dossier (path=dir, file=chemin complet).
-  const openFileAt = (full: string) => {
+    navigate({ to: '/git', search: (p) => ({ ...p, file: next, line: undefined }) })
+  // Palette « go to file » (line absent → surbrillance effacée) ET recherche de code (line ciblée) : ouvre un
+  // fichier ET aligne l'arbre sur son dossier (path=dir, file=chemin complet).
+  const openFileAt = (full: string, line?: number) => {
     const dir = full.includes('/') ? full.slice(0, full.lastIndexOf('/')) : ''
-    navigate({ to: '/git', search: (p) => ({ ...p, path: dir || undefined, file: full }) })
+    navigate({ to: '/git', search: (p) => ({ ...p, path: dir || undefined, file: full, line }) })
   }
 
   const join = (dir: string, name: string) => (dir ? `${dir}/${name}` : name)
@@ -100,7 +109,7 @@ export function RepoExplorer(
         />
         {file == null && readmePath
           ? <ReadmePane project={project} gitRef={ref} readmePath={readmePath} />
-          : <FilePane project={project} gitRef={ref} file={file} headSha={headSha} />}
+          : <FilePane project={project} gitRef={ref} file={file} headSha={headSha} highlightLine={line} />}
       </div>
     </Card>
   )
@@ -274,8 +283,8 @@ function EntryRow({ entry, active, onClick }: { entry: GitTreeEntry; active: boo
 
 /** Visionneuse du fichier sélectionné : contenu texte avec n° de ligne, ou état binaire / trop-gros / vide.
  *  Un basculeur « Historique » ouvre les commits touchant ce fichier (intelligence git P3). */
-function FilePane({ project, gitRef, file, headSha }: {
-  project: string; gitRef: string; file: string | null; headSha?: string
+function FilePane({ project, gitRef, file, headSha, highlightLine }: {
+  project: string; gitRef: string; file: string | null; headSha?: string; highlightLine?: number
 }) {
   const [showHistory, setShowHistory] = useState(false)
   const [showBlame, setShowBlame] = useState(false)
@@ -310,7 +319,7 @@ function FilePane({ project, gitRef, file, headSha }: {
   const lineCount = !data.binary && !data.too_large && data.content ? data.content.split('\n').length : null
   const rawUrl = gitRawUrl(project, gitRef, file)
   const downloadUrl = gitDownloadUrl(project, gitRef, file)
-  const permalink = filePermalink(project, headSha ?? gitRef, file)
+  const permalink = filePermalink(project, headSha ?? gitRef, file, highlightLine)
 
   return (
     <Card className="flex min-h-40 flex-col overflow-hidden p-0">
@@ -346,7 +355,7 @@ function FilePane({ project, gitRef, file, headSha }: {
       </div>
       {showHistory
         ? <FileHistory project={project} gitRef={gitRef} file={file} />
-        : <FileBody blob={data} blame={showBlame ? blame?.lines : undefined} />}
+        : <FileBody blob={data} blame={showBlame ? blame?.lines : undefined} highlightLine={highlightLine} />}
     </Card>
   )
 }
@@ -450,7 +459,12 @@ function BlameCell({ line, prev }: { line?: BlameLine; prev?: BlameLine }) {
 /** Corps de la visionneuse : les gardes L4 d'abord (binaire / trop gros), puis — si `blame` est fourni — les
  *  lignes brutes numérotées avec gouttière blame (façon GitHub : le blame prime sur la coloration, non coloré),
  *  sinon le rendu normal (Markdown / code coloré / texte numéroté). */
-function FileBody({ blob, blame }: { blob: GitBlob; blame?: BlameLine[] }) {
+function FileBody(
+  { blob, blame, highlightLine }: { blob: GitBlob; blame?: BlameLine[]; highlightLine?: number },
+) {
+  // Scroll+surbrillance de la ligne ciblée (recherche/permalink) : ref posée sur le wrapper scrollable du rendu
+  // texte nu (le rendu code coloré gère la sienne dans HighlightedCode). Hook appelé avant tout early-return.
+  const scrollRef = useScrollToLine(highlightLine, blob.content)
   if (blob.too_large) {
     return (
       <div className="p-5">
@@ -490,9 +504,10 @@ function FileBody({ blob, blame }: { blob: GitBlob; blame?: BlameLine[] }) {
       </div>
     )
   }
-  if (blob.path.endsWith('.md')) {
+  if (blob.path.endsWith('.md') && highlightLine == null) {
     // `.md` → Markdown en réutilisant DocView (calque BundleFileBody, pas de 2ᵉ renderer). Never-silent-cap :
-    // un aperçu tronqué reste signalé au-dessus du rendu.
+    // un aperçu tronqué reste signalé au-dessus du rendu. Exception : un deep-link ciblant une LIGNE (recherche)
+    // retombe sur le rendu texte nu ci-dessous — une ligne n'a de sens que dans la source, pas le Markdown rendu.
     return (
       <div className="flex flex-col">
         {blob.truncated && (
@@ -515,7 +530,7 @@ function FileBody({ blob, blame }: { blob: GitBlob; blame?: BlameLine[] }) {
           <div className="px-4 py-2"><Badge tone="warn" dot>Aperçu tronqué</Badge></div>
         )}
         <Suspense fallback={<div className="p-4"><LoadingState label="Coloration…" /></div>}>
-          <HighlightedCode content={blob.content} lang={lang} />
+          <HighlightedCode content={blob.content} lang={lang} highlightLine={highlightLine} />
         </Suspense>
       </div>
     )
@@ -528,11 +543,13 @@ function FileBody({ blob, blame }: { blob: GitBlob; blame?: BlameLine[] }) {
           <Badge tone="warn" dot>Aperçu tronqué</Badge>
         </div>
       )}
-      <div className="overflow-auto">
+      <div ref={scrollRef} className="overflow-auto">
         <pre className="min-w-full text-xs leading-relaxed">
           <code className="grid font-mono">
             {lines.map((line, i) => (
-              <span key={i} className="grid grid-cols-[auto_1fr] gap-4 px-4 hover:bg-surface-raised">
+              <span key={i} data-line={i + 1}
+                className={`grid grid-cols-[auto_1fr] gap-4 px-4 hover:bg-surface-raised${
+                  i + 1 === highlightLine ? ' bg-accent-500/15' : ''}`}>
                 <span className="select-none text-right text-faint">{i + 1}</span>
                 <span className="whitespace-pre text-fg">{line || ' '}</span>
               </span>
@@ -592,7 +609,7 @@ function triggerDownload(url: string) {
 
 /** Permalink absolu épinglé au SHA (immuable, façon « y » de GitHub) : reproduit la vue fichiers courante avec
  *  la réf résolue en commit → copiable/partageable tel quel. Le dossier est dérivé du chemin du fichier. */
-function filePermalink(project: string, pinnedRef: string, file: string): string {
+function filePermalink(project: string, pinnedRef: string, file: string, line?: number): string {
   const dir = file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : ''
   const u = new URL(`${window.location.origin}/git`)
   u.searchParams.set('project', project)
@@ -600,6 +617,7 @@ function filePermalink(project: string, pinnedRef: string, file: string): string
   u.searchParams.set('ref', pinnedRef)
   if (dir) u.searchParams.set('path', dir)
   u.searchParams.set('file', file)
+  if (line != null) u.searchParams.set('line', String(line))   // épingle aussi la ligne ciblée (permalink)
   return u.toString()
 }
 

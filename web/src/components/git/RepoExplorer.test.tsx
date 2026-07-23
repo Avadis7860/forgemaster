@@ -8,7 +8,7 @@ import type { GitBranch } from '@/lib/schemas'
 // testée ici. `search` = l'état d'URL simulé (le router est mocké, cf. convention GitExplorer.test) : les
 // setters de RepoExplorer passent par useNavigate → on mute `search` puis on `rerender` pour refléter l'URL.
 const h = vi.hoisted(() => ({
-  search: {} as { ref?: string; path?: string; file?: string },
+  search: {} as { ref?: string; path?: string; file?: string; line?: number },
   trees: {} as Record<string, { name: string; type: string; size: number | null; sha: string }[]>,
   blobs: {} as Record<string, unknown>,
   history: [] as { sha: string; short: string; author: string; date: string; subject: string }[],
@@ -94,6 +94,27 @@ describe('RepoExplorer', () => {
     expect(await screen.findByText("print('hi')")).toBeInTheDocument()
     expect(screen.getByText('1')).toBeInTheDocument()
     expect(screen.getByText('2')).toBeInTheDocument()
+  })
+
+  it('surligne la ligne ciblée (deep-link recherche/permalink) et l\'efface à toute autre navigation', () => {
+    h.trees = {
+      '': [
+        { name: 'notes.txt', type: 'blob', size: 12, sha: 'b1' },
+        { name: 'app.txt', type: 'blob', size: 30, sha: 'b2' },
+      ],
+    }
+    h.blobs = {
+      'app.txt': { project: 'p', path: 'app.txt', ref: 'dev', size: 30,
+        binary: false, truncated: false, too_large: false, content: 'ligne 1\nligne 2\nligne 3\n' },
+    }
+    // deep-link direct : fichier ouvert AVEC une ligne ciblée (?file=app.txt&line=2)
+    h.search = { file: 'app.txt', line: 2 }
+    const { container } = render(<RepoExplorer project="p" branches={BRANCHES} tags={[]} />)
+    expect(container.querySelector('[data-line="2"]')).toHaveClass('bg-accent-500/15')   // ligne ciblée surlignée
+    expect(container.querySelector('[data-line="1"]')).not.toHaveClass('bg-accent-500/15')  // les autres non
+    // ouvrir un autre fichier (navigation arbre) efface la surbrillance fantôme (line remise à zéro)
+    fireEvent.click(screen.getByText('notes.txt'))
+    expect(h.search.line).toBeUndefined()
   })
 
   it('auto-rend le README.md du dossier en Markdown (aucune sélection requise, façon GitHub)', async () => {

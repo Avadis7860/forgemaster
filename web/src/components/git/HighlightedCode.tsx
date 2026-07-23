@@ -1,5 +1,6 @@
 import { Fragment, type ReactNode } from 'react'
 import { common, createLowlight } from 'lowlight'
+import { useScrollToLine } from '@/lib/useScrollToLine'
 
 // lowlight (highlight.js sans DOM) partagé — `common` = ~37 langages courants d'un dépôt. Ce module est
 // lazy-chargé (chunk séparé, comme DocView) : lowlight n'entre dans le bundle que quand on ouvre un fichier
@@ -46,20 +47,26 @@ function toLines(children: HNode[]): Tok[][] {
 }
 
 /** Visionneuse de fichier de code COLORÉE : même grille n°-de-ligne que le rendu nu, chaque ligne tokenisée
- *  par lowlight (spans `.hljs-*` thémés dans index.css). Langage inconnu / erreur → texte nu (jamais de crash). */
-export default function HighlightedCode({ content, lang }: { content: string; lang: string }): ReactNode {
+ *  par lowlight (spans `.hljs-*` thémés dans index.css). Langage inconnu / erreur → texte nu (jamais de crash).
+ *  `highlightLine` (1-based) → la ligne est surlignée et défilée au centre (deep-link recherche/permalink). */
+export default function HighlightedCode(
+  { content, lang, highlightLine }: { content: string; lang: string; highlightLine?: number },
+): ReactNode {
   let lines: Tok[][]
   try {
     lines = toLines(lowlight.highlight(lang, content).children as HNode[])
   } catch {
     lines = content.split('\n').map((l) => (l ? [{ text: l, cls: '' }] : []))
   }
+  const scrollRef = useScrollToLine(highlightLine, content)
   return (
-    <div className="overflow-auto">
+    <div ref={scrollRef} className="overflow-auto">
       <pre className="min-w-full text-xs leading-relaxed">
         <code className="hljs grid bg-transparent font-mono">
           {lines.map((toks, i) => (
-            <span key={i} className="grid grid-cols-[auto_1fr] gap-4 px-4 hover:bg-surface-raised">
+            <span key={i} data-line={i + 1}
+              className={`grid grid-cols-[auto_1fr] gap-4 px-4 hover:bg-surface-raised${
+                i + 1 === highlightLine ? ' bg-accent-500/15' : ''}`}>
               <span className="select-none text-right text-faint">{i + 1}</span>
               <span className="whitespace-pre text-fg">
                 {toks.length === 0
