@@ -6,7 +6,8 @@ import { SearchAddon } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 import { Badge, Button, Input } from '@/components/ui'
-import { ptyPath, wsUrl, type PtySession } from '@/lib/ws'
+import { useWsToken } from '@/lib/queries'
+import { ptyPath, tokenProtocols, wsUrl, type PtySession } from '@/lib/ws'
 import { buildTheme } from './theme'
 import { LeaveTerminalConfirm } from './LeaveTerminalConfirm'
 
@@ -79,10 +80,11 @@ export function TerminalPane({ project, session = 'shell' }: { project: string; 
   const [fontSize, setFontSize] = useState<number>(readFontSize)
   const [reconnectKey, setReconnectKey] = useState(0)
   const [query, setQuery] = useState('')
+  const token = useWsToken() // garde CSWSH : injecté au handshake ; le WS n'ouvre pas tant qu'il manque
 
   useEffect(() => {
     const host = hostRef.current
-    if (!host) return
+    if (!host || !token) return // pas de token → pas d'ouverture (handshake serait refusé 1008)
     setStatus('connecting')
 
     const term = new Terminal({
@@ -111,7 +113,7 @@ export function TerminalPane({ project, session = 'shell' }: { project: string; 
     }
     safeFit()
 
-    const ws = new WebSocket(wsUrl(ptyPath(project, session)))
+    const ws = new WebSocket(wsUrl(ptyPath(project, session)), tokenProtocols(token))
     ws.binaryType = 'arraybuffer'
     wsRef.current = ws
     const enc = new TextEncoder()
@@ -178,7 +180,7 @@ export function TerminalPane({ project, session = 'shell' }: { project: string; 
     }
     // fontSize hors deps : appliqué à chaud par l'effet dédié (pas de recréation du terminal à chaque cran).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project, session, reconnectKey])
+  }, [project, session, reconnectKey, token])
 
   // Taille de police appliquée À CHAUD (sans recréer le terminal) + persistée.
   useEffect(() => {

@@ -49,6 +49,16 @@ def test_build_app_has_explicit_di_container_and_health(client):
     assert r.status_code == 200 and r.json()["status"] == "ok"
 
 
+def test_ws_token_endpoint_exposes_instance_token_to_same_origin_front(client):
+    """Le front same-origin lit le token WS par-instance ici pour l'injecter au handshake (sous-protocole).
+    Le token rendu == celui posé sur `app.state` au boot. (Une page tierce ne peut PAS lire ce corps : CORS
+    + same-origin policy ; la garde `wsguard` reste la barrière réelle.)"""
+    c, _ = client
+    r = c.get("/api/ws-token")
+    assert r.status_code == 200
+    assert r.json()["token"] == c.app.state.ws_token
+
+
 # -- projects --------------------------------------------------------------------------------------
 
 def test_projects_crud_over_http(client):

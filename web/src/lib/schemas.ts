@@ -6,6 +6,11 @@ import { z } from 'zod'
 export const HealthSchema = z.object({ status: z.string(), version: z.string() })
 export type Health = z.infer<typeof HealthSchema>
 
+// Token WS par-instance (garde CSWSH) : le front same-origin le lit puis l'injecte dans le sous-protocole
+// des handshakes WS. Cf. daemon.wsguard + lib/ws.tokenProtocols.
+export const WsTokenSchema = z.object({ token: z.string() })
+export type WsToken = z.infer<typeof WsTokenSchema>
+
 export const ProjectSchema = z.object({
   id: z.string(),
   slug: z.string(),

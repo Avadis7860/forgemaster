@@ -124,6 +124,14 @@ def build_app(settings: Settings) -> FastAPI:
     def health() -> dict:                                # liveness self (sonde) — pas de gate
         return {"status": "ok", "version": __version__}
 
+    @app.get("/api/ws-token")
+    def get_ws_token() -> dict:
+        """Token WS par-instance, lu par le front **same-origin** pour l'injecter dans le sous-protocole des
+        handshakes WS (garde CSWSH, cf. `daemon.wsguard`). Sûr : une page tierce ne peut PAS lire cette
+        réponse (same-origin policy sur la lecture du corps ; le CORS n'ouvre que le dev localhost) — elle ne
+        peut donc pas forger `cockpit.token.<v>`. Le token seul ne suffit pas non plus (barrière Origin)."""
+        return {"token": app.state.ws_token}
+
     for make_router in (projects.make_projects_router, roadmap.make_roadmap_router,
                         dispatch.make_dispatch_router, gate.make_gate_router,
                         git.make_git_router, codemap.make_codemap_router,

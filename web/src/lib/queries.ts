@@ -6,6 +6,7 @@ import type { BootstrapRunInput, CredentialLinkInput, CreateProjectInput, McpWir
 
 export const qk = {
   health: ['health'] as const,
+  wsToken: ['ws-token'] as const,
   types: ['types'] as const,
   templates: ['templates'] as const,
   bundleTree: (type: string) => ['bundle-tree', type] as const,
@@ -53,6 +54,13 @@ export const qk = {
 export function useHealth() {
   // Sonde de liveness — rafraîchie périodiquement pour la pastille d'état du daemon.
   return useQuery({ queryKey: qk.health, queryFn: api.health, refetchInterval: 10_000, retry: false })
+}
+
+// Token WS par-instance (garde CSWSH) : chargé une fois, immuable dans la session (staleTime infini, pas de
+// poll). Les consommateurs WS (terminal, transcript de dispatch) l'appellent en interne et n'ouvrent le
+// WebSocket qu'une fois le token présent (sinon le handshake serait refusé 1008). Retourne `string | undefined`.
+export function useWsToken(): string | undefined {
+  return useQuery({ queryKey: qk.wsToken, queryFn: api.wsToken, staleTime: Infinity }).data?.token
 }
 
 // Les types de projet offerts (registre filtré par validation). Stable (change au dépôt d'un overlay) →

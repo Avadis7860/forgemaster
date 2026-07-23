@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ptyPath, wsUrl } from './ws'
+import { ptyPath, tokenProtocols, wsUrl } from './ws'
 
 describe('wsUrl', () => {
   it('construit une URL même-origine à partir du chemin (ws en http)', () => {
@@ -18,5 +18,14 @@ describe('ptyPath', () => {
   })
   it('URL-encode le projet', () => {
     expect(ptyPath('a/b', 'interview')).toBe('/ws/interview/a%2Fb')
+  })
+})
+
+describe('tokenProtocols', () => {
+  it('token présent → sous-protocole `cockpit.token.<v>` (injecté au handshake WS)', () => {
+    expect(tokenProtocols('abc123')).toEqual(['cockpit.token.abc123'])
+  })
+  it('token absent (pas encore chargé) → undefined : le consommateur n’ouvre PAS le WS', () => {
+    expect(tokenProtocols(undefined)).toBeUndefined()
   })
 })

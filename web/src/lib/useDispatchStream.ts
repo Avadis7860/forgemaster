@@ -3,8 +3,9 @@
 // valide chaque frame par TranscriptEventSchema (source unique du contrat), accumule les événements
 // conversationnels et isole la frame terminale `{type:'job'}`. Le daemon clôt le socket en fin de run.
 import { useEffect, useState } from 'react'
+import { useWsToken } from './queries'
 import { TranscriptEventSchema, type JobFrame, type TranscriptEvent } from './schemas'
-import { wsUrl } from './ws'
+import { tokenProtocols, wsUrl } from './ws'
 
 export type StreamStatus = 'idle' | 'connecting' | 'open' | 'closed' | 'error'
 
@@ -19,6 +20,7 @@ export function useDispatchStream(jobId: string | null): DispatchStream {
   const [terminal, setTerminal] = useState<JobFrame | null>(null)
   const [status, setStatus] = useState<StreamStatus>('idle')
   const [currentJob, setCurrentJob] = useState<string | null>(jobId)
+  const token = useWsToken() // garde CSWSH : injecté au handshake ; le WS n'ouvre pas tant qu'il manque
 
   // Reset PENDANT le rendu quand le job change (pattern React supporté — pas un effet) : l'état résiduel d'un
   // job précédent n'est jamais exposé, et la souscription WS (effet) redémarre propre. La souscription elle
@@ -31,9 +33,9 @@ export function useDispatchStream(jobId: string | null): DispatchStream {
   }
 
   useEffect(() => {
-    if (!jobId) return
+    if (!jobId || !token) return // pas de token → pas d'ouverture (handshake serait refusé 1008)
 
-    const ws = new WebSocket(wsUrl(`/ws/dispatch/${encodeURIComponent(jobId)}`))
+    const ws = new WebSocket(wsUrl(`/ws/dispatch/${encodeURIComponent(jobId)}`), tokenProtocols(token))
     ws.onopen = () => setStatus('open')
     ws.onmessage = (m) => {
       let raw: unknown
@@ -58,7 +60,7 @@ export function useDispatchStream(jobId: string | null): DispatchStream {
       ws.onclose = null // évite un setState après démontage
       ws.close()
     }
-  }, [jobId])
+  }, [jobId, token])
 
   return { events, terminal, status }
 }
