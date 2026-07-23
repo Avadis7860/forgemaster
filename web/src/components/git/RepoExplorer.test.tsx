@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
   history: [] as { sha: string; short: string; author: string; date: string; subject: string }[],
   paths: [] as string[],
   blame: [] as { sha: string; author: string; date: string; summary: string }[],
+  matches: [] as { path: string; line: number; text: string }[],
 }))
 
 vi.mock('@tanstack/react-router', () => ({
@@ -45,6 +46,12 @@ vi.mock('@/lib/queries', () => ({
     data: enabled && file ? { project: 'p', ref: 'dev', path: file, lines: h.blame } : undefined,
     isLoading: false, isError: false, error: null,
   }),
+  useGitSearch: (_p: string, _r: string, q: string, enabled: boolean) => ({
+    data: enabled && q
+      ? { project: 'p', ref: 'dev', q, results: h.matches, truncated: false, count: h.matches.length }
+      : undefined,
+    isLoading: false, isError: false, error: null,
+  }),
 }))
 
 const BRANCHES: GitBranch[] = [
@@ -59,6 +66,7 @@ beforeEach(() => {
   h.history = []
   h.paths = []
   h.blame = []
+  h.matches = []
 })
 
 describe('RepoExplorer', () => {
@@ -230,6 +238,23 @@ describe('RepoExplorer', () => {
     // pick → écrit ?path=docs&file=docs/architecture.md (arbre aligné sur le dossier du fichier)
     fireEvent.click(screen.getByRole('button', { name: 'docs/architecture.md' }))
     expect(h.search).toEqual({ path: 'docs', file: 'docs/architecture.md' })
+  })
+
+  it('palette « rechercher dans le code » : un pick ouvre le fichier À la ligne de la correspondance', async () => {
+    h.trees = { '': [{ name: 'README.md', type: 'blob', size: 3, sha: 'b1' }] }
+    h.matches = [
+      { path: 'src/app.py', line: 2, text: 'x = 1' },
+      { path: 'README.md', line: 5, text: '# titre' },
+    ]
+    render(<RepoExplorer project="p" branches={BRANCHES} tags={[]} />)
+    // ouverture de la palette → champ de recherche
+    fireEvent.click(screen.getByRole('button', { name: 'Rechercher' }))
+    fireEvent.change(screen.getByLabelText('Rechercher une chaîne dans le code'), { target: { value: 'x' } })
+    // débounce (~200 ms) → résultats du serveur (mocké) ; findBy attend le re-render post-débounce
+    const match = await screen.findByRole('button', { name: /src\/app\.py:2/ })
+    fireEvent.click(match)
+    // deep-link E.2 : fichier ouvert À la ligne (path=dir, file=chemin complet, line=n° de la correspondance)
+    expect(h.search).toEqual({ path: 'src', file: 'src/app.py', line: 2 })
   })
 
   it('toggle Blame : gouttière sha·âge par ligne, collapsée par run de commit', async () => {

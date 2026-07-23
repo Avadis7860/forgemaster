@@ -1,11 +1,11 @@
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import { Alert, Badge, Button, Card, Dialog, EmptyState, Input, LoadingState } from '@/components/ui'
 import { ApiError, gitDownloadUrl, gitRawUrl } from '@/lib/api'
 import { fuzzyFilter, timeAgo } from '@/lib/git'
 import { useScrollToLine } from '@/lib/useScrollToLine'
-import { useGitBlame, useGitBlob, useGitHistory, useGitPaths, useGitTree } from '@/lib/queries'
-import type { BlameLine, GitBlob, GitBranch, GitTree, GitTreeEntry } from '@/lib/schemas'
+import { useGitBlame, useGitBlob, useGitHistory, useGitPaths, useGitSearch, useGitTree } from '@/lib/queries'
+import type { BlameLine, GitBlob, GitBranch, GitSearchMatch, GitTree, GitTreeEntry } from '@/lib/schemas'
 
 // DocView (react-markdown + remark-gfm) en chunk séparé — même économie que Bundles/Docs (lazy, hors bundle
 // initial). Un `.md` du dépôt (fichier sélectionné ou README auto d'un dossier) est rendu en vraie page.
@@ -76,6 +76,7 @@ export function RepoExplorer(
         <div className="flex items-center gap-3">
           <p className="text-sm font-medium text-fg">Fichiers</p>
           <GoToFilePalette project={project} gitRef={ref} onPick={openFileAt} />
+          <SearchPalette project={project} gitRef={ref} onPick={openFileAt} />
         </div>
         <label className="flex items-center gap-2 text-sm text-muted">
           <span>Réf</span>
@@ -159,6 +160,69 @@ function GoToFilePalette(
                     onClick={() => pick(path)}
                   >
                     {path}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </Dialog>
+    </>
+  )
+}
+
+/** Palette « rechercher dans le code » : recherche plein-texte (grep serveur) sur le contenu des fichiers à la
+ *  réf courante. Requête DÉBOUNCÉE (≈200 ms → une requête par pause de frappe, pas par touche) ; hook `enabled`
+ *  seulement palette ouverte + requête non vide (fetch paresseux). Chaque correspondance `chemin:ligne` + extrait
+ *  est un Button (R1) qui ouvre le fichier À la ligne (deep-link E.2). `truncated`/`count` du serveur affichés —
+ *  cap SIGNALÉ, jamais un « tout » trompeur. */
+function SearchPalette(
+  { project, gitRef, onPick }: { project: string; gitRef: string; onPick: (path: string, line: number) => void },
+) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const q = useDebounced(query, 200).trim()
+  const { data, isLoading } = useGitSearch(project, gitRef, q, open)
+  const pick = (m: GitSearchMatch) => { onPick(m.path, m.line); setOpen(false); setQuery('') }
+
+  return (
+    <>
+      <Button variant="ghost" size="sm" onClick={() => { setQuery(''); setOpen(true) }}>Rechercher</Button>
+      <Dialog open={open} onOpenChange={setOpen} title="Rechercher dans le code">
+        <div className="space-y-3">
+          <Input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Rechercher une chaîne…"
+            aria-label="Rechercher une chaîne dans le code"
+          />
+          {!q ? (
+            <EmptyState title="Rechercher dans le code"
+              description="Saisis une chaîne — la recherche porte sur le contenu des fichiers à cette réf." />
+          ) : isLoading ? (
+            <LoadingState label="Recherche…" />
+          ) : !data || data.results.length === 0 ? (
+            <EmptyState title="Aucune correspondance" description={`Aucune ligne ne contient « ${q} ».`} />
+          ) : (
+            <ul className="max-h-[50vh] space-y-0.5 overflow-auto">
+              {data.truncated && (
+                <li className="px-2 py-1">
+                  <Badge tone="warn">
+                    {data.count} correspondances — {data.results.length} premières affichées, affine la recherche
+                  </Badge>
+                </li>
+              )}
+              {data.results.map((m, i) => (
+                <li key={`${m.path}:${m.line}:${i}`}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full justify-start gap-2 font-mono text-xs"
+                    onClick={() => pick(m)}
+                  >
+                    <span className="shrink-0 text-muted">{m.path}:{m.line}</span>
+                    <span className="min-w-0 truncate text-faint">{m.text.trim()}</span>
                   </Button>
                 </li>
               ))}
@@ -596,6 +660,17 @@ function useCopy(): [boolean, (text: string) => void] {
     })()
   }
   return [copied, copy]
+}
+
+/** Valeur débouncée : renvoie `value` seulement après `ms` sans changement (évite une requête serveur par
+ *  touche dans la palette de recherche). Un changement plus rapide annule le timer précédent. */
+function useDebounced<T>(value: T, ms: number): T {
+  const [debounced, setDebounced] = useState(value)
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), ms)
+    return () => clearTimeout(id)
+  }, [value, ms])
+  return debounced
 }
 
 /** Déclenche le téléchargement d'une URL (le backend force `Content-Disposition: attachment`) via un ancrage

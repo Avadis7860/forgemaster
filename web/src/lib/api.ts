@@ -26,6 +26,7 @@ import {
   GitBlameSchema,
   GitHistorySchema,
   GitPathsSchema,
+  GitSearchSchema,
   GitTreeSchema,
   GitViewSchema,
   GitSyncSchema,
@@ -242,6 +243,13 @@ export const api = {
       `/api/projects/${encodeURIComponent(project)}/git/blame` +
         `?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent(path)}`,
       GitBlameSchema,
+    ),
+  // Recherche plein-texte (grep) dans tous les fichiers d'une réf (palette « rechercher dans le code »).
+  getGitSearch: (project: string, ref: string, q: string) =>
+    request(
+      `/api/projects/${encodeURIComponent(project)}/git/search` +
+        `?ref=${encodeURIComponent(ref)}&q=${encodeURIComponent(q)}`,
+      GitSearchSchema,
     ),
   // Flow (flot d'exécution) : opérations découvertes (routes + verbes CLI) + sous-graphe d'appels d'une
   // opération. GET idempotents (index bâti au 1ᵉʳ accès, caché par SHA — aucun effet observable, goto-safe).

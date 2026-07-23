@@ -5,6 +5,14 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Git/UI — palette « rechercher dans le code » (grep, parité GitHub) — pas de bump
+- Un bouton « Rechercher » (en-tête de l'explorateur, à côté de « Go to file ») ouvre une palette `Dialog` :
+  la requête, **débouncée** (≈200 ms), interroge `GET …/git/search` (livré) ; chaque correspondance
+  `chemin:ligne` + extrait est un `<Button>` (R1) qui **ouvre le fichier à la ligne** (deep-link `line`,
+  surbrillance + scroll). `truncated`/`count` du serveur affichés (cap SIGNALÉ, jamais un « tout » trompeur).
+  Hook `useGitSearch` paresseux (`enabled` = palette ouverte + requête non vide). Front-only (consomme
+  l'endpoint E.1) → **pas de bump ni de changement d'API**. Schéma `GitSearchSchema` (calque `GitPaths`).
+
 ### Git/UI — ouvrir un fichier à une ligne (surbrillance + scroll, permalink épinglé) — pas de bump
 - La vue git accepte un paramètre d'URL `line` (`?file=…&line=N`) : la ligne ciblée est **surlignée** et
   **défilée au centre** (deep-link depuis la recherche de code, à venir, ou un permalink). Le bouton

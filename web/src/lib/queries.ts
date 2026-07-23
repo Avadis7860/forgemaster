@@ -32,6 +32,8 @@ export const qk = {
   gitPaths: (project: string, ref: string) => ['git-paths', project, ref] as const,
   gitBlame: (project: string, ref: string, path: string) =>
     ['git-blame', project, ref, path] as const,
+  gitSearch: (project: string, ref: string, q: string) =>
+    ['git-search', project, ref, q] as const,
   docs: (project: string) => ['docs', project] as const,
   deployments: (project: string) => ['deployments', project] as const,
   deploymentLogs: (project: string, branch: string, tail: number) =>
@@ -353,6 +355,16 @@ export function useGitBlame(project: string, ref: string, path: string, enabled:
     queryKey: qk.gitBlame(project, ref, path),
     queryFn: () => api.getGitBlame(project, ref, path),
     enabled: Boolean(project && ref && path && enabled),
+  })
+}
+
+// Recherche plein-texte (grep) d'une réf. `enabled` = paresseux : tiré seulement quand la palette est ouverte
+// ET la requête non vide. Clé incluant `q` → chaque requête est cachée séparément (SHA+q-bound).
+export function useGitSearch(project: string, ref: string, q: string, enabled: boolean) {
+  return useQuery({
+    queryKey: qk.gitSearch(project, ref, q),
+    queryFn: () => api.getGitSearch(project, ref, q),
+    enabled: Boolean(project && ref && q && enabled),
   })
 }
 

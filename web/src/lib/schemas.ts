@@ -618,6 +618,27 @@ export const GitPathsSchema = z.object({
 })
 export type GitPaths = z.infer<typeof GitPathsSchema>
 
+// Une correspondance grep : chemin + n° de ligne (1-based) + extrait de la ligne (borné côté serveur).
+export const GitSearchMatchSchema = z.object({
+  path: z.string(),
+  line: z.number(),
+  text: z.string(),
+})
+export type GitSearchMatch = z.infer<typeof GitSearchMatchSchema>
+
+// GET /api/projects/{p}/git/search?ref=&q= : recherche plein-texte (grep) d'une réf (palette « rechercher
+// dans le code »). `truncated` = le nb de correspondances dépasse le cap serveur (signalé) ; `count` = total
+// avant cap.
+export const GitSearchSchema = z.object({
+  project: z.string(),
+  ref: z.string(),
+  q: z.string(),
+  results: z.array(GitSearchMatchSchema),
+  truncated: z.boolean(),
+  count: z.number(),
+})
+export type GitSearch = z.infer<typeof GitSearchSchema>
+
 // GET /api/projects/{p}/git/blob?ref=&path= : contenu d'un fichier. Gardes L4 : `binary`/`too_large`
 // → `content` vide (jamais d'octets bruts) ; `truncated` si le contenu affiché a été coupé.
 export const GitBlobSchema = z.object({
