@@ -556,6 +556,57 @@ def test_write_decision_doc_writes_body_and_skips_blank(tmp_path: Path):
     assert list((wt / "docs" / "decisions").glob("*--blank.md")) == []
 
 
+def test_write_decision_doc_preamble_prefixes_but_guards_on_result(tmp_path: Path):
+    """`preamble` (la passe de fix y met les findings du gate rouge) PRÉFIXE le corps `preamble\\n\\n{result}`
+    ; la garde no-op reste sur `result` seul — un preamble sans corps ne fabrique jamais de minerai."""
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    doc = worker.write_decision_doc(wt, "t", "le récit du fix", date_str="2026-07-23",
+                                    preamble="## Bloqueurs\n- a.py:12 — null deref")
+    body = doc.read_text(encoding="utf-8")
+    assert body.startswith("## Bloqueurs\n- a.py:12 — null deref\n\n")
+    assert body.rstrip().endswith("le récit du fix")
+    # preamble présent mais result blanc/absent → None, aucun fichier (findings seuls ne sont pas du minerai)
+    assert worker.write_decision_doc(wt, "b", "  ", date_str="2026-07-23", preamble="## Bloqueurs") is None
+    assert worker.write_decision_doc(wt, "n", None, date_str="2026-07-23", preamble="## Bloqueurs") is None
+
+
+_FIX_FINDINGS = {
+    "review": {"findings": [{"severity": "🔴 bloquant", "file": "core.py", "line": 12,
+                             "claim": "déréférencement null", "evidence": "x peut être None"}]},
+    "toolchain": {"steps": [{"name": "mypy", "cmd": "mypy .", "exit_code": 1, "ok": False,
+                             "error": "incompatible type"}]},
+}
+
+
+def test_dispatch_fix_harvests_ore_on_success(ctx):
+    """Passe de fix réussie → le savoir de la correction (findings du gate rouge PRÉFIXÉS + récit du worker)
+    devient un `docs/decisions/<date>--<feature>-refix-<job>.md` durable, committé avec le fix. Ferme le trou
+    C (le fix ne jetait plus son minerai)."""
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    report = worker.dispatch_fix(conn, settings, feature_ref="proj/feat", findings=_FIX_FINDINGS,
+                                 runner=_ok_runner)
+    assert report["dispatched"] and report["result"]["ok"]
+    wt = Path(jobs.get_job(conn, report["job_id"])["worktree_path"])
+    docs = list((wt / "docs" / "decisions").glob("*--feat-refix-*.md"))
+    assert len(docs) == 1
+    text = docs[0].read_text(encoding="utf-8")
+    assert "findings d'origine" in text                        # le gate rouge d'origine est capturé
+    assert "déréférencement null" in text and "mypy" in text   # findings reviewer + Tier-0 rendus
+    assert text.rstrip().endswith("fait")                      # le récit du worker suit
+
+
+def test_dispatch_fix_no_ore_on_failure(ctx):
+    """Passe de fix ratée → AUCUN minerai orphelin (symétrie avec le run de task raté)."""
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    report = worker.dispatch_fix(conn, settings, feature_ref="proj/feat", findings=_FIX_FINDINGS,
+                                 runner=_fail_runner)
+    wt = Path(jobs.get_job(conn, report["job_id"])["worktree_path"])
+    assert list((wt / "docs" / "decisions").glob("*.md")) == []
+
+
 # -- suivi de log incrémental + normaliseur ---------------------------------------------------------
 
 def test_read_events_incremental_and_partial_line(tmp_path: Path):

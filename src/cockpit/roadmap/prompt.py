@@ -110,10 +110,11 @@ def _fix_mandate() -> str:
     )
 
 
-def _findings_block(findings: dict) -> str:
+def findings_block(findings: dict) -> str:
     """Rend les findings du gate rouge (le **brief = le verdict**) : les 🔴 du reviewer Tier-1 (file:line —
     claim + evidence) et les étapes Tier-0 natives en échec (cmd + exit + extrait d'erreur). Un verdict absent
-    est simplement omis (fail-soft)."""
+    est simplement omis (fail-soft). Public : réutilisé par la forge pour PRÉFIXER le minerai d'une passe de
+    fix (`worker.dispatch_fix` → `write_decision_doc`) du gate rouge d'origine."""
     lines: list[str] = []
     review = findings.get("review") or {}
     reds = [f for f in review.get("findings", []) if str(f.get("severity", "")).startswith("🔴")]
@@ -156,7 +157,7 @@ def build_fix_prompt(project: dict, feature: dict, *, findings: dict, root: Path
         _facet_block(root, facet, "PERSONA.md"),
         _fix_mandate(),
         _facet_block(root, facet, "METHOD.md"),
-        f"## Bloqueurs du gate à corriger\n{_findings_block(findings)}",
+        f"## Bloqueurs du gate à corriger\n{findings_block(findings)}",
         f"## Contexte du projet\n{_context_block(root)}",
     ]
     return "\n\n".join(b for b in blocks if b) + "\n"

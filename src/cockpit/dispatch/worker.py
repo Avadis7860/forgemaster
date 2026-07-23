@@ -34,7 +34,7 @@ from cockpit.git.internal import InternalGit
 from cockpit.projects.registry import get_project, sot_path_for
 from cockpit.provision.mcp import inject_mcp_config
 from cockpit.roadmap import model, resolver
-from cockpit.roadmap.prompt import build_fix_prompt, build_worker_prompt
+from cockpit.roadmap.prompt import build_fix_prompt, build_worker_prompt, findings_block
 from cockpit.tools import ToolPreflightError, preflight_tools, tools_env
 
 # -- politique d'outils (verbatim de worker_dispatch.py) --------------------------------------------
@@ -184,18 +184,24 @@ def parse_headless_result(stdout: str, returncode: int = 0) -> dict:
 
 
 def write_decision_doc(worktree: Path, task_slug: str, result: str | None, *,
-                       date_str: str) -> Path | None:
+                       date_str: str, preamble: str | None = None) -> Path | None:
     """Persiste le message final du worker (`result`) en **minerai local** durable :
     `<worktree>/docs/decisions/<date_str>--<task_slug>.md`, corps **verbatim** (le worker le termine par une
     section `## Décisions prises`, cf. `prompt._mandate`). Provenance portée par le NOM (date+slug) +
     l'auteur git du commit — pas de frontmatter neuf. **No-op** (retourne `None`, n'écrit rien) si `result`
     est absent ou blanc : pas de doc vide, pas de minerai orphelin. PUR (date injectée → testable sans
-    horloge). L'appelant ne l'invoque que dans la branche run-réussi → jamais de trace sur un run raté."""
+    horloge). L'appelant ne l'invoque que dans la branche run-réussi → jamais de trace sur un run raté.
+
+    `preamble` (optionnel) est PRÉFIXÉ au corps (`preamble\\n\\n{result}`) : la passe de fix y injecte les
+    findings du gate rouge d'origine (`findings_block`), pour que le minerai capture findings→cause→fix, pas
+    seulement le récit du worker. La garde no-op reste sur `result` seul — un preamble sans corps ne fabrique
+    jamais un minerai (symétrie avec le run raté)."""
     if not result or not result.strip():
         return None
+    body = f"{preamble.rstrip()}\n\n{result}" if preamble else result
     doc = Path(worktree) / "docs" / "decisions" / f"{date_str}--{task_slug}.md"
     doc.parent.mkdir(parents=True, exist_ok=True)
-    doc.write_text(result if result.endswith("\n") else result + "\n", encoding="utf-8")
+    doc.write_text(body if body.endswith("\n") else body + "\n", encoding="utf-8")
     return doc
 
 
@@ -343,10 +349,11 @@ def dispatch_fix(conn: sqlite3.Connection, settings: Settings, *, feature_ref: s
                  git: GitBackend | None = None, runner: Runner | None = None) -> dict:
     """Dispatche un worker de **correction** sur la branche de feature (gate rouge → refix) : réutilise le
     worktree (rebase idempotent sur `dev` — « retour au dev »), construit le brief depuis les `findings` (le
-    brief = le verdict), spawne, committe le fix. PAS de task → aucune transition `todo`/`done`, aucune
-    récolte de minerai. Job journalisé `kind='fix'` (ancré sur une task `done` de la feature pour la
-    découverte live/`list_jobs`) → la borne se compte par `count_fix_jobs`. Retourne
-    `{dispatched, reason, job_id?, result?}`."""
+    brief = le verdict), spawne, RÉCOLTE le minerai puis committe le fix. PAS de task → aucune transition
+    `todo`/`done` ; mais la correction distille son savoir (findings→cause→fix) en `docs/decisions/` comme
+    une passe de task (le fix porte souvent le savoir le plus précieux — cause racine, contournement écarté).
+    Job journalisé `kind='fix'` (ancré sur une task `done` de la feature pour la découverte live/`list_jobs`)
+    → la borne se compte par `count_fix_jobs`. Retourne `{dispatched, reason, job_id?, result?}`."""
     git = git or InternalGit()
     project, feature = feature_ref.split("/", 1)
     feat = model.resolve_feature(conn, feature_ref)
@@ -360,9 +367,18 @@ def dispatch_fix(conn: sqlite3.Connection, settings: Settings, *, feature_ref: s
     job_id = jobs.record_start(conn, task_id=anchor, worktree=str(res["path"]), port=res["port"],
                                session_id=session_id, log_path=str(log_path), kind="fix")
 
-    def _on_success(_parsed: dict) -> None:
-        # Le worker de fix écrit le code mais NE fait PAS de git (mandat) → la forge committe la correction
-        # sur la branche de feature → le gate SHA-bound s'ancre sur le nouveau HEAD (re-finalisé par `refix`).
+    def _on_success(parsed: dict) -> None:
+        # Récolte le minerai de la correction AVANT le commit, symétrique de `dispatch_next._on_success` : le
+        # message final du worker (cause racine + fix retenu) devient un `docs/decisions/<date>--<feature>-
+        # refix-<job>.md`, PRÉFIXÉ des findings du gate rouge d'origine → le minerai capture findings→cause→
+        # fix (self-contained ; les verdicts de gate sont purgés au merge). `job_id` discrimine plusieurs
+        # refix le même jour (aucun écrasement). No-op honnête si le worker n'a rien distillé (garde sur
+        # `result`). Puis la forge committe la correction (le worker NE fait PAS de git — mandat) → le gate
+        # SHA-bound s'ancre sur le nouveau HEAD (re-finalisé par `refix`).
+        preamble = (f"# Passe de correction — feature {feature}\n\n"
+                    f"## Bloqueurs du gate rouge (findings d'origine)\n{findings_block(findings)}")
+        write_decision_doc(res["path"], f"{feature}-refix-{job_id}", parsed.get("result"),
+                           date_str=date.today().isoformat(), preamble=preamble)
         git.commit_worktree(res["path"], message=f"fix({feature}): gate refix pass (worker dispatch)",
                             identity=resolve_identity(project, worktree.WORKTREE_BASE, role="worker"))
 
