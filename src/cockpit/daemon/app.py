@@ -67,6 +67,7 @@ def build_app(settings: Settings) -> FastAPI:
         tool,
         types,
     )
+    from cockpit.daemon.ws_token import ensure_ws_token
 
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):  # type: ignore[no-untyped-def]
@@ -107,9 +108,11 @@ def build_app(settings: Settings) -> FastAPI:
 
     app = FastAPI(title="cockpit", version=__version__, lifespan=_lifespan)
     app.state.deps = Deps(settings)                      # conteneur DI unique, lu par get_deps
+    app.state.ws_token = ensure_ws_token(settings)       # secret par-instance, gate les WS (wsguard)
 
-    # CORS pour le dev Vite (:5173 → daemon :8700). Outil strictement local : origines localhost only,
-    # pas de credentials (aucune auth cookie). En prod, le front est servi same-origin (StaticFiles).
+    # CORS pour le dev Vite (:5173 → daemon :8700). Le CORS ne couvre QUE les `fetch` — les handshakes WS
+    # n'y passent PAS : leur garde (Origin + token par-instance) vit dans `daemon.wsguard`. Outil local :
+    # origines localhost only, pas de credentials (aucune auth cookie).
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],

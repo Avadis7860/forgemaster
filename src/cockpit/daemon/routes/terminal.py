@@ -11,15 +11,17 @@ même garde, **clés de registre distinctes** (aucune collision) :
   regate l'auth côté CLI et l'affiche dans le PTY. Session **distincte** du shell → persistance/reprise
   propres, indépendantes.
 
-Garde commune (avant `accept()`) : `pty.resolve_workdir` (#4 anti-traversal) + `is_dir` (sinon `bash` dans un
-dir absent crash post-accept). La frontière **client** reste la frontière **réseau** (LAN/VPN), hors
-process."""
+Garde commune (avant `accept()`) : `wsguard.authorize_ws` (contrôle d'Origin + token par-instance — ferme le
+vecteur CSWSH, cf. `daemon.wsguard`) PUIS `pty.resolve_workdir` (#4 anti-traversal) + `is_dir` (sinon `bash`
+dans un dir absent crash post-accept). La frontière **client** est désormais **dans le process** (Origin +
+token serveur), plus seulement le réseau (LAN/VPN) — qui ne filtre pas le vecteur navigateur."""
 from __future__ import annotations
 
 from pathlib import Path
 
 from fastapi import APIRouter, WebSocket
 
+from cockpit.daemon.wsguard import authorize_ws
 from cockpit.provision.mcp import inject_mcp_config
 from cockpit.terminal import pty
 
@@ -35,6 +37,9 @@ async def _accept_project_pty(websocket: WebSocket, project: str) -> str | None:
     No-op honnête si le MCP n'est pas câblé (install sans corpus privé). Le cwd n'est pas un working-tree
     (racine projet = `sot.git` bare + `worktrees/`) → le Bearer n'est jamais committé."""
     deps = websocket.app.state.deps
+    subprotocol = await authorize_ws(websocket)                 # garde CSWSH (Origin + token) avant accept
+    if subprotocol is None:                                     # Origin hors politique / token absent → fermé
+        return None
     try:
         workdir = pty.resolve_workdir(deps.settings, project)   # borné au dossier du projet
     except ValueError:
@@ -44,7 +49,7 @@ async def _accept_project_pty(websocket: WebSocket, project: str) -> str | None:
         await websocket.close(code=1008)
         return None
     inject_mcp_config(Path(workdir), deps.settings, slug=project)   # câble le MCP au cwd (no-op si non câblé)
-    await websocket.accept()
+    await websocket.accept(subprotocol=subprotocol)            # echo du token retenu (obligation RFC 6455)
     return workdir
 
 

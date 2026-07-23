@@ -33,6 +33,13 @@ def client(tmp_path: Path):
     return TestClient(app_mod.build_app(settings)), settings
 
 
+def _tok(c) -> list[str]:
+    """Sous-protocole du token WS par-instance (garde CSWSH, cf. `daemon.wsguard`). Tout handshake WS le
+    passe en `subprotocols=` — sans lui, la garde ferme `1008` avant `accept()`. Aucun `Origin` n'est posé
+    par TestClient → la branche « Origin absent » (client non-navigateur) tolère, seul le token gate."""
+    return [f"cockpit.token.{c.app.state.ws_token}"]
+
+
 # -- DI + santé ------------------------------------------------------------------------------------
 
 def test_build_app_has_explicit_di_container_and_health(client):
@@ -443,7 +450,7 @@ def test_dispatch_ws_streams_normalized_transcript_then_terminal_frame(client, t
         encoding="utf-8")
     job_id = _seed_job(settings, str(log), status="done")   # terminal → le stream draine puis clôt
 
-    with c.websocket_connect(f"/ws/dispatch/{job_id}") as ws:
+    with c.websocket_connect(f"/ws/dispatch/{job_id}", subprotocols=_tok(c)) as ws:
         e1 = ws.receive_json()
         assert e1["type"] == "assistant" and "démarre" in e1["text"]
         assert e1["tools"][0] == {"name": "Read", "input_summary": "core.py"}
@@ -452,8 +459,9 @@ def test_dispatch_ws_streams_normalized_transcript_then_terminal_frame(client, t
         e3 = ws.receive_json()                              # frame terminale de fin de job
         assert e3["type"] == "job" and e3["status"] == "done" and e3["num_turns"] == 3
 
-    # job inconnu → refus 1008, jamais un flux
-    with pytest.raises(WebSocketDisconnect), c.websocket_connect("/ws/dispatch/inexistant") as ws:
+    # job inconnu (token valide → passe la garde, teste bien le gate d'existence) → refus 1008, jamais un flux
+    with pytest.raises(WebSocketDisconnect), \
+            c.websocket_connect("/ws/dispatch/inexistant", subprotocols=_tok(c)) as ws:
         ws.receive_json()
 
 
@@ -1100,7 +1108,8 @@ def test_terminal_ws_refuses_unknown_project_before_accept(client, monkeypatch):
     monkeypatch.setattr("cockpit.auth.claude_auth_status",
                         lambda *a, **k: {"authenticated": False, "source": None})
     # fermé avant accept → disconnect levé au connect
-    with pytest.raises(WebSocketDisconnect), c.websocket_connect("/ws/terminal/does-not-exist"):
+    with pytest.raises(WebSocketDisconnect), \
+            c.websocket_connect("/ws/terminal/does-not-exist", subprotocols=_tok(c)):
         pass
 
 
@@ -1120,7 +1129,7 @@ def test_terminal_ws_opens_when_host_unauthenticated(client, monkeypatch):
         await websocket.send_text(json.dumps({"t": "session", "fresh": True}))
 
     monkeypatch.setattr("cockpit.terminal.pty.serve_project_terminal", _fake_serve)
-    with c.websocket_connect("/ws/terminal/real") as ws:   # accept réussi (pas de WebSocketDisconnect)
+    with c.websocket_connect("/ws/terminal/real", subprotocols=_tok(c)) as ws:   # accept OK
         assert json.loads(ws.receive_text()) == {"t": "session", "fresh": True}
 
 
@@ -1139,9 +1148,9 @@ def test_terminal_and_interview_ws_are_distinct_sessions(client, monkeypatch):
         await websocket.send_text(json.dumps({"t": "session", "fresh": True}))
 
     monkeypatch.setattr("cockpit.terminal.pty.serve_project_terminal", _fake_serve)
-    with c.websocket_connect("/ws/terminal/real") as ws:
+    with c.websocket_connect("/ws/terminal/real", subprotocols=_tok(c)) as ws:
         assert json.loads(ws.receive_text())["t"] == "session"
-    with c.websocket_connect("/ws/interview/real") as ws:
+    with c.websocket_connect("/ws/interview/real", subprotocols=_tok(c)) as ws:
         assert json.loads(ws.receive_text())["t"] == "session"
 
     assert seen == [
@@ -1164,7 +1173,7 @@ def test_terminal_ws_injects_mcp_config_at_project_cwd_when_wired(client, monkey
         await websocket.send_text(json.dumps({"t": "session", "fresh": True}))
 
     monkeypatch.setattr("cockpit.terminal.pty.serve_project_terminal", _fake_serve)
-    with c.websocket_connect("/ws/terminal/real") as ws:
+    with c.websocket_connect("/ws/terminal/real", subprotocols=_tok(c)) as ws:
         ws.receive_text()
     mcp_json = settings.projects_root / "real" / ".mcp.json"
     assert mcp_json.is_file()
@@ -1184,7 +1193,7 @@ def test_terminal_ws_mcp_injection_is_honest_noop_when_not_wired(client, monkeyp
         await websocket.send_text(json.dumps({"t": "session", "fresh": True}))
 
     monkeypatch.setattr("cockpit.terminal.pty.serve_project_terminal", _fake_serve)
-    with c.websocket_connect("/ws/terminal/real") as ws:
+    with c.websocket_connect("/ws/terminal/real", subprotocols=_tok(c)) as ws:
         assert json.loads(ws.receive_text())["t"] == "session"       # ouverture normale
     assert not (settings.projects_root / "real" / ".mcp.json").exists()
 
@@ -1196,8 +1205,63 @@ def test_interview_ws_refuses_unknown_project_before_accept(client, monkeypatch)
     c, _ = client
     monkeypatch.setattr("cockpit.auth.claude_auth_status",
                         lambda *a, **k: {"authenticated": False, "source": None})
-    with pytest.raises(WebSocketDisconnect), c.websocket_connect("/ws/interview/does-not-exist"):
+    with pytest.raises(WebSocketDisconnect), \
+            c.websocket_connect("/ws/interview/does-not-exist", subprotocols=_tok(c)):
         pass
+
+
+# -- garde CSWSH : Origin + token par-instance AVANT accept (cf. daemon.wsguard) --------------------
+
+def _open_terminal_ok(c, monkeypatch):
+    """Prépare un projet valide + un `serve` faké qui annonce la session — factorise les tests de garde WS
+    (on isole la DÉCISION de la garde, le vrai `serve` est couvert par les tests détache/ré-attache)."""
+    c.post("/api/projects", json={"slug": "real"})
+    c.app.state.terminals = term_reg.PtySessionRegistry()
+
+    async def _fake_serve(websocket, registry, **kwargs):
+        await websocket.send_text(json.dumps({"t": "session", "fresh": True}))
+
+    monkeypatch.setattr("cockpit.terminal.pty.serve_project_terminal", _fake_serve)
+
+
+def test_ws_refuses_handshake_without_token(client, monkeypatch):
+    """Un handshake WS SANS le sous-protocole token est fermé (1008) AVANT `accept()`, même sur un projet
+    valide. Le token par-instance est la barrière anti-client-non-navigateur + defense-in-depth."""
+    c, _ = client
+    _open_terminal_ok(c, monkeypatch)
+    with pytest.raises(WebSocketDisconnect), c.websocket_connect("/ws/terminal/real"):
+        pass
+
+
+def test_ws_refuses_handshake_with_wrong_token(client, monkeypatch):
+    """Un token FAUX est refusé (comparaison temps-constant serveur) — pas seulement un token absent."""
+    c, _ = client
+    _open_terminal_ok(c, monkeypatch)
+    with pytest.raises(WebSocketDisconnect), \
+            c.websocket_connect("/ws/terminal/real", subprotocols=["cockpit.token.deadbeef"]):
+        pass
+
+
+def test_ws_refuses_cross_origin_even_with_valid_token(client, monkeypatch):
+    """Cœur anti-CSWSH : une page tierce (Origin hors politique) est fermée AVANT `accept()` MÊME avec un
+    token valide — le contrôle d'Origin est la barrière anti-navigateur (Origin non-forgeable depuis une
+    page). Prouve que la garde ne se réduit pas au token."""
+    c, _ = client
+    _open_terminal_ok(c, monkeypatch)
+    with pytest.raises(WebSocketDisconnect), \
+            c.websocket_connect("/ws/terminal/real", subprotocols=_tok(c),
+                                headers={"origin": "http://evil.example"}):
+        pass
+
+
+def test_ws_accepts_same_origin_with_valid_token(client, monkeypatch):
+    """Le front same-origin (Origin == Host de l'instance) + token valide → accepté, sans configuration.
+    TestClient pose `Host: testserver` → un Origin `http://testserver` est same-origin (Origin↔Host)."""
+    c, _ = client
+    _open_terminal_ok(c, monkeypatch)
+    with c.websocket_connect("/ws/terminal/real", subprotocols=_tok(c),
+                             headers={"origin": "http://testserver"}) as ws:
+        assert json.loads(ws.receive_text())["t"] == "session"
 
 
 # -- fail-loud UI : dist absente → page d'aide, jamais un 404 muet ----------------------------------

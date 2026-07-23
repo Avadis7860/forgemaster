@@ -12,6 +12,7 @@ explicitement aux couches — jamais un module-global mutable (correctif anti go
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,6 +20,7 @@ ENV_HOME = "COCKPIT_HOME"
 ENV_PROJECTS_ROOT = "COCKPIT_PROJECTS_ROOT"
 ENV_SECRET_STORE = "COCKPIT_SECRET_STORE"
 ENV_COMPOSE_CMD = "COCKPIT_COMPOSE_CMD"
+ENV_WS_ALLOWED_ORIGINS = "COCKPIT_WS_ALLOWED_ORIGINS"
 
 DEFAULT_HOME = "~/.cockpit"
 DEFAULT_PROJECTS_ROOT = "~/projects"
@@ -37,6 +39,11 @@ class Settings:
     # package que podman 4.3.1, dépourvu de la sous-commande `podman compose` (≥4.4). `("docker","compose")`
     # via `COCKPIT_COMPOSE_CMD` reste un réglage (backend abstrait + engine-aware, cf. runtime/backend.py).
     compose_cmd: tuple[str, ...] = ("podman-compose",)
+    # Origines WS autorisées EN PLUS du same-origin (comparaison Origin↔Host, zéro-config) et du dev Vite
+    # (cf. daemon/wsguard). Sert le cas « daemon derrière un reverse-proxy à nom public différent » : y
+    # déposer l'origine publique (ex. "https://cockpit.example"). Défaut vide : same-origin + dev couvrent
+    # l'usage local/LAN. Env `COCKPIT_WS_ALLOWED_ORIGINS` (séparateur virgule/espace).
+    ws_allowed_origins: tuple[str, ...] = ()
 
     @property
     def db_path(self) -> Path:
@@ -60,17 +67,21 @@ class Settings:
         projects_root: str | os.PathLike[str] | None = None,
         secret_store: str | None = None,
         compose_cmd: str | None = None,
+        ws_allowed_origins: str | None = None,
     ) -> Settings:
         """Résout les racines. Priorité par racine : argument explicite > variable d'env > défaut.
         `~` est toujours développé ; les chemins sont rendus absolus (jamais relatifs au cwd courant).
         `secret_store` est un sélecteur (chaîne, non normalisé), pas un chemin. `compose_cmd` est une
-        chaîne (préfixe splité sur les espaces, ex. `"docker compose"`), normalisée en tuple."""
+        chaîne (préfixe splité sur les espaces, ex. `"docker compose"`), normalisée en tuple.
+        `ws_allowed_origins` est une liste d'origines (séparateur virgule/espace), normalisée en tuple."""
         h = _pick(home, os.environ.get(ENV_HOME), DEFAULT_HOME)
         p = _pick(projects_root, os.environ.get(ENV_PROJECTS_ROOT), DEFAULT_PROJECTS_ROOT)
         s = _pick(secret_store, os.environ.get(ENV_SECRET_STORE), DEFAULT_SECRET_STORE)
         c = _pick(compose_cmd, os.environ.get(ENV_COMPOSE_CMD), DEFAULT_COMPOSE_CMD)
+        w = _pick(ws_allowed_origins, os.environ.get(ENV_WS_ALLOWED_ORIGINS), "")
         return Settings(home=_norm(h), projects_root=_norm(p), secret_store=s,
-                        compose_cmd=tuple(c.split()))
+                        compose_cmd=tuple(c.split()),
+                        ws_allowed_origins=tuple(o for o in re.split(r"[,\s]+", w) if o))
 
 
 def _pick(explicit: object, env: str | None, default: str) -> str:

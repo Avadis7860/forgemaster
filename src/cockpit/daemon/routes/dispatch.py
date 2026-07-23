@@ -13,6 +13,7 @@ from starlette.concurrency import run_in_threadpool
 
 from cockpit import auth, interview
 from cockpit.daemon.deps import Deps, get_deps
+from cockpit.daemon.wsguard import authorize_ws
 from cockpit.dispatch import abort, jobs, orchestrator, stream
 from cockpit.roadmap import model
 
@@ -89,9 +90,13 @@ def make_dispatch_router() -> APIRouter:
 
     @router.websocket("/ws/dispatch/{job_id}")
     async def dispatch_ws(websocket: WebSocket, job_id: str) -> None:
-        """Transcript **live** d'un job : valide l'existence AVANT `accept()` (job inconnu → refus policy
-        1008, jamais un flux vide), puis délègue la boucle de streaming à `stream.stream_job`."""
+        """Transcript **live** d'un job : garde CSWSH (Origin + token, `wsguard`) PUIS validation d'existence,
+        le tout AVANT `accept()` (job inconnu → refus policy 1008, jamais un flux vide ; garde d'abord pour ne
+        pas offrir d'oracle d'existence à un handshake non autorisé), puis délègue à `stream.stream_job`."""
         deps: Deps = websocket.app.state.deps
+        subprotocol = await authorize_ws(websocket)     # Origin + token AVANT tout accept (et avant l'oracle)
+        if subprotocol is None:
+            return
         conn = deps.open_db()
         try:
             jobs.get_job(conn, job_id)                  # KeyError si inconnu
@@ -100,7 +105,7 @@ def make_dispatch_router() -> APIRouter:
             return
         finally:
             conn.close()
-        await websocket.accept()
+        await websocket.accept(subprotocol=subprotocol)  # echo du token retenu (obligation RFC 6455)
         await stream.stream_job(websocket, deps, job_id)
 
     return router
