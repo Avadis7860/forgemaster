@@ -91,9 +91,16 @@ def test_launch_loop_closes_via_first_session_interview(ctx):
         design.parent.mkdir(parents=True, exist_ok=True)
         design.write_text("# Design\n## Concept\nRoguelike de cartes ; jouable = 1 run.\n"
                           "## Boucle\nPiocher, arbitrer, risquer.\n## Économie\nPV 30, coût 2, gain 3.\n")
+        # Passe B (depuis PR B2, le gate de profondeur est contraignant à la clôture) : la roadmap authorée
+        # COUVRE les 7 axes de l'archétype `game` via les acceptances (aucun axe muet → socle clôturable). La
+        # roadmap vit dans la DB, pas en fichiers → le socle reste docs-only (design.md seul committé).
         model.add_feature(conn, project_slug=PROJECT, slug="backend-scaffold", facet="code")
         model.add_task(conn, feature_ref=f"{PROJECT}/backend-scaffold", slug="impl",
-                       acceptance="Serveur répond /health 200, testé.")
+                       acceptance="Serveur /health 200 ; boucle de jeu jouable, sauvegarde de session, "
+                                  "adversaire scripté, testé.")
+        model.add_task(conn, feature_ref=f"{PROJECT}/backend-scaffold", slug="tuning",
+                       acceptance="Équilibrage : corridor de win-rate sur seeds ; états d'échec/bords ; "
+                                  "rejouabilité par seed ; HUD lisible.")
         return 0
 
     rep2 = interview.run_interview(conn, settings, project=PROJECT, git=InternalGit(),

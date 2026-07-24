@@ -110,13 +110,25 @@ def _has_work_feature(conn, project: str, socle_slug: str) -> bool:
     return any(f["slug"] != socle_slug for f in model.list_features(conn, project))
 
 
-def verify_and_complete(conn, project: str, feature: dict) -> dict:
-    """VÉRIFIE le socle après la session (verified, pas trusted) : `roadmap check` vert ET ≥1 feature de
-    travail → clôt les tasks du socle en `done` (l'interview a rempli la doc, decompose a authoré la
-    roadmap). Sinon laisse le socle `todo` et rend ce qui manque. Rend
+def _depth_issues(conn, settings: Settings, project: str, *, cwd: Path | None = None) -> list[check.Issue]:
+    """Défauts de PROFONDEUR d'archétype à la clôture du socle (chaque axe couvert-ou-différé — le hard-gate
+    qui empêche une roadmap PLATE de clore, pas seulement le `--depth` opt-in). Déférals lus du worktree
+    réservé (`cwd`, édition d'interview `.cockpit/deferred-axes.yaml` non commitée) sinon du SoT commité.
+    No-op honnête (liste vide) si l'archétype du projet n'a pas d'axes catalogués."""
+    deferred = check.load_deferred_axes(settings, project, cwd=cwd)
+    return check.check_depth_axes(conn, project, deferred=deferred)
+
+
+def verify_and_complete(conn, settings: Settings, project: str, feature: dict, *,
+                        wt_path: Path | None = None) -> dict:
+    """VÉRIFIE le socle après la session (verified, pas trusted) : `roadmap check` vert, **profondeur
+    d'archétype couverte-ou-différée** ET ≥1 feature de travail → clôt les tasks du socle en `done`
+    (l'interview a rempli la doc, decompose a authoré la roadmap, la passe B a statué chaque axe). Sinon
+    laisse le socle `todo` et rend ce qui manque (complétude + profondeur). Les axes différés sont lus du
+    worktree réservé (`wt_path`, `.cockpit/deferred-axes.yaml` non encore commité). Rend
     `{completed, issues, work_feature, socle_tasks_closed}` (`socle_tasks_closed` = nombre de tasks
     RÉELLEMENT transitionnées → done, pour le compte-rendu humain de la réconciliation)."""
-    issues = check.check_roadmap(conn, project)
+    issues = check.check_roadmap(conn, project) + _depth_issues(conn, settings, project, cwd=wt_path)
     work = _has_work_feature(conn, project, feature["slug"])
     completed = not issues and work
     closed = 0
@@ -130,11 +142,15 @@ def verify_and_complete(conn, project: str, feature: dict) -> dict:
             "work_feature": work, "socle_tasks_closed": closed}
 
 
-def _socle_worked(conn, project: str, feature: dict) -> bool:
+def _socle_worked(conn, settings: Settings, project: str, feature: dict, *,
+                  wt_path: Path | None = None) -> bool:
     """Le socle est-il DÉJÀ objectivement travaillé (l'interview a produit) — même critère que la clôture de
-    `verify_and_complete` (`roadmap check` vert ET ≥1 feature de travail), mais SANS muter. Prédicat de la
-    réconciliation idempotente : vrai → on peut clore sans (re)lancer l'interview."""
-    return _has_work_feature(conn, project, feature["slug"]) and not check.check_roadmap(conn, project)
+    `verify_and_complete` (`roadmap check` vert, profondeur d'archétype couverte ET ≥1 feature de travail),
+    mais SANS muter. Prédicat de la réconciliation idempotente : vrai → on peut clore sans (re)lancer
+    l'interview. Sans `wt_path` (appelé avant réservation), les axes différés sont lus du SoT commité."""
+    return (_has_work_feature(conn, project, feature["slug"])
+            and not check.check_roadmap(conn, project)
+            and not _depth_issues(conn, settings, project, cwd=wt_path))
 
 
 def _commit_design(git: GitBackend, project: str, feature: dict, wt_path) -> str | None:
@@ -158,10 +174,10 @@ def reconcile_socle(conn, settings: Settings, *, project: str, git: GitBackend |
     if resolved is None:
         return None                              # aucun socle interactif READY (déjà clos, ou pas de socle)
     feature, _task = resolved
-    if not _socle_worked(conn, project, feature):
+    if not _socle_worked(conn, settings, project, feature):
         return None                              # pas encore objectivement travaillé → rien à clore
     res = worktree.reserve(conn, settings, git, project=project, feature=feature["slug"])
-    outcome = verify_and_complete(conn, project, feature)
+    outcome = verify_and_complete(conn, settings, project, feature, wt_path=res["path"])
     design_sha = _commit_design(git, project, feature, res["path"]) if outcome["completed"] else None
     return {**outcome, "design_sha": design_sha,
             "next_step": ("Drain des features de travail (`cockpit run`)." if outcome["completed"]
@@ -250,7 +266,7 @@ def run_interview(conn, settings: Settings, *, project: str, git: GitBackend | N
     launch = launcher or _default_launcher
     launch(argv, cwd=res["path"], env=interview_env(settings))
     # Réconciliation / vérification à la sortie : la doc éditée + la roadmap authorée sont dans worktree/DB.
-    outcome = verify_and_complete(conn, project, feature)
+    outcome = verify_and_complete(conn, settings, project, feature, wt_path=res["path"])
     if outcome["completed"]:
         _commit_design(git, project, feature, res["path"])
     return {"ran": True, "reason": "ok", "feature": feature["slug"], "task": task["slug"],

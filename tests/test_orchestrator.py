@@ -144,7 +144,8 @@ def test_run_project_auto_reconciles_worked_socle_without_interview(ctx, monkeyp
     model.add_task(conn, feature_ref="proj/socle", slug="cadrage",
                    acceptance="Intention renseignée.", mode="interactive")
     model.add_feature(conn, project_slug="proj", slug="build", facet="code")   # facet valide → check vert
-    model.add_task(conn, feature_ref="proj/build", slug="impl", acceptance="Code posé.")
+    model.add_task(conn, feature_ref="proj/build", slug="impl",   # acceptance couvrant les axes `doc` (PR B2)
+                   acceptance="Structure posée, couverture de tests, exemple d'usage, doc de maintenance.")
     summary = orchestrator.run_project(conn, settings, project="proj",
                                        runner=_writing_worker(), review_runner=_review_worker())
     assert _statuses(conn, "socle") == {"cadrage": "done"}   # réconcilié sans 2ᵉ interview

@@ -78,17 +78,31 @@ Applique la **critique de complétude de `roadmap-decompose` (§6)** : confronte
 
 - soit **une feature le couvre** (ajoute-la avec ses tasks + `acceptance` — même règles que la passe A) ;
 - soit il est **différé EXPLICITEMENT** avec une raison (une décision assumée, pas un oubli) — trace
-  machine-lisible que le gate de profondeur (`roadmap check`) vérifie.
+  machine-lisible dans `.cockpit/deferred-axes.yaml` (à la racine du worktree), `{axe: raison}` :
+
+```yaml
+# .cockpit/deferred-axes.yaml — axes de l'archétype assumés HORS périmètre de ce socle (raison obligatoire)
+replayability: "run unique au MVP ; méta-progression après validation de la boucle"
+```
+
+Puis **vérifie le gate de profondeur** (couvre-ou-diffère chaque axe) avant de rendre la main :
+
+```bash
+cockpit roadmap check <projet> --depth   # doit finir VERT — chaque axe couvert OU différé (raison non vide)
+```
 
 Exemples d'axes (non exhaustif, cf. `roadmap-decompose §6`) : **jeu** — équilibrage *convergé* (prouvé *bon*,
 p.ex. corridor de win-rate, pas seulement *correct*), persistance de session, qualité des adversaires,
 lisibilité, bords/états d'échec, rejouabilité ; **outil/service** — robustesse aux erreurs, observabilité,
-doc d'usage, perf/charge, migration/compat. Un axe **omis en silence** ⇒ `roadmap check` lève `UNCOVERED_AXIS`.
+doc d'usage, perf/charge, migration/compat. Un axe **omis en silence** ⇒ `roadmap check` lève `UNCOVERED_AXIS`
+**et la forge REFUSE de clore le socle** (le gate de profondeur est contraignant à la clôture, pas seulement
+opt-in en CLI).
 
 ### 5. Rendre la main
 Préviens l'humain quand l'intention est fixée, la roadmap authorée **et la passe de profondeur close** (chaque
-axe couvert ou différé tracé). La forge **vérifie** (roadmap check vert + ≥1 feature de travail) et clôt le
-socle en `done` — tu n'as pas à marquer les tasks du socle toi-même. `cockpit run <projet>` prend alors le
+axe couvert ou différé tracé). La forge **vérifie** (roadmap check vert + **profondeur d'archétype couverte** +
+≥1 feature de travail) et clôt le socle en `done` — tu n'as pas à marquer les tasks du socle toi-même. Un socle
+à roadmap plate (un axe non statué) **ne se clôt pas** : la forge te rend la main avec `UNCOVERED_AXIS`. `cockpit run <projet>` prend alors le
 relais et draine les features de travail en headless.
 
 ## Anti-patterns

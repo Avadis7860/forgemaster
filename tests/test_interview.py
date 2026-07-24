@@ -15,6 +15,12 @@ from cockpit.projects import registry
 from cockpit.roadmap import model
 from cockpit.tools import tools_bin
 
+# Acceptance d'une feature de travail qui COUVRE les axes de l'archétype `doc` (structure / completeness /
+# examples / maintenance) — le type par défaut d'un projet de test est `generic` → archétype `doc`. Depuis
+# PR B2 le gate de profondeur est CONTRAIGNANT à la clôture : sans couverture (ni déféral), un socle ne se
+# clôt plus. Une interview représentative produit cette profondeur.
+_DEEP_DOC_ACCEPTANCE = "Structure du code posée, couverture de tests, exemple d'usage, doc de maintenance."
+
 
 @pytest.fixture
 def ctx(tmp_path: Path, fake_tools, monkeypatch):
@@ -49,9 +55,9 @@ def test_interview_resolves_launches_interactive_and_completes(ctx):
 
     def human_launcher(argv, *, cwd, env=None):
         launched.append(argv)
-        # L'humain (via la session) remplit la doc puis AUTHORE une feature de travail check-verte.
+        # L'humain remplit la doc puis AUTHORE une feature de travail check-verte ET profonde (axes couverts).
         model.add_feature(conn, project_slug="proj", slug="build", facet="code")
-        model.add_task(conn, feature_ref="proj/build", slug="impl", acceptance="Code posé et testé.")
+        model.add_task(conn, feature_ref="proj/build", slug="impl", acceptance=_DEEP_DOC_ACCEPTANCE)
         return 0
 
     report = interview.run_interview(conn, settings, project="proj", git=InternalGit(),
@@ -106,9 +112,9 @@ def test_interview_reconcile_only_after_interruption(ctx):
     _socle_project(conn, settings)
 
     def crashing_launcher(argv, *, cwd, env=None):
-        # L'humain authore une feature de travail (check-verte)… puis le PTY est tué avant la réconciliation.
+        # L'humain authore une feature de travail (check-verte + profonde)… puis le PTY est tué avant clôture.
         model.add_feature(conn, project_slug="proj", slug="build", facet="code")
-        model.add_task(conn, feature_ref="proj/build", slug="impl", acceptance="Code posé et testé.")
+        model.add_task(conn, feature_ref="proj/build", slug="impl", acceptance=_DEEP_DOC_ACCEPTANCE)
         raise RuntimeError("PTY tué avant verify_and_complete")
 
     with pytest.raises(RuntimeError):
@@ -145,7 +151,7 @@ def test_reconcile_socle_report_reconciles_and_reports(ctx):
     git = InternalGit()
     _socle_project(conn, settings)
     model.add_feature(conn, project_slug="proj", slug="build", facet="code")
-    model.add_task(conn, feature_ref="proj/build", slug="impl", acceptance="Code posé et testé.")
+    model.add_task(conn, feature_ref="proj/build", slug="impl", acceptance=_DEEP_DOC_ACCEPTANCE)
     res = worktree.reserve(conn, settings, git, project="proj", feature="socle", probe=None)
     (res["path"] / "design.md").write_text("# Design rempli\n", encoding="utf-8")   # doc éditée à committer
 
@@ -165,7 +171,7 @@ def test_reconcile_socle_report_already_closed_then_incomplete_and_no_socle(ctx)
     # (a) déjà clôturé : on réconcilie une 1ʳᵉ fois, la 2ᵉ n'a plus rien à faire
     _socle_project(conn, settings)
     model.add_feature(conn, project_slug="proj", slug="build", facet="code")
-    model.add_task(conn, feature_ref="proj/build", slug="impl", acceptance="Code.")
+    model.add_task(conn, feature_ref="proj/build", slug="impl", acceptance=_DEEP_DOC_ACCEPTANCE)
     interview.reconcile_socle_report(conn, settings, project="proj", git=git)
     again = interview.reconcile_socle_report(conn, settings, project="proj", git=git)
     assert again["status"] == "already_closed" and again["completed"] is True
@@ -262,6 +268,53 @@ def test_interview_no_interactive_task_does_not_launch(ctx):
     report = interview.run_interview(conn, settings, project="proj", git=InternalGit(),
                                      launcher=lambda *a, **k: launched.append(a) or 0)
     assert report["ran"] is False and launched == []
+
+
+def test_interview_shallow_roadmap_does_not_close_socle(ctx):
+    """PR B2 — hard-gate de profondeur à la CLÔTURE : une roadmap DISPATCHABLE (`roadmap check` vert, ≥1
+    feature de travail) mais PLATE (un axe de l'archétype `doc` ni couvert ni différé) NE clôt PAS le socle —
+    la forge rend la main avec `UNCOVERED_AXIS`. C'est ce qui rend l'Objectif final contraignant (plus
+    seulement `--depth` opt-in en CLI). Régression du défaut void-runner (roadmap plate passée quand même)."""
+    settings, conn = ctx
+    _socle_project(conn, settings)                        # generic → archétype `doc` (4 axes exigés)
+
+    def shallow_launcher(argv, *, cwd, env=None):
+        model.add_feature(conn, project_slug="proj", slug="build", facet="code")
+        model.add_task(conn, feature_ref="proj/build", slug="impl",   # aucun mot-clé d'axe `doc`
+                       acceptance="Code posé et testé.")
+        return 0
+
+    report = interview.run_interview(conn, settings, project="proj", git=InternalGit(),
+                                     launcher=shallow_launcher)
+    assert report["ran"] is True and report["completed"] is False                 # roadmap plate → non clos
+    assert any("UNCOVERED_AXIS" in i for i in report["issues"])            # motif de profondeur remonté
+    assert conn.execute(                                                          # socle laissé ouvert
+        "SELECT status FROM tasks WHERE slug='cadrage'").fetchone()["status"] == "todo"
+
+
+def test_interview_deferred_axes_in_worktree_close_socle(ctx):
+    """PR B2 — la déférence EXPLICITE est une sortie légitime du gate : les axes de l'archétype tracés dans
+    `.cockpit/deferred-axes.yaml` (`{axe: raison}`) DANS le worktree d'interview (édition non commitée)
+    satisfont la profondeur → le socle se clôt. Prouve que `verify_and_complete` lit les déférals du worktree
+    réservé (`res["path"]`), pas seulement le SoT commité."""
+    settings, conn = ctx
+    _socle_project(conn, settings)
+
+    def deferring_launcher(argv, *, cwd, env=None):
+        model.add_feature(conn, project_slug="proj", slug="build", facet="code")
+        model.add_task(conn, feature_ref="proj/build", slug="impl", acceptance="Code posé et testé.")
+        cockpit_dir = Path(cwd) / ".cockpit"
+        cockpit_dir.mkdir(parents=True, exist_ok=True)
+        (cockpit_dir / "deferred-axes.yaml").write_text(          # les 4 axes `doc` différés avec raison
+            "structure: MVP — plan de structure différé\ncompleteness: MVP\n"
+            "examples: MVP — exemples après la boucle nominale\nmaintenance: MVP\n", encoding="utf-8")
+        return 0
+
+    report = interview.run_interview(conn, settings, project="proj", git=InternalGit(),
+                                     launcher=deferring_launcher)
+    assert report["ran"] is True and report["completed"] is True          # axes différés tracés → clos
+    assert conn.execute(
+        "SELECT status FROM tasks WHERE slug='cadrage'").fetchone()["status"] == "done"
 
 
 def test_build_interview_prompt_points_skill_and_renders_acceptance(ctx):

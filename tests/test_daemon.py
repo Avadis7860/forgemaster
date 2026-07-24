@@ -413,7 +413,8 @@ def test_reconcile_socle_endpoint_reports_result(client):
     model.add_task(conn, feature_ref="proj/socle", slug="cadrage", acceptance="Intention.",
                    mode="interactive")
     model.add_feature(conn, project_slug="proj", slug="build", facet="code")   # feature de travail authorée
-    model.add_task(conn, feature_ref="proj/build", slug="impl", acceptance="Code.")
+    model.add_task(conn, feature_ref="proj/build", slug="impl",   # couvre les axes `doc` (PR B2)
+                   acceptance="Structure posée, couverture de tests, exemple d'usage, doc de maintenance.")
     conn.close()
 
     r = c.post("/api/dispatch/proj/reconcile-socle")
