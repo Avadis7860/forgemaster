@@ -1,6 +1,6 @@
 ---
 name: first-session-interview
-description: Mener l'interview de conception (1ʳᵉ session) d'un browser-game neuf — cadrer concept, boucle de jeu et économie avec l'humain (au terminal, NO-CODE), les fixer dans docs/design.md, puis dériver la roadmap de lancement jouable via roadmap-decompose. Variante game-design du first-session-interview de base.
+description: Mener l'interview de conception (1ʳᵉ session) d'un browser-game neuf — d'ABORD proposer un STYLE servi (patron verrouillé + templates de domaine, énuméré via le MCP de corpus) puis cadrer concept, boucle de jeu et économie avec l'humain (au terminal, NO-CODE), les fixer dans docs/design.md, et dériver la roadmap de lancement jouable via roadmap-decompose. Variante game-design du first-session-interview de base.
 inputs: [browser-game neuf semé (socle-design nu), humain présent au terminal]
 outputs: [docs/design.md renseigné (concept + boucle + économie), roadmap de lancement jouable authorée, socle prêt à drainer]
 related_catalogs: []
@@ -34,8 +34,22 @@ dans `docs/design.md`, ancrer l'implémentabilité, ne toucher ni code ni gate).
 
 ## Protocole
 
+### 0. Proposer un STYLE servi (capital-token via MCP) — AVANT de concevoir
+Un browser-game peut partir d'un **style** de conception déjà distillé (patron verrouillé + templates de
+domaine), servi par le **MCP de corpus**. Ton worktree a un accès MCP natif (`/mcp`) **si** le corpus est
+câblé — utilise-le en solve-mode :
+- **Énumère les styles** : `list_collections("blueprint")` → garde les entrées dont le champ `class` commence
+  par **`browser-game:`** (ex. `browser-game:ogame-rogue-like-pve`). Chaque entrée = `{class, id, title}`.
+- **Propose-les à l'humain** (id + titre) comme points de départ, **plus** l'option « aucun / sur-mesure ».
+- **Sur choix d'un style** : `read("blueprint", "<id>")` → tire la **guidance** (design verrouillé, boucle,
+  formules, pointeurs de templates de domaine). Tu **cadres** tout le reste de l'interview sur cette guidance,
+  et le jeu se **construit** ensuite d'après elle — tu ne re-débats pas ce qui y est déjà tranché.
+- **Dégradation honnête** : MCP non câblé (`list_collections` vide/erreur), aucun style `browser-game:`, ou
+  l'humain veut du sur-mesure → poursuis en **générique** (étapes 1→4 telles quelles). Jamais de blocage.
+
 ### 1. Interviewer pour concevoir (concept → boucle → économie)
-Interroge l'humain jusqu'à pouvoir écrire, sans inventer :
+Si un style a été choisi à l'étape 0, **cadre chaque question sur SA guidance** (ne réinvente pas ce qui y est
+verrouillé). Sinon, interroge l'humain jusqu'à pouvoir écrire, sans inventer :
 - **Concept** : à quoi on joue, la fantaisie procurée, ce qui rend le premier jalon « jouable » (binaire).
 - **Boucle de jeu** : la décision que le joueur répète (récolter / arbitrer / risquer…), la tension qui la
   rend intéressante.
@@ -67,6 +81,7 @@ en `done` — ne marque pas les tasks toi-même. `cockpit run <projet>` draine e
 
 ## Anti-patterns
 
+- **Ignorer les styles servis** — si le MCP expose des styles `browser-game:`, propose-les AVANT de concevoir à blanc ; réinventer un design déjà distillé gaspille le capital.
 - **Concevoir sans l'humain** — l'interview EST le point : ne devine pas le jeu.
 - **Économie « à équilibrer plus tard »** — pas de nombres = pas de design vérifiable ; chiffre maintenant.
 - **Écrire du code** — tu es NO-CODE ; ta sortie est de la conception que `backend`/`frontend` implémentent.

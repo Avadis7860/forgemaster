@@ -242,6 +242,16 @@ def test_browser_game_wires_game_dev_identity():
         assert forbidden not in gd_settings, f"game-design ne doit pas permettre Bash({forbidden}…)"
 
 
+def test_browser_game_interview_enumerates_served_styles():
+    """L'interview first-session du générique `browser-game` PROPOSE les STYLES servis par le MCP de corpus
+    (patrons distillés) AVANT de concevoir à blanc — sinon choisir un « style ogame » ne spécialise rien (la
+    connaissance ogame vit en capital servi, pas dans un overlay hand-codé). Contrat falsifiable SANS réseau :
+    le `SKILL.md` semé porte l'étape d'énumération (list_collections → filtre `browser-game:` → read)."""
+    skill = load_bundle("browser-game")[".claude/skills/first-session-interview/SKILL.md"]
+    for marker in ('list_collections("blueprint")', "browser-game:", 'read("blueprint"'):
+        assert marker in skill, f"interview browser-game sans câblage styles-servis : « {marker} » absent"
+
+
 def test_ogame_rogue_like_pve_wires_ogame_identity():
     """Le type `ogame-rogue-like-pve` (bundle crash-test) porte l'identité de GENRE opinionnée — c'est ce qui
     le distingue du générique neutre `browser-game` : ogame-like/PvE vs bots + le patron d'étapes ogame dérivé
