@@ -48,6 +48,14 @@ vision  →  features[facet]  →  tasks[depends_on + acceptance]
 5. **Donne à chaque task ses critères d'acceptation.** Concrets, vérifiables (« l'endpoint `POST /x` renvoie
    422 si `y` manque, testé »), pas « faire marcher ». Ils **deviennent** le contrat que le worker doit
    satisfaire — c'est le levier qualité le plus direct.
+6. **Critique de complétude (dernière passe, AVANT de rendre).** Une roadmap dispatchable n'est pas une
+   roadmap **profonde**. Confronte-la à la question **produit**, pas seulement découpage : *pour un livrable
+   **complet et de qualité** de CE type, quels axes ne sont pas couverts ?* Passe l'intention contre les axes
+   propres au type de livrable — **pour un jeu** : convergence d'équilibrage (prouvé *bon*, pas seulement
+   *correct*), persistance de session, pression/qualité des adversaires, lisibilité/onboarding, états
+   d'échec & bords, rejouabilité/contenu ; **pour un outil/service** : robustesse aux erreurs, observabilité,
+   doc d'usage, perf/charge, migration/compat. Chaque axe pertinent : **couvert par une feature, ou différé
+   EXPLICITEMENT avec raison**. Un axe omis en silence = une dette qui se découvre en production.
 
 ## En pratique (cockpit ou manuel)
 
@@ -70,6 +78,9 @@ feature) — le modèle (facette par feature, DAG + acceptance par task) est ce 
 - **Dépendance inter-features cachée** — back→front non exprimé par l'ordre de merge → le front part sans le
   contrat. Séquence par le merge, ne parallélise que l'indépendant.
 - **DAG sur-contraint** — des `depends_on` factices « pour ranger » : ils tuent le parallélisme intra-feature.
+- **Roadmap plate** — décomposition dispatchable mais sans profondeur : toutes les features prouvent que « ça
+  tourne », aucune ne prouve que « c'est bon » (résultat convergé/équilibré, contenu suffisant, axes du type
+  couverts). Passe la **critique de complétude** (méthode §6) avant de rendre.
 
 ## Sortie
 

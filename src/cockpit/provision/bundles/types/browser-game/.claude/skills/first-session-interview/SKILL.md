@@ -31,6 +31,18 @@ dans `docs/design.md`, ancrer l'implémentabilité, ne toucher ni code ni gate).
 2. La roadmap porte les **features d'amorçage jouable** — typiquement scaffold serveur (backend), schémas
    partagés (backend), premier jalon jouable (frontend) — chacune facette + tasks (`depends_on` +
    `acceptance`), et `cockpit roadmap check <projet>` est **vert**.
+3. La roadmap **couvre la profondeur**, pas seulement l'amorçage — sinon on livre un jeu qui *tourne* sans
+   être *bon* :
+   - **Couverture du style choisi** : si un style servi a été retenu (étape 0), la roadmap porte **une feature
+     par étape de son patron d'étapes** (`read("blueprint", <id>)`), **y compris la persistance** si le
+     blueprint la verrouille. Toute étape non couverte au premier jalon est **différée EXPLICITEMENT** (une
+     ligne `différé : <étape> — <raison>` dans `docs/design.md`), jamais omise en silence.
+   - **Équilibrage prouvé, pas affirmé** : « gagnable » n'est acquis que si une feature porte une acceptance de
+     **convergence d'équilibrage** — un **corridor de win-rate sur un échantillon de seeds** (une ligne
+     compétente gagne avec marge, une ligne gloutonne/passive perd). Des nombres écrits ≠ un jeu équilibré ; un
+     test scripté WIN/LOSE prouve la machinerie du verdict, pas la gagnabilité au skill.
+   - **Couvre-ou-diffère les axes du genre** : applique la **critique de complétude** de `roadmap-decompose`
+     (chaque axe couvert par une feature, ou différé avec raison).
 
 ## Protocole
 
@@ -84,5 +96,9 @@ en `done` — ne marque pas les tasks toi-même. `cockpit run <projet>` draine e
 - **Ignorer les styles servis** — si le MCP expose des styles `browser-game:`, propose-les AVANT de concevoir à blanc ; réinventer un design déjà distillé gaspille le capital.
 - **Concevoir sans l'humain** — l'interview EST le point : ne devine pas le jeu.
 - **Économie « à équilibrer plus tard »** — pas de nombres = pas de design vérifiable ; chiffre maintenant.
+- **« Gagnable » sans corridor de win-rate** — affirmer la gagnabilité sans feature de convergence
+  d'équilibrage : des nombres chiffrés ne prouvent pas qu'un humain gagne au skill et perd à la faute.
+- **Amorçage sans profondeur** — s'arrêter au triplet scaffold+schémas+jalon en laissant tomber des étapes
+  verrouillées du blueprint (persistance…) : couvre le patron du style, ou diffère **explicitement**.
 - **Écrire du code** — tu es NO-CODE ; ta sortie est de la conception que `backend`/`frontend` implémentent.
 - **Roadmap non vérifiée** — ne rends pas la main tant que `roadmap check` n'est pas vert.
