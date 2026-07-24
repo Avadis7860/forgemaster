@@ -100,6 +100,8 @@ def build_parser() -> argparse.ArgumentParser:
     rc = p_roadmap_sub.add_parser("check", parents=[common],
                                   help="vérifier qu'une roadmap est opérationnelle (gate de complétude)")
     rc.add_argument("project")
+    rc.add_argument("--depth", action="store_true",
+                    help="ajouter le gate de PROFONDEUR par archétype (chaque axe couvert ou différé)")
 
     # -- task ---------------------------------------------------------------------------------------
     p_task = sub.add_parser("task", parents=[common], help="tasks d'une feature (DAG depends_on)")

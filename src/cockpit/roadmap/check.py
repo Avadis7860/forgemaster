@@ -12,11 +12,19 @@ from __future__ import annotations
 import argparse
 import sqlite3
 from dataclasses import dataclass
+from pathlib import Path
+
+import yaml
 
 from cockpit.config import Settings
 from cockpit.db import store
-from cockpit.projects.registry import get_project
+from cockpit.git.internal import GitOpError, InternalGit
+from cockpit.projects.registry import get_project, sot_path_for
+from cockpit.provision import BundleError, load_bundle, read_bundle_manifest
 from cockpit.roadmap import model, resolver
+
+_DEPTH_AXES_PATH = ".cockpit/depth-axes.yaml"        # catalogue archétype→axes, semé en base (bundle source)
+_DEFERRED_AXES_PATH = ".cockpit/deferred-axes.yaml"  # reports worker {axe: raison}, per-projet (worktree/SoT)
 
 
 @dataclass(frozen=True)
@@ -24,6 +32,7 @@ class Issue:
     """Un défaut de complétude localisé (feature, éventuellement task) avec son motif lisible."""
     kind: str            # DANGLING_DEP | CYCLE | MISSING_ACCEPTANCE | BAD_FACET | MISSING_FACET | EMPTY
     #                    | DANGLING_FEATURE_DEP | FEATURE_CYCLE | DEAD_FEATURE_DEP  (inter-feature, v10)
+    #                    | UNCOVERED_AXIS  (gate de profondeur par archétype, opt-in `--depth` ; task=axe)
     feature: str
     task: str | None
     detail: str
@@ -80,11 +89,99 @@ def check_roadmap(conn: sqlite3.Connection, project_slug: str) -> list[Issue]:
     return issues
 
 
+# --- Gate de PROFONDEUR par archétype (séparé de `check_roadmap`, qui reste la complétude structurelle) ---
+# `check_roadmap` prouve qu'une roadmap est *drainable* (DoD/DAG/facettes) ; `check_depth_axes` prouve qu'elle
+# est *complète pour son archétype* (jeu/outil/service/app/doc). Opt-in (`roadmap check --depth`) : gate de
+# fin-d'interview/release, pas un lint per-édit. Manifestes SECS lus localement (bundle source + working-tree/
+# SoT), zéro MCP, zéro schéma-contrat figé touché.
+
+
+def _archetype_axes(project_type: str) -> dict[str, list[str]]:
+    """Les axes-qualité de l'archétype d'un type de bundle : `{axe: [mots-clés]}`. Vide (⇒ gate no-op honnête)
+    si le type ne déclare pas d'`archetype`, si le catalogue `depth-axes.yaml` est absent, ou si l'archétype
+    n'y figure pas. Lu depuis le **bundle source** (déterministe, toujours présent), jamais le MCP."""
+    try:
+        archetype = read_bundle_manifest(project_type).get("archetype")
+        raw = load_bundle(project_type).get(_DEPTH_AXES_PATH) if archetype else None
+    except BundleError:
+        return {}
+    if not archetype or not raw:
+        return {}
+    catalog = yaml.safe_load(raw) or {}
+    axes = catalog.get(archetype) or {}
+    return {str(name): list(kws or []) for name, kws in axes.items()}
+
+
+def _roadmap_corpus(conn: sqlite3.Connection, project_slug: str) -> str:
+    """Tout le texte de la roadmap (slugs + titres des features & tasks + acceptances) en minuscules — le
+    substrat du match mot-clé de couverture. Read-only."""
+    parts: list[str] = []
+    for f in model.list_features(conn, project_slug):
+        parts += [f["slug"], f.get("title") or ""]
+        for t in model.list_tasks(conn, f["id"]):
+            parts += [t["slug"], t.get("title") or "", t.get("acceptance") or ""]
+    return " ".join(parts).lower()
+
+
+def load_deferred_axes(settings: Settings, project_slug: str, *,
+                       cwd: Path | None = None, git: InternalGit | None = None) -> dict[str, str]:
+    """Les axes DIFFÉRÉS explicitement par le worker : `{axe: raison}` (raison vide ignorée). Lu là où le
+    fichier `.cockpit/deferred-axes.yaml` existe — d'abord le **working-tree** (`cwd` = worktree du worker :
+    reflète l'édition non commitée pendant l'interview), sinon la version **commitée** du SoT bare
+    (`read_blob HEAD`, déterministe hors worktree, bare-safe). Absent/illisible → `{}` (fail-closed : un axe
+    non couvert sans report reste `UNCOVERED_AXIS`)."""
+    raw: str | None = None
+    if cwd is not None:
+        f = Path(cwd) / _DEFERRED_AXES_PATH
+        if f.is_file():
+            raw = f.read_text(encoding="utf-8")
+    if raw is None:
+        git = git or InternalGit()
+        try:
+            raw = git.read_blob(sot_path_for(settings, project_slug), "HEAD", _DEFERRED_AXES_PATH)["content"]
+        except (GitOpError, OSError):
+            return {}
+    parsed = yaml.safe_load(raw) or {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {str(k): str(v) for k, v in parsed.items() if str(v).strip()}
+
+
+def check_depth_axes(conn: sqlite3.Connection, project_slug: str, *,
+                     deferred: dict[str, str] | None = None) -> list[Issue]:
+    """Défauts de PROFONDEUR : pour l'archétype du projet, chaque axe-qualité doit être **couvert** (une
+    feature/task le mentionne — un mot-clé de l'axe ⊆ slug/titre/acceptance) ou **différé** (`deferred[axe]`
+    non vide). Un axe ni couvert ni différé ⇒ `UNCOVERED_AXIS`. Type sans archétype / catalogue absent ⇒ liste
+    vide (no-op). Read-only, déterministe. `deferred` : cf. `load_deferred_axes` (défaut vide)."""
+    deferred = deferred or {}
+    project = get_project(conn, project_slug)
+    axes = _archetype_axes(project["project_type"])
+    if not axes:
+        return []
+    corpus = _roadmap_corpus(conn, project_slug)
+    issues: list[Issue] = []
+    for axis, keywords in axes.items():
+        if any(kw.lower() in corpus for kw in keywords):
+            continue
+        if deferred.get(axis, "").strip():
+            continue
+        arche = project["project_type"]
+        issues.append(Issue("UNCOVERED_AXIS", "-", axis,
+                            f"axe de l'archétype {arche!r} ni couvert ni différé — "
+                            f"couvre-le, ou trace-le dans {_DEFERRED_AXES_PATH}"))
+    return issues
+
+
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
-    """Route `cockpit roadmap check <project>`. Rapport groupé par feature ; **exit 1 dès une issue**."""
+    """Route `cockpit roadmap check <project> [--depth]`. Rapport groupé par feature ; **exit 1 dès une
+    issue**. `--depth` ajoute le gate de profondeur par archétype et surface les reports."""
     conn = store.open_db(settings)
+    deferred: dict[str, str] = {}
     try:
         issues = check_roadmap(conn, args.project)
+        if getattr(args, "depth", False):
+            deferred = load_deferred_axes(settings, args.project, cwd=Path.cwd())
+            issues = issues + check_depth_axes(conn, args.project, deferred=deferred)
         feats = model.list_features(conn, args.project)
         n_feat = len(feats)
         n_task = sum(len(model.list_tasks(conn, f["id"])) for f in feats)
@@ -93,8 +190,11 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
         return 1
     finally:
         conn.close()
+    if deferred:                             # surface les reports tracés (jamais de cap silencieux)
+        print(f"axes différés (tracés, {len(deferred)}) : {', '.join(sorted(deferred))}")
     if not issues:
-        print(f"roadmap opérationnelle : {n_feat} features, {n_task} tasks — 0 issue")
+        depth = " + profondeur" if getattr(args, "depth", False) else ""
+        print(f"roadmap opérationnelle{depth} : {n_feat} features, {n_task} tasks — 0 issue")
         return 0
     print(f"roadmap NON opérationnelle : {len(issues)} issue(s)")
     for iss in issues:

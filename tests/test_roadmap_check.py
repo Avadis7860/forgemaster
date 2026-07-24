@@ -168,3 +168,102 @@ def test_cli_dispatch_exit_codes(ctx, capsys):
     rc = check.cli_dispatch(settings, argparse.Namespace(project="proj"))
     assert rc == 1
     assert "MISSING_ACCEPTANCE" in capsys.readouterr().out
+
+
+# --- Gate de PROFONDEUR par archétype (check_depth_axes, opt-in --depth) --------------------------------
+
+def test_depth_uncovered_axis_flagged_on_bare_seed(ctx):
+    """Sur un seed browser-game nu, des axes du genre (adversaire, lisibilité, bords, rejouabilité) ne sont
+    couverts par aucune feature → chacun est un `UNCOVERED_AXIS` (le drop silencieux est refusé)."""
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj", project_type="browser-game")
+    issues = check.check_depth_axes(conn, "proj")
+    assert issues and all(i.kind == "UNCOVERED_AXIS" for i in issues)
+    assert "adversary-pressure" in {i.task for i in issues}         # l'axe est porté par Issue.task
+    assert check.check_roadmap(conn, "proj") == []                  # la complétude structurelle reste verte
+
+
+def test_depth_axis_covered_by_feature_keyword(ctx):
+    """Un axe devient couvert dès qu'une feature/task le mentionne (mot-clé ⊆ slug/titre/acceptance)."""
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj", project_type="browser-game")
+    before = {i.task for i in check.check_depth_axes(conn, "proj")}
+    assert "readability" in before
+    model.add_feature(conn, project_slug="proj", slug="hud-onboarding", facet="game-design")
+    model.add_task(conn, feature_ref="proj/hud-onboarding", slug="hud",
+                   acceptance="Le HUD rend le doom-clock lisible, test inclus.")
+    after = {i.task for i in check.check_depth_axes(conn, "proj")}
+    assert "readability" not in after
+
+
+def test_depth_axis_deferred_with_reason_is_ok(ctx):
+    """Un axe non couvert mais différé AVEC raison (deferred[axe] non vide) n'est pas une issue."""
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj", project_type="browser-game")
+    uncovered = {i.task for i in check.check_depth_axes(conn, "proj")}
+    deferred = {axis: "différé au jalon 2 — raison assumée" for axis in uncovered}
+    assert check.check_depth_axes(conn, "proj", deferred=deferred) == []
+
+
+def test_depth_deferral_with_empty_reason_still_flagged(ctx):
+    """Un report à raison vide ne compte PAS comme différé (pas d'échappatoire silencieuse)."""
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj", project_type="browser-game")
+    uncovered = {i.task for i in check.check_depth_axes(conn, "proj")}
+    deferred = {axis: "   " for axis in uncovered}          # raisons vides
+    assert {i.task for i in check.check_depth_axes(conn, "proj", deferred=deferred)} == uncovered
+
+
+def test_depth_noop_when_all_axes_covered_or_deferred(ctx):
+    """Toutes les branches OK (couvert OU différé) → 0 issue : le gate ne sur-signale pas."""
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj", project_type="cli-tool")
+    axes = check._archetype_axes("cli-tool")
+    # couvre chaque axe par une task dont l'acceptance nomme le 1ᵉʳ mot-clé de l'axe
+    model.add_feature(conn, project_slug="proj", slug="cover", facet="tool")
+    for axis, kws in axes.items():
+        model.add_task(conn, feature_ref="proj/cover", slug=f"t-{axis}",
+                       acceptance=f"Couvre {kws[0]}, test inclus.")
+    assert check.check_depth_axes(conn, "proj") == []
+
+
+def test_load_deferred_axes_from_worktree(ctx, tmp_path):
+    """`load_deferred_axes` lit `.cockpit/deferred-axes.yaml` du working-tree, raisons vides ignorées."""
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj", project_type="browser-game")
+    wt = tmp_path / "wt"
+    (wt / ".cockpit").mkdir(parents=True)
+    (wt / ".cockpit" / "deferred-axes.yaml").write_text(
+        "replayability: méta cross-run reportée au jalon 3\nedge-states: ''\n", encoding="utf-8")
+    loaded = check.load_deferred_axes(settings, "proj", cwd=wt)
+    assert loaded == {"replayability": "méta cross-run reportée au jalon 3"}   # raison vide filtrée
+
+
+def test_load_deferred_axes_absent_is_empty(ctx, tmp_path):
+    """Aucun fichier (ni working-tree ni SoT commité) → {} (fail-closed : les axes restent à couvrir)."""
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj", project_type="browser-game")
+    assert check.load_deferred_axes(settings, "proj", cwd=tmp_path / "empty") == {}
+
+
+def test_cli_dispatch_depth_flag(ctx, capsys, tmp_path, monkeypatch):
+    """`roadmap check --depth` : rc 1 + UNCOVERED_AXIS sur seed nu ; rc 0 une fois tout différé (reports lus
+    dans le working-tree = cwd). Sans `--depth`, le comportement structurel est inchangé (rc 0)."""
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj", project_type="browser-game")
+    # sans --depth : seed drainable → vert (le gate de profondeur ne s'applique pas)
+    assert check.cli_dispatch(settings, argparse.Namespace(project="proj")) == 0
+    capsys.readouterr()
+    # avec --depth : des axes du genre manquent → rouge
+    rc = check.cli_dispatch(settings, argparse.Namespace(project="proj", depth=True))
+    assert rc == 1
+    assert "UNCOVERED_AXIS" in capsys.readouterr().out
+    # trace tous les axes non couverts dans le working-tree (cwd), puis relance --depth → vert
+    uncovered = {i.task for i in check.check_depth_axes(conn, "proj")}
+    (tmp_path / ".cockpit").mkdir(parents=True)
+    (tmp_path / ".cockpit" / "deferred-axes.yaml").write_text(
+        "".join(f"{a}: reporté au jalon 2\n" for a in uncovered), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    rc = check.cli_dispatch(settings, argparse.Namespace(project="proj", depth=True))
+    out = capsys.readouterr().out
+    assert rc == 0 and "profondeur" in out and "axes différés" in out

@@ -59,12 +59,16 @@ def make_roadmap_router() -> APIRouter:
             conn.close()
 
     @router.get("/api/projects/{project}/roadmap/check")
-    def roadmap_check(project: str, deps: Deps = Depends(get_deps)) -> dict:
+    def roadmap_check(project: str, depth: bool = False, deps: Deps = Depends(get_deps)) -> dict:
         # Gate de complétude exposé en HTTP : MÊME autorité que le CLI `cockpit roadmap check` (réutilise
-        # `check.check_roadmap`, aucune 2ᵉ logique). Projet inconnu → KeyError → 404 (handler global).
+        # `check.check_roadmap`, aucune 2ᵉ logique). `depth=true` ajoute le gate de profondeur par archétype
+        # (reports lus depuis le SoT commité — pas de worktree côté daemon). Projet inconnu → KeyError → 404.
         conn = deps.open_db()
         try:
             issues = check.check_roadmap(conn, project)
+            if depth:
+                deferred = check.load_deferred_axes(deps.settings, project)
+                issues = issues + check.check_depth_axes(conn, project, deferred=deferred)
             return {"project": project, "ok": not issues,
                     "issues": [dataclasses.asdict(i) for i in issues]}
         finally:

@@ -3,6 +3,7 @@ version = "1"
 project_type = "service-api"
 facets = ["backend", "doc"]
 default_facet = "backend"
+archetype = "service"       # gate de profondeur : axes d'un service HTTP (cf. depth-axes.yaml)
 
 # Déclaration MCP sèche (sans secret ni endpoint). `corpus = true` = ce type bénéficie du capital-token servi.
 # Un overlay surcharge `bundle.toml` en whole-file → sans ce bloc, le `corpus = true` de la base est PERDU.

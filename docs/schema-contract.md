@@ -195,6 +195,39 @@ tools:
 JAMAIS ici — seulement dans le coffre. Amorçage **idempotent** (slug présent → `skipped`) ; échec d'une
 entrée isolé (`failed`), un manifeste invalide avorte (fail-loud).
 
+## 2c. Manifestes de PROFONDEUR — `depth-axes.yaml` (semé) + `deferred-axes.yaml` (worker)
+
+Deux manifestes **SECS** au service du gate de profondeur (`roadmap/check.py : check_depth_axes`, opt-in
+`cockpit roadmap check <projet> --depth`). **Hors contrat figé** (comme `bundle.toml`/`bootstrap.yaml`) : ce
+sont des listes/maps sans prose, versionnées avec le repo, **pas de `SCHEMA_VERSION` ni de bump** à l'édition.
+
+- **`depth-axes.yaml`** — catalogue `archétype → {axe: [mots-clés]}`, semé en **`bundles/base/.cockpit/`**
+  (hérité par TOUS les types, composition whole-file). L'archétype d'un projet est déclaré par le champ
+  `archetype` de son `.cockpit/bundle.toml` (`game`/`tool`/`service`/`app`/`doc`). Lu depuis le **bundle
+  source** (`load_bundle`), jamais le MCP. Un type sans `archetype`, un catalogue absent, ou un archétype
+  hors catalogue ⇒ gate **no-op** honnête.
+
+  ```yaml
+  game:
+    balance-convergence: [équilibrage, balance, win-rate, corridor, tuning]   # axe: mots-clés (FR+EN)
+    persistence: [persistance, sauvegarde, save, reload, session]
+    # …un axe par exigence de qualité du genre
+  ```
+
+- **`deferred-axes.yaml`** — reports **par-projet** authorés par le worker d'interview : `{axe: raison}`
+  (raison vide ignorée). Lu du **working-tree** (worktree du worker, édition non commitée) sinon de la
+  version **commitée** du SoT (`read_blob HEAD`). Absent ⇒ `{}` (fail-closed).
+
+  ```yaml
+  replayability: méta cross-run reportée au jalon 3     # axe: raison assumée (machine-lisible)
+  ```
+
+Sémantique du gate : pour chaque axe de l'archétype du projet — **couvert** (un mot-clé ⊆ slug/titre/
+acceptance d'une feature/task) OU **différé** (raison non vide) ⇒ OK ; sinon issue **`UNCOVERED_AXIS`**
+(`Issue.task` = l'axe). Le drop silencieux est refusé ; les différés sont surfacés (jamais de cap muet).
+`check_depth_axes` est **séparé** de `check_roadmap` (complétude structurelle) — les deux fusionnent dans
+`cockpit roadmap check --depth` et la route `GET …/roadmap/check?depth=true`.
+
 ## 3. Contrat API HTTP (`daemon/`, porté)
 
 Le daemon expose le cœur ; le web (P5) le consomme. **DI explicite** (`Deps` sur `app.state`, lu par

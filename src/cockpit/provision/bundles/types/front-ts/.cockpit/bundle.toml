@@ -3,6 +3,7 @@ version = "1"
 project_type = "front-ts"
 facets = ["frontend", "backend", "doc"]
 default_facet = "frontend"
+archetype = "app"           # gate de profondeur : axes UX d'une app front (cf. depth-axes.yaml)
 
 # Déclaration MCP sèche (sans secret ni endpoint). `corpus = true` = ce type bénéficie du capital-token servi.
 # Un overlay surcharge `bundle.toml` en whole-file → sans ce bloc, le `corpus = true` de la base est PERDU.
