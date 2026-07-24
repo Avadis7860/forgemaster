@@ -16,20 +16,17 @@ def test_check_drift_clean_for_ogame_rogue_like_pve():
 
 
 def test_derive_reproduces_managed_set_with_jetons():
-    """`derive_type` produit le set de fichiers managés attendu ; les jetons **archétype** sont remplis
-    (gate/versions), les jetons **projet** restent `{{…}}` (remplis par le worker du projet)."""
+    """Après le découplage moteur↔derive (P2) : `derive_type` ne produit plus QUE l'**épine structurelle** —
+    le `package.json` (manifest + contrat de gate) et le splice §6 du `CLAUDE.md`. Le moteur de jeu
+    (src/server/web) est hand-authored dans l'overlay, plus dérivé. Les jetons **archétype** sont remplis
+    (gate/versions), le jeton **projet** `{{theme}}` reste `{{…}}` (rempli par le worker du projet)."""
     res = derive.derive_type("ogame-rogue-like-pve")
-    assert set(res.files) == {"package.json", "tsconfig.json", "src/shared/schema.ts",
-                              "src/shared/schema.test.ts", "src/shared/tick.ts",
-                              "src/shared/tick.test.ts", "src/index.ts", "server/index.ts",
-                              "web/index.html", "web/main.tsx", "web/App.tsx", "vite.config.ts",
-                              "vitest.config.ts", "CLAUDE.md", "eslint.config.js", "web/index.css",
-                              "web/queryClient.ts", "web/vite-env.d.ts"}
+    assert set(res.files) == {"package.json", "CLAUDE.md"}
     assert res.template_ref == "browser-game-pve/scaffold"
     pkg = res.files["package.json"]
     assert '"name": "game"' in pkg and '"zod"' in pkg          # archétype rempli (nom valide, dép Zod)
     assert "{{gate_cmd}}" not in pkg and "{{ts_version}}" not in pkg
-    assert "{{game_name}}" in res.files["src/index.ts"]        # jeton projet laissé verbatim
+    assert "{{theme}}" in pkg                                  # jeton projet laissé verbatim
 
 
 def test_fill_jetons_fills_archetype_leaves_project_rejects_unknown():
