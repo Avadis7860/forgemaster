@@ -1,21 +1,28 @@
-// schema.test.ts — test PUR du modèle de domaine partagé (Vitest, aucune I/O : la résolution se teste en pur
-// avant l'UI, décision verrouillée). Il prouve que le gate `tsc --noEmit && vitest run` est vert dès l'amorçage
-// et fixe l'invariant « une capacité livrée = un test ». Étends-le au fil du modèle (unités, combat, tick).
+// schema.test.ts — test PUR du modèle de domaine partagé (Vitest, aucune I/O). Prouve que le gate
+// `tsc --noEmit && vitest run` est vert dès l'amorçage et que l'état/les commandes valident.
 import { describe, expect, it } from "vitest";
 
-import { Player, Resource } from "./schema.js";
+import { Command, GameState, Resources } from "./schema.js";
+import { initialGameState } from "./tick.js";
 
 describe("modèle de domaine partagé", () => {
-  it("accepte un joueur d'amorçage valide", () => {
-    const player = Player.parse({
-      id: "00000000-0000-0000-0000-000000000000",
-      name: "seed",
-      resources: [{ kind: "credits", amount: 0 }],
-    });
-    expect(player.resources[0]?.kind).toBe("credits");
+  it("valide un état initial (500/500, tick 0)", () => {
+    const s = GameState.parse(initialGameState({ runSeed: 7 }));
+    expect(s.resources.metal).toBe(500);
+    expect(s.resources.crystal).toBe(500);
+    expect(s.tick).toBe(0);
   });
 
-  it("rejette une ressource au montant négatif (invariant serveur-autoritatif)", () => {
-    expect(() => Resource.parse({ kind: "energy", amount: -1 })).toThrow();
+  it("rejette une ressource négative (invariant serveur-autoritatif)", () => {
+    expect(() => Resources.parse({ metal: -1, crystal: 0, deuterium: 0 })).toThrow();
+  });
+
+  it("valide une commande d'enfilement de bâtiment", () => {
+    const cmd = Command.parse({ kind: "enqueueBuilding", building: "metalMine" });
+    expect(cmd.kind).toBe("enqueueBuilding");
+  });
+
+  it("rejette une commande de kind inconnu", () => {
+    expect(() => Command.parse({ kind: "bogus" })).toThrow();
   });
 });

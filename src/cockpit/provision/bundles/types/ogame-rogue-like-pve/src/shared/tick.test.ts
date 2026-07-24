@@ -1,59 +1,72 @@
-// tick.test.ts — test PUR du cœur de simulation (Vitest, aucune I/O). Rend l'invariant verrouillé
-// « même seed + même suite de commandes → même état » EXÉCUTABLE (pas juste déclaratif), et fixe l'invariant
-// « une capacité livrée = un test ». Étends-le au fil du modèle (production par bâtiment, combat, IA bots).
+// tick.test.ts — test PUR du cœur de simulation (Vitest, aucune I/O). Rend EXÉCUTABLES les invariants
+// verrouillés : déterminisme (rejeu byte-identique), production ogame, files de construction, refus
+// serveur-autoritatif (état inchangé, même référence), pureté.
 import { describe, expect, it } from "vitest";
 
-import { applyCommand, applyTick } from "./tick.js";
+import { applyCommand, applyTick, initialGameState } from "./tick.js";
 import type { GameState } from "./schema.js";
 
-const seedState: GameState = { tick: 0, resources: [{ kind: "credits", amount: 0 }] };
+const runTicks = (s: GameState, n: number): GameState => {
+  let cur = s;
+  for (let i = 0; i < n; i++) cur = applyTick(cur);
+  return cur;
+};
 
-describe("simulation déterministe (contrat verrouillé (état, commandes, seed) → état')", () => {
-  it("même seed + même suite de commandes → même état (rejeu byte-identique)", () => {
+describe("simulation déterministe + économie ogame", () => {
+  it("même seed + mêmes commandes → même état (rejeu byte-identique)", () => {
     const run = (): GameState => {
-      let s = seedState;
-      for (let i = 0; i < 10; i++) s = applyTick(s, 42);
-      return applyCommand(s, { kind: "spend", resource: "credits", amount: 25 });
+      let s = initialGameState({ runSeed: 42 });
+      s = applyCommand(s, { kind: "enqueueBuilding", building: "metalMine" });
+      return runTicks(s, 20);
     };
     expect(run()).toEqual(run());
   });
 
-  it("un seed différent produit une trajectoire différente (le seed compte réellement)", () => {
-    // Compare la TRAJECTOIRE complète (le montant à chaque tick), pas l'état final : deux trajectoires
-    // 10-ticks identiques exigeraient un jitter égal à CHAQUE tick (~(1/5)^10), pas juste une somme égale.
-    const trajectory = (seed: number): number[] => {
-      let s = seedState;
-      const amounts: number[] = [];
-      for (let i = 0; i < 10; i++) {
-        s = applyTick(s, seed);
-        amounts.push(s.resources[0]?.amount ?? 0);
-      }
-      return amounts;
-    };
-    expect(trajectory(1)).not.toEqual(trajectory(999));
-  });
-
-  it("un tick avance le compteur et produit des ressources", () => {
-    const s = applyTick(seedState, 7);
+  it("un tick produit du métal/cristal dès L0 (revenu de base)", () => {
+    const s = applyTick(initialGameState());
     expect(s.tick).toBe(1);
-    expect(s.resources[0]?.amount).toBeGreaterThan(0);
+    expect(s.resources.metal).toBe(530); // 500 + base 30
+    expect(s.resources.crystal).toBe(515); // 500 + base 15
   });
 
-  it("une dépense valide débite le solde", () => {
-    const s: GameState = { tick: 3, resources: [{ kind: "credits", amount: 50 }] };
-    const after = applyCommand(s, { kind: "spend", resource: "credits", amount: 20 });
-    expect(after.resources[0]?.amount).toBe(30);
+  it("enfiler une mine débite le coût et l'ajoute à la file", () => {
+    const s = applyCommand(initialGameState(), { kind: "enqueueBuilding", building: "metalMine" });
+    expect(s.resources.metal).toBe(440); // 500 - 60
+    expect(s.resources.crystal).toBe(485); // 500 - 15
+    expect(s.construction).toHaveLength(1);
+    expect(s.construction[0].targetLevel).toBe(1);
   });
 
-  it("une dépense au-delà du solde est refusée (état inchangé — le serveur dispose)", () => {
-    const s: GameState = { tick: 3, resources: [{ kind: "credits", amount: 5 }] };
-    const after = applyCommand(s, { kind: "spend", resource: "credits", amount: 999 });
-    expect(after).toBe(s); // même référence : refus strict, aucune mutation
+  it("la mine se termine et monte de niveau (file drainée)", () => {
+    let s = applyCommand(initialGameState(), { kind: "enqueueBuilding", building: "metalMine" });
+    s = runTicks(s, s.construction[0].completesAtTick);
+    expect(s.buildings.metalMine).toBe(1);
+    expect(s.construction).toHaveLength(0);
+  });
+
+  it("refus si ressources insuffisantes → état inchangé (même référence)", () => {
+    const empty: GameState = { ...initialGameState(), resources: { metal: 0, crystal: 0, deuterium: 0 } };
+    const after = applyCommand(empty, { kind: "enqueueBuilding", building: "metalMine" });
+    expect(after).toBe(empty);
+  });
+
+  it("refus si prérequis manquant (chantier requiert usine de robots 2) → même référence", () => {
+    const s = initialGameState();
+    const after = applyCommand(s, { kind: "enqueueBuilding", building: "shipyard" });
+    expect(after).toBe(s);
+  });
+
+  it("une commande différente produit une trajectoire différente", () => {
+    const base = runTicks(initialGameState(), 10);
+    let other = applyCommand(initialGameState(), { kind: "enqueueBuilding", building: "metalMine" });
+    other = runTicks(other, 10);
+    expect(other).not.toEqual(base);
   });
 
   it("applyTick ne mute pas l'état d'entrée (pureté)", () => {
-    const s: GameState = { tick: 0, resources: [{ kind: "credits", amount: 0 }] };
-    applyTick(s, 3);
-    expect(s).toEqual({ tick: 0, resources: [{ kind: "credits", amount: 0 }] });
+    const s = initialGameState();
+    const snapshot = JSON.stringify(s);
+    applyTick(s);
+    expect(JSON.stringify(s)).toBe(snapshot);
   });
 });
