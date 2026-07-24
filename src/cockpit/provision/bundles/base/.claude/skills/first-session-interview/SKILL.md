@@ -1,6 +1,6 @@
 ---
 name: first-session-interview
-description: Mener l'interview de 1ʳᵉ session d'un projet neuf — cadrer l'intention avec l'humain (dans le terminal, pas en headless), la fixer dans la doc de design, puis dériver la roadmap de travail via roadmap-decompose. C'est le point d'entrée qui personnalise un projet générique semé.
+description: Mener l'interview de 1ʳᵉ session d'un projet neuf — cadrer l'intention avec l'humain (dans le terminal, pas en headless), la fixer dans la doc de design, puis dériver la roadmap de travail via roadmap-decompose. Deux passes OBLIGATOIRES — amorçage (MVP dispatchable) puis profondeur (couvre-ou-diffère les axes-qualité de l'archétype). C'est le point d'entrée qui personnalise un projet générique semé.
 inputs: [projet neuf semé (socle nu), humain présent au terminal]
 outputs: [doc de design renseignée, roadmap de travail authorée (≥1 feature), socle prêt à drainer]
 related_catalogs: []
@@ -24,10 +24,21 @@ propose, reformule, jusqu'à ce que l'intention soit nette. C'est une interview,
    le critère binaire de « fini » du premier jalon sont **écrits**.
 2. La roadmap porte **≥1 feature de travail** (facette + tasks avec `depends_on` + `acceptance`), et
    `cockpit roadmap check <projet>` est **vert**.
+3. La roadmap **couvre la profondeur de l'archétype**, pas seulement l'amorçage — sinon on livre un projet qui
+   *tourne* sans être *complet*. Pour chaque **axe-qualité de l'archétype du livrable** (jeu / outil / service /
+   doc — cf. `roadmap-decompose` §6 « critique de complétude ») : **une feature le couvre, ou il est différé
+   EXPLICITEMENT avec raison** (trace machine-lisible que `roadmap check` vérifie). Un axe omis en silence est
+   une dette qui se découvre en production — le gate de profondeur le refuse (`UNCOVERED_AXIS`).
 
-Tant que ces deux points ne sont pas atteints, le socle reste ouvert (la forge le vérifie à ta sortie).
+Tant que ces trois points ne sont pas atteints, le socle reste ouvert (la forge le vérifie à ta sortie).
+
+> **Deux passes, jamais une.** Ta pente naturelle (comme tout worker) est de t'arrêter au **minimum viable** :
+> une roadmap dispatchable + `check` vert. Ce n'est que la **passe A**. La **passe B (profondeur) est
+> obligatoire** avant de rendre la main — c'est elle qui distingue « ça tourne » de « c'est complet ».
 
 ## Protocole
+
+## Passe A — amorçage (l'intention et le MVP dispatchable)
 
 ### 1. Interviewer pour cadrer l'intention
 Interroge l'humain — par petits lots de questions, pas une à la fois — jusqu'à pouvoir écrire, sans inventer :
@@ -55,14 +66,38 @@ Chaque feature porte **une** facette du bundle du projet ; chaque task porte une
 (sans elle, le worker n'a pas de définition de « fini »). Les deps back→front se résolvent par l'ordre de
 merge (cf. `roadmap-decompose`), pas par un champ inter-feature.
 
-### 4. Rendre la main
-Préviens l'humain quand l'intention est fixée et la roadmap authorée. La forge **vérifie** (roadmap check
-vert + ≥1 feature de travail) et clôt le socle en `done` — tu n'as pas à marquer les tasks du socle toi-même.
-`cockpit run <projet>` prend alors le relais et draine les features de travail en headless.
+## Passe B — profondeur (OBLIGATOIRE avant de rendre la main)
+
+La passe A donne un socle *dispatchable*. Elle ne garantit **pas** un livrable *complet*. Ne rends jamais la
+main à la fin de la passe A : fais d'abord la passe de profondeur.
+
+### 4. Passe de profondeur — couvrir-ou-différer les axes de l'archétype
+Applique la **critique de complétude de `roadmap-decompose` (§6)** : confronte la roadmap à la question
+**produit**, pas au découpage. Pour l'**archétype du livrable** (jeu / outil / service / doc), parcours ses
+**axes-qualité** et statue **chacun** :
+
+- soit **une feature le couvre** (ajoute-la avec ses tasks + `acceptance` — même règles que la passe A) ;
+- soit il est **différé EXPLICITEMENT** avec une raison (une décision assumée, pas un oubli) — trace
+  machine-lisible que le gate de profondeur (`roadmap check`) vérifie.
+
+Exemples d'axes (non exhaustif, cf. `roadmap-decompose §6`) : **jeu** — équilibrage *convergé* (prouvé *bon*,
+p.ex. corridor de win-rate, pas seulement *correct*), persistance de session, qualité des adversaires,
+lisibilité, bords/états d'échec, rejouabilité ; **outil/service** — robustesse aux erreurs, observabilité,
+doc d'usage, perf/charge, migration/compat. Un axe **omis en silence** ⇒ `roadmap check` lève `UNCOVERED_AXIS`.
+
+### 5. Rendre la main
+Préviens l'humain quand l'intention est fixée, la roadmap authorée **et la passe de profondeur close** (chaque
+axe couvert ou différé tracé). La forge **vérifie** (roadmap check vert + ≥1 feature de travail) et clôt le
+socle en `done` — tu n'as pas à marquer les tasks du socle toi-même. `cockpit run <projet>` prend alors le
+relais et draine les features de travail en headless.
 
 ## Anti-patterns
 
 - **Cadrer sans l'humain** — tu es en interactif *pour* l'interviewer ; ne devine pas l'intention.
 - **Doc de design laissée « à renseigner »** — l'intention floue produit une roadmap bancale.
+- **Rendre la main au minimum viable** — s'arrêter à la fin de la passe A (roadmap dispatchable + `check` vert)
+  en sautant la passe de profondeur : c'est le défaut par défaut de tout worker. La passe B n'est pas optionnelle.
+- **Axe de l'archétype omis en silence** — laisser tomber un axe-qualité sans le couvrir NI le différer avec
+  raison. Couvre-le, ou diffère-le explicitement (le gate de profondeur refuse le drop silencieux).
 - **Roadmap non vérifiée** — ne rends pas la main tant que `roadmap check` n'est pas vert avec ≥1 feature.
 - **Task sans `acceptance`** — le worker headless improvisera sa cible. Toujours un critère binaire.
