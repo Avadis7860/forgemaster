@@ -10,6 +10,7 @@ import { useWsToken } from '@/lib/queries'
 import { ptyPath, tokenProtocols, wsUrl, type PtySession } from '@/lib/ws'
 import { buildTheme } from './theme'
 import { LeaveTerminalConfirm } from './LeaveTerminalConfirm'
+import { InterviewEndState } from './InterviewEndState'
 
 export type TermStatus = 'connecting' | 'connected' | 'closed' | 'error'
 
@@ -68,8 +69,11 @@ export function parseSessionFrame(data: string): { fresh: boolean } | null {
  *  `/ws/interview/{project}` (session DÉDIÉE dont le process EST `cockpit interview` — plus de commande
  *  tapée dans un shell partagé). xterm.js (addons fit + search + web-links). Frames BINAIRES = frappes ;
  *  frames TEXTE = contrôle `{"type":"resize",cols,rows}`. Le process tourne dans la racine du projet côté
- *  daemon ; à sa sortie le socket se ferme → « Relancer » recrée la session. Barre d'outils : recherche
- *  dans le scrollback, taille de police (persistée), effacer, lancer Claude. */
+ *  daemon ; à sa sortie le socket se ferme. La barre d'outils et l'état de fin BRANCHENT sur le flavor : en
+ *  `shell`, hints de login + « Lancer Claude » + « Relancer » (recrée la session) ; en `interview`, pas de hints
+ *  shell et, à la fermeture, un état de fin dédié (`InterviewEndState`) qui lit la roadmap et ouvre le chemin
+ *  suivant (reprise ou lancement) plutôt qu'un « Relancer » trompeur. Commun aux deux : recherche dans le
+ *  scrollback, taille de police (persistée), effacer. */
 export function TerminalPane({ project, session = 'shell' }: { project: string; session?: PtySession }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
@@ -220,13 +224,29 @@ export function TerminalPane({ project, session = 'shell' }: { project: string; 
   }
 
   const st = STATUS[status]
+  // Flavor : le terminal est générique (shell OU interview) — sa barre d'outils et son état de fin BRANCHENT
+  // sur `session`. Le shell est le `bash -l` de login (surface `claude login`) ; l'interview est une session
+  // DÉDIÉE dont le process EST `cockpit interview` — pas de hints shell, pas de « Lancer Claude », et à sa
+  // fermeture (EOF propre) un état de fin qui ouvre le chemin suivant au lieu d'un « Relancer » trompeur.
+  const isInterview = session === 'interview'
+  // Fin d'interview : le PTY a quitté (fermeture propre) ou le transport a lâché. Dans cet état, l'organisateur
+  // unique de la fin est le panneau `InterviewEndState` → le badge de statut brut devient redondant (masqué) et
+  // le terminal résiduel (2 lignes de log de clôture) est BORNÉ (plus de canvas vide qui mange 40 % de hauteur).
+  const interviewClosed = isInterview && (status === 'closed' || status === 'error')
   return (
     <div className="flex h-full flex-col gap-2">
       <div className="flex shrink-0 flex-wrap items-center gap-2">
-        <p className="mr-auto text-xs text-faint">
-          Login shell (<span className="font-mono">bash -l</span>) — tape{' '}
-          <span className="font-mono">claude</span> pour lier ton compte (1ʳᵉ fois : login).
-        </p>
+        {isInterview ? (
+          <p className="mr-auto text-xs text-faint">
+            Interview de conception (<span className="font-mono">cockpit interview</span>) — mène-la dans le
+            terminal ; à la sortie, le socle se clôt.
+          </p>
+        ) : (
+          <p className="mr-auto text-xs text-faint">
+            Login shell (<span className="font-mono">bash -l</span>) — tape{' '}
+            <span className="font-mono">claude</span> pour lier ton compte (1ʳᵉ fois : login).
+          </p>
+        )}
         <div className="w-full sm:w-52">
           <Input
             value={query}
@@ -254,22 +274,41 @@ export function TerminalPane({ project, session = 'shell' }: { project: string; 
           disabled={!connected} title="Effacer l'écran">
           Effacer
         </Button>
-        <Button variant="secondary" size="sm" onClick={() => sendToPty('claude\n')} disabled={!connected}
-          title="Lancer Claude Code dans le shell">
-          Lancer Claude
-        </Button>
-        {(status === 'closed' || status === 'error') && (
+        {/* « Lancer Claude » et le « Relancer » générique sont des affordances SHELL : l'interview est déjà un
+            process `cockpit interview` (y taper `claude` n'a aucun sens), et sa fermeture propre est gérée par
+            l'état de fin dédié ci-dessous (reprise honnête ou hand-off vers le lancement), pas par un « Relancer »
+            qui recréerait une interview sur un socle déjà clos. */}
+        {!isInterview && (
+          <Button variant="secondary" size="sm" onClick={() => sendToPty('claude\n')} disabled={!connected}
+            title="Lancer Claude Code dans le shell">
+            Lancer Claude
+          </Button>
+        )}
+        {!isInterview && (status === 'closed' || status === 'error') && (
           <Button variant="primary" size="sm" onClick={() => setReconnectKey((k) => k + 1)}>
             Relancer
           </Button>
         )}
-        <Badge tone={st.tone} dot>
-          {st.label}
-        </Badge>
+        {/* Statut brut masqué en fin d'interview : le panneau `InterviewEndState` porte déjà l'état (pas de
+            « ● fermé » redondant au-dessus de « Interview terminée / incomplète »). */}
+        {!interviewClosed && (
+          <Badge tone={st.tone} dot>
+            {st.label}
+          </Badge>
+        )}
       </div>
+      {/* État de FIN de l'interview : à la fermeture du socket (le PTY `cockpit interview` a quitté), on ne laisse
+          plus un terminal gelé — on lit la roadmap et on ouvre le chemin suivant (reprise ou lancement). */}
+      {interviewClosed && (
+        <InterviewEndState project={project} onReconnect={() => setReconnectKey((k) => k + 1)} />
+      )}
       <div
         ref={hostRef}
-        className="min-h-0 flex-1 overflow-hidden rounded-card border border-border bg-bg p-3"
+        className={
+          interviewClosed
+            ? 'h-32 shrink-0 overflow-hidden rounded-card border border-border bg-bg p-3'
+            : 'min-h-0 flex-1 overflow-hidden rounded-card border border-border bg-bg p-3'
+        }
       />
       <LeaveTerminalConfirm blocker={leaveBlocker} />
     </div>

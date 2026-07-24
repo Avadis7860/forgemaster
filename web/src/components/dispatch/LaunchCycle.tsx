@@ -1,18 +1,8 @@
 import { Alert, Button, Card, Eyebrow } from '@/components/ui'
 import { ApiError } from '@/lib/api'
+import { LAUNCH_STEPS, deriveLaunchStage } from '@/lib/launch'
 import { useReconcileSocle, useRoadmapCheck } from '@/lib/queries'
 import type { Roadmap } from '@/lib/schemas'
-
-// Étapes du cycle (labels d'état NEUTRES : l'état vient du cercle ✓/actif/pending, jamais du temps du verbe)
-// + la PROCHAINE ACTION humaine de chaque étape (répond l'intention « quoi faire maintenant » dans TOUT état,
-// pas seulement au gate de réconciliation où le bouton primaire apparaît).
-const STEPS = [
-  { label: 'Interview', next: "Mène l'interview de conception dans l'onglet Ops (terminal)." },
-  { label: 'Design', next: "Termine l'interview jusqu'à une roadmap valide (design rempli + features)." },
-  { label: 'Réconciliation', next: "Valide l'interview ci-dessous pour clôturer le socle." },
-  { label: 'Socle mergé', next: 'Lance le travail — le socle se merge au premier drain.' },
-  { label: 'Features de travail', next: 'Le socle est lancé — draine les features de travail.' },
-] as const
 
 /** Frise du CYCLE DE LANCEMENT + action nommée par son RÉSULTAT. Rend lisible, dans l'UI seule (sans lire les
  *  bundles de config Claude), où en est le lancement, quelle est la prochaine action humaine, et ce qu'elle
@@ -24,18 +14,12 @@ const STEPS = [
  *  roadmap verte, socle pas encore clôturé) et RAPPORTE ce qu'elle a fait (sha du design, N tasks, prochaine
  *  étape) — l'invalidation fait avancer la frise seule. */
 export function LaunchCycle({ project, roadmap }: { project: string; roadmap: Roadmap }) {
-  const socle = roadmap.features.find((f) => f.tasks.some((t) => t.mode === 'interactive'))
   const check = useRoadmapCheck(project)
   const reconcile = useReconcileSocle(project)
+  // Étape dérivée de la roadmap + gate (source unique serveur partagée avec l'état de fin d'interview).
+  const { socle, current } = deriveLaunchStage(roadmap, check.data?.ok ?? false)
   if (!socle) return null // projet sans socle interactif → pas de cycle de lancement à rendre
 
-  const hasWork = roadmap.features.some((f) => f.slug !== socle.slug) // ≥1 feature de travail authorée
-  const checkGreen = check.data?.ok ?? false
-  const socleClosed = socle.tasks.every((t) => t.status === 'done' || t.status === 'cancelled')
-  const socleMerged = socle.status === 'merged'
-  // Index de l'étape courante : Interview(0) → Design(1) → Réconciliation(2) → Socle mergé(3) →
-  // Features de travail(4). Chaque seuil est un fait serveur, pas un ressenti UI.
-  const current = !hasWork ? 0 : !checkGreen ? 1 : !socleClosed ? 2 : !socleMerged ? 3 : 4
   const canReconcile = current === 2
   const r = reconcile.data
 
@@ -45,7 +29,7 @@ export function LaunchCycle({ project, roadmap }: { project: string; roadmap: Ro
       {/* Chaque groupe = [flèche + étape] (flèche AVANT l'étape, sauf la 1ʳᵉ) → au wrap, la flèche part à la
           ligne AVEC l'étape qu'elle pointe (jamais orpheline en fin de ligne). Tient à 390px comme à 1400px. */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        {STEPS.map((step, i) => (
+        {LAUNCH_STEPS.map((step, i) => (
           <div key={step.label} className="flex items-center gap-3">
             {i > 0 && (
               <span aria-hidden className="text-faint">
@@ -66,7 +50,7 @@ export function LaunchCycle({ project, roadmap }: { project: string; roadmap: Ro
       {!canReconcile && (
         <p className="text-sm text-fg">
           <span className="text-muted">Prochaine action : </span>
-          {STEPS[current].next}
+          {LAUNCH_STEPS[current].next}
         </p>
       )}
       <p className="text-xs text-faint">
