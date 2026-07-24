@@ -333,28 +333,6 @@ def test_create_project_stamps_provenance_in_sot(ctx):
     assert tomllib.loads(gen)["provenance"]["bundle"] == "generic"
 
 
-def test_create_project_stamps_template_provenance_for_derived_type(ctx):
-    """Un type dont le seed est **projeté d'un template corpus** (ogame-rogue-like-pve, cf. provision.derive)
-    tamponne aussi `template@sha` — de quel template le seed a été dérivé au build. Trace la chaîne
-    SoT-and-derive complète (template → seed → projet). Un type non dérivé (générique) n'a pas ces clés."""
-    settings, conn = ctx
-    import tomllib
-
-    from cockpit.provision import derive
-    registry.create_project(conn, settings, slug="void-runner", project_type="ogame-rogue-like-pve")
-    sot = registry.sot_path_for(settings, "void-runner")
-    stamp = tomllib.loads(
-        run.run(["git", "-C", str(sot), "show", "dev:.cockpit/provenance.toml"]).stdout)["provenance"]
-    ref, sha = derive.template_provenance("ogame-rogue-like-pve")
-    assert stamp["template"] == ref == "browser-game-pve/scaffold"
-    assert stamp["template_sha"] == sha
-    # le générique n'est pas dérivé → tampon 3-clés, sans template
-    registry.create_project(conn, settings, slug="plain")
-    gen = tomllib.loads(run.run(["git", "-C", str(registry.sot_path_for(settings, "plain")),
-                                 "show", "dev:.cockpit/provenance.toml"]).stdout)["provenance"]
-    assert "template" not in gen
-
-
 def test_create_project_does_not_re_derive_at_seed(ctx, monkeypatch):
     """VERROU : `create_project` lit les octets DÉJÀ dérivés (verbatim/offline) et ne re-dérive JAMAIS au
     seed. On neutralise le générateur (derive_type/apply_derivation → boom) : la création d'un projet du type

@@ -46,9 +46,9 @@ def test_generic_project_seeds_socle(ctx):
     assert all(t["acceptance"] for t in tasks.values())            # DoD binaire partout
 
 
-def test_ogame_overrides_with_design_socle(ctx):
+def test_browser_game_overrides_with_design_socle(ctx):
     settings, conn = ctx
-    registry.create_project(conn, settings, slug="game", project_type="ogame-rogue-like-pve")
+    registry.create_project(conn, settings, slug="game", project_type="browser-game")
     assert _board(conn, "game") == {"socle-design": ["boucle-eco", "decompose", "interview"]}
     feat = model.list_features(conn, "game")[0]
     assert feat["facet"] == "game-design"

@@ -76,13 +76,14 @@ Ne pas re-débattre (distillées en [`specs/`](specs/) quand elles portent des i
   réseau (LAN/VPN) ne filtre pas le vecteur navigateur (CSWSH) ; le CORS ne couvre pas les WS. C'est un
   **prérequis de distribution** — `--host 0.0.0.0` n'est sûr que grâce à cette garde (spec
   [`ws-origin-token-boundary`](specs/ws-origin-token-boundary.md)).
-- **Bundle générique vs bundle crash-test = deux régimes** — un **type** bundle est **générique** (neutre,
-  réutilisable pour toute la classe) ; un **crash-test** est un objet distinct, **opinionné et complet**, qui
-  livre un projet **fini né-avec** pour exercer l'arc *scaffold → roadmap → projet-fini* au maximum (débusquer
-  bugs/manques avant sortie). D'où le split `browser-game` (générique neutre) ⟂ `ogame-rogue-like-pve`
-  (crash-test, jeu ogame fini). Deux **types indépendants** (la machinerie compose `base ⊕ overlay(type)`, pas
-  de composition type-sur-type) ; ref blueprint **paramétrée** (`values.toml`), jamais en dur dans `derive.py`
-  (spec [`ogame-rogue-like-pve-bundle`](specs/ogame-rogue-like-pve-bundle.md)).
+- **Générique neutre ⟂ style servi (pas un bundle hand-codé)** — un **type** bundle est **générique** (neutre,
+  réutilisable pour toute la classe, ex. `browser-game`) ; le **spécialisé** n'est **pas** un type hand-codé
+  mais un **STYLE distillé en capital servi** (blueprint + templates, `mcp-catalogs-data`, servi par le MCP).
+  L'interview first-session du générique **énumère les styles servis** (`list_collections` filtré
+  `browser-game:`) et en tire la guidance ; le **worker construit** le jeu depuis le capital — c'est ça, le
+  crash-test void-runner. *(L'ex-bundle-type `ogame-rogue-like-pve` hand-codé a été **défait** le 2026-07-24 :
+  coder le jeu à la place du worker vidait le test et gaspillait le capital — spec
+  [`ogame-rogue-like-pve-bundle`](specs/ogame-rogue-like-pve-bundle.md), superseded.)*
 
 ## Horizons (non planifiés — ouverts)
 

@@ -1,6 +1,12 @@
 # spec — Split browser-game + bundle crash-test `ogame-rogue-like-pve` (P0 : décision + design)
 
-> **Statut** : P0 livrée (décision + design du moteur). Build gated P1→P3 (voir §Phases).
+> **Statut** : ⛔ **SUPERSEDED** (2026-07-24) — l'approche « bundle-type ogame **hand-codé** » décrite ici a
+> été **défaite** (unwind). Le spécialisé n'est PAS un bundle-type mais un **STYLE distillé en capital servi**
+> (blueprint + templates, `mcp-catalogs-data`), **énuméré** par l'interview first-session du générique
+> `browser-game` (le worker construit le jeu lui-même). Coder le jeu à la place du worker vidait le crash-test
+> et gaspillait le capital. Ce fichier est conservé comme **historique du pivot capital-jeton** (tracker vault
+> `cockpit-browser-game-generic-vs-ogame-bundle` + doctrine capital-jeton). Tout ce qui suit est l'état
+> d'origine, **non maintenu**.
 > **Portée** : sépare le type `browser-game` (aujourd'hui confondu générique+ogame) en **deux types
 > indépendants** — `browser-game` (générique neutre) + `ogame-rogue-like-pve` (bundle **crash-test** : jeu
 > ogame **fini né-avec**). Cible : `provision/bundles/types/{browser-game,ogame-rogue-like-pve}/`,

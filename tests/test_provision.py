@@ -41,7 +41,7 @@ _EXPECTED = (
 # READMEs universels (dans la base → présents dans TOUT type) : racine + dossiers structurants de base.
 _BASE_READMES = ("README.md", "docs/README.md", ".claude/README.md")
 # READMEs par-dossier propres à un overlay : `src/` n'existe que chez les types qui portent une arbo source.
-_SRC_README_TYPES = ("browser-game", "ogame-rogue-like-pve", "front-ts")
+_SRC_README_TYPES = ("browser-game", "front-ts")
 
 # Skills de méthodo (Phase 6) : ce qui rend un projet semé auto-travaillable — planifier + mémoriser,
 # au-delà de la seule boucle git (work-loop/quality-gate). Présents dans la base → dans TOUT type.
@@ -216,7 +216,7 @@ def test_browser_game_wires_game_dev_identity():
     """Le type `browser-game` (générique NEUTRE) sème une identité game-dev complète + outils câblés par
     référence : cadre tech verrouillé dans le CLAUDE.md (serveur-autoritatif, stack TS), foyer de design
     (idea_home), engine code-map épinglé ts, 4 facettes de dispatch adossées — MAIS aucun genre imposé
-    (l'ogame vit dans le type `ogame-rogue-like-pve`, cf. test dédié)."""
+    (l'ogame vit en capital servi, proposé à l'interview — cf. le test dédié à l'énumération des styles)."""
     bundle = load_bundle("browser-game")
     # (a) identité : le CLAUDE.md porte le cadre VERROUILLÉ de l'archétype (serveur-autoritatif, stack TS).
     claude = bundle["CLAUDE.md"]
@@ -252,18 +252,6 @@ def test_browser_game_interview_enumerates_served_styles():
         assert marker in skill, f"interview browser-game sans câblage styles-servis : « {marker} » absent"
 
 
-def test_ogame_rogue_like_pve_wires_ogame_identity():
-    """Le type `ogame-rogue-like-pve` (bundle crash-test) porte l'identité de GENRE opinionnée — c'est ce qui
-    le distingue du générique neutre `browser-game` : ogame-like/PvE vs bots + le patron d'étapes ogame dérivé
-    (É1→É7) + le cadre serveur-autoritatif/déterministe verrouillé (spec `ogame-rogue-like-pve-bundle`)."""
-    claude = load_bundle("ogame-rogue-like-pve")["CLAUDE.md"]
-    for marker in ("ogame-rogue-like-pve", "OGame-like", "PvE vs bots", "serveur-autoritatif", "VERROUILLÉ"):
-        assert marker in claude, f"ogame CLAUDE.md sans marqueur de genre « {marker} »"
-    # le §6 dérivé porte le patron d'étapes ogame (IA des bots, Combat) — le twist du genre, pas neutre.
-    for step in ("IA des bots", "Combat"):
-        assert step in claude, f"ogame CLAUDE.md §6 sans l'étape ogame « {step} »"
-
-
 def test_load_bundle_is_deterministic():
     for t in discover_types():
         assert load_bundle(t) == load_bundle(t)     # lecture triée + merge `|` déterministe
@@ -278,14 +266,16 @@ def test_launch_roadmap_generic_is_socle_with_acceptance():
     assert all(t.get("acceptance") for t in tasks.values())        # DoD binaire partout
 
 
-def test_launch_roadmap_ogame_overrides_whole_file():
-    rm = load_launch_roadmap("ogame-rogue-like-pve")
+def test_launch_roadmap_browser_game_overrides_with_design_socle():
+    # le générique `browser-game` surcharge la roadmap en socle DESIGN-FIRST : sa 1ʳᵉ session est l'interview
+    # de conception (qui énumère les STYLES servis via MCP, cf. test dédié), pas un cadrage neutre.
+    rm = load_launch_roadmap("browser-game")
     feats = {f["slug"]: f for f in rm["features"]}
-    assert set(feats) == {"socle-design"}                          # remplace le socle générique, pas fusionné
+    assert set(feats) == {"socle-design"}                          # override whole-file du socle générique
     assert feats["socle-design"]["facet"] == "game-design"
     assert {t["slug"] for t in feats["socle-design"]["tasks"]} == {"interview", "boucle-eco", "decompose"}
-    # le générique `browser-game` n'override PAS la roadmap de lancement → hérite du socle générique de base.
-    assert {f["slug"] for f in load_launch_roadmap("browser-game")["features"]} == {"socle"}
+    # `generic`, lui, garde le socle générique de base (cadrage → decompose).
+    assert {f["slug"] for f in load_launch_roadmap("generic")["features"]} == {"socle"}
 
 
 def test_launch_roadmap_absent_type_is_failsoft(tmp_path, monkeypatch):
@@ -340,7 +330,6 @@ _TYPE_TOOLCHAIN_PROBES = {
     "cli-tool": ["probe.py"],
     "front-ts": ["server.mjs", "web/Probe.tsx"],
     "browser-game": ["src/probe.ts", "web/Probe.tsx"],
-    "ogame-rogue-like-pve": ["src/probe.ts", "web/Probe.tsx"],
 }
 
 
@@ -554,15 +543,14 @@ def test_activate_facet_failsoft_when_no_settings_local(tmp_path: Path):
 
 # Les types-SERVICE portent une config de run (compose + Dockerfile + stub runnable) ; les autres non
 # (un CLI / un projet générique n'expose aucun service long-running à héberger).
-_SERVICE_TYPES = ("service-api", "front-ts", "browser-game", "ogame-rogue-like-pve")
+_SERVICE_TYPES = ("service-api", "front-ts", "browser-game")
 # `generic`/`cli-tool` n'exposent aucun service long-running à héberger → aucune run config semée (l'engine
 # refusera proprement leur deploy). `browser-game` est désormais déployable : la chaîne deploy+E2E « jouable »
 # exige que son SoT porte compose.yaml + Dockerfile dès l'amorçage (deploy chain).
 _NON_SERVICE_TYPES = ("generic", "cli-tool")
 # stub runnable par type-service. browser-game : entrypoint prod qui réunifie le front statique (Vite → dist/)
 # et l'API Hono derrière un unique port 8000 (server/prod.ts, pas un stub racine — univers TS unifié).
-_APP_STUB = {"service-api": "app.py", "front-ts": "server.mjs", "browser-game": "server/prod.ts",
-             "ogame-rogue-like-pve": "server/prod.ts"}
+_APP_STUB = {"service-api": "app.py", "front-ts": "server.mjs", "browser-game": "server/prod.ts"}
 
 
 @pytest.mark.parametrize("project_type", _SERVICE_TYPES)

@@ -1,4 +1,0 @@
-/* index.css — feuille racine du client, importée par web/main.tsx. Tailwind v4 en zéro-config : le scan du
-   contenu est automatique (aucun tailwind.config ni postcss.config). Ajoute tes couches / design-tokens sous
-   l'import ; le design-system est indexé par `frontmap`. */
-@import "tailwindcss";

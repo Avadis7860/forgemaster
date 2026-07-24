@@ -1,6 +1,6 @@
 """E2E — la boucle de lancement autonome, fermée par l'interview de 1ʳᵉ session.
 
-Sur un projet neuf **ogame-rogue-like-pve** (seed réel), la boucle complète tient bout-à-bout :
+Sur un projet neuf **browser-game** (seed réel), la boucle complète tient bout-à-bout :
   1. `cockpit run` sur le socle nu → **surface** `needs_interview`, **zéro** headless spawné dessus,
      la task interactive reste `todo` (jamais faux-`done`).
   2. `cockpit interview` → lance `claude` **INTERACTIF** (argv sans `-p`) ; l'humain (launcher injecté)
@@ -70,8 +70,8 @@ def _features(conn) -> list[str]:
 def test_launch_loop_closes_via_first_session_interview(ctx):
     settings, conn = ctx
 
-    # 0 — projet neuf ogame-rogue-like-pve : socle-design nu, task `interview` interactive au seed.
-    registry.create_project(conn, settings, slug=PROJECT, project_type="ogame-rogue-like-pve")
+    # 0 — projet neuf browser-game : socle-design nu, task `interview` interactive au seed.
+    registry.create_project(conn, settings, slug=PROJECT, project_type="browser-game")
     assert _socle(conn)["interview"] == ("todo", "interactive")
     assert _features(conn) == ["socle-design"]                       # roadmap figée au socle
 

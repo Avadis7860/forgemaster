@@ -1,32 +1,10 @@
-"""Tests de provision.derive — la projection build-time `template corpus → seed vendoré`. Purs (aucune
-écriture) sauf la garde de drift, qui vérifie que l'overlay commité EST en phase avec ses sources."""
+"""Tests de provision.derive — les primitives de projection build-time `template corpus → seed vendoré`.
+Purs (aucune écriture) : remplissage de jetons, parse de scaffold, splice de région, chaîne d'étapes."""
 from __future__ import annotations
 
 import pytest
 
 from cockpit.provision import derive
-
-
-def test_check_drift_clean_for_ogame_rogue_like_pve():
-    """GARDE centrale : l'overlay ogame-rogue-like-pve vendoré est **en phase** avec son template — la
-    dérivation ne tient que si le seed ne peut pas re-diverger silencieusement. Si ce test rougit :
-    quelqu'un a hand-édité un chemin managé au lieu de `cockpit bundle derive`. (Le générique `browser-game`
-    n'est PAS dérivé — hand-authored neutre, aucun derive/.)"""
-    assert derive.check_drift("ogame-rogue-like-pve") == []
-
-
-def test_derive_reproduces_managed_set_with_jetons():
-    """Après le découplage moteur↔derive (P2) : `derive_type` ne produit plus QUE l'**épine structurelle** —
-    le `package.json` (manifest + contrat de gate) et le splice §6 du `CLAUDE.md`. Le moteur de jeu
-    (src/server/web) est hand-authored dans l'overlay, plus dérivé. Les jetons **archétype** sont remplis
-    (gate/versions), le jeton **projet** `{{theme}}` reste `{{…}}` (rempli par le worker du projet)."""
-    res = derive.derive_type("ogame-rogue-like-pve")
-    assert set(res.files) == {"package.json", "CLAUDE.md"}
-    assert res.template_ref == "browser-game-pve/scaffold"
-    pkg = res.files["package.json"]
-    assert '"name": "game"' in pkg and '"zod"' in pkg          # archétype rempli (nom valide, dép Zod)
-    assert "{{gate_cmd}}" not in pkg and "{{ts_version}}" not in pkg
-    assert "{{theme}}" in pkg                                  # jeton projet laissé verbatim
 
 
 def test_fill_jetons_fills_archetype_leaves_project_rejects_unknown():
@@ -61,10 +39,3 @@ def test_blueprint_step_chain_derives_from_titles_excluding_e0():
           "- **É2 — Boucle de tick serveur** : z\n")
     chain = derive.blueprint_step_chain(md)
     assert chain == "É1 Modèle de domaine → É2 Boucle de tick serveur"   # É0 exclu, ordre par numéro
-
-
-def test_template_provenance_reads_manifest():
-    ref, sha = derive.template_provenance("ogame-rogue-like-pve")
-    assert ref == "browser-game-pve/scaffold" and len(sha) == 64      # sha256 hex
-    assert derive.template_provenance("generic") is None             # type non dérivé
-    assert derive.template_provenance("browser-game") is None        # générique neutre : plus de derive/
