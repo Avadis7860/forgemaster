@@ -334,18 +334,18 @@ def test_create_project_stamps_provenance_in_sot(ctx):
 
 
 def test_create_project_stamps_template_provenance_for_derived_type(ctx):
-    """Un type dont le seed est **projeté d'un template corpus** (browser-game, cf. provision.derive) tamponne
-    aussi `template@sha` — de quel template le seed a été dérivé au build. Trace la chaîne SoT-and-derive
-    complète (template → seed → projet). Un type non dérivé (générique) n'a pas ces clés."""
+    """Un type dont le seed est **projeté d'un template corpus** (ogame-rogue-like-pve, cf. provision.derive)
+    tamponne aussi `template@sha` — de quel template le seed a été dérivé au build. Trace la chaîne
+    SoT-and-derive complète (template → seed → projet). Un type non dérivé (générique) n'a pas ces clés."""
     settings, conn = ctx
     import tomllib
 
     from cockpit.provision import derive
-    registry.create_project(conn, settings, slug="void-runner", project_type="browser-game")
+    registry.create_project(conn, settings, slug="void-runner", project_type="ogame-rogue-like-pve")
     sot = registry.sot_path_for(settings, "void-runner")
     stamp = tomllib.loads(
         run.run(["git", "-C", str(sot), "show", "dev:.cockpit/provenance.toml"]).stdout)["provenance"]
-    ref, sha = derive.template_provenance("browser-game")
+    ref, sha = derive.template_provenance("ogame-rogue-like-pve")
     assert stamp["template"] == ref == "browser-game-pve/scaffold"
     assert stamp["template_sha"] == sha
     # le générique n'est pas dérivé → tampon 3-clés, sans template

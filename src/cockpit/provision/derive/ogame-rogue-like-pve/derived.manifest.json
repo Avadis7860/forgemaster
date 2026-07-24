@@ -2,7 +2,7 @@
   "template": "browser-game-pve/scaffold",
   "template_sha": "7ffa0a4cc8b7e68baa1aaa1fab8c9bbc4b6c87af1df14edb3325a667e2fc4305",
   "blueprint_sha": "1449935735475b86096432d8ecb0bdaa4f2f07932334b00470b264a873270a32",
-  "values_sha": "86299903a4a2b3108a95a31ac8a2e47f74db86c52e45dd021583d53e4c8d0694",
+  "values_sha": "179311be03f54d6368bb6ff3d464190a796f4669f64b28d1cf5bdb3ee65e06dc",
   "generator_version": "1",
   "managed_paths": [
     "CLAUDE.md",

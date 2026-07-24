@@ -137,9 +137,14 @@ def derive_type(project_type: str) -> DeriveResult:
     blueprint = (d / "blueprint.md").read_text(encoding="utf-8")
     values_raw = (d / "values.toml").read_text(encoding="utf-8")
     cfg = tomllib.loads(values_raw)
+    template = cfg.get("template", {})
     archetype = {str(k): str(v) for k, v in cfg.get("archetype", {}).items()}
     allow = {str(x) for x in cfg.get("project", {}).get("allow", [])}
-    template_ref = str(cfg["template"]["ref"])
+    template_ref = str(template["ref"])
+    # Nom du blueprint + ses décisions verrouillées : PARAMÉTRÉS par values.toml (plus de littéral en dur —
+    # chaque type dérivé nomme SON blueprint). Fallback : le préfixe du ref (`<blueprint>/scaffold`).
+    blueprint_ref = str(template.get("blueprint") or template_ref.split("/", 1)[0])
+    locked = str(template.get("locked_decisions", "")).strip()
 
     files: dict[str, str] = {}
     for rel, body in parse_scaffold(scaffold):
@@ -147,9 +152,10 @@ def derive_type(project_type: str) -> DeriveResult:
 
     overlay_claude = (_overlay_dir(project_type) / "CLAUDE.md").read_text(encoding="utf-8")
     chain = blueprint_step_chain(blueprint)
+    locked_clause = f" et les décisions verrouillées ({locked})" if locked else ""
     bullet = (
-        f"- **Blueprint d'abord** : applique le patron d'étapes ({chain}) et les décisions verrouillées "
-        f"(serveur-autoritatif, déterminisme). *(Dérivé du blueprint `browser-game-pve` — ne pas éditer "
+        f"- **Blueprint d'abord** : applique le patron d'étapes ({chain}){locked_clause}. "
+        f"*(Dérivé du blueprint `{blueprint_ref}` — ne pas éditer "
         f"à la main ; `cockpit bundle derive`.)*")
     files["CLAUDE.md"] = splice_region(overlay_claude, "blueprint-pattern", bullet)
 

@@ -7,17 +7,18 @@ import pytest
 from cockpit.provision import derive
 
 
-def test_check_drift_clean_for_browser_game():
-    """GARDE centrale : l'overlay browser-game vendoré est **en phase** avec son template — la décision
-    de dérivation ne tient que si le seed ne peut pas re-diverger silencieusement. Si ce test rougit :
-    quelqu'un a hand-édité un chemin managé au lieu de `cockpit bundle derive`."""
-    assert derive.check_drift("browser-game") == []
+def test_check_drift_clean_for_ogame_rogue_like_pve():
+    """GARDE centrale : l'overlay ogame-rogue-like-pve vendoré est **en phase** avec son template — la
+    dérivation ne tient que si le seed ne peut pas re-diverger silencieusement. Si ce test rougit :
+    quelqu'un a hand-édité un chemin managé au lieu de `cockpit bundle derive`. (Le générique `browser-game`
+    n'est PAS dérivé — hand-authored neutre, aucun derive/.)"""
+    assert derive.check_drift("ogame-rogue-like-pve") == []
 
 
 def test_derive_reproduces_managed_set_with_jetons():
     """`derive_type` produit le set de fichiers managés attendu ; les jetons **archétype** sont remplis
     (gate/versions), les jetons **projet** restent `{{…}}` (remplis par le worker du projet)."""
-    res = derive.derive_type("browser-game")
+    res = derive.derive_type("ogame-rogue-like-pve")
     assert set(res.files) == {"package.json", "tsconfig.json", "src/shared/schema.ts",
                               "src/shared/schema.test.ts", "src/shared/tick.ts",
                               "src/shared/tick.test.ts", "src/index.ts", "server/index.ts",
@@ -66,6 +67,7 @@ def test_blueprint_step_chain_derives_from_titles_excluding_e0():
 
 
 def test_template_provenance_reads_manifest():
-    ref, sha = derive.template_provenance("browser-game")
+    ref, sha = derive.template_provenance("ogame-rogue-like-pve")
     assert ref == "browser-game-pve/scaffold" and len(sha) == 64      # sha256 hex
     assert derive.template_provenance("generic") is None             # type non dérivé
+    assert derive.template_provenance("browser-game") is None        # générique neutre : plus de derive/

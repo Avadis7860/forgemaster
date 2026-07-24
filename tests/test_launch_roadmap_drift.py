@@ -31,13 +31,16 @@ def test_every_type_maps_to_a_mirror() -> None:
         assert canon is not None, f"{t} : graine présente sans mirror vendoré"
 
 
-def test_generic_and_browser_game_use_distinct_mirrors() -> None:
-    """La base et l'overlay browser-game sont deux artefacts distincts → deux mirrors distincts."""
+def test_generic_and_ogame_use_distinct_mirrors() -> None:
+    """La base et l'overlay ogame-rogue-like-pve (qui SURCHARGE la roadmap de lancement) sont deux artefacts
+    distincts → deux mirrors distincts. Le générique `browser-game`, lui, n'override PAS → il partage le
+    mirror `generic.yaml` (hérite du socle de base)."""
     generic = provision._canonical_launch_roadmap("generic")
-    bg = provision._canonical_launch_roadmap("browser-game")
-    assert generic is not None and bg is not None
-    assert generic[0] == "generic.yaml" and bg[0] == "browser-game.yaml"
-    assert generic[1] != bg[1]
+    og = provision._canonical_launch_roadmap("ogame-rogue-like-pve")
+    assert generic is not None and og is not None
+    assert generic[0] == "generic.yaml" and og[0] == "ogame-rogue-like-pve.yaml"
+    assert generic[1] != og[1]
+    assert provision._canonical_launch_roadmap("browser-game")[0] == "generic.yaml"   # générique = socle base
 
 
 def test_drift_detected_when_seed_diverges(monkeypatch, tmp_path: Path) -> None:

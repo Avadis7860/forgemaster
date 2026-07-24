@@ -4,24 +4,24 @@
 > `game-design` (persona designer NO-CODE) ; lu **à la demande** par les autres facettes quand une feature
 > implémente une règle. Le `CLAUDE.md` ne porte JAMAIS le design — il vit ici, traçable et révisable.
 > Toute décision de design est **écrite** (une section = une décision vérifiable). À remplir au fil de la conception.
+> Ce starter est **générique** : aucun genre imposé. Remplace les sections ci-dessous par celles de TON jeu.
 
 ## Concept & périmètre jouable
 
-_(à renseigner)_ — Le pitch en une phrase, et la définition binaire de « jouable » pour le premier jalon.
+_(à renseigner)_ — Le pitch en une phrase, le **genre** choisi, et la définition binaire de « jouable » pour le premier jalon.
 
 ## Boucle de jeu
 
-_(à renseigner)_ — La boucle cœur (ex. ressources → construction → flotte → exploration/combat → progression).
-Quelle est la décision répétée que le joueur prend, et à quel rythme.
+_(à renseigner)_ — La boucle cœur : quelle est la **décision répétée** que le joueur prend, et à quel rythme.
 
-## Économie & équilibrage
+## Règles & mécaniques
 
-_(à renseigner)_ — Ressources, coûts, taux de production, courbes de progression. Les nombres se justifient.
+_(à renseigner)_ — Les systèmes du jeu (ce qui se calcule côté serveur, l'état, les commandes du joueur).
 
-## Factions & bots (PvE)
+## Contenu & équilibrage
 
-_(à renseigner)_ — Les adversaires PvE : comportements, paliers de difficulté, IA des bots.
+_(à renseigner)_ — Le contenu (niveaux, entités, objets…), les nombres et courbes. Les valeurs se justifient.
 
-## Map & structure du monde
+## Progression & fin de partie
 
-_(à renseigner)_ — Topologie (galaxie/systèmes/cases), distances, ce qui contraint l'expansion.
+_(à renseigner)_ — Comment le joueur progresse, et ce qui conclut une partie (victoire / défaite / score).

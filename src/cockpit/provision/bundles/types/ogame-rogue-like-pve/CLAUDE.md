@@ -1,4 +1,4 @@
-# CLAUDE.md — jeu navigateur (archétype générique browser-game)
+# CLAUDE.md — jeu navigateur de gestion ogame-rogue-like-PvE (archétype ogame-rogue-like-pve)
 
 > Lu au début de **chaque** session dans ce repo : contexte global + instructions système. Le détail vit
 > dans `docs/` — **interroge-le** (`docsmap where`), ne le recopie pas ici. Projet semé par le cockpit :
@@ -7,16 +7,15 @@
 
 ## 1. Contexte et objectifs
 
-- **Ce que fait ce projet** : un **jeu navigateur** — un **starter générique neutre**, aucun genre imposé
-  (arcade, gestion, puzzle, temps-réel… : **tu le définis**). Ce que produit exactement le jeu — sa
-  boucle, ses règles, son contenu, son périmètre « jouable » — **ne vit PAS ici** : il vit dans `docs/design.md`
-  (foyer dynamique de la conception). N'inline **jamais** le design dans ce fichier ; ce `CLAUDE.md` reste la
-  base structurelle (framework / comment-travailler / règles).
+- **Ce que fait ce projet** : un **jeu navigateur de gestion, PvE vs bots** (OGame-like / roguelike). Ce que
+  produit exactement le jeu — sa boucle, son économie, ses factions/bots, sa map, son périmètre « jouable » —
+  **ne vit PAS ici** : il vit dans `docs/design.md` (foyer dynamique de la conception). N'inline **jamais** le
+  design dans ce fichier ; ce `CLAUDE.md` reste la base structurelle (framework / comment-travailler / règles).
 - **Public cible** : les **joueurs** (client web) et les mainteneurs du service serveur-autoritatif.
 - **État actuel** : **amorçage** — repo semé avec un **squelette TS-mono runnable né-avec** (`package.json` +
   `web/` client Vite/React + Tailwind + React Query + `server/` Hono + Zod partagé + test Vitest + lint eslint ;
-  gate `eslint → tsc → vitest` vert sans édition). Le modèle de domaine semé est un **placeholder neutre**.
-  La stack est en place : tu **remplaces le placeholder** par le modèle de TON jeu, tu ne scaffoldes PAS la toolchain.
+  gate `eslint → tsc → vitest` vert sans édition).
+  La stack est en place : tu **déroules É1** (modèle de domaine), tu ne scaffoldes PAS la toolchain.
 
 ## 2. Rôle de l'IA (persona)
 
@@ -28,8 +27,8 @@
 ## 3. Stack technique et environnement (VERROUILLÉ — ne pas re-choisir)
 
 Univers **TypeScript unique** :
-- **Front** : React 19 + Vite + TypeScript + Tailwind (UI web, rendu CSR) → `web/`.
-- **Back** : Hono (état serveur-autoritatif ; état **en mémoire à l'amorçage** — persistance **Drizzle + SQLite** câblée plus tard, SQLite→Postgres ensuite) → `server/`.
+- **Front** : React 19 + Vite + TypeScript + Tailwind (UI de gestion, rendu CSR) → `web/`.
+- **Back** : Hono (état serveur-autoritatif ; état **en mémoire à l'amorçage** — persistance **Drizzle + SQLite câblée en É7**, SQLite→Postgres plus tard) → `server/`.
 - **Liant** : schémas **Zod** partagés client/serveur. **Tests** : Vitest. Gate : `eslint` → `tsc` → `vitest`.
 - **Temps réel** : poll React Query (UI) + WebSocket Hono (events critiques). Pas de moteur de jeu lourd au départ.
 - Code indexé par `codemap` (engine **ts**, sous-systèmes `web`/`server`), design-system par `frontmap`.
@@ -40,7 +39,7 @@ Univers **TypeScript unique** :
 - **Règles verrouillées** :
   - **Aucune logique de jeu côté client** (anti-triche) — le client propose, le serveur dispose.
   - **Simulation déterministe** (même seed + commandes → même état) ; la résolution se teste en pur avant l'UI.
-  - **Échelle différée** — monolithe + SQLite (persistance câblée plus tard) d'abord, pas de sur-architecture.
+  - **Échelle différée** — monolithe + SQLite (persistance câblée en É7) d'abord, pas de sur-architecture.
 - **Anti-patterns** (jamais) : signature d'API « de mémoire » avant un import non trivial (React Query / Hono /
   Drizzle / Zod) → **si un MCP de corpus est câblé** (`cockpit mcp wire`), interroge le **silo tech pertinent**
   (`query(type=tech, scope=<silo>)` — `react` · `vite` · `typescript` · `tailwind` · `zod` · `vitest` ·
@@ -56,9 +55,9 @@ Univers **TypeScript unique** :
 
 ## 6. Workflows et processus
 
-- **Patron d'étapes = le tien** : ce squelette est **générique**, il n'impose **aucun genre**. Définis ta boucle
-  de jeu dans `docs/design.md`, puis décompose-la (`roadmap-decompose`) en features/tasks. Décisions de départ
-  (extensibles) : **serveur-autoritatif**, simulation **déterministe** (le client propose, le serveur dispose).
+<!-- derived:blueprint-pattern:start -->
+- **Blueprint d'abord** : applique le patron d'étapes (É1 Modèle de domaine → É2 Boucle de tick serveur → É3 Commandes + API → É4 IA des bots → É5 Combat / résolution → É6 UI de gestion → É7 Persistance & sessions) et les décisions verrouillées (serveur-autoritatif, déterminisme). *(Dérivé du blueprint `browser-game-pve` — ne pas éditer à la main ; `cockpit bundle derive`.)*
+<!-- derived:blueprint-pattern:end -->
 - **Boucle** : `roadmap-decompose` (intention → features[facette] → tasks) → `work-loop` (feature depuis `dev`,
   gate vert, ff-only vers `dev`, `main` promu depuis un `dev` vert) → `docs-authoring`. Tout acte irréversible =
   **GO humain** (fail-closed).
