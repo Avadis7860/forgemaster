@@ -29,3 +29,4 @@
 - `bundle-crash-test` — câblage MCP réel dans un worker + crash-test void-runner (create browser-game → dispatch `claude -p` sans crash → commit propre, JWT hors historique) ; clôt l'épic bundle-system.
 - `template-ui-application-lifecycle` — le dirigeant applique un template UI de référence (`inspire`) ; graine `docs/design/<slug>/` posée par la forge (feature `design-<slug>`, merge GO) ; le worker la relit (`_design_block`) et CUSTOMISE ; MCP différé (N=1/0-app).
 - `ws-origin-token-boundary` — frontière client WS = **Origin + token par-instance côté serveur** (avant `accept`), PAS le réseau ; ferme le CSWSH ; CORS≠garde-WS ; prérequis de distribution (`--host 0.0.0.0`).
+- `ogame-rogue-like-pve-bundle` — split `browser-game` (générique neutre) vs **bundle crash-test** `ogame-rogue-like-pve` (jeu ogame **fini né-avec**, formules sourcées, roguelike-PvE seedé déterministe) ; deux types indépendants ; de-hardcode `derive.py` (ref blueprint → `values.toml`).
