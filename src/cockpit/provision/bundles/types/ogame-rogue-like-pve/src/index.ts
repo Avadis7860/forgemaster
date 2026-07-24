@@ -9,3 +9,11 @@ export const gameName = "{{game_name}}";
 
 // État canonique initial d'un run, validé contre le schéma partagé.
 export const initial: GameState = GameState.parse(initialGameState({ runSeed: 1 }));
+
+// Combat déterministe (F2) — résolveur + bonus de tech. L'APPLICATION du rapport à l'univers est F3.
+export { resolveBattle, effectiveStats, MAX_UNITS } from "./shared/combat.js";
+export type { Force, BattleReport, BattleContext, ResourceDebris } from "./shared/combat.js";
+
+// Factions PNJ (F2) — politiques de build-order pures, déterministes.
+export { botCommands, FACTIONS } from "./shared/bots.js";
+export type { FactionArchetype } from "./shared/bots.js";

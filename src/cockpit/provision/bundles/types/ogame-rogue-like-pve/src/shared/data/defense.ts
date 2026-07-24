@@ -1,6 +1,8 @@
 // data/defense.ts — catalogue de la défense planétaire (données pures, sourcées OGame : Fandom « Defense »).
 // Réutilise `CombatUnitDef` (coque `= (metal+crystal)/10`, `weapon`/`shield`, `cargo`=0). Réparée à ~70 %
-// après combat (F2). Les dômes de bouclier sont **uniques** (`maxCount: 1`). Missiles (ABM/IPM) différés.
+// après combat (`combat.resolveBattle` → `defenseRepair`). Les dômes de bouclier sont **uniques**
+// (`maxCount: 1`). Missiles (ABM/IPM) différés. La défense **n'a pas de rapidfire** en OGame (sourcé) : chaque
+// `rapidfire` reste `{}` — volontaire, pas un trou. Ce sont les vaisseaux qui rapidfirent la défense (cf. ships).
 import type { CombatUnitDef } from "./ships.js";
 import type { ResourceCost } from "./research.js";
 
