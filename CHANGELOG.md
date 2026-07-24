@@ -5,6 +5,23 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Roadmap/CLI — édition validée du DAG : `roadmap set-deps` / `task set-deps` — pas de bump
+- Le DAG de roadmap n'avait **aucune surface d'édition** : `features.depends_on` (v10) et `tasks.depends_on` ne
+  se mutaient qu'à la **création** (`--depends-on` d'`add-feature` / `task add`, INSERT-only). Une dépendance
+  découverte **après coup** — cas *par design*, la critique de complétude de `roadmap-decompose` révèle un
+  prérequis manquant — forçait le worker à ouvrir `cockpit.db` en **raw-SQL** (`UPDATE features SET depends_on…
+  WHERE slug=…` → near-miss `ambiguous column name: slug`), contournant l'autorité de validation.
+- Ajout de deux verbes CLI + leurs helpers data-layer : `roadmap set-deps <projet> <feature> --depends-on …`
+  (`model.set_feature_deps`) et `task set-deps <projet>/<feature> <task> --depends-on …` (`model.set_task_deps`).
+  Sémantique **remplace** (cohérent avec `set`). Write-validate-rollback en une transaction : écriture **scopée
+  par id/feature_id** (tue le footgun `ambiguous column name`), puis **réutilise l'unique autorité**
+  `resolver.classify_features` / `classify` (dangling→`ERROR`, cycle/self-dep→`CYCLE`) sur l'écriture
+  non-commitée → refus propre (`ValueError`, exit 1) + `rollback` si l'arête casse le DAG ; `commit` sinon.
+- La skill semée `roadmap-decompose` pointe désormais ces verbes (et interdit explicitement l'édition raw-SQL
+  de `cockpit.db`) ; point 3 corrigé (les deps inter-feature **sont** un champ `depends_on` depuis v10, pas
+  seulement l'ordre de merge). Additif : verbes CLI nouveaux, colonnes existantes, aucun schéma / API HTTP /
+  `roadmap.yaml` touché → **pas de bump `SCHEMA_VERSION`**.
+
 ### API/capital — erreur serveur MCP honnête : 502 (détail réel) ≠ 503 (indispo) — pas de bump
 - Les routes `GET /api/capital/*` distinguent désormais **3 états** au lieu de 2. Avant : toute défaillance du
   parcours capital (y compris une **erreur d'outil serveur** — ref cassée, silo en défaut alors que le MCP

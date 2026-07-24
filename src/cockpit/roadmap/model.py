@@ -93,6 +93,30 @@ def resolve_feature(conn: sqlite3.Connection, ref: str) -> dict:
     return d
 
 
+def set_feature_deps(conn: sqlite3.Connection, *, ref: str, depends_on: list[str]) -> dict:
+    """Édite le DAG **inter-feature** d'une feature déjà créée : REMPLACE ses `depends_on` (v10). Là où
+    `add_feature` reste souple (forward-ref au build en lot), l'édition valide l'arête ciblée — le graphe
+    existe déjà. Validation = **réutilise l'autorité `resolver.classify_features`** (dangling→ERROR,
+    cycle/self-dep→CYCLE), jamais un 2ᵉ détecteur. Écriture scopée `WHERE id=?` (la clé résolue tue le footgun
+    « ambiguous column name: slug »). Write-validate-rollback en une transaction ; le row RENDU décode
+    `depends_on`. Lève `KeyError` (feature inconnue), `ValueError` (dep pendante / cycle)."""
+    from cockpit.roadmap import resolver  # import paresseux : resolver importe déjà model (cycle)
+    feature = resolve_feature(conn, ref)              # KeyError si absente
+    project_slug = ref.split("/", 1)[0]
+    deps = list(depends_on)
+    conn.execute("UPDATE features SET depends_on = ? WHERE id = ?",
+                 (json.dumps(deps), feature["id"]))   # PAS de commit : validé sur l'écriture non-commitée
+    node = resolver.classify_features(conn, project_slug)[feature["slug"]]
+    if node["state"] == "ERROR":
+        conn.rollback()
+        raise ValueError(f"feature prérequise inexistante : {', '.join(node['blockers'])}")
+    if node["state"] == "CYCLE":
+        conn.rollback()
+        raise ValueError(f"cycle de dépendances inter-features introduit par {feature['slug']}")
+    conn.commit()
+    return {**feature, "depends_on": deps}
+
+
 TASK_MODES = ("headless", "interactive")
 
 
@@ -121,6 +145,34 @@ def add_task(conn: sqlite3.Connection, *, feature_ref: str, slug: str, title: st
     except sqlite3.IntegrityError as exc:
         raise ValueError(f"task déjà existante : {feature_ref}/{slug}") from exc
     return row
+
+
+def set_task_deps(conn: sqlite3.Connection, *, feature_ref: str, slug: str, depends_on: list[str]) -> dict:
+    """Édite le DAG **intra-feature** d'une task déjà créée : REMPLACE ses `depends_on` (slugs de tasks de la
+    même feature). Symétrique de `set_feature_deps` : validation via **l'autorité `resolver.classify`**
+    (dangling→ERROR, cycle/self-dep→CYCLE), écriture scopée `WHERE feature_id=? AND slug=?` (jamais un
+    `WHERE slug=?` ambigu). Write-validate-rollback ; le row RENDU décode `depends_on`. Lève `KeyError`
+    (feature/task inconnue), `ValueError` (dep pendante / cycle)."""
+    from cockpit.roadmap import resolver  # import paresseux (cf. set_feature_deps)
+    feature = resolve_feature(conn, feature_ref)      # KeyError si feature absente
+    exists = conn.execute("SELECT 1 FROM tasks WHERE feature_id = ? AND slug = ?",
+                          (feature["id"], slug)).fetchone()
+    if exists is None:
+        raise KeyError(f"{feature_ref}/{slug}")
+    deps = list(depends_on)
+    conn.execute("UPDATE tasks SET depends_on = ? WHERE feature_id = ? AND slug = ?",
+                 (json.dumps(deps), feature["id"], slug))     # scopé par feature_id : pas d'ambiguïté
+    index = {t["slug"]: t for t in list_tasks(conn, feature["id"])}
+    classified = resolver.classify(index)             # voit l'écriture non-commitée (même conn)
+    state = classified[slug]["state"]
+    if state == "ERROR":
+        conn.rollback()
+        raise ValueError(f"dépendance inexistante : {', '.join(classified[slug]['blockers'])}")
+    if state == "CYCLE":
+        conn.rollback()
+        raise ValueError(f"cycle de dépendances introduit par {slug}")
+    conn.commit()
+    return {**dict(index[slug]), "depends_on": deps}
 
 
 def list_features(conn: sqlite3.Connection, project_slug: str) -> list[dict]:
@@ -173,7 +225,7 @@ def to_yaml(project_slug: str, features: list[dict]) -> str:
 
 
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
-    """Route `cockpit roadmap <action>` (add-feature|show)."""
+    """Route `cockpit roadmap <action>` (add-feature|set-deps|show)."""
     conn = store.open_db(settings)
     try:
         if args.action == "add-feature":
@@ -182,6 +234,11 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
                             depends_on=getattr(args, "depends_on", None) or [])
             fac = f" [{f['facet']}]" if f.get("facet") else ""
             print(f"feature créée : {args.project}/{f['slug']}{fac} — branche {f['branch']}")
+        elif args.action == "set-deps":
+            f = set_feature_deps(conn, ref=f"{args.project}/{args.feature}",
+                                 depends_on=getattr(args, "depends_on", None) or [])
+            deps = ", ".join(f["depends_on"]) or "(aucune)"
+            print(f"deps de {args.project}/{f['slug']} mises à jour : {deps}")
         elif args.action == "show":
             features = list_features(conn, args.project)
             for f in features:

@@ -10,6 +10,14 @@ Crée un row feature `planned` (`branch = feature/<slug>`, `worktree_path=None`)
 `src/cockpit/roadmap/model.py:81` · appelé par `add_task`, `resolver.index_for_feature`
 Split `"<projet>/<feature>"` (sans `/` → `ValueError`), résout le projet via `get_project`, SELECT par `(project_id, slug)`. `None` → `KeyError(ref)`. Décode `depends_on` (v10) en liste avant de rendre.
 
+## model.set_feature_deps() — édite le DAG inter-feature d'une feature existante (v10)
+`src/cockpit/roadmap/model.py:96` · appelé par `cli_dispatch` (`roadmap set-deps`)
+REMPLACE les `depends_on` d'une feature déjà créée (là où `add_feature` reste souple pour le forward-ref au build en lot, l'édition valide l'arête ciblée). Write-validate-rollback en une transaction : `UPDATE … WHERE id=?` (scopé par la clé résolue → tue le footgun `ambiguous column name: slug`) **sans commit**, puis rejoue l'autorité `resolver.classify_features` sur la conn (voit l'écriture non-commitée) — `state` du nœud cible `ERROR` → `ValueError` (dep pendante), `CYCLE` → `ValueError` (cycle/self-dep) + `rollback` ; sinon `commit`. Zéro 2ᵉ détecteur de cycle (réutilise l'unique autorité). Row rendu `depends_on` décodé. `KeyError` si feature inconnue. Import paresseux de `resolver` (cycle `model↔resolver`).
+
+## model.set_task_deps() — édite le DAG intra-task d'une task existante
+`src/cockpit/roadmap/model.py:150` · appelé par `resolver.cli_dispatch` (`task set-deps`)
+Symétrique de `set_feature_deps` pour les tasks : `UPDATE tasks … WHERE feature_id=? AND slug=?` (scopé par feature_id), validé via `resolver.classify` sur l'index re-lu. Vérifie l'existence de la task (`KeyError` sinon) après `resolve_feature` (`KeyError` si feature absente). `ERROR`/`CYCLE` → `ValueError` + `rollback`.
+
 ## model.add_task() — insère une task (priorité + DoD)
 `src/cockpit/roadmap/model.py:96` · appelé par `resolver.cli_dispatch` (`task add`), `seed.seed_launch_roadmap`
 Task `todo` sous une feature résolue. `priority` bornée à `P0..P3` (sinon `ValueError`). `depends_on` = slugs de tasks **de la même feature** (JSON). `acceptance` = TEXT libre injecté comme DoD dans le prompt worker au dispatch. `IntegrityError` → `ValueError` (doublon). NB : la validation « acceptance non vide » vit côté CLI (`resolver.cli_dispatch`), pas ici — `model` reste souple.
@@ -59,7 +67,7 @@ Read-only, déterministe, unique autorité de complétude (partagée CLI + API).
 Pure seed (aucune heuristique design-first ; l'ordre naît de la GRAINE `depends_on`, jamais du resolver). `load_launch_roadmap(project_type)` (fail-soft → 0) → boucle features (`model.add_feature`, `depends_on` inter-feature semable v10) puis tasks (`model.add_task`, `priority` défaut `P1`). Retourne le nombre de features semées. Idempotence : aucune — `add_feature`/`add_task` lèvent `ValueError` sur doublon, l'appelant enveloppe fail-soft (jamais de rollback SoT). Import paresseux côté registry (évite le cycle registry↔model).
 
 ## Zones non détaillées
-- **model.py** : `_now` (timestamp ISO UTC), `_project_facets` (vocab facettes bundle∪base, registre-driven, fallback `{'doc'}`), `_feature_doc` (bloc feature du contrat YAML, champs optionnels conditionnels), `cli_dispatch` (route `roadmap add-feature|show`).
-- **resolver.py** : `_to_records`/`_feature_records` (projection rows cockpit → forme record taskmap : `id≡slug`, `created≡created_at`, `tags:[]`, statut mappé), `_blockers`/`_feature_blockers` (re-traduction blockers en vocab cockpit), `_classify_tm` (délégation `taskmap.classify`), `_counts` (tally d'états pour le rapport CLI), `cli_dispatch` (route `task add|next`), constantes `PRIO`/`_STATUS_TO_TM`/`_FEATURE_STATUS_TO_TM`.
+- **model.py** : `_now` (timestamp ISO UTC), `_project_facets` (vocab facettes bundle∪base, registre-driven, fallback `{'doc'}`), `_feature_doc` (bloc feature du contrat YAML, champs optionnels conditionnels), `cli_dispatch` (route `roadmap add-feature|set-deps|show`).
+- **resolver.py** : `_to_records`/`_feature_records` (projection rows cockpit → forme record taskmap : `id≡slug`, `created≡created_at`, `tags:[]`, statut mappé), `_blockers`/`_feature_blockers` (re-traduction blockers en vocab cockpit), `_classify_tm` (délégation `taskmap.classify`), `_counts` (tally d'états pour le rapport CLI), `cli_dispatch` (route `task add|set-deps|next`), constantes `PRIO`/`_STATUS_TO_TM`/`_FEATURE_STATUS_TO_TM`.
 - **prompt.py** : `_mandate`, `_context_block`, `_facet_block`, `_acceptance_block` (helpers de composition détaillés inline dans `build_worker_prompt` ci-dessus), constantes `CONTEXT_DOCS`/`_EXCERPT_MAX`.
 - **check.py** : `Issue` (dataclass frozen, énumération des `kind`), `cli_dispatch` (route `roadmap check`, rapport groupé par feature).

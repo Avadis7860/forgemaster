@@ -268,6 +268,72 @@ def test_add_task_validates_refs_and_priority(ctx):
         model.add_task(conn, feature_ref="proj/absent", slug="t")                # feature absente
 
 
+def test_set_feature_deps_edits_and_validates(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj")
+    for s in ("a", "b", "c"):
+        model.add_feature(conn, project_slug="proj", slug=s)
+    # happy : b dépend de a
+    r = model.set_feature_deps(conn, ref="proj/b", depends_on=["a"])
+    assert r["depends_on"] == ["a"]
+    assert model.resolve_feature(conn, "proj/b")["depends_on"] == ["a"]   # persisté (commit)
+    # dangling → refus + rollback (b garde ['a'])
+    with pytest.raises(ValueError):
+        model.set_feature_deps(conn, ref="proj/b", depends_on=["ghost"])
+    assert model.resolve_feature(conn, "proj/b")["depends_on"] == ["a"]
+    # self-dep → refus (cycle)
+    with pytest.raises(ValueError):
+        model.set_feature_deps(conn, ref="proj/b", depends_on=["b"])
+    # cycle a→b (b→a existe déjà) → refus + rollback (a reste vide)
+    with pytest.raises(ValueError):
+        model.set_feature_deps(conn, ref="proj/a", depends_on=["b"])
+    assert model.resolve_feature(conn, "proj/a")["depends_on"] == []
+    # feature cible inconnue → KeyError
+    with pytest.raises(KeyError):
+        model.set_feature_deps(conn, ref="proj/absent", depends_on=[])
+    # remplace-sémantique : liste vide efface
+    model.set_feature_deps(conn, ref="proj/b", depends_on=[])
+    assert model.resolve_feature(conn, "proj/b")["depends_on"] == []
+
+
+def test_set_feature_deps_scoped_by_project(ctx):
+    settings, conn = ctx
+    for p in ("p1", "p2"):
+        registry.create_project(conn, settings, slug=p)
+        model.add_feature(conn, project_slug=p, slug="a")
+        model.add_feature(conn, project_slug=p, slug="b")     # même slug dans les 2 projets
+    model.set_feature_deps(conn, ref="p1/b", depends_on=["a"])
+    assert model.resolve_feature(conn, "p1/b")["depends_on"] == ["a"]
+    assert model.resolve_feature(conn, "p2/b")["depends_on"] == []    # l'autre projet intact (scope par id)
+
+
+def test_set_task_deps_edits_and_validates(ctx):
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="proj")
+    model.add_feature(conn, project_slug="proj", slug="feat")
+    for s in ("t1", "t2", "t3"):
+        model.add_task(conn, feature_ref="proj/feat", slug=s)
+    feat_id = model.resolve_feature(conn, "proj/feat")["id"]
+    # happy : t2 dépend de t1
+    r = model.set_task_deps(conn, feature_ref="proj/feat", slug="t2", depends_on=["t1"])
+    assert r["depends_on"] == ["t1"]
+    assert {t["slug"]: t for t in model.list_tasks(conn, feat_id)}["t2"]["depends_on"] == ["t1"]
+    # dangling → refus + rollback
+    with pytest.raises(ValueError):
+        model.set_task_deps(conn, feature_ref="proj/feat", slug="t2", depends_on=["ghost"])
+    assert {t["slug"]: t for t in model.list_tasks(conn, feat_id)}["t2"]["depends_on"] == ["t1"]
+    # self-dep + cycle → refus
+    with pytest.raises(ValueError):
+        model.set_task_deps(conn, feature_ref="proj/feat", slug="t3", depends_on=["t3"])
+    with pytest.raises(ValueError):
+        model.set_task_deps(conn, feature_ref="proj/feat", slug="t1", depends_on=["t2"])
+    # task cible inconnue → KeyError ; feature inconnue → KeyError
+    with pytest.raises(KeyError):
+        model.set_task_deps(conn, feature_ref="proj/feat", slug="absent", depends_on=[])
+    with pytest.raises(KeyError):
+        model.set_task_deps(conn, feature_ref="proj/absent", slug="t1", depends_on=[])
+
+
 def test_roadmap_to_yaml_contract(ctx):
     settings, conn = ctx
     registry.create_project(conn, settings, slug="proj")

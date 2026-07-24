@@ -38,10 +38,12 @@ vision  →  features[facet]  →  tasks[depends_on + acceptance]
    casquette change (back↔front↔tool↔doc) ou (b) un bloc peut avancer **sans attendre** un autre. Les features
    **indépendantes prêtes** tournent **en parallèle** (`cockpit run` ⇒ N workers) — les rendre indépendantes
    est ce qui débloque le parallélisme.
-3. **Ordonne les features par dépendance = ordre de merge.** Les deps **inter-features** ne s'expriment pas
-   dans un champ : elles se résolvent par le **merge vers `dev`**. Une feature `frontend` qui consomme une API
-   se planifie **après** la feature `backend` — la worktree frontend, créée `base=dev`, verra le contrat mergé.
-   Séquence back → merge → front.
+3. **Ordonne les features par dépendance = ordre de merge.** Les deps **inter-features** s'expriment via le
+   champ `depends_on` **au niveau feature** (`--depends-on` d'`add-feature`, ou `roadmap set-deps` après coup) :
+   une feature reste **non-dispatchable** tant qu'une prérequise n'est pas `merged` — soit exactement l'ordre
+   de merge `back → front`. Une feature `frontend` qui consomme une API se planifie **après** la feature
+   `backend` (la worktree frontend, créée `base=dev`, verra le contrat mergé). Ne pose une dep inter-feature
+   que là où le merge est un vrai prérequis — sinon tu sérialises ce qui pourrait paralléliser.
 4. **Dans chaque feature, pose le DAG des tasks (`depends_on`).** Ce qui est indépendant reste indépendant
    (deux tasks sans lien = deux `NEXT` prêtes, sérialisées par le mutex de la feature mais toutes deux
    drainées). Ne crée pas de dépendance factice « pour l'ordre » — elle bride le résolveur.
@@ -61,10 +63,15 @@ vision  →  features[facet]  →  tasks[depends_on + acceptance]
 
 ```bash
 # Avec le cockpit (in-repo : features + tasks dans la roadmap du projet)
-cockpit roadmap add-feature <projet> <feature> --facet backend
+cockpit roadmap add-feature <projet> <feature> --facet backend --depends-on <feat-prereq>
 cockpit task add <projet>/<feature> <task> --depends-on <t-prereq> \
     --acceptance "Critère binaire, testé : … "
+# Corriger une dépendance DÉCOUVERTE APRÈS COUP (ex. la critique §6 révèle un prérequis manquant) —
+# jamais en éditant cockpit.db à la main : les verbes valident (refus dangling/cycle/self) et écrivent atomiquement.
+cockpit roadmap set-deps <projet> <feature> --depends-on <feat-prereq...>   # REMPLACE les deps inter-feature
+cockpit task set-deps <projet>/<feature> <task> --depends-on <t-prereq...>  # REMPLACE les deps intra-task
 cockpit roadmap show <projet>          # relire le DAG
+cockpit roadmap check <projet>         # prouver : DoD/DAG/facettes OK (0 issue = drainable)
 cockpit run <projet> --max-parallel 2  # drainer + paralléliser les features indépendantes prêtes
 ```
 
@@ -78,6 +85,8 @@ feature) — le modèle (facette par feature, DAG + acceptance par task) est ce 
 - **Dépendance inter-features cachée** — back→front non exprimé par l'ordre de merge → le front part sans le
   contrat. Séquence par le merge, ne parallélise que l'indépendant.
 - **DAG sur-contraint** — des `depends_on` factices « pour ranger » : ils tuent le parallélisme intra-feature.
+- **Édition du DAG en raw-SQL** — corriger une dépendance en ouvrant `cockpit.db` (`sqlite3`/`UPDATE`) contourne
+  la validation (dangling/cycle) et corrompt le résolveur en silence. Utilise `roadmap set-deps` / `task set-deps`.
 - **Roadmap plate** — décomposition dispatchable mais sans profondeur : toutes les features prouvent que « ça
   tourne », aucune ne prouve que « c'est bon » (résultat convergé/équilibré, contenu suffisant, axes du type
   couverts). Passe la **critique de complétude** (méthode §6) avant de rendre.

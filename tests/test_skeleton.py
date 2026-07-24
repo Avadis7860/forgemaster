@@ -132,6 +132,23 @@ def test_cli_roadmap_check_parses():
     assert args.command == "roadmap" and args.action == "check" and args.project == "demo"
 
 
+def test_cli_roadmap_set_deps_parses():
+    args = build_parser().parse_args(
+        ["roadmap", "set-deps", "demo", "boucle-tick", "--depends-on", "modele-domaine", "io"])
+    assert args.command == "roadmap" and args.action == "set-deps"
+    assert args.project == "demo" and args.feature == "boucle-tick"
+    assert args.depends_on == ["modele-domaine", "io"]
+    empty = build_parser().parse_args(["roadmap", "set-deps", "demo", "f"])   # --depends-on facultatif → []
+    assert empty.depends_on == []
+
+
+def test_cli_task_set_deps_parses():
+    args = build_parser().parse_args(
+        ["task", "set-deps", "proj/feat", "api", "--depends-on", "schema"])
+    assert args.command == "task" and args.action == "set-deps"
+    assert args.feature == "proj/feat" and args.slug == "api" and args.depends_on == ["schema"]
+
+
 def test_cli_run_parses_project_and_max_parallel():
     args = build_parser().parse_args(["run", "demo", "--max-parallel", "3"])
     assert args.command == "run" and args.project == "demo" and args.max_parallel == 3

@@ -141,7 +141,8 @@ def classify_features(conn, project: str) -> dict[str, dict]:
 
 
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
-    """Route `cockpit task <action>` (add|next). `add` = saisie (data layer) ; `next` = résolveur DAG."""
+    """Route `cockpit task <action>` (add|set-deps|next). `add`/`set-deps` = saisie/édition (data layer) ;
+    `next` = résolveur DAG."""
     conn = store.open_db(settings)
     try:
         if args.action == "add":
@@ -153,6 +154,12 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
                                depends_on=args.depends_on, priority=getattr(args, "priority", "P1"),
                                acceptance=acceptance)
             print(f"task créée : {args.feature}/{t['slug']} (priorité {t['priority']})")
+            return 0
+        if args.action == "set-deps":
+            t = model.set_task_deps(conn, feature_ref=args.feature, slug=args.slug,
+                                    depends_on=getattr(args, "depends_on", None) or [])
+            deps = ", ".join(t["depends_on"]) or "(aucune)"
+            print(f"deps de {args.feature}/{t['slug']} mises à jour : {deps}")
             return 0
         # action == "next"
         index = index_for_feature(conn, args.feature)

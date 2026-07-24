@@ -95,6 +95,12 @@ def build_parser() -> argparse.ArgumentParser:
                     help="facette de dispatch selon le bundle du projet ; défaut = default_facet du bundle")
     rf.add_argument("--depends-on", nargs="*", default=[],
                     help="slugs de features prérequises (DAG inter-feature ; bloque tant que non mergées)")
+    rsd = p_roadmap_sub.add_parser("set-deps", parents=[common],
+                                   help="éditer le DAG inter-feature d'une feature (REMPLACE ses deps)")
+    rsd.add_argument("project")
+    rsd.add_argument("feature")
+    rsd.add_argument("--depends-on", nargs="*", default=[],
+                     help="slugs de features prérequises (remplace l'ensemble ; refuse dangling/cycle/self)")
     rs = p_roadmap_sub.add_parser("show", parents=[common], help="afficher la roadmap d'un projet")
     rs.add_argument("project")
     rc = p_roadmap_sub.add_parser("check", parents=[common],
@@ -115,6 +121,12 @@ def build_parser() -> argparse.ArgumentParser:
                     help="priorité P0-P3 (défaut P1) — classée par priorité effective au résolveur")
     ta.add_argument("--acceptance", required=True,
                     help="critères de DoD (obligatoire) injectés dans le prompt du worker au dispatch")
+    tsd = p_task_sub.add_parser("set-deps", parents=[common],
+                                help="éditer le DAG intra-feature d'une task existante (REMPLACE ses deps)")
+    tsd.add_argument("feature")
+    tsd.add_argument("slug")
+    tsd.add_argument("--depends-on", nargs="*", default=[],
+                     help="ids de tasks prérequises (remplace l'ensemble ; refuse dangling/cycle/self)")
     tn = p_task_sub.add_parser("next", parents=[common], help="prochaine task dispatchable (résolveur DAG)")
     tn.add_argument("feature")
 
