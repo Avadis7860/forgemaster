@@ -74,13 +74,28 @@ def _added_texts_by_file(diff_text: str) -> dict[str, set[str]]:
     return out
 
 
+def _unwrap_citation(tail: str) -> str:
+    """Retire l'habillage d'une citation LLM — un code-span markdown (backticks) puis un marqueur de diff
+    `+`/`-` recopié — pour comparer le CONTENU nu. **Asymétrique** : ne touche jamais le hay (issu du diff,
+    dont `_added_texts_by_file` a déjà retiré le `+` via `line[1:]`, et qui peut porter des backticks
+    légitimes — template literals TS/JS). Un seul niveau de backticks est retiré (edge `` `a`b` `` → au pire
+    un faux-rejet, jamais un faux-KEEP)."""
+    s = tail.strip()
+    if len(s) >= 2 and s[0] == "`" and s[-1] == "`":   # un code-span markdown
+        s = s[1:-1].strip()
+    if s[:1] in ("+", "-"):                            # un marqueur de diff recopié
+        s = s[1:].strip()
+    return s
+
+
 def _extract_citation(evidence: str | None) -> str | None:
-    """Portion CODE d'une evidence `"f.py:12 — <code>"` (après le séparateur «—»). None si l'evidence ne
-    porte pas de citation verbatim (`file:line` seul) — ce qui vaudra rejet en aval."""
+    """Portion CODE d'une evidence `"f.py:12 — <code>"` (après le séparateur «—»), **dé-wrappée** de son
+    habillage LLM (backticks, marqueur `+`). None si l'evidence ne porte pas de citation verbatim
+    (`file:line` seul, ou vide après unwrap) — ce qui vaudra rejet en aval."""
     if not evidence or "—" not in evidence:
         return None
-    tail = evidence.split("—", 1)[1].strip()
-    return tail or None
+    cleaned = _unwrap_citation(evidence.split("—", 1)[1])
+    return cleaned or None
 
 
 def _reject_reason(finding: dict, added: dict[str, set[str]]) -> str | None:

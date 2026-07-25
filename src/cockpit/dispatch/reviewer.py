@@ -81,12 +81,13 @@ def build_review_prompt(worktree_root: object, feature: dict, tasks: list[dict],
         "{\"base\": \"dev\", \"findings\": [\n"
         "  {\"severity\": \"🔴\", \"category\": \"correctness\", \"file\": \"chemin\", \"line\": 12,\n"
         "   \"claim\": \"ce qui est faux, en une phrase\",\n"
-        "   \"evidence\": \"chemin:12 — <citation VERBATIM d'une ligne + du diff>\",\n"
+        "   \"evidence\": \"chemin:12 — <citation VERBATIM du code, SANS backtick ni marqueur +>\",\n"
         "   \"verify_note\": \"réfutation tentée : … → confirmé\"}\n"
         "]}\n"
         "```\n"
-        "`evidence` DOIT contenir, après le tiret «—», une citation **verbatim** d'une ligne ajoutée (`+`) "
-        "du diff : un finding non citable est rejeté à la source. Diff propre → `\"findings\": []`."
+        "`evidence` DOIT contenir, après le tiret «—», une citation **verbatim du CODE** d'une ligne ajoutée "
+        "du diff — le **contenu nu**, sans les backticks markdown ni le `+` de tête : un finding non citable "
+        "est rejeté à la source. Diff propre → `\"findings\": []`."
     )
     branch = feature.get("branch", "")
     blocks = [

@@ -158,6 +158,34 @@ def test_partition_findings_keeps_citable_rejects_hallucinated():
     assert review.evidence_in_diff(_F_OK, _DIFF) and not review.evidence_in_diff(_F_ABSENT, _DIFF)
 
 
+def test_partition_findings_unwraps_backtick_and_diff_marker():
+    """La garde ne doit PAS fausse-rejeter une citation réelle habillée par le reviewer (code-span markdown
+    et/ou marqueur de diff `+`/`-` recopié) — régression du fail-open vu sur void-runner (2026-07-25)."""
+    f_bt_plus = {"severity": "🔴", "file": "f.py", "line": 11,
+                 "evidence": "f.py:11 — `+ for i in range(n + 1):`"}      # backtick + marqueur +
+    f_bt_only = {"severity": "🟡", "file": "f.py", "line": 12,
+                 "evidence": "f.py:12 — `for i in range(n + 1):`"}         # backtick seul
+    f_minus = {"severity": "🟡", "file": "g.py", "line": 2,
+               "evidence": "g.py:2 — `- helper()`"}                        # marqueur - (contenu ajouté)
+    f_wrapped_absent = {"severity": "🔴", "file": "f.py", "line": 99,
+                        "evidence": "f.py:99 — `+ fabricated()`"}          # habillé MAIS absent du diff
+    f_empty_cite = {"severity": "🟡", "file": "f.py", "line": 1,
+                    "evidence": "f.py:1 — ``"}                             # vide après unwrap
+    kept, rej = review.partition_findings(
+        [f_bt_plus, f_bt_only, f_minus, f_wrapped_absent, f_empty_cite], _DIFF)
+    reasons = {r["evidence"]: r["reject_reason"] for r in rej}
+    assert f_bt_plus in kept and f_bt_only in kept and f_minus in kept   # habillage dé-wrappé → citable
+    assert reasons["f.py:99 — `+ fabricated()`"] == "citation-absente-du-diff"  # garde anti-halluc tient
+    assert reasons["f.py:1 — ``"] == "pas-de-citation"                   # vide après unwrap
+
+
+def test_unwrap_citation_strips_one_layer_only():
+    assert review._unwrap_citation("`+ code()`") == "code()"
+    assert review._unwrap_citation("  - code()  ") == "code()"
+    assert review._unwrap_citation("`plain`") == "plain"
+    assert review._unwrap_citation("nu()") == "nu()"
+
+
 def test_build_verdict_is_pure_and_applies_guard():
     v = review.build_verdict({"findings": [_F_OK, _F_ABSENT]}, sha="cafe",
                              ts="2026-07-02T00:00:00+00:00", diff_text=_DIFF)
