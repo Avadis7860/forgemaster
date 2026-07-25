@@ -19,6 +19,7 @@ import json
 import shutil
 import sqlite3
 import time
+from collections import deque
 from collections.abc import Callable, Mapping
 from datetime import date
 from pathlib import Path
@@ -60,8 +61,47 @@ DENY_DESTRUCTIVE = "Bash(git push *),Bash(git reset *),Bash(sudo *)"
 
 DISPATCH_TIMEOUT = 1800.0   # s ; un worker qui pend ne bloque pas la forge (→ RunTimeout)
 
+# Spin-guard : le timeout ci-dessus est le filet ULTIME (30 min). Un worker peut aussi NON-PROGRESSER sans
+# pendre — enchaîner des tool-calls qui rendent la même sortie (observé void-runner : 12 sims plates à
+# `win=0/50`, brute-force sans convergence). Ce n'est pas un stall (les événements coulent, `dontAsk` tient) ;
+# aucun filet ne le coupait avant 1800s → burn silencieux. `make_spin_detector` le coupe tôt (→ RunSpin).
+SPIN_WINDOW = 12   # tool-results consécutifs identiques (sans nouveauté d'assistant) → non-progression
+
 # runner(argv, *, cwd, input_text, timeout, env) -> RunResult. Défaut = subprocess local ; injecté en test.
 Runner = Callable[..., run.RunResult]
+
+
+def make_spin_detector(window: int = SPIN_WINDOW) -> Callable[[str], str | None]:
+    """Prédicat d'abort `on_line` (pour `run.run_streaming`) : détecte un worker qui n'AVANCE plus dans le
+    flux stream-json, sans nouveau parseur (réutilise `jobs.normalize_line`). État en closure :
+    - une fenêtre glissante des `window` derniers summaries de `tool_result` ;
+    - tout TEXTE d'assistant NEUF réarme (vide la fenêtre) → une vraie progression (raisonnement neuf entre
+      deux outils) ne déclenche jamais.
+    Rend une raison ssi la fenêtre est PLEINE et ses `window` summaries sont identiques et NON vides ; le
+    cœur tue alors le process (→ `RunSpin`). Conservateur par conception : faux-positifs quasi-nuls ; le
+    `DISPATCH_TIMEOUT` reste le filet ultime pour les spins « pensés à voix haute » (texte neuf par tour)."""
+    results: deque[str] = deque(maxlen=window)
+    last_text: list[str] = []   # dernier texte d'assistant vu (liste = cellule mutable en closure)
+
+    def _detect(line: str) -> str | None:
+        ev = jobs.normalize_line(line)
+        if ev is None:
+            return None
+        if ev.get("type") == "assistant":
+            text = (ev.get("text") or "").strip()
+            if text and text != (last_text[0] if last_text else None):
+                last_text[:] = [text]
+                results.clear()   # progression réelle → réarme le compteur
+            return None
+        if ev.get("type") == "tool_result":
+            summary = " | ".join((r.get("summary") or "") for r in ev.get("results", []))
+            results.append(summary)
+            if len(results) == window and summary and all(s == summary for s in results):
+                return (f"spin: aucune nouveauté sur {window} tool-results consécutifs "
+                        "(worker répète la même sortie)")
+        return None
+
+    return _detect
 
 
 def build_headless_argv(*, session_id: str, work: bool = True, model: str | None = None,
@@ -225,13 +265,18 @@ def _make_default_runner(out_path: str, conn: sqlite3.Connection | None = None,
     Spawn en **session propre** (`new_session=True` → le worker est leader de groupe, tuable en groupe par
     l'abort) et **persiste son pid** dès le spawn (`on_spawn` → `jobs.record_pid`) sur la connexion
     thread-locale `conn` : c'est le handle explicite que `cockpit abort` lit en DB (fin du `pkill` fragile).
-    `conn`/`job_id` absents (runner de test) → pas de persistance, comportement inchangé."""
+    `conn`/`job_id` absents (runner de test) → pas de persistance, comportement inchangé.
+
+    Câble aussi le **spin-guard** (`on_line=make_spin_detector()`) : un worker qui n'avance plus est coupé tôt
+    (→ `RunSpin`) au lieu de brûler jusqu'au timeout. Détecteur FRAIS par run (état par-worker). Les runners
+    injectés en test ne passent pas par ici → pas de détecteur, comportement inchangé."""
     def _runner(argv: list[str], *, cwd: object, input_text: str, timeout: float,
                 env: Mapping[str, str] | None = None) -> run.RunResult:
         on_spawn = ((lambda pid: jobs.record_pid(conn, job_id, pid))
                     if conn is not None and job_id is not None else None)
         return run.run_streaming(argv, cwd=cwd, input_text=input_text, timeout=timeout,   # type: ignore[arg-type]
-                                 env=env, out_path=out_path, new_session=True, on_spawn=on_spawn)
+                                 env=env, out_path=out_path, new_session=True, on_spawn=on_spawn,
+                                 on_line=make_spin_detector())
     return _runner
 
 

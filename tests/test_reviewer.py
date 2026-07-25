@@ -286,7 +286,7 @@ def test_reviewer_default_runner_streams_transcript_and_writes_verdict(ctx, monk
     spawned: dict = {}
 
     def _fake_streaming(argv, *, cwd, env=None, timeout=None, input_text=None, out_path=None,
-                        new_session=False, on_spawn=None):
+                        new_session=False, on_spawn=None, on_line=None):
         spawned["out_path"] = out_path
         if on_spawn is not None:
             on_spawn(4321)                                  # exerce record_pid (le reviewer devient killable)

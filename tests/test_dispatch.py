@@ -455,6 +455,37 @@ def test_run_streaming_honors_timeout_even_without_output():
         run.run_streaming([sys.executable, "-c", "import time; time.sleep(30)"], timeout=0.4)
 
 
+def test_run_streaming_aborts_when_on_line_returns_reason():
+    """Le prédicat `on_line` coupe le process AVANT le timeout : la 1re raison truthy tue le worker (→ RunSpin
+    porteur de la raison). Le script imprime tout puis dormirait 30s — un abort qui marche lève vite (< le
+    timeout de 5s) ; un abort cassé retomberait sur RunTimeout (mauvaise exception → le test échoue)."""
+    script = ('import sys, time\n'
+              'for _ in range(20):\n'
+              '    print("SPIN"); sys.stdout.flush()\n'
+              'time.sleep(30)\n')
+    seen = {"n": 0}
+
+    def _watch(line: str) -> str | None:
+        if line.strip() == "SPIN":
+            seen["n"] += 1
+            if seen["n"] >= 3:
+                return "spin: test"
+        return None
+
+    with pytest.raises(run.RunSpin) as ei:
+        run.run_streaming([sys.executable, "-c", script], timeout=5, on_line=_watch)
+    assert "spin: test" in str(ei.value)
+    assert isinstance(ei.value, run.RunTimeout)   # RunSpin IS-A RunTimeout → capté par le même except
+
+
+def test_run_streaming_on_line_returning_none_never_aborts():
+    """Non-régression : un `on_line` fourni mais qui ne rend jamais de raison n'interrompt rien — le run se
+    termine normalement (aucun RunSpin), le stdout complet est rendu."""
+    script = 'print("a"); print("b")'
+    res = run.run_streaming([sys.executable, "-c", script], timeout=10, on_line=lambda _l: None)
+    assert res.returncode == 0 and res.stdout.count("\n") == 2
+
+
 def test_build_headless_argv_stream_json_requires_verbose():
     """`claude -p --output-format stream-json` EXIGE `--verbose` ; le défaut `json` ne le pose pas."""
     argv = worker.build_headless_argv(session_id="s", output_format="stream-json")
@@ -649,6 +680,61 @@ def test_normalize_line_tool_use_and_result_and_noise():
     assert jobs.normalize_line(res)["results"][0] == {"ok": True, "summary": "ok"}
     assert jobs.normalize_line("not json") is None
     assert jobs.normalize_line(json.dumps({"type": "queue-operation"})) is None
+
+
+# -- spin-guard : détecteur de non-progression ------------------------------------------------------
+
+def _tr_line(text: str) -> str:
+    """Une ligne stream-json `tool_result` de summary `text`."""
+    return json.dumps({"type": "user", "message": {"content": [
+        {"type": "tool_result", "content": text, "is_error": False}]}})
+
+
+def _at_line(text: str) -> str:
+    """Une ligne stream-json `assistant` porteuse d'un texte de raisonnement."""
+    return json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}})
+
+
+def test_spin_detector_fires_on_identical_tool_results():
+    """La fenêtre pleine de summaries IDENTIQUES et non vides déclenche — à la Nᵉ répétition, pas avant."""
+    detect = worker.make_spin_detector(window=3)
+    assert detect(_tr_line("win=0/50")) is None            # 1/3
+    assert detect(_tr_line("win=0/50")) is None            # 2/3
+    reason = detect(_tr_line("win=0/50"))                  # 3/3 → spin
+    assert reason is not None and "spin" in reason and "3 tool-results" in reason
+
+
+def test_spin_detector_silent_on_varied_tool_results():
+    """Des summaries qui VARIENT = progression apparente → jamais de déclenchement."""
+    detect = worker.make_spin_detector(window=3)
+    assert all(detect(_tr_line(f"win={i}/50")) is None for i in range(10))
+
+
+def test_spin_detector_rearms_on_novel_assistant_text():
+    """Un TEXTE d'assistant neuf entre les répétitions réarme (vide la fenêtre) : un worker qui raisonne à
+    neuf ne déclenche jamais, même si l'outil rend la même sortie."""
+    detect = worker.make_spin_detector(window=3)
+    for i in range(10):
+        assert detect(_at_line(f"tentative {i}")) is None  # raisonnement neuf → reset
+        assert detect(_tr_line("win=0/50")) is None         # même sortie, mais compteur remis à 1
+
+
+def test_spin_detector_different_summary_breaks_the_streak():
+    """Une sortie différente au milieu casse la série : il faut de nouveau `window` identiques d'affilée."""
+    detect = worker.make_spin_detector(window=3)
+    detect(_tr_line("A"))
+    detect(_tr_line("A"))                                    # 2 identiques
+    assert detect(_tr_line("B")) is None                    # rupture → pas de spin
+    assert detect(_tr_line("A")) is None                    # la série repart : [A,B,A] ≠ tous égaux
+    assert detect(_tr_line("A")) is None                    # [B,A,A]
+    assert detect(_tr_line("A")) is not None                # [A,A,A] → spin
+
+
+def test_spin_detector_ignores_empty_and_noise():
+    """Summaries vides / lignes de bruit ne déclenchent jamais (garde `summary` non vide)."""
+    detect = worker.make_spin_detector(window=2)
+    assert detect("not json") is None
+    assert detect(_tr_line("")) is None and detect(_tr_line("")) is None   # vides → jamais
 
 
 # -- prompt-builder ---------------------------------------------------------------------------------

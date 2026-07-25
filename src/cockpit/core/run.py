@@ -29,6 +29,12 @@ class RunTimeout(RuntimeError):
     """La commande a dépassé son `timeout` et a été tuée."""
 
 
+class RunSpin(RunTimeout):
+    """`run_streaming` a été coupé par son prédicat `on_line` : le flux n'avançait plus (worker en spin).
+    Sous-classe `RunTimeout` — un abort de non-progression est capté partout où un timeout l'est (même
+    disposition fail-closed), avec un message distinct porteur de la raison."""
+
+
 @dataclass(frozen=True)
 class RunResult:
     """Résultat structuré d'une exécution locale."""
@@ -99,6 +105,7 @@ def run_streaming(
     out_path: str | Path | None = None,
     new_session: bool = False,
     on_spawn: Callable[[int], None] | None = None,
+    on_line: Callable[[str], str | None] | None = None,
 ) -> RunResult:
     """Comme `run`, mais **écrit le stdout au fil de l'eau** dans `out_path` (une ligne = un flush) au lieu de
     ne le capturer qu'à la fin — c'est ce qui rend le transcript d'un worker `claude -p --output-format
@@ -111,7 +118,12 @@ def run_streaming(
     `new_session=True` place le process dans sa **propre session** (`setsid` → il est leader de groupe,
     `pgid == pid`) : un abort peut alors le tuer **en groupe** (`os.killpg`) sans toucher l'orchestrateur —
     c'est le handle explicite qui remplace le `pgrep`/`kill -0` fragile. `on_spawn(pid)`, si fourni, est
-    appelé juste après le spawn (le dispatch y persiste le pid en DB → l'abort cross-process le retrouve)."""
+    appelé juste après le spawn (le dispatch y persiste le pid en DB → l'abort cross-process le retrouve).
+
+    `on_line(line) -> raison|None`, si fourni, est un **prédicat d'abort injecté** appelé sur chaque ligne
+    stdout : la première raison truthy qu'il rend tue le process et fait lever `RunSpin(raison)`. Le cœur
+    reste générique — il ne sait pas ce qu'est un « spin » ; la sémantique de non-progression appartient à
+    l'appelant (le dispatch). Une exception du prédicat n'interrompt jamais le pompage (avalée)."""
     proc = subprocess.Popen(  # noqa: S603 — argv liste sans shell
         list(argv),
         cwd=str(cwd) if cwd is not None else None,
@@ -127,6 +139,7 @@ def run_streaming(
         on_spawn(proc.pid)
     out_chunks: list[str] = []
     err_chunks: list[str] = []
+    aborted: dict[str, str] = {}   # {"reason": …} posé par le prédicat on_line → kill + RunSpin après wait
 
     def _pump_stdout() -> None:
         # Ouvre out_path une fois, écrit+flush chaque ligne dès qu'elle arrive → suivable en live.
@@ -137,6 +150,16 @@ def run_streaming(
                 if sink is not None:
                     sink.write(line)
                     sink.flush()
+                # Prédicat d'abort injecté : la 1re raison truthy tue le process (→ RunSpin après le wait).
+                # Défensif : une exception du prédicat ne doit JAMAIS interrompre le drain du pipe.
+                if on_line is not None and not aborted:
+                    try:
+                        reason = on_line(line)
+                    except Exception:      # noqa: BLE001 — un prédicat qui plante ne casse pas le pompage
+                        reason = None
+                    if reason:
+                        aborted["reason"] = reason
+                        proc.kill()
         finally:
             if sink is not None:
                 sink.close()
@@ -164,6 +187,11 @@ def run_streaming(
     finally:
         t_out.join(timeout=5)
         t_err.join(timeout=5)
+
+    # Le prédicat on_line a tué le process (kill depuis le thread pump → wait revient sans TimeoutExpired) :
+    # on lève APRÈS le join, une fois le stdout drainé, pour une raison porteuse et un flux complet capturé.
+    if aborted:
+        raise RunSpin(aborted["reason"])
 
     return RunResult(argv=list(argv), returncode=proc.returncode,
                      stdout="".join(out_chunks), stderr="".join(err_chunks))
