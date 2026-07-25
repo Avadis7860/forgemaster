@@ -539,6 +539,20 @@ def test_activate_facet_failsoft_when_no_settings_local(tmp_path: Path):
     assert not (tmp_path / ".claude" / "settings.local.json").exists()
 
 
+def test_review_facet_allowlist_is_static_readonly_no_test_runner():
+    """Le facet `review` est le contrat STATIQUE du reviewer Tier-1 : read + git-LECTURE + maps, JAMAIS de
+    test-runner. Sur un workspace trusté (le reviewer appelle `trust_workspace`) les allow-rules du
+    settings.local.json s'appliquent → un grant `pytest`/`vitest` ferait rejouer le gate, ce que le
+    mandate interdit (Tier-0 possède déjà la couleur des tests, veto non-overridable). Régression du grant
+    Python-only (`ruff`/`mypy`/`pytest`) vu sur void-runner le 2026-07-25."""
+    allow = json.loads(
+        load_bundle("service-api")[".claude/facets/review/settings.local.json"])["permissions"]["allow"]
+    bash = {e for e in allow if e.startswith("Bash(")}
+    runners = ("ruff", "mypy", "pytest", "vitest", "npm", "node", "jest", "tsc")
+    assert not any(r in e for e in bash for r in runners), f"test-runner dans facet review : {sorted(bash)}"
+    assert "Bash(git diff:*)" in bash and "Bash(codemap:*)" in bash    # situe le diff, read-only
+
+
 # -- P3 : config de run semée (types-services déployables sans édition) -----------------------------
 
 # Les types-SERVICE portent une config de run (compose + Dockerfile + stub runnable) ; les autres non

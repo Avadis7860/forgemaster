@@ -39,6 +39,13 @@ from cockpit.tools import ToolPreflightError, preflight_tools, tools_env
 
 # -- politique d'outils (verbatim de worker_dispatch.py) --------------------------------------------
 WRITE_PERMISSION_MODE = "acceptEdits"   # sans lui, `claude -p` refuse Write/Edit (aucun interlocuteur)
+# Mode read-only du reviewer : en `-p` SANS `--permission-mode`, un outil hors-allowlist tombe en `ask` → sur
+# un workspace TRUSTÉ (le reviewer appelle `trust_workspace`, le fallback « untrusted→deny » ne le protège
+# PAS) il n'y a personne pour approuver → HANG jusqu'au timeout (stall silencieux de ~min observé sur
+# void-runner). `dontAsk` auto-REFUSE tout ce qui prompterait (le modèle voit le deny et poursuit son jugement
+# statique) et auto-PERMET les bash read-only (git diff/log/show — il SITUE le diff) : ajustement exact d'un
+# reviewer read-only. Doc : permission-modes (« the session never waits for input »).
+READONLY_PERMISSION_MODE = "dontAsk"
 READONLY_TOOLS = "Read,Grep,Glob"       # baseline lecture-seule (preuve de canal) ; le reviewer l'ÉLARGIT
 WRITE_CODE_TOOLS = "Bash,WebSearch,WebFetch"
 # DENY destructif — deny PRIME sur allow (précédence deny>ask>allow), posé dans tous les modes. On borne les
@@ -61,12 +68,13 @@ def build_headless_argv(*, session_id: str, work: bool = True, model: str | None
                         output_format: str = "json", mcp_config: Path | None = None,
                         allowed_tools: str | None = None) -> list[str]:
     """Argv de `claude -p` **local** (le prompt part sur le stdin, jamais l'argv). `--session-id` fixe le
-    transcript à un chemin déterministe (suivi live). `work=True` → allowlist code + `acceptEdits` ;
-    `work=False` → lecture seule (preuve de canal). `allowed_tools`, si fourni, **override** le choix
-    `WRITE_CODE_TOOLS`/`READONLY_TOOLS` (le reviewer y injecte son allowlist read-only ÉLARGIE : git-lecture +
-    maps, cf. `reviewer.REVIEW_TOOLS`). Le DENY destructif est posé dans tous les cas et **prime** sur l'allow
-    (précédence deny>ask>allow). Si `mcp_config` est fourni, `--mcp-config <f>` charge le MCP de corpus
-    injecté (non-strict : garde les autres configs). PUR."""
+    transcript à un chemin déterministe (suivi live). `work=True` → allowlist code + `--permission-mode
+    acceptEdits` ; `work=False` → read-only + `--permission-mode dontAsk` (auto-refuse sans HANG tout outil
+    hors-allowlist). `allowed_tools`, si fourni, **override** le choix `WRITE_CODE_TOOLS`/`READONLY_TOOLS` (le
+    reviewer y injecte son allowlist read-only ÉLARGIE : git-lecture + maps, cf. `reviewer.REVIEW_TOOLS`). Le
+    DENY destructif est posé dans tous les cas et **prime** sur l'allow (précédence deny>ask>allow). Si
+    `mcp_config` est fourni, `--mcp-config <f>` charge le MCP de corpus injecté (non-strict : garde les autres
+    configs). PUR."""
     argv = ["claude", "-p", "--output-format", output_format, "--session-id", session_id]
     if output_format == "stream-json":
         argv += ["--verbose"]            # `claude -p --output-format stream-json` EXIGE --verbose
@@ -74,8 +82,10 @@ def build_headless_argv(*, session_id: str, work: bool = True, model: str | None
         argv += ["--model", model]
     argv += ["--allowedTools", allowed_tools or (WRITE_CODE_TOOLS if work else READONLY_TOOLS)]
     argv += ["--disallowedTools", DENY_DESTRUCTIVE]
-    if work:
-        argv += ["--permission-mode", WRITE_PERMISSION_MODE]
+    # `--permission-mode` posé dans TOUS les cas (headless) : `acceptEdits` pour l'ouvrier
+    # (auto-accepte Write/Edit), `dontAsk` pour le reviewer read-only (auto-refuse tout ce qui prompterait au
+    # lieu de HANG en `ask`). Sans lui, un outil hors-allowlist bloque la session jusqu'au timeout.
+    argv += ["--permission-mode", WRITE_PERMISSION_MODE if work else READONLY_PERMISSION_MODE]
     if mcp_config is not None:
         argv += ["--mcp-config", str(mcp_config)]
     return argv

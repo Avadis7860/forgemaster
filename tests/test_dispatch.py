@@ -474,6 +474,17 @@ def test_build_headless_argv_allowed_tools_override():
     assert ro[ro.index("--allowedTools") + 1] == worker.READONLY_TOOLS
 
 
+def test_build_headless_argv_permission_mode_per_work():
+    """`--permission-mode` posé dans TOUS les cas (headless = zéro interlocuteur) : `acceptEdits` pour
+    l'ouvrier (auto-accepte Write/Edit), `dontAsk` pour le reviewer read-only. Un outil hors-allowlist
+    tombe en `ask` → sur un workspace trusté (le reviewer appelle `trust_workspace`) → HANG
+    jusqu'au timeout (stall silencieux vu sur void-runner). `dontAsk` auto-refuse et ne bloque jamais."""
+    w = worker.build_headless_argv(session_id="s", work=True)
+    assert w[w.index("--permission-mode") + 1] == worker.WRITE_PERMISSION_MODE == "acceptEdits"
+    r = worker.build_headless_argv(session_id="s", work=False)
+    assert r[r.index("--permission-mode") + 1] == worker.READONLY_PERMISSION_MODE == "dontAsk"
+
+
 def test_deny_destructive_borders_reliable_forms_not_scratch_rm():
     """DENY rescopé (2026-07-22) : borne les formes que le NOMMAGE rend fiables (push/reset/sudo) et NE
     bloque PLUS `rm` — le blanket `Bash(rm *)` était théâtre (bypass Node) qui interdisait le nettoyage de
