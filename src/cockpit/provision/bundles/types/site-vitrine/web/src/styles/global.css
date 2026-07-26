@@ -1,0 +1,36 @@
+/* global.css — Tailwind v4 + design tokens de la vitrine. Les tokens sont la SOURCE UNIQUE du style : le
+   projet re-thème en changeant ces valeurs, pas en dispersant du CSS ad-hoc. */
+@import "tailwindcss";
+
+/* Design tokens (neutres, à re-thématiser par le projet). Exposés comme utilitaires Tailwind via @theme. */
+@theme {
+  --color-ink: #14181f;
+  --color-muted: #5b6472;
+  --color-surface: #ffffff;
+  --color-surface-alt: #f5f7fa;
+  --color-accent: #3b5bdb;
+  --color-accent-ink: #ffffff;
+
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --spacing-section: 6rem;
+  --radius-card: 0.75rem;
+}
+
+/* Base a11y — invariants, pas des options. */
+:where(a, button, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Respecte la préférence système : coupe les animations pour qui les refuse. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

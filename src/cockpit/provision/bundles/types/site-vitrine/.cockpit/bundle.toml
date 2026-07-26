@@ -1,0 +1,13 @@
+[bundle]
+version = "1"
+project_type = "site-vitrine"
+facets = ["frontend", "content", "deploy", "doc"]
+default_facet = "frontend"
+archetype = "app"           # gate de profondeur : axes UX d'un site présentational (cf. depth-axes.yaml)
+
+# Déclaration MCP sèche (sans secret ni endpoint). `corpus = true` = ce type bénéficie du capital-token servi.
+# Un overlay surcharge `bundle.toml` en whole-file → sans ce bloc, le `corpus = true` de la base est PERDU.
+# Silos tech pertinents (astro·tailwind·react·mdx·motion·typescript·vitest·wai-aria-apg) : nommés dans la prose
+# du `CLAUDE.md §4`. Un blueprint générique `site-vitrine` est aussi servi (query(type=blueprint, scope=…)).
+[bundle.mcp]
+corpus = true

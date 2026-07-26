@@ -1,0 +1,12 @@
+---
+// Page 404 statique (servie par nginx via `error_page`). Reste dans le layout pour garder chrome + a11y.
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="404" description="Page not found.">
+  <section>
+    <h1>404</h1>
+    <p>This page does not exist.</p>
+    <p><a href="/">Home</a></p>
+  </section>
+</BaseLayout>

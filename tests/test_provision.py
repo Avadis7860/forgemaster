@@ -330,6 +330,9 @@ _TYPE_TOOLCHAIN_PROBES = {
     "cli-tool": ["probe.py"],
     "front-ts": ["server.mjs", "web/Probe.tsx"],
     "browser-game": ["src/probe.ts", "web/Probe.tsx"],
+    # site-vitrine : app Astro sous web/ (`.astro` n'est pas un node-suffix → le groupe `front` se déclenche
+    # UNIQUEMENT par le chemin web/ ; la gate composite est montée par web/package.json `gate`).
+    "site-vitrine": ["web/src/pages/index.astro"],
 }
 
 
@@ -557,14 +560,15 @@ def test_review_facet_allowlist_is_static_readonly_no_test_runner():
 
 # Les types-SERVICE portent une config de run (compose + Dockerfile + stub runnable) ; les autres non
 # (un CLI / un projet générique n'expose aucun service long-running à héberger).
-_SERVICE_TYPES = ("service-api", "front-ts", "browser-game")
+_SERVICE_TYPES = ("service-api", "front-ts", "browser-game", "site-vitrine")
 # `generic`/`cli-tool` n'exposent aucun service long-running à héberger → aucune run config semée (l'engine
 # refusera proprement leur deploy). `browser-game` est désormais déployable : la chaîne deploy+E2E « jouable »
 # exige que son SoT porte compose.yaml + Dockerfile dès l'amorçage (deploy chain).
 _NON_SERVICE_TYPES = ("generic", "cli-tool")
 # stub runnable par type-service. browser-game : entrypoint prod qui réunifie le front statique (Vite → dist/)
 # et l'API Hono derrière un unique port 8000 (server/prod.ts, pas un stub racine — univers TS unifié).
-_APP_STUB = {"service-api": "app.py", "front-ts": "server.mjs", "browser-game": "server/prod.ts"}
+_APP_STUB = {"service-api": "app.py", "front-ts": "server.mjs", "browser-game": "server/prod.ts",
+             "site-vitrine": "nginx.conf"}
 
 
 @pytest.mark.parametrize("project_type", _SERVICE_TYPES)

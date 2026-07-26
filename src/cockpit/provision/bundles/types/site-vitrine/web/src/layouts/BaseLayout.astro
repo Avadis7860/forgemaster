@@ -1,0 +1,58 @@
+---
+// BaseLayout.astro — enveloppe commune : SEO/méta/OG, canonical + hreflang par locale, lang/dir, skip-link et
+// landmarks sémantiques (header/nav/main/footer). Porte les invariants a11y/SEO ; les pages n'ont qu'à remplir
+// leur contenu.
+import '../styles/global.css';
+import { getLangFromUrl, useTranslations, localePrefix, type Lang } from '../i18n/utils';
+import { languages } from '../i18n/ui';
+import MobileNav from '../components/MobileNav.tsx';
+
+interface Props {
+  title: string;
+  description?: string;
+}
+
+const { title, description = '' } = Astro.props;
+const lang = getLangFromUrl(Astro.url) as Lang;
+const t = useTranslations(lang);
+const canonical = new URL(Astro.url.pathname, Astro.site);
+---
+
+<!doctype html>
+<html lang={lang} dir="ltr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical.href} />
+    {
+      (Object.keys(languages) as Lang[]).map((l) => (
+        <link
+          rel="alternate"
+          hreflang={l}
+          href={new URL(`${localePrefix(l)}/`, Astro.site).href}
+        />
+      ))
+    }
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical.href} />
+  </head>
+  <body>
+    <a class="sr-only focus:not-sr-only" href="#main">{t('nav.skipToContent')}</a>
+    <header>
+      <nav aria-label={t('nav.menu')}>
+        <a href={`${localePrefix(lang)}/`}>{t('nav.home')}</a>
+        <MobileNav client:visible label={t('nav.menu')} homeLabel={t('nav.home')} homeHref={`${localePrefix(lang)}/`} />
+      </nav>
+    </header>
+    <main id="main">
+      <slot />
+    </main>
+    <footer>
+      <p>{t('footer.rights')}</p>
+    </footer>
+  </body>
+</html>

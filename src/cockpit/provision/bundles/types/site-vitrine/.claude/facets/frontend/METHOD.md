@@ -1,0 +1,12 @@
+# Méthode — facette Frontend
+
+1. **Boucle visuelle** — tout changement d'écran : screenshot **puis Read** de la capture AVANT de livrer.
+   Ambigu (« façon X ») → mockup A/B d'abord.
+2. **Zéro-JS par défaut** — pas d'îlot sans interaction réelle. Chaque `client:load|visible|idle` est un choix
+   justifié ; préfère `client:visible`/`client:idle` à `client:load`.
+3. **Design tokens d'abord** — `frontmap where` (tokens / primitives) avant d'écrire du CSS neuf ; anime avec
+   `motion` sous `prefers-reduced-motion` (`useReducedMotion`).
+4. **a11y** — un seul `<h1>` par page, landmarks (`header/nav/main/footer`), skip-link, `:focus-visible`, cibles
+   tactiles ≥44px, `alt` signifiant. Patrons : `query(type=tech, scope=wai-aria-apg)`.
+5. **Gate composite** — `astro check` → `tsc --noEmit` → `vitest run` → `astro build` vert. Corrige la cause.
+6. **Fraîcheur** — front touché → `frontmap build` (+ `codemap build` pour la logique).
