@@ -79,12 +79,22 @@ PARTIEL `ux_alerts_open(project, feature_ref, kind) WHERE status='open'` : au pl
 ferme au succès (merge réussi / feature drainée / gate redevenue verte) pour que le compteur dise vrai. Émis
 chokepoint de décision (orchestrateur/merge), best-effort (cf. `db/alerts.py`) — une alerte ratée ne casse
 jamais un drain. Lu par le daemon (`GET /api/alerts`), poussé au header web (poll court).
+v18 (gate-green-outcome / merge_outcomes) = nouvelle table `merge_outcomes` : rend la fiabilité du gate vert
+MESURABLE. Chaque merge VERT y enregistre une ligne DURABLE et survivante (`record_merge`, best-effort au
+chokepoint du merge) — le dénominateur « mergé vert au SHA X ». Son `outcome` (`held|reverted|refixed`) est
+MUTABLE par MARQUE HUMAINE (`mark_outcome`) : le terrain n'a aucun signal automatique d'issue aval (pas de
+concept revert ; refix ne touche pas une feature mergée ; merge_sha ≠ commit de merge), donc l'attribution est
+humaine, avec une pré-suggestion advisory dérivée au read. Survit à `delete_branch`/`prune_verdicts` (table
+dédiée, hors du journal borné `gate_verdicts`). Table neuve → `CREATE IF NOT EXISTS` (précédent v17 `alerts` ;
+pas de rebuild, pas d'`ensure_columns`). Dédup par index UNIQUE `ux_merge_outcome(project, feature, sha)` (≤1
+ligne / merge vert ; `record_merge` = `INSERT OR IGNORE`). Une agrégation (`reliability`, fold Python) expose
+`(n_merges_verts, n_adverse, taux)` par projet ET global — lu par le daemon (`GET /api/reliability`).
 """
 from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 # Ordre = ordre de création (les FK pointent vers des tables déjà créées). Chaque table porte les
 # invariants durs en contraintes SQL (NOT NULL, UNIQUE, FK, CHECK sur les enums de statut).
@@ -245,6 +255,22 @@ DDL: tuple[str, ...] = (
         resolved_at TEXT                           -- NULL tant que open/acked
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS merge_outcomes (
+        id          TEXT PRIMARY KEY,
+        project     TEXT NOT NULL,                 -- slug projet (scope agrégation + deep-link)
+        feature     TEXT NOT NULL,                 -- slug feature
+        feature_ref TEXT NOT NULL,                 -- "projet/feature" (journal pur dénormalisé, pas de FK)
+        sha         TEXT NOT NULL,                 -- reviewed_sha du merge vert (ancre, dédup)
+        human_go    INTEGER NOT NULL DEFAULT 1,    -- merge vert sous GO humain (0 = auto-merge futur)
+        outcome     TEXT NOT NULL DEFAULT 'held'   -- issue AVAL observée (marque humaine ; 'held' = a tenu)
+                        CHECK (outcome IN ('held', 'reverted', 'refixed')),
+        note        TEXT,                          -- raison libre de la marque adverse (opt)
+        merged_at   TEXT NOT NULL,                 -- instant du merge vert (dénominateur + partition signal)
+        updated_at  TEXT NOT NULL,                 -- dernière écriture (record/mark)
+        marked_at   TEXT                           -- instant de la marque adverse ; NULL tant que 'held'
+    )
+    """,
 )
 
 # Colonnes ajoutées à une table pré-existante après sa v1 (chemin ALTER idempotent — cf. `ensure_columns`).
@@ -304,6 +330,10 @@ INDEXES: tuple[str, ...] = (
     "CREATE UNIQUE INDEX IF NOT EXISTS ux_alerts_open ON alerts(project, feature_ref, kind) "
     "WHERE status = 'open'",
     "CREATE INDEX IF NOT EXISTS ix_alerts_status ON alerts(status)",
+    # Dédup : au plus UNE ligne d'issue par merge vert (project, feature, sha) — cible de l'`INSERT OR IGNORE`
+    # de `record_merge` (un merge rejoué au même SHA ne double pas le dénominateur).
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_merge_outcome ON merge_outcomes(project, feature, sha)",
+    "CREATE INDEX IF NOT EXISTS ix_merge_outcomes_project ON merge_outcomes(project)",
 )
 
 

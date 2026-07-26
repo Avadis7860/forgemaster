@@ -26,7 +26,7 @@ import sqlite3
 from pathlib import Path
 
 from cockpit.config import Settings
-from cockpit.db import alerts
+from cockpit.db import alerts, merge_outcomes
 from cockpit.dispatch import worktree
 from cockpit.gate import history, review, toolchain, verify
 from cockpit.git.identity import resolve_identity
@@ -302,6 +302,10 @@ def run_merge(conn: sqlite3.Connection, settings: Settings, *, feature_ref: str,
     history.record_verdict(conn, project_slug, feature_slug, "merge",
                            {"reviewed_sha": head_sha, "human_go": human_go, "reason": "merge"})
     history.prune_verdicts(conn, project_slug, feature_slug)
+    # (3c) instrumentation d'outcome : ancre DURABLE et survivante du merge vert (dénominateur de fiabilité) —
+    # hors du journal borné, l'issue aval sera marquée APRÈS coup. Best-effort (cf. db/merge_outcomes).
+    merge_outcomes.record_merge(conn, project=project_slug, feature=feature_slug, feature_ref=feature_ref,
+                                sha=head_sha, human_go=human_go)
     # (4) clôture DB : feature merged, tasks landées done.
     report["closed_tasks"] = _close_feature_tasks(conn, feature["id"])
     # Ancre de résolution DÉFINITIVE : une feature mergée ne re-bloque jamais → toute alerte ouverte tombe.

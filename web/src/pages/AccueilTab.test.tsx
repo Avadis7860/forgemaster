@@ -18,6 +18,13 @@ vi.mock('@/lib/queries', () => ({
     data: { total: { n_jobs: 0 } }, isLoading: false, isError: false, error: null,
     refetch: vi.fn(), isFetching: false,
   }),
+  // ReliabilityStrip (rendu par l'Accueil) : fixture honnête-vide (0 merge vert) → EmptyState, n'interfère pas.
+  useProjectReliability: () => ({
+    data: { scope: 'project', n_merges_verts: 0, n_reverted: 0, n_refixed: 0, n_adverse: 0, n_held: 0,
+      taux: null, features: [] },
+    isLoading: false, isError: false, error: null, refetch: vi.fn(), isFetching: false,
+  }),
+  useMarkOutcome: () => ({ mutate: vi.fn(), isPending: false }),
   // LaunchCycle (rendu par l'Accueil) consomme ces deux hooks ; ici les fixtures n'ont pas de socle interactif
   // (tasks vides) → LaunchCycle rend `null` et n'interfère pas avec les assertions de l'Accueil.
   useRoadmapCheck: () => ({ data: { ok: false } }),

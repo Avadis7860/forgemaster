@@ -1041,3 +1041,36 @@ export type Alert = z.infer<typeof AlertSchema>
 
 export const AlertsListSchema = z.object({ alerts: z.array(AlertSchema), count: z.number() })
 export type AlertsList = z.infer<typeof AlertsListSchema>
+
+// Fiabilité du gate vert (v18) : parmi les merges VERTS, la fraction qui a TENU (aucun revert/refix marqué
+// aval). `taux` = fiabilité (verts_tenus/verts), `null` si aucun merge vert (honnête-vide, jamais 0/0).
+// L'attribution est HUMAINE (le terrain n'a aucun signal auto) : `outcome` est marqué à la main ; `suggested`
+// est un nudge advisory (rework détecté après le merge), JAMAIS compté dans le taux.
+export const ReliabilityFeatureSchema = z.object({
+  feature: z.string(),
+  sha: z.string(),
+  human_go: z.boolean(),
+  outcome: z.enum(['held', 'reverted', 'refixed']),
+  suggested: z.enum(['reverted', 'refixed']).nullable(),
+  note: z.string().nullable(),
+  merged_at: z.string(),
+  marked_at: z.string().nullable(),
+})
+export type ReliabilityFeature = z.infer<typeof ReliabilityFeatureSchema>
+
+const ReliabilityTallySchema = z.object({
+  n_merges_verts: z.number(),
+  n_reverted: z.number(),
+  n_refixed: z.number(),
+  n_adverse: z.number(),
+  n_held: z.number(),
+  taux: z.number().nullable(),
+})
+
+export const ReliabilitySchema = ReliabilityTallySchema.extend({
+  scope: z.string(),
+  project: z.string().optional(),                                   // présent en scope 'project'
+  features: z.array(ReliabilityFeatureSchema).optional(),          // scope 'project' : une ligne / merge vert
+  projects: z.array(ReliabilityTallySchema.extend({ project: z.string() })).optional(),   // scope 'global'
+})
+export type Reliability = z.infer<typeof ReliabilitySchema>

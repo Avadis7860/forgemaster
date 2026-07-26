@@ -141,6 +141,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_cost.add_argument("--by-step", action="store_true", help="détailler par step (task) et fix de feature")
     p_cost.add_argument("--json", action="store_true", help="JSON brut de l'agrégation")
 
+    # -- reliability --------------------------------------------------------------------------------
+    p_rel = sub.add_parser("reliability", parents=[common],
+                           help="fiabilité du gate vert (merges verts vs revert/refix aval marqués)")
+    p_rel_sub = p_rel.add_subparsers(dest="action", required=True, metavar="<action>")
+    rls = p_rel_sub.add_parser("show", parents=[common],
+                               help="taux de fiabilité (projet, ou global si projet omis)")
+    rls.add_argument("project", nargs="?", help="projet (omis = agrégat global)")
+    rls.add_argument("--json", action="store_true", help="JSON brut de l'agrégation")
+    rlm = p_rel_sub.add_parser("mark", parents=[common],
+                               help="marquer l'issue aval d'un merge vert (revert/refix constaté)")
+    rlm.add_argument("project")
+    rlm.add_argument("feature")
+    rlm.add_argument("--outcome", required=True, choices=["held", "reverted", "refixed"],
+                     help="issue aval marquée (held = annuler une marque)")
+    rlm.add_argument("--note", help="raison libre de la marque")
+    rlm.add_argument("--sha", help="cibler un merge précis (défaut : le plus récent de la feature)")
+    rlm.add_argument("--json", action="store_true", help="JSON de la ligne marquée")
+
     # -- run ----------------------------------------------------------------------------------------
     p_run = sub.add_parser("run", parents=[common],
                            help="drainer la roadmap d'un projet en parallèle (features indépendantes)")
@@ -324,6 +342,11 @@ def _h_cost(settings: Settings, args: argparse.Namespace) -> int:
     return cost.cli_dispatch(settings, args)
 
 
+def _h_reliability(settings: Settings, args: argparse.Namespace) -> int:
+    from cockpit.db import merge_outcomes
+    return merge_outcomes.cli_dispatch(settings, args)
+
+
 def _h_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     from cockpit.dispatch import worker
     return worker.cli_dispatch(settings, args)
@@ -454,6 +477,7 @@ _HANDLERS = {
     "task": _h_task,
     "dispatch": _h_dispatch,
     "cost": _h_cost,
+    "reliability": _h_reliability,
     "run": _h_run,
     "abort": _h_abort,
     "refix": _h_refix,

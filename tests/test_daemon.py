@@ -16,7 +16,7 @@ from starlette.websockets import WebSocketDisconnect
 from cockpit.config import Settings
 from cockpit.core import run
 from cockpit.daemon import app as app_mod
-from cockpit.db import alerts, store
+from cockpit.db import alerts, merge_outcomes, store
 from cockpit.dispatch import jobs, worker, worktree
 from cockpit.gate import toolchain
 from cockpit.git.identity import resolve_identity
@@ -1320,3 +1320,32 @@ def test_alerts_api_lists_open_and_acks(client):
     assert ack.status_code == 200 and ack.json()["status"] == "acked"
     assert c.get("/api/alerts").json()["count"] == 1              # l'acquittée sort du compteur
     assert c.post("/api/alerts/does-not-exist/ack").status_code == 404   # KeyError → 404 (handler global)
+
+
+def test_reliability_api_reads_and_marks(client):
+    """GET /api/reliability/{projet} rend le taux + les merges verts ; POST /{projet}/mark marque l'issue
+    aval (→ le taux tombe) ; GET /api/reliability agrège le global ; projet/merge inconnu → 404."""
+    c, settings = client
+    conn = store.open_db(settings)
+    try:
+        registry.create_project(conn, settings, slug="proj", name="Proj")
+        merge_outcomes.record_merge(conn, project="proj", feature="a", feature_ref="proj/a", sha="sa")
+        merge_outcomes.record_merge(conn, project="proj", feature="b", feature_ref="proj/b", sha="sb")
+    finally:
+        conn.close()
+
+    r = c.get("/api/reliability/proj")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["n_merges_verts"] == 2 and body["n_adverse"] == 0 and body["taux"] == 1.0
+
+    mk = c.post("/api/reliability/proj/mark", json={"feature": "a", "outcome": "reverted", "note": "ko"})
+    assert mk.status_code == 200 and mk.json()["outcome"] == "reverted"
+    assert c.get("/api/reliability/proj").json()["taux"] == 0.5      # 1 vert tenu sur 2
+
+    g = c.get("/api/reliability").json()
+    assert g["scope"] == "global" and g["n_merges_verts"] == 2 and g["n_adverse"] == 1
+
+    assert c.get("/api/reliability/ghost").status_code == 404        # projet inconnu → 404
+    assert c.post("/api/reliability/proj/mark",
+                  json={"feature": "nope", "outcome": "reverted"}).status_code == 404   # merge inconnu → 404

@@ -20,6 +20,7 @@ export const qk = {
   projects: ['projects'] as const,
   project: (slug: string) => ['projects', slug] as const,
   cost: (project: string) => ['cost', project] as const,
+  reliability: (project: string) => ['reliability', project] as const,
   roadmap: (project: string) => ['roadmap', project] as const,
   roadmapCheck: (project: string) => ['roadmap-check', project] as const,
   git: (project: string) => ['git', project] as const,
@@ -637,5 +638,25 @@ export function useAckAlert() {
   return useMutation({
     mutationFn: (id: string) => api.ackAlert(id),
     onSettled: () => qc.invalidateQueries({ queryKey: qk.alerts }),
+  })
+}
+
+// Fiabilité du gate vert (v18) : taux + merges verts d'un projet. GET idempotent, pas de poll — refresh manuel
+// (réconcilie après un drain / une marque). La donnée sert la décision d'auto-merge (E3) + le jugement humain.
+export function useProjectReliability(project: string) {
+  return useQuery({
+    queryKey: qk.reliability(project), queryFn: () => api.projectReliability(project),
+    enabled: Boolean(project),
+  })
+}
+
+// Marquer l'issue aval d'un merge vert (revert/refix constaté après coup). Invalide au settle pour rafraîchir
+// le taux immédiatement — l'attribution est humaine, il n'y a pas de signal automatique.
+export function useMarkOutcome(project: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { feature: string; outcome: string; note?: string; sha?: string }) =>
+      api.markOutcome(project, input),
+    onSettled: () => qc.invalidateQueries({ queryKey: qk.reliability(project) }),
   })
 }

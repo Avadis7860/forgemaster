@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from cockpit.config import Settings
-from cockpit.db import alerts, store
+from cockpit.db import alerts, merge_outcomes, store
 from cockpit.dispatch import ports, worktree
 from cockpit.gate import merge, review, toolchain, verify
 from cockpit.git.identity import resolve_identity
@@ -814,3 +814,28 @@ def test_run_merge_success_resolves_open_alerts(ctx):
     assert done["merged"] is True
     assert alerts.list_alerts(conn, "open") == []         # résolue au merge
     assert any(a["kind"] == "worker_failed" for a in alerts.list_alerts(conn, "resolved"))
+
+
+def test_run_merge_success_records_merge_outcome(ctx):
+    """Instrumentation d'outcome : un merge VERT (GO humain) enregistre le dénominateur de fiabilité — une
+    ligne `merge_outcomes` DURABLE (`held`, `human_go`, ancrée au SHA), survivante au `delete_branch`."""
+    settings, conn = ctx
+    git = InternalGit()
+    _seed_committed_feature(conn, settings, git)
+    done = merge.run_merge(conn, settings, feature_ref="proj/feat", human_go=True, git=git)
+    assert done["merged"] is True
+    rel = merge_outcomes.reliability(conn, "proj")
+    assert rel["n_merges_verts"] == 1 and rel["n_adverse"] == 0 and rel["taux"] == 1.0
+    row = rel["features"][0]
+    assert row["outcome"] == "held" and row["human_go"] is True and row["sha"] == done["merge_sha"]
+
+
+def test_run_merge_red_gate_records_no_merge_outcome(ctx):
+    """Un merge refusé sur gate ROUGE n'atteint pas le chokepoint d'enregistrement (garde `allow`) → aucun
+    merge vert compté : un gate rouge ne poisonne pas le dénominateur de fiabilité."""
+    settings, conn = ctx
+    git = InternalGit()
+    _seed_committed_feature(conn, settings, git, red_finding=True)
+    rep = merge.run_merge(conn, settings, feature_ref="proj/feat", human_go=True, git=git)
+    assert rep["merged"] is False
+    assert merge_outcomes.reliability(conn, "proj")["n_merges_verts"] == 0

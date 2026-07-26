@@ -88,8 +88,8 @@ def test_db_schema_creates_all_tables(tmp_path: Path):
     store.migrate(conn)
     names = sorted(r[0] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'"))
-    assert names == ["alerts", "deployments", "dispatch_jobs", "features", "gate_verdicts", "non_runs",
-                     "port_reservations", "projects", "tasks"]
+    assert names == ["alerts", "deployments", "dispatch_jobs", "features", "gate_verdicts",
+                     "merge_outcomes", "non_runs", "port_reservations", "projects", "tasks"]
     assert schema.schema_version(conn) == schema.SCHEMA_VERSION
 
 
@@ -105,9 +105,9 @@ def test_cli_parser_wires_all_subcommands():
     parser = build_parser()
     sub = next(a for a in parser._actions if a.dest == "command")  # noqa: SLF001 (introspection de test)
     assert set(sub.choices) == {
-        "project", "tool", "tools", "bundle", "roadmap", "task", "dispatch", "cost", "run", "abort", "refix",
-        "interview", "inspire", "deploy", "gate", "merge", "onboard", "bootstrap", "serve", "setup",
-        "install-service", "doctor", "mcp",
+        "project", "tool", "tools", "bundle", "roadmap", "task", "dispatch", "cost", "reliability", "run",
+        "abort", "refix", "interview", "inspire", "deploy", "gate", "merge", "onboard", "bootstrap", "serve",
+        "setup", "install-service", "doctor", "mcp",
     }
 
 
@@ -154,6 +154,18 @@ def test_cli_run_parses_project_and_max_parallel():
     assert args.command == "run" and args.project == "demo" and args.max_parallel == 3
     default = build_parser().parse_args(["run", "demo"])
     assert default.max_parallel == 2                         # borne prudente par défaut
+
+
+def test_cli_reliability_show_and_mark_parse():
+    args = build_parser().parse_args(["reliability", "show", "demo"])
+    assert args.command == "reliability" and args.action == "show" and args.project == "demo"
+    glob = build_parser().parse_args(["reliability", "show"])          # projet omis = agrégat global
+    assert glob.action == "show" and glob.project is None
+    mark = build_parser().parse_args(
+        ["reliability", "mark", "demo", "feat", "--outcome", "reverted", "--note", "ko"])
+    assert mark.action == "mark" and mark.feature == "feat" and mark.outcome == "reverted"
+    with pytest.raises(SystemExit):                                    # --outcome obligatoire
+        build_parser().parse_args(["reliability", "mark", "demo", "feat"])
 
 
 def test_cli_help_runs():

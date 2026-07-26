@@ -15,6 +15,8 @@ import {
   AbortResultSchema,
   AlertSchema,
   AlertsListSchema,
+  ReliabilityFeatureSchema,
+  ReliabilitySchema,
   DeploymentActionSchema,
   DeploymentLogsSchema,
   DeploymentsSchema,
@@ -421,4 +423,13 @@ export const api = {
   listAlerts: () => request('/api/alerts', AlertsListSchema),
   ackAlert: (id: string) =>
     request(`/api/alerts/${encodeURIComponent(id)}/ack`, AlertSchema, { method: 'POST', body: '{}' }),
+
+  // Fiabilité du gate vert (v18, enabler auto-merge) : GET idempotent (par projet, ou global), POST mark =
+  // marque humaine de l'issue aval d'un merge vert (revert/refix constaté). Le numérateur du taux = ces marques.
+  projectReliability: (slug: string) =>
+    request(`/api/reliability/${encodeURIComponent(slug)}`, ReliabilitySchema),
+  globalReliability: () => request('/api/reliability', ReliabilitySchema),
+  markOutcome: (slug: string, input: { feature: string; outcome: string; note?: string; sha?: string }) =>
+    request(`/api/reliability/${encodeURIComponent(slug)}/mark`, ReliabilityFeatureSchema,
+      { method: 'POST', body: JSON.stringify(input) }),
 }

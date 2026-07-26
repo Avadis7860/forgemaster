@@ -2,6 +2,7 @@ import { Suspense, lazy, useState } from 'react'
 import { Link, useParams } from '@tanstack/react-router'
 import { Alert, Badge, Button, Card, Eyebrow, LoadingState } from '@/components/ui'
 import { CostStrip } from '@/components/cost/CostStrip'
+import { ReliabilityStrip } from '@/components/reliability/ReliabilityStrip'
 import { LaunchCycle } from '@/components/dispatch/LaunchCycle'
 import { DocReaderOverlay } from '@/components/docs/DocReader'
 import { useDeployments, useDocs, useRoadmap } from '@/lib/queries'
@@ -79,6 +80,10 @@ export function AccueilTab() {
 
       {/* Coût token du projet : total + répartition + drill-down feature→step (honnête-vide tant qu'aucun drain). */}
       <CostStrip project={project} />
+
+      {/* Fiabilité du gate vert : merges verts tenus vs revert/refix marqués aval (honnête-vide tant qu'aucun
+          merge). Enabler de l'auto-merge — la donnée décide, l'attribution reste humaine. */}
+      <ReliabilityStrip project={project} />
 
       {/* Points d'entrée à scent : où aller ensuite, avec un aperçu d'état (badge dérivé, pas d'endpoint neuf). */}
       <section className="space-y-3">

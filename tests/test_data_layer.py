@@ -834,7 +834,7 @@ def test_migrate_v16_to_v17_adds_alerts_table_in_place(tmp_path: Path):
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert "alerts" not in tables
 
-    assert store.migrate(conn) == schema.SCHEMA_VERSION == 17   # migre en place → v17
+    assert store.migrate(conn) == schema.SCHEMA_VERSION         # migre en place (alerts revient)
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     idx = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
     assert "alerts" in tables and "ux_alerts_open" in idx and "ix_alerts_status" in idx
@@ -848,6 +848,41 @@ def test_migrate_v16_to_v17_adds_alerts_table_in_place(tmp_path: Path):
     conn.execute("INSERT INTO alerts (id, project, feature_ref, feature, kind, reason, status, "
                  "created_at, updated_at) VALUES ('a1','p','p/f','f','gate_red','r','open','t','t')")
     conn.commit()
-    assert store.migrate(conn) == 17                    # idempotent
+    assert store.migrate(conn) == schema.SCHEMA_VERSION   # idempotent
     assert conn.execute("SELECT reason FROM alerts WHERE id='a1'").fetchone()[0] == "r"   # donnée préservée
+    conn.close()
+
+
+def test_migrate_v17_to_v18_adds_merge_outcomes_table_in_place(tmp_path: Path):
+    """v18 (gate-green-outcome) : la table `merge_outcomes` est BRAND-NEW → ajoutée en place sur une base v17
+    par `CREATE IF NOT EXISTS` (précédent v17 `alerts`), SANS rebuild. Données préservées, index unique
+    `ux_merge_outcome` posé, migration idempotente."""
+    import sqlite3
+
+    from cockpit.db import schema, store
+    conn = store.connect(tmp_path / "v17.db")
+    schema.create_schema(conn)                          # base à jour…
+    conn.execute("DROP INDEX ux_merge_outcome")
+    conn.execute("DROP TABLE merge_outcomes")           # …ramenée à un état « pré-v18 » (sans merge_outcomes)
+    conn.execute("PRAGMA user_version = 17")
+    conn.commit()
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "merge_outcomes" not in tables
+
+    assert store.migrate(conn) == schema.SCHEMA_VERSION         # migre en place (merge_outcomes revient)
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    idx = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+    assert "merge_outcomes" in tables and "ux_merge_outcome" in idx
+    # l'index unique tient : un 2e merge de même (project, feature, sha) est rejeté
+    conn.execute("INSERT INTO merge_outcomes (id, project, feature, feature_ref, sha, merged_at, updated_at) "
+                 "VALUES ('m1','p','f','p/f','abc','t','t')")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO merge_outcomes (id, project, feature, feature_ref, sha, merged_at, "
+                     "updated_at) VALUES ('m2','p','f','p/f','abc','t','t')")
+    conn.rollback()
+    conn.execute("INSERT INTO merge_outcomes (id, project, feature, feature_ref, sha, merged_at, updated_at) "
+                 "VALUES ('m1','p','f','p/f','abc','t','t')")
+    conn.commit()
+    assert store.migrate(conn) == schema.SCHEMA_VERSION   # idempotent
+    assert conn.execute("SELECT outcome FROM merge_outcomes WHERE id='m1'").fetchone()[0] == "held"
     conn.close()
