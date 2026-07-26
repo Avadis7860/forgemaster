@@ -84,4 +84,29 @@ describe('InterviewEndState — fin d\'interview branchée sur le vrai statut du
     fireEvent.click(screen.getByRole('button', { name: /Continuer le lancement/i }))
     expect(h.navigate).toHaveBeenCalledTimes(1)
   })
+
+  it('échec technique (failed_start) SANS roadmap → branche danger « n\'a pas pu démarrer », pas un vide', () => {
+    h.roadmapData = undefined // l'outil n'a pas démarré → aucune roadmap produite
+    const { container } = render(
+      <InterviewEndState project="atlas" onReconnect={() => {}} exitReason="failed_start" />,
+    )
+    expect(container).not.toBeEmptyDOMElement()
+    expect(screen.getByText(/n'a pas pu démarrer/i)).toBeTruthy()
+    expect(screen.queryByText(/Interview incomplète/i)).toBeNull()
+  })
+
+  it('échec technique (crash) est PRIORITAIRE sur le cadrage roadmap (pas « incomplète »)', () => {
+    h.checkOk = false
+    h.roadmapData = roadmap() // dériverait « Interview incomplète » sans la raison serveur
+    render(<InterviewEndState project="atlas" onReconnect={() => {}} exitReason="crash" />)
+    expect(screen.getByText(/erreur technique/i)).toBeTruthy()
+    expect(screen.queryByText(/Interview incomplète/i)).toBeNull()
+  })
+
+  it('sortie propre (clean) → NON-régression : branchement roadmap inchangé', () => {
+    h.roadmapData = roadmap({ socleClosed: true })
+    render(<InterviewEndState project="atlas" onReconnect={() => {}} exitReason="clean" />)
+    expect(screen.getByText(/socle clos/i)).toBeTruthy()
+    expect(screen.queryByText(/n'a pas pu démarrer/i)).toBeNull()
+  })
 })

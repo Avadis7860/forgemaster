@@ -5,6 +5,28 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Terminal/WS/UI — frame `exit` : l'end-state d'interview distingue crash-au-démarrage de incomplète — pas de bump
+- L'état de fin d'interview (`InterviewEndState`) dérivait la fin de la **seule roadmap** (`productive =
+  stage.current >= 2`, sinon « Interview incomplète » en `warn`). Un **crash au démarrage** — le PTY lance
+  `bash -lc 'exec cockpit interview <p>'` ; `cockpit` hors du PATH de login → `exec: cockpit: not found`, EOF
+  immédiat, exit 127 — tombait dans le **même** cadrage *métier* « pas de roadmap », alors que le log résiduel
+  montrait un échec **technique** (dissonance de scent relevée par la critique UX du 2026-07-24). L'unique recours
+  « Reprendre » rejouerait le même échec.
+- **Signal serveur (net-neuf)** : `serve_project_terminal` émet, **sur EOF réel uniquement** (pas sur
+  déconnexion/replaced — aucun spectateur à qui rendre un verdict), une frame de contrôle finale
+  `{"t":"exit","code":int|null,"reason":"clean|failed_start|crash"}` **avant** le close. `reason` dérivée du code
+  de sortie du shell par la fonction pure `terminal.pty.classify_exit` (0→clean ; 126/127→failed_start ;
+  autre/None→crash) ; `PtySession.exit_code` expose le `returncode` réappé au teardown.
+- **Front** : `parseSessionFrame`→`parseControlFrame` (union discriminée `session`|`exit`|`unknown`). Un `t:`
+  **inconnu** est désormais **ignoré**, jamais réécrit brut dans le terminal (durcissement : évite qu'un futur
+  `t:` s'affiche en clair). `InterviewEndState` reçoit `exitReason` et rend, pour `failed_start|crash`, une branche
+  **`Alert tone="danger"`** *prioritaire* (avant toute lecture roadmap — sur un `failed_start` il n'y a PAS de
+  roadmap), qui renvoie au log de session et n'offre qu'un « Reprendre quand même » dé-emphasé.
+- Contrat WS (frame de contrôle texte) → additif, versionné par CHANGELOG (`docs/schema-contract.md` §4,
+  terminal) ; **pas** de bump `SCHEMA_VERSION` (SQLite-only). Preuve : `classify_exit` + émission EOF-only
+  (`tests/test_terminal_pty.py`, WS/session factices) ; `parseControlFrame` + branche danger prioritaire
+  (`TerminalPane.test.tsx`, `InterviewEndState.test.tsx`).
+
 ### Roadmap/CLI — édition validée du DAG : `roadmap set-deps` / `task set-deps` — pas de bump
 - Le DAG de roadmap n'avait **aucune surface d'édition** : `features.depends_on` (v10) et `tasks.depends_on` ne
   se mutaient qu'à la **création** (`--depends-on` d'`add-feature` / `task add`, INSERT-only). Une dépendance

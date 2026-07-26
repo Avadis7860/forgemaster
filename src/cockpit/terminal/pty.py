@@ -89,6 +89,20 @@ _EOF = "eof"                 # le shell a fermé le PTY → teardown final
 _REPLACED = "replaced"       # un nouveau client a pris la session → sortir sans y toucher
 
 
+def classify_exit(code: int | None) -> str:
+    """Classe le code de sortie du shell d'interview en RAISON portée à l'UI. PUR. Le PTY d'interview lance
+    `bash -lc 'exec cockpit interview <p>'` : un `exec` échoué (`cockpit` introuvable / non exécutable → PATH
+    de login non câblé) fait sortir bash en **127/126** ; une sortie propre de l'interview → **0** ; tout
+    autre code (ou process tué sans code, `None`) → un **crash** en cours d'exécution. `failed_start` et
+    `crash` mènent tous deux à une branche d'erreur *technique* côté UI (distincte du cadrage métier « pas de
+    roadmap »), mais restent nommés séparément pour un wording futur plus fin."""
+    if code == 0:
+        return "clean"
+    if code in (126, 127):
+        return "failed_start"
+    return "crash"
+
+
 async def serve_project_terminal(websocket, registry: PtySessionRegistry, *, session_key: str,
                                  argv: list[str], cwd: str | None, env: dict | None) -> None:
     """Sert une session PTY **détachable**, indexée par `session_key` (le SEUL identifiant de registre — la
@@ -119,8 +133,16 @@ async def serve_project_terminal(websocket, registry: PtySessionRegistry, *, ses
     if reason == _DISCONNECT and session.alive():
         session.detach()                                     # le process survit ; le reaper s'en chargera
         return
-    session.close(registry.killer)                           # EOF / process mort → teardown final
+    session.close(registry.killer)                           # EOF / process mort → teardown final (reap)
     registry.pop(session_key, session)
+    if reason == _EOF:                                       # le process a fini, un client regardait
+        # Frame de contrôle finale porteuse de la RAISON de sortie du PTY (contrat WS, cf. CHANGELOG) : l'UI
+        # distingue un échec technique (failed_start/crash → danger) d'une sortie propre (clean). Émise avant
+        # le close, sur EOF réel SEULEMENT — un disconnect (client parti) n'a pas de spectateur à qui rendre
+        # un verdict. Générique (tout terminal) : le front l'ignore là où elle n'est pas consommée.
+        code = session.exit_code
+        with contextlib.suppress(Exception):
+            await websocket.send_text(json.dumps({"t": "exit", "code": code, "reason": classify_exit(code)}))
     with contextlib.suppress(Exception):
         await websocket.close()
 

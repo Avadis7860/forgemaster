@@ -134,6 +134,17 @@ class PtySession:
         """Le shell tourne encore (ni EOF ni process terminé)."""
         return not self.eof and self.proc.poll() is None
 
+    @property
+    def exit_code(self) -> int | None:
+        """Code de sortie du shell enfant une fois terminé (None s'il tourne encore). `close()`/`_terminate`
+        ont fait le `wait()` qui matérialise le code ; on tente un `poll()` de secours si le process est parti
+        mais pas encore réappé. Bas-niveau (code brut) — la RAISON (clean/failed_start/crash) est dérivée plus
+        haut, dans `pty.classify_exit`."""
+        if self.proc.returncode is None:
+            with contextlib.suppress(Exception):
+                self.proc.poll()
+        return self.proc.returncode
+
     def read_from(self, cursor: int) -> tuple[bytes, int]:
         """Octets du scrollback à partir de l'offset absolu `cursor`, + le nouvel offset. Un curseur tombé
         SOUS la fenêtre glissante (client trop lent) est ramené au début de la fenêtre (perte bornée du

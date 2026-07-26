@@ -346,7 +346,12 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   **503** générique (« … non câblé ou injoignable ») ; (c) le MCP **répond mais échoue** sur la ressource (ref
   cassée, silo en défaut) → **502** + le **détail serveur réel** (jamais repeint en « non câblé » — mislabel
   corrigé) ; `collections:[]` d'un type plat = réponse **valide** (200, indispo ≠ vide). Tous idempotents (goto-safe).
-- **terminal** — `WS /ws/terminal/{project}` (PTY **local** `bash -l`, workdir borné).
+- **terminal** — `WS /ws/terminal/{project}` (PTY **local** `bash -l`, workdir borné) · `WS /ws/interview/{project}`
+  (PTY dédié `cockpit interview`). Frames de **contrôle TEXTE** serveur→client (la sortie PTY, elle, est toujours
+  BINAIRE) : `{"t":"session","fresh":bool}` à la (ré)connexion ; `{"t":"exit","code":int|null,"reason":"clean|failed_start|crash"}`
+  à la fin du PTY (`reason` dérivée du code de sortie par `terminal.pty.classify_exit` → l'UI branche une erreur
+  *technique* distincte du cadrage *métier* « pas de roadmap »). Additif : le client **ignore** tout `t:` inconnu
+  (jamais réécrit brut). Contrat WS → versionné par CHANGELOG, **pas** de bump `SCHEMA_VERSION` (SQLite-only).
 
 Un endpoint qui borne/tronque le **signale** dans sa réponse. `WS /ws/dispatch/{job}` (streaming live du
 transcript) est **porté** (déclaré dans le routeur `dispatch`, cf. ci-dessus) ; le `tail` par pull reste le

@@ -51,17 +51,41 @@ function readTheme(el: HTMLElement): Record<string, string> {
   return buildTheme((name) => cs.getPropertyValue(name))
 }
 
-/** Frame de contrôle TEXTE émise par le daemon à la (ré)connexion : `{"t":"session","fresh":bool}`. `fresh`
- *  distingue une session NEUVE (le client rejoue son `initialCommand`) d'une RÉ-ATTACHE (scrollback rejoué,
- *  surtout pas de re-run). Retourne null si le texte n'est pas cette frame (→ sortie PTY texte brute). */
-export function parseSessionFrame(data: string): { fresh: boolean } | null {
+/** Raison de sortie du PTY d'interview, dérivée serveur (cf. `terminal/pty.py::classify_exit`) : sortie propre,
+ *  échec au démarrage (outil introuvable/env cassé), ou crash en cours. Porte la branche d'erreur *technique*
+ *  de l'état de fin (distincte du cadrage *métier* « pas de roadmap »). */
+export type ExitReason = 'clean' | 'failed_start' | 'crash'
+
+/** Frame de contrôle TEXTE émise par le daemon. Contrat WS **figé** (bump + CHANGELOG à toute évolution).
+ *  Deux types portés :
+ *   - `{"t":"session","fresh":bool}` à la (ré)connexion — `fresh` distingue une session NEUVE (le client
+ *     rejoue son `initialCommand`) d'une RÉ-ATTACHE (scrollback rejoué, surtout pas de re-run) ;
+ *   - `{"t":"exit","code":int|null,"reason":ExitReason}` à la fin du PTY — l'UI branche la fin d'interview sur
+ *     la RAISON serveur, pas sur la seule roadmap. */
+export type ControlFrame =
+  | { kind: 'session'; fresh: boolean }
+  | { kind: 'exit'; code: number | null; reason: ExitReason }
+  | { kind: 'unknown' }
+
+/** Parse un texte serveur→client. La sortie du PTY est TOUJOURS binaire → un texte ne peut être qu'un contrôle.
+ *  Retour : une frame typée pour un `t:` connu ; `{kind:'unknown'}` pour un JSON de contrôle à `t:` **non
+ *  reconnu** → à IGNORER (jamais réécrit brut dans le terminal, sinon un futur `t:` s'afficherait en clair) ;
+ *  `null` pour un texte non-JSON (fallback historique : écrit tel quel). */
+export function parseControlFrame(data: string): ControlFrame | null {
+  let m: { t?: unknown; fresh?: unknown; code?: unknown; reason?: unknown }
   try {
-    const m = JSON.parse(data) as { t?: string; fresh?: unknown }
-    if (m && m.t === 'session') return { fresh: Boolean(m.fresh) }
+    m = JSON.parse(data)
   } catch {
-    /* pas du JSON → sortie PTY texte brute */
+    return null // pas du JSON → sortie PTY texte brute (fallback)
   }
-  return null
+  if (!m || typeof m !== 'object' || typeof m.t !== 'string') return null
+  if (m.t === 'session') return { kind: 'session', fresh: Boolean(m.fresh) }
+  if (m.t === 'exit') {
+    const reason: ExitReason =
+      m.reason === 'clean' || m.reason === 'failed_start' || m.reason === 'crash' ? m.reason : 'crash'
+    return { kind: 'exit', code: typeof m.code === 'number' ? m.code : null, reason }
+  }
+  return { kind: 'unknown' } // frame de contrôle à `t:` inconnu → ignorée (pas d'écriture brute)
 }
 
 /** Terminal PTY d'un projet, `session` détermine le flavor et donc la route WS (`ptyPath`) :
@@ -84,12 +108,14 @@ export function TerminalPane({ project, session = 'shell' }: { project: string; 
   const [fontSize, setFontSize] = useState<number>(readFontSize)
   const [reconnectKey, setReconnectKey] = useState(0)
   const [query, setQuery] = useState('')
+  const [exitReason, setExitReason] = useState<ExitReason | undefined>(undefined) // frame `exit` serveur (fin PTY)
   const token = useWsToken() // garde CSWSH : injecté au handshake ; le WS n'ouvre pas tant qu'il manque
 
   useEffect(() => {
     const host = hostRef.current
     if (!host || !token) return // pas de token → pas d'ouverture (handshake serait refusé 1008)
     setStatus('connecting')
+    setExitReason(undefined) // nouvelle connexion → on repart sans verdict de sortie
 
     const term = new Terminal({
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
@@ -140,13 +166,18 @@ export function TerminalPane({ project, session = 'shell' }: { project: string; 
         return
       }
       if (typeof ev.data !== 'string') return
-      // Frame de CONTRÔLE serveur (texte) : annonce de session (neuve vs ré-attachée). La sortie du PTY,
-      // elle, est TOUJOURS binaire — un texte ne peut être qu'un contrôle.
-      const ctl = parseSessionFrame(ev.data)
-      if (!ctl) {
-        term.write(ev.data)
+      // Frame de CONTRÔLE serveur (texte). La sortie du PTY, elle, est TOUJOURS binaire — un texte ne peut être
+      // qu'un contrôle : session (annonce), exit (raison de fin), ou frame inconnue (ignorée, jamais réécrite).
+      const ctl = parseControlFrame(ev.data)
+      if (ctl === null) {
+        term.write(ev.data) // texte non-JSON → sortie PTY brute (fallback historique)
         return
       }
+      if (ctl.kind === 'exit') {
+        setExitReason(ctl.reason) // fin du PTY : l'état de fin d'interview branche sur cette raison serveur
+        return
+      }
+      if (ctl.kind === 'unknown') return // frame de contrôle à `t:` non reconnu → ignorée
       // Bannière cliente (repère stable pour la boucle visuelle + « où suis-je »), fraîche vs restaurée.
       // Le flavor de session pilote le libellé — l'interview est une session DÉDIÉE (son process EST
       // `cockpit interview`), le shell est le `bash -l` de login du projet. Aucun handoff tapé : le process
@@ -300,7 +331,11 @@ export function TerminalPane({ project, session = 'shell' }: { project: string; 
       {/* État de FIN de l'interview : à la fermeture du socket (le PTY `cockpit interview` a quitté), on ne laisse
           plus un terminal gelé — on lit la roadmap et on ouvre le chemin suivant (reprise ou lancement). */}
       {interviewClosed && (
-        <InterviewEndState project={project} onReconnect={() => setReconnectKey((k) => k + 1)} />
+        <InterviewEndState
+          project={project}
+          onReconnect={() => setReconnectKey((k) => k + 1)}
+          exitReason={exitReason}
+        />
       )}
       <div
         ref={hostRef}
