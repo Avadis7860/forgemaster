@@ -96,7 +96,8 @@ def _dispatch_one(settings: Settings, project: str, feature: str,
         return {"feature": feature, "task": report.get("task"), "ok": ok,
                 "reason": report.get("reason", "?"),
                 "needs_terminal": bool(report.get("needs_terminal")),   # v12 : task interactive → interview
-                "rate_limited": bool(report.get("result", {}).get("rate_limited"))}   # v15 : plafond 5h org
+                "rate_limited": bool(report.get("result", {}).get("rate_limited")),   # v15 : plafond 5h org
+                "interrupted": bool(report.get("result", {}).get("interrupted"))}   # v16 : SIGTERM externe
     finally:
         conn.close()
 
@@ -189,6 +190,7 @@ def run_project(conn: sqlite3.Connection, settings: Settings, *, project: str,
     needs_interview: set[str] = set()   # v12 : next task interactive → tenue pour le terminal (pas un échec)
     rate_limited: set[str] = set()   # v15 : run rejeté par le plafond 5h org → tenue (pas échec), re-runnable
     rate_hit = False              # rejet rate-limit (org-global) → cesser d'assigner (les autres rejettent)
+    interrupted: set[str] = set()   # v16 : run coupé par SIGTERM externe → tenue (pas échec), re-runnable
     reports: list[dict] = []
     pending: dict[Future, str] = {}
 
@@ -204,7 +206,8 @@ def run_project(conn: sqlite3.Connection, settings: Settings, *, project: str,
             # terminal, ou tenue jusqu'au merge du socle) : sans les exclure, elles resteraient READY et la
             # boucle spinnerait à l'infini.
             for slug in _discoverable_features(conn, project, in_flight,
-                                               failed | needs_interview | held_for_socle | rate_limited):
+                                               failed | needs_interview | held_for_socle
+                                               | rate_limited | interrupted):
                 if socle_blocking and slug != socle_slug:
                     held_for_socle.add(slug)            # feature de travail : attend le merge du socle
                     continue
@@ -225,6 +228,9 @@ def run_project(conn: sqlite3.Connection, settings: Settings, *, project: str,
                 elif report.get("rate_limited"):
                     rate_limited.add(slug)              # plafond 5h org → tenue (pas un échec), re-runnable
                     rate_hit = True
+                elif report.get("interrupted"):
+                    interrupted.add(slug)               # SIGTERM externe → tenue ; le drain CONTINUE (≠ D1 :
+                    #                                     l'interruption est par-worker, pas org-globale)
                 elif not report["ok"]:
                     failed.add(slug)                    # exclue → pas de re-dispatch en boucle infinie
             if rate_hit:
@@ -234,14 +240,15 @@ def run_project(conn: sqlite3.Connection, settings: Settings, *, project: str,
     # Drain fini → FINALISE chaque feature au travail complet : Tier-0 + reviewer dispatché → merge-ready.
     # C'est le tronçon « qualité » de la boucle autonome (le merge reste le GO humain, hors boucle).
     worked = _worked_complete_features(conn, project,
-                                       failed | needs_interview | held_for_socle | rate_limited)
+                                       failed | needs_interview | held_for_socle
+                                       | rate_limited | interrupted)
     finalizations = [finalize_feature(conn, settings, project, slug, review_runner=review_runner)
                      for slug in worked]
     dispositions = _dispositions(conn, project, drained=set(worked), failed=failed,
                                  interview=needs_interview, held_socle=held_for_socle,
-                                 rate_limited=rate_limited)
+                                 rate_limited=rate_limited, interrupted=interrupted)
     return _summarize(project, reports, failed, finalizations, needs_interview=needs_interview,
-                      held_for_socle=held_for_socle, rate_limited=rate_limited,
+                      held_for_socle=held_for_socle, rate_limited=rate_limited, interrupted=interrupted,
                       dispositions=dispositions, aborted=aborted)
 
 
@@ -287,31 +294,38 @@ def run_feature(conn: sqlite3.Connection, settings: Settings, *, project: str, f
     abort.clear_abort(settings, project)
     last_held = bool(reports and reports[-1].get("needs_terminal"))   # v12 : tenue pour l'interview terminale
     last_rate = bool(reports and reports[-1].get("rate_limited"))     # v15 : rejet rate-limit (pas un échec)
+    last_interrupt = bool(reports and reports[-1].get("interrupted"))  # v16 : SIGTERM externe (pas un échec)
     needs_interview: set[str] = {feature} if last_held else set()
     rate_limited: set[str] = {feature} if last_rate else set()
-    failed: set[str] = ({feature} if (reports and not reports[-1]["ok"] and not last_held and not last_rate)
-                        else set())
-    worked = _worked_complete_features(conn, project, failed | needs_interview | rate_limited)
+    interrupted: set[str] = {feature} if last_interrupt else set()
+    failed: set[str] = ({feature} if (reports and not reports[-1]["ok"] and not last_held and not last_rate
+                                      and not last_interrupt) else set())
+    worked = _worked_complete_features(conn, project,
+                                       failed | needs_interview | rate_limited | interrupted)
     finalizations = ([finalize_feature(conn, settings, project, feature, review_runner=review_runner)]
                      if feature in worked else [])
     dispositions = _dispositions(conn, project, drained=set(worked), failed=failed,
-                                 interview=needs_interview, held_socle=set(), rate_limited=rate_limited)
+                                 interview=needs_interview, held_socle=set(), rate_limited=rate_limited,
+                                 interrupted=interrupted)
     return _summarize(project, reports, failed, finalizations, needs_interview=needs_interview,
-                      rate_limited=rate_limited, dispositions=dispositions, aborted=aborted)
+                      rate_limited=rate_limited, interrupted=interrupted, dispositions=dispositions,
+                      aborted=aborted)
 
 
-_DISPOSITIONS = ("drained", "interview", "held_socle", "rate_limited", "failed", "blocked")
+_DISPOSITIONS = ("drained", "interview", "held_socle", "rate_limited", "interrupted", "failed", "blocked")
 
 
 def _dispositions(conn: sqlite3.Connection, project: str, *, drained: set[str], failed: set[str],
                   interview: set[str], held_socle: set[str],
-                  rate_limited: set[str] | None = None) -> dict[str, list[str]]:
+                  rate_limited: set[str] | None = None,
+                  interrupted: set[str] | None = None) -> dict[str, list[str]]:
     """Range CHAQUE feature non-inerte du projet dans **UNE** disposition, sans double-compte — c'est ce qui
     permet un résumé exact (« 1 drainée, 1 tenue-interview, 2 bloquées ») au lieu de « 4 dispatchée, 3 ok »
     qui agrège des cas distincts (bug de lisibilité constaté E2E 2026-07-18). `blocked` = ni drainée, ni
     tenue (interview/socle), ni échouée : elle n'a aucune task READY (DAG inter- ou intra-feature non
     débloqué) → elle n'a rien fait ce run. Les statuts inertes (merged/cancelled) sont hors-run. Read-only."""
     rate_held = rate_limited or set()
+    interrupt_held = interrupted or set()
     disp: dict[str, list[str]] = {k: [] for k in _DISPOSITIONS}
     for f in model.list_features(conn, project):
         slug = f["slug"]
@@ -323,6 +337,8 @@ def _dispositions(conn: sqlite3.Connection, project: str, *, drained: set[str], 
             disp["interview"].append(slug)
         elif slug in rate_held:
             disp["rate_limited"].append(slug)   # tenue par le plafond 5h org (pas un échec), re-runnable
+        elif slug in interrupt_held:
+            disp["interrupted"].append(slug)    # tenue par un SIGTERM externe (pas un échec), re-runnable
         elif slug in held_socle:
             disp["held_socle"].append(slug)
         elif slug in drained:
@@ -337,6 +353,7 @@ def _summarize(project: str, reports: list[dict], failed: set[str],
                needs_interview: set[str] | None = None,
                held_for_socle: set[str] | None = None,
                rate_limited: set[str] | None = None,
+               interrupted: set[str] | None = None,
                dispositions: dict[str, list[str]] | None = None,
                aborted: bool = False) -> dict:
     """Agrège les runs + les **finalisations** (Tier-0 + review par feature complète). `drained` (bool) ⟺
@@ -344,8 +361,9 @@ def _summarize(project: str, reports: list[dict], failed: set[str],
     `needs_interview` (v12) = features dont la next task est `interactive` : tenues pour `cockpit interview`
     (surfacées, pas comptées en échec). `held_for_socle` = features de travail NON dispatchées parce que le
     socle du projet n'est pas encore mergé dans `dev`. `rate_limited` (v15) = features tenues par le plafond
-    5 h de l'org (rejet `claude -p`) : ni ok ni échec, re-dispatchables après reset. `counts` (par
-    `_dispositions`) ventile les features par disposition **sans double-compte** — la source de vérité lisible
+    5 h de l'org (rejet `claude -p`) : ni ok ni échec, re-dispatchables après reset. `interrupted` (v16) =
+    features tenues par un SIGTERM externe (teardown/OOM/session) : ni ok ni échec, re-dispatchables. `counts`
+    (par `_dispositions`) ventile les features **sans double-compte** — source de vérité lisible
     du résumé (les clés historiques `dispatched`/`ok` restent par-task-run, conservées pour la compat schéma).
     `aborted` = un abort humain a rompu le run (rien mergé, re-runnable)."""
     fins = finalizations or []
@@ -355,16 +373,19 @@ def _summarize(project: str, reports: list[dict], failed: set[str],
     # Une run interactive apparaît dans `reports` avec ok=False (aucun worker lancé) mais N'EST PAS un échec :
     # on ne la compte ni dans `ok` ni dans `failed`, elle vit dans `needs_interview`.
     rate_held = rate_limited or set()
+    interrupt_held = interrupted or set()
     n_ok = sum(1 for r in reports if r["ok"])
     n_held = sum(1 for r in reports if r.get("needs_terminal"))
     n_rate = sum(1 for r in reports if r.get("rate_limited"))   # v15 : ni ok ni échec (plafond 5h org)
+    n_interrupt = sum(1 for r in reports if r.get("interrupted"))   # v16 : ni ok ni échec (SIGTERM externe)
     counts = {k: len(disp.get(k, [])) for k in _DISPOSITIONS}
     return {"project": project, "dispatched": len(reports), "ok": n_ok,
-            "failed": len(reports) - n_ok - n_held - n_rate, "failed_features": sorted(failed),
+            "failed": len(reports) - n_ok - n_held - n_rate - n_interrupt, "failed_features": sorted(failed),
             "drained": not failed, "runs": reports,
             "needs_interview": sorted(held),
             "held_for_socle": sorted(socle_held),
             "rate_limited": sorted(rate_held),
+            "interrupted": sorted(interrupt_held),
             "finalizations": fins,
             "merge_ready": sorted(f["feature"] for f in fins if f["merge_ready"]),
             "counts": counts, "blocked_features": sorted(disp.get("blocked", [])),
@@ -412,6 +433,8 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
         parts.append(f"{c['held_socle']} en attente socle")
     if c["rate_limited"]:
         parts.append(f"{c['rate_limited']} tenue(s) rate-limit")
+    if c["interrupted"]:
+        parts.append(f"{c['interrupted']} interrompue(s)")
     print(f"run {args.project} : {', '.join(parts)} — {tail}")
     for feat in summary.get("needs_interview", []):
         print(f"  🖐 {feat} — interview terminale requise (task interactive, non dispatchable en headless) : "
@@ -428,6 +451,11 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
               f"(rien mergé, re-runnable) : {', '.join(rate_limited)}.")
         print(f"    → relance après le reset du plafond : `cockpit run {args.project}` "
               f"(les tasks sont revenues `todo`, reprise là où ça a tenu).")
+    interrupted = summary.get("interrupted", [])
+    if interrupted:
+        print(f"  ⏸ {len(interrupted)} feature(s) interrompue(s) (signal externe : teardown/OOM/session) — "
+              f"tenue(s), rien mergé, re-runnable : {', '.join(interrupted)}.")
+        print(f"    → relance : `cockpit run {args.project}` (les tasks sont revenues `todo`).")
     for fin in summary["finalizations"]:
         if fin["merge_ready"]:
             print(f"  ✅ {fin['feature']} — MERGE-READY (Tier-0 + review OK) → `cockpit merge {args.project}"

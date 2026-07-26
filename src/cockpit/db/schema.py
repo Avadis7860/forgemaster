@@ -64,12 +64,18 @@ le plafond 5 h de l'org (`rate_limit_event status:"rejected"`) est classé À PA
 task (l'orchestrateur TIENT la feature, re-dispatchable après reset), et un faux `failed` poisonnerait
 l'instrumentation d'outcome. SQLite ne sait pas ALTER un CHECK → rebuild de table (`_migrate_v15_...`, patron
 v8), gardé + idempotent. Classé par `parse_headless_result`/`record_finish` (cf. `dispatch/jobs.py`).
+v16 (interrupt-not-failure) = le `CHECK` de `dispatch_jobs.status` gagne `interrupted` : un run coupé EN VOL
+par un signal externe (SIGTERM/SIGINT — teardown d'environnement, OOM, fin de session ; marqueur `[Request
+interrupted by user]`) est classé À PART — ce n'est pas un échec de la task (l'orchestrateur TIENT la feature,
+re-dispatchable), et un faux `failed` (`claude -p rc=143`) poisonnerait l'instrumentation d'outcome comme un
+rate-limit (v15) ou un succès relu killed (D3). SQLite ne sait pas ALTER un CHECK → rebuild de table
+(`_migrate_v16_...`, patron v8/v15), gardé + idempotent. Classé par `parse_headless_result`/`record_finish`.
 """
 from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 # Ordre = ordre de création (les FK pointent vers des tables déjà créées). Chaque table porte les
 # invariants durs en contraintes SQL (NOT NULL, UNIQUE, FK, CHECK sur les enums de statut).
@@ -137,7 +143,7 @@ DDL: tuple[str, ...] = (
         pid           INTEGER,
         status        TEXT NOT NULL DEFAULT 'pending'
                           CHECK (status IN ('pending', 'running', 'done', 'failed', 'killed',
-                                            'rate_limited')),
+                                            'rate_limited', 'interrupted')),
         kind          TEXT NOT NULL DEFAULT 'task'   -- identité du run (v11) : ouvrier de task vs reviewer/…
                           CHECK (kind IN ('task', 'review', 'toolchain', 'fix')),
         log_path      TEXT,                          -- transcript JSONL local (dérivé de session_id)
@@ -277,6 +283,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     ensure_columns(conn)
     _migrate_v8_drop_project_type_check(conn)
     _migrate_v15_dispatch_status_rate_limited(conn)
+    _migrate_v16_dispatch_status_interrupted(conn)
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     conn.commit()
 
@@ -357,6 +364,59 @@ def _migrate_v15_dispatch_status_rate_limited(conn: sqlite3.Connection) -> None:
         "    status        TEXT NOT NULL DEFAULT 'pending'\n"
         "                      CHECK (status IN ('pending', 'running', 'done', 'failed', 'killed',\n"
         "                                        'rate_limited')),\n"
+        "    kind          TEXT NOT NULL DEFAULT 'task'\n"
+        "                      CHECK (kind IN ('task', 'review', 'toolchain', 'fix')),\n"
+        "    log_path      TEXT,\n"
+        "    session_id    TEXT,\n"
+        "    num_turns     INTEGER,\n"
+        "    cost_usd      REAL,\n"
+        "    wall_s        REAL,\n"
+        "    engine        TEXT,\n"
+        "    input_tokens          INTEGER,\n"
+        "    output_tokens         INTEGER,\n"
+        "    cache_read_tokens     INTEGER,\n"
+        "    cache_creation_tokens INTEGER,\n"
+        "    model         TEXT,\n"
+        "    error         TEXT,\n"
+        "    started_at    TEXT,\n"
+        "    ended_at      TEXT\n"
+        ");\n"
+        "INSERT INTO dispatch_jobs_new SELECT id, task_id, worktree_path, port, pid, status, kind, log_path,"
+        " session_id, num_turns, cost_usd, wall_s, engine, input_tokens, output_tokens, cache_read_tokens,"
+        " cache_creation_tokens, model, error, started_at, ended_at FROM dispatch_jobs;\n"
+        "DROP TABLE dispatch_jobs;\n"
+        "ALTER TABLE dispatch_jobs_new RENAME TO dispatch_jobs;\n"
+        "COMMIT;\n"
+    )
+    if fk_prev:
+        conn.execute("PRAGMA foreign_keys=ON")
+
+
+def _migrate_v16_dispatch_status_interrupted(conn: sqlite3.Connection) -> None:
+    """v15→v16 : le `CHECK` de `dispatch_jobs.status` gagne `interrupted` (un SIGTERM externe qui coupe le
+    worker en vol n'est PAS un échec de task — cf. `record_finish`/orchestrator). SQLite ne sait pas ALTER un
+    CHECK → **rebuild de table** (même patron que `_migrate_v15_...`/`_migrate_v8_...`). GARDÉ (no-op si le
+    CHECK contient déjà `interrupted` — base neuve v16 par DDL, ou déjà migrée) et IDEMPOTENT. Le CHECK
+    reconstruit porte les DEUX ajouts (`rate_limited` de v15 + `interrupted`) : un v14→v16 enchaîne les deux
+    rebuilds, un v15→v16 n'ajoute que `interrupted`. FK propre préservée (id conservé, FK OFF au rebuild)."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='dispatch_jobs'").fetchone()
+    if row is None or "interrupted" in row[0]:
+        return                              # base neuve v16 (CHECK à jour) ou déjà migrée → no-op
+    fk_prev = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    conn.commit()                           # clôt toute transaction (PRAGMA FK est no-op en transaction)
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.executescript(
+        "BEGIN;\n"
+        "CREATE TABLE dispatch_jobs_new (\n"
+        "    id            TEXT PRIMARY KEY,\n"
+        "    task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,\n"
+        "    worktree_path TEXT NOT NULL,\n"
+        "    port          INTEGER,\n"
+        "    pid           INTEGER,\n"
+        "    status        TEXT NOT NULL DEFAULT 'pending'\n"
+        "                      CHECK (status IN ('pending', 'running', 'done', 'failed', 'killed',\n"
+        "                                        'rate_limited', 'interrupted')),\n"
         "    kind          TEXT NOT NULL DEFAULT 'task'\n"
         "                      CHECK (kind IN ('task', 'review', 'toolchain', 'fix')),\n"
         "    log_path      TEXT,\n"

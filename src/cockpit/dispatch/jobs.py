@@ -67,8 +67,11 @@ def record_finish(conn: sqlite3.Connection, job_id: str, parsed: dict, *,
     dominant, extrait par `parse_headless_result`) est persisté ici — NULL sur un run raté (parsed sans
     usage), jamais un faux zéro. Le $ reste `cost_usd` (= total_cost_usd de Claude), non recalculé. Un run
     **rate-limité** (`parsed.rate_limited`, v15) est classé `rate_limited` — distinct de `failed` : le plafond
-    5 h de l'org rejette `claude -p`, ce n'est pas un échec de la task (l'orchestrateur TIENT la feature)."""
+    5 h de l'org rejette `claude -p`, ce n'est pas un échec de la task (l'orchestrateur TIENT la feature). Un
+    run **interrompu par signal** (`parsed.interrupted`, v16) est classé `interrupted` — distinct de `failed`
+    aussi : un SIGTERM externe (teardown/OOM/session) coupe le worker en vol (pas un échec de task)."""
     final = status or ("rate_limited" if parsed.get("rate_limited")
+                       else "interrupted" if parsed.get("interrupted")
                        else "done" if parsed.get("ok") else "failed")
     conn.execute(
         "UPDATE dispatch_jobs SET status = ?, num_turns = ?, cost_usd = ?, wall_s = ?, "
@@ -343,6 +346,36 @@ def _rate_limit_rejection(text: str) -> dict | None:
     return hit
 
 
+_INTERRUPT_MARKER = "[Request interrupted by user]"
+
+
+def _signal_interruption(text: str) -> str | None:
+    """Vrai (raison lisible) ssi le stream porte le marqueur explicite `[Request interrupted by user]` — la
+    trace qu'un signal (SIGTERM/SIGINT) a coupé `claude` EN VOL (teardown, OOM, fin de session),
+    distincte d'un échec de task. `claude` l'émet comme un message `type=="user"`. STRICT : on exige une ligne
+    `user` portant ce texte exact (parse JSON par ligne, jamais un substring brut → un run qui l'écrirait dans
+    sa propre sortie ne déclenche pas). Clé sur le MARQUEUR (pas le rc) : la réconciliation relit le
+    transcript SANS rc, seul un signal lisible dans le texte survit (compo D1×D3). PUR."""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or _INTERRUPT_MARKER not in line:
+            continue
+        try:
+            o = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(o, dict) or o.get("type") != "user":
+            continue
+        content = o["message"].get("content") if isinstance(o.get("message"), dict) else None
+        if isinstance(content, str) and _INTERRUPT_MARKER in content:
+            return "Request interrupted"
+        if isinstance(content, list) and any(
+                isinstance(b, dict) and b.get("type") == "text"
+                and _INTERRUPT_MARKER in (b.get("text") or "") for b in content):
+            return "Request interrupted"
+    return None
+
+
 # Clés d'usage token à persister (v13). Toujours présentes dans le dict retourné (None si absent) → un run
 # raté ne fabrique jamais un faux zéro ; `record_finish` les lit par `.get()`.
 _USAGE_KEYS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens", "model")
@@ -378,8 +411,10 @@ def parse_headless_result(stdout: str, returncode: int = 0) -> dict:
     PUR. Fail-LOUD : rc≠0, sortie vide, JSON illisible, `is_error`/`api_error_status` → `ok=False` + `error`
     (jamais de faux-vert). Un **rejet rate-limit** (`rate_limit_event status:"rejected"`) est classé À PART :
     `rate_limited=True` + `rate_limit_info` (plafond org, pas un échec) — cf. `_rate_limit_rejection`.
-    Tolérant au préambule. Retour : {ok, is_error, result, session_id, cost_usd,
-    num_turns, duration_ms, error, rate_limited, rate_limit_info, raw} + l'usage token
+    Une **interruption par signal** (marqueur `[Request interrupted by user]`) est classée À PART aussi :
+    `interrupted=True` (SIGTERM externe : teardown/OOM/session, pas un échec de task) — cf.
+    `_signal_interruption`. Tolérant au préambule. Retour : {ok, is_error, result, session_id, cost_usd,
+    num_turns, duration_ms, error, rate_limited, rate_limit_info, interrupted, raw} + l'usage token
     (`input_tokens`/`output_tokens`/`cache_read_tokens`/
     `cache_creation_tokens`/`model`, cf. `_usage_fields`). `duration_ms` (wall du run rapporté par Claude,
     None si absent) sert notamment à donner un `wall_s` non-null quand un job est finalisé depuis son
@@ -387,7 +422,7 @@ def parse_headless_result(stdout: str, returncode: int = 0) -> dict:
     none_usage = dict.fromkeys(_USAGE_KEYS)
     base = {"ok": False, "is_error": True, "result": None, "session_id": None,
             "cost_usd": None, "num_turns": None, "duration_ms": None, "error": None, "raw": stdout,
-            "rate_limited": False, "rate_limit_info": None, **none_usage}
+            "rate_limited": False, "rate_limit_info": None, "interrupted": False, **none_usage}
     text = (stdout or "").strip()
     # Rejet rate-limit : classé AVANT le verdict générique (rc≠0 / is_error) — le plafond 5 h de l'org
     # rejette `claude -p` sans que ce soit un échec de la task (détecté sur l'event explicite). La feature
@@ -397,6 +432,13 @@ def parse_headless_result(stdout: str, returncode: int = 0) -> dict:
         return {**base, "rate_limited": True, "rate_limit_info": rl,
                 "error": f"rate-limit {rl.get('rateLimitType') or '?'} rejeté "
                          f"(overage {rl.get('overageStatus') or '?'})"}
+    # Interruption par signal : classée AVANT le verdict générique rc≠0 — un SIGTERM externe (rc=143) coupe
+    # `claude` en vol sans que ce soit un échec de la task. Sinon elle serait fondue dans un `failed` opaque
+    # (`claude -p rc=143`) qui poisonne l'instrumentation d'outcome. La feature est TENUE (cf. orchestrator).
+    interrupt = _signal_interruption(text)
+    if interrupt is not None:
+        return {**base, "interrupted": True,
+                "error": f"worker interrompu ({interrupt}, rc={returncode}) — non imputable à la task"}
     if returncode != 0:
         snippet = (stdout or "").strip()[:200] or "(vide)"
         return {**base, "error": f"claude -p rc={returncode} : {snippet}"}
@@ -418,4 +460,4 @@ def parse_headless_result(stdout: str, returncode: int = 0) -> dict:
             "duration_ms": duration if isinstance(duration, (int, float))
             and not isinstance(duration, bool) else None,
             "error": err, "raw": stdout, "rate_limited": False, "rate_limit_info": None,
-            **_usage_fields(obj)}
+            "interrupted": False, **_usage_fields(obj)}

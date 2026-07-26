@@ -267,6 +267,11 @@ def _fail_runner(argv, *, cwd, input_text, timeout, env=None):
     return run.RunResult(argv=list(argv), returncode=1, stdout="boom", stderr="err")
 
 
+def _interrupt_runner(argv, *, cwd, input_text, timeout, env=None):
+    # Worker coupé EN VOL par un SIGTERM externe : rc=143 + le marqueur `[Request interrupted by user]`.
+    return run.RunResult(argv=list(argv), returncode=143, stdout=_DRAIN_INTERRUPT_LOG, stderr="")
+
+
 def test_dispatch_refused_when_feature_has_no_task(ctx):
     settings, conn = ctx
     registry.create_project(conn, settings, slug="proj")
@@ -324,6 +329,31 @@ def test_dispatch_failure_reverts_task_to_todo(ctx):
     assert job["status"] == "failed"
     task = conn.execute("SELECT status FROM tasks WHERE slug='schema'").fetchone()
     assert task["status"] == "todo"        # re-dispatchable
+
+
+def test_run_worker_external_interrupt_marks_interrupted_not_failed(ctx):
+    """D2 : sans abort (sentinelle absente), un worker coupé par un SIGTERM externe (rc=143 + marqueur) est
+    finalisé `interrupted` — statut DISTINCT de `failed`. La task revient `todo` (re-dispatchable), la feature
+    est TENUE, jamais comptée comme un échec de task (ne poisonne pas l'instrumentation E2)."""
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    report = worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=_interrupt_runner)
+    assert report["result"]["interrupted"] is True
+    assert jobs.get_job(conn, report["job_id"])["status"] == "interrupted"
+    assert conn.execute("SELECT status FROM tasks WHERE slug='schema'").fetchone()["status"] == "todo"
+
+
+def test_run_worker_human_abort_marks_killed_not_interrupted(ctx):
+    """D2 (désambiguïsation) : un abort humain tue le worker par SIGTERM → même marqueur/rc qu'un interrupt
+    externe. Le seul discriminant est la SENTINELLE (posée AVANT le kill). Sentinelle présente ⇒ le job
+    est finalisé `killed` + "aborted by human" (sémantique d'abort préservée), PAS `interrupted`."""
+    from cockpit.dispatch import abort
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    abort.request_abort(settings, project="proj")   # pose la sentinelle (0 worker en vol → juste le signal)
+    report = worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=_interrupt_runner)
+    job = jobs.get_job(conn, report["job_id"])
+    assert job["status"] == "killed" and job["error"] == "aborted by human"
 
 
 def test_dispatch_injects_tools_bin_on_worker_path(ctx):
@@ -518,6 +548,20 @@ def test_reconcile_finalizes_rate_limited_from_terminal_result(ctx):
     assert conn.execute("SELECT status FROM tasks WHERE slug='schema'").fetchone()["status"] == "todo"
 
 
+def test_reconcile_finalizes_interrupted_from_terminal_result(ctx):
+    """D2×D3 : un orphelin dont le transcript porte le marqueur d'interruption est finalisé `interrupted` (pas
+    `killed`, pas `failed`). La classification survit à la réconciliation d'orphelin ET elle est clé sur le
+    MARQUEUR — le transcript est relu SANS rc (returncode=0 par défaut), seul un signal lisible dans le texte
+    passe. La task revient `todo` (re-dispatchable)."""
+    from cockpit.dispatch import reconcile
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    job_id, _ = _running_job_with_log(conn, settings, _DRAIN_INTERRUPT_LOG)
+    assert reconcile.reconcile_orphans(conn) == [job_id]
+    assert jobs.get_job(conn, job_id)["status"] == "interrupted"
+    assert conn.execute("SELECT status FROM tasks WHERE slug='schema'").fetchone()["status"] == "todo"
+
+
 # -- P3 : transcript live (stream-json streamé vers log_path) ---------------------------------------
 
 def test_run_streaming_writes_stdout_live_to_out_path(tmp_path: Path):
@@ -663,6 +707,36 @@ def test_parse_no_rate_limit_flag_on_plain_failure():
     nd = '{"type":"result","is_error":true,"subtype":"error_during_execution","session_id":"s","num_turns":1}'
     parsed = worker.parse_headless_result(nd, 0)
     assert parsed["rate_limited"] is False and parsed["rate_limit_info"] is None
+    assert not parsed["ok"]
+
+
+# stream-json d'un run coupé par un SIGTERM externe (miroir du défaut miné D2 : 54 tours, $6.13, marqueur
+# `[Request interrupted by user]` puis result is_error, rc=143). Ce n'est PAS un échec de task.
+_DRAIN_INTERRUPT_LOG = (
+    '{"type":"system","subtype":"init","session_id":"s"}\n'
+    '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}\n'
+    '{"type":"user","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}\n'
+    '{"type":"result","is_error":true,"num_turns":54,"stop_reason":"tool_use","total_cost_usd":6.13,'
+    '"session_id":"s"}\n'
+)
+
+
+def test_parse_headless_result_flags_signal_interruption():
+    """D2 : un run coupé EN VOL par un SIGTERM externe (marqueur `[Request interrupted by user]` + rc=143) est
+    CLASSÉ `interrupted` — pas un échec de task. La classification PRIME sur le verdict rc≠0 (sinon un
+    `claude -p rc=143` opaque masquerait la vraie cause et poisonnerait l'instrumentation d'outcome)."""
+    parsed = worker.parse_headless_result(_DRAIN_INTERRUPT_LOG, 143)
+    assert parsed["interrupted"] is True
+    assert not parsed["ok"] and "interrompu" in parsed["error"]
+
+
+def test_parse_no_interrupt_flag_on_plain_failure():
+    """Garde STRICTE : un vrai échec (`result is_error:true`) SANS marqueur d'interruption n'est jamais pris
+    pour une interruption — il reste un échec classique (`interrupted=False`), donc la feature est bien exclue
+    (`failed`), pas gardée « tenue » à tort."""
+    nd = '{"type":"result","is_error":true,"subtype":"error_during_execution","session_id":"s","num_turns":1}'
+    parsed = worker.parse_headless_result(nd, 1)
+    assert parsed["interrupted"] is False
     assert not parsed["ok"]
 
 
@@ -1134,3 +1208,18 @@ def test_record_finish_classifies_rate_limited_not_failed(ctx):
                                       "error": "rate-limit five_hour rejeté (overage rejected)"})
     row = jobs.get_job(conn, job_id)
     assert row["status"] == "rate_limited" and row["error"].startswith("rate-limit")
+
+
+def test_record_finish_classifies_interrupted_not_failed(ctx):
+    """D2 : un run interrompu (`parsed.interrupted`) → statut `interrupted`, DISTINCT de `failed`
+    (v16). Sans ça, un SIGTERM externe compterait comme un échec de task et poisonnerait l'instrumentation
+    d'outcome (E2), exactement comme un rate-limit relu `failed` (D1)."""
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    task_id = conn.execute("SELECT id FROM tasks WHERE slug='schema'").fetchone()["id"]
+    job_id = jobs.record_start(conn, task_id=task_id, worktree="/tmp/wt", session_id="s1")
+    jobs.record_finish(conn, job_id, {"ok": False, "interrupted": True, "num_turns": 54, "cost_usd": 6.13,
+                                      "error": "worker interrompu (Request interrupted, rc=143) — non "
+                                               "imputable à la task"})
+    row = jobs.get_job(conn, job_id)
+    assert row["status"] == "interrupted" and "interrompu" in row["error"]

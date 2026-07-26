@@ -27,7 +27,7 @@ from cockpit import auth
 from cockpit.config import Settings
 from cockpit.core import ids, run
 from cockpit.db import store
-from cockpit.dispatch import jobs, reconcile, worktree
+from cockpit.dispatch import abort, jobs, reconcile, worktree
 from cockpit.git.backend import GitBackend
 from cockpit.git.identity import resolve_identity
 from cockpit.git.internal import InternalGit
@@ -292,7 +292,17 @@ def _run_worker(conn: sqlite3.Connection, settings: Settings, *, res: dict, sess
             parsed = {"ok": False, "session_id": session_id, "num_turns": None, "cost_usd": None,
                       "error": str(exc)}
         wall_s = time.monotonic() - started
-        jobs.record_finish(conn, job_id, parsed, wall_s=wall_s)
+        # Désambiguïsation interrupt externe vs abort humain : les deux tuent le worker par SIGTERM (même
+        # `rc=143` + marqueur `[Request interrupted by user]`). Seul l'abort pose la sentinelle →
+        # sentinelle présente = abort humain (finalisé `killed` + "aborted by human", sémantique d'abort
+        # préservée) ; absente = SIGTERM ENVIRONNEMENTAL → `interrupted` (tenu, re-dispatchable) via le
+        # classement de `record_finish`. Le grace 3 s de `request_abort` garantit qu'on finalise ici AVANT son
+        # `mark_job_orphan` post-grace → ce gate est le discriminant effectif.
+        if parsed.get("interrupted") and abort.abort_requested(settings, project):
+            jobs.record_finish(conn, job_id, {**parsed, "error": abort._ABORTED_REASON},
+                               wall_s=wall_s, status="killed")
+        else:
+            jobs.record_finish(conn, job_id, parsed, wall_s=wall_s)
         if parsed.get("ok"):
             on_success(parsed)
         else:

@@ -338,6 +338,62 @@ def test_run_project_rate_limit_stops_drain(ctx):
     assert _statuses(conn, "aaa") == {"t": "todo"}       # re-dispatchable
 
 
+# stdout d'un run coupé par un SIGTERM externe (marqueur `[Request interrupted by user]` + result is_error).
+_INTERRUPT_STDOUT = (
+    '{"type":"system","subtype":"init","session_id":"s"}\n'
+    '{"type":"user","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}\n'
+    '{"type":"result","is_error":true,"num_turns":54,"total_cost_usd":6.13,"session_id":"s"}\n'
+)
+
+
+class _InterruptRunner:
+    """Runner injecté qui simule un SIGTERM externe (rc=143 + marqueur d'interruption) pour les
+    features de `interrupt`, et un succès sinon. Trace l'ordre des features appelées (`calls`)."""
+    def __init__(self, *, interrupt: tuple[str, ...] = ()):
+        self.interrupt = set(interrupt)
+        self.calls: list[str] = []
+
+    def __call__(self, argv, *, cwd, input_text, timeout, env=None):
+        feature = Path(cwd).name
+        self.calls.append(feature)
+        sid = argv[argv.index("--session-id") + 1]
+        if feature in self.interrupt:
+            return run.RunResult(argv=list(argv), returncode=143, stdout=_INTERRUPT_STDOUT, stderr="")
+        out = json.dumps({"is_error": False, "result": "ok", "session_id": sid,
+                          "total_cost_usd": 0.01, "num_turns": 1})
+        return run.RunResult(argv=list(argv), returncode=0, stdout=out, stderr="")
+
+
+def test_run_feature_holds_interrupted_not_failed(ctx):
+    """D2 : une feature dont le run est coupé par un SIGTERM externe N'EST PAS marquée `failed` — TENUE
+    (disposition `interrupted`), la task revient `todo` (re-dispatchable), run non compté en échec."""
+    settings, conn = ctx
+    _new_project(conn, settings, "proj")
+    _seed(conn, settings, "proj", "work", [("t", [])])
+    summary = orchestrator.run_feature(conn, settings, project="proj", feature="work",
+                                       git=InternalGit(), runner=_InterruptRunner(interrupt=("work",)))
+    assert summary["failed_features"] == [] and summary["failed"] == 0
+    assert summary["interrupted"] == ["work"] and summary["counts"]["interrupted"] == 1
+    assert _statuses(conn, "work") == {"t": "todo"}      # revenue todo → re-dispatchable
+
+
+def test_run_project_interrupted_does_not_stop_drain(ctx):
+    """D2 : contrairement au rate-limit (org-global → stop, D1), une interruption est PAR-WORKER — la boucle
+    CONTINUE d'assigner. La feature interrompue est tenue (pas `failed`) ; une feature saine suivante est bien
+    dispatchée (le drain n'avorte pas sur un teardown/OOM ponctuel)."""
+    settings, conn = ctx
+    _new_project(conn, settings, "proj")
+    _seed(conn, settings, "proj", "aaa", [("t", [])])    # slug tôt dans l'ordre → dispatché en 1er
+    _seed(conn, settings, "proj", "zzz", [("t", [])])
+    r = _InterruptRunner(interrupt=("aaa",))
+    summary = orchestrator.run_project(conn, settings, project="proj", max_parallel=1,
+                                       git=InternalGit(), runner=r)
+    assert "aaa" in summary["interrupted"]               # interrompue → tenue
+    assert summary["failed_features"] == []              # aucun échec fabriqué
+    assert r.calls == ["aaa", "zzz"]                     # le drain a CONTINUÉ — zzz bien dispatchée
+    assert _statuses(conn, "aaa") == {"t": "todo"}       # re-dispatchable
+
+
 # -- enforcement du DAG INTER-feature (v10) : design→code -------------------------------------------
 
 def test_run_project_blocks_feature_until_prereq_merged(ctx):

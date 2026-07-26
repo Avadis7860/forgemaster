@@ -89,8 +89,11 @@ def mark_job_orphan(conn: sqlite3.Connection, job_id: str) -> str | None:
         jobs.record_finish(conn, job_id, parsed,
                            wall_s=(wall / 1000) if isinstance(wall, (int, float)) else None)
         # Miroir de la classification de `record_finish` (le retour pilote `abort.py` + la truthiness du
-        # collecteur) : un rejet rate-limit est `rate_limited`, pas `failed` (D1×D3).
+        # collecteur) : un rejet rate-limit est `rate_limited`, une interruption par signal `interrupted` —
+        # ni l'un ni l'autre n'est `failed` (D1×D3 ; l'interrupt est clé sur le MARQUEUR du transcript, relu
+        # ici sans rc).
         final = ("rate_limited" if parsed.get("rate_limited")
+                 else "interrupted" if parsed.get("interrupted")
                  else "done" if parsed.get("ok") else "failed")
     else:
         conn.execute(

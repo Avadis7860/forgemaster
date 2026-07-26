@@ -677,6 +677,51 @@ def test_migrate_v15_adds_rate_limited_to_dispatch_status_check(tmp_path: Path):
     conn.close()
 
 
+def test_migrate_v16_adds_interrupted_to_dispatch_status_check(tmp_path: Path):
+    """Une base v15 dont `dispatch_jobs.status` porte le CHECK v15 (avec `rate_limited`, sans `interrupted`)
+    migre en v16 par rebuild de table : le statut `interrupted` est accepté, les données préservées, et
+    `rate_limited` (v15) reste valable. SQLite n'ALTER pas un CHECK → rebuild (patron v8). Idempotent."""
+    import sqlite3
+
+    from cockpit.db import schema, store
+    conn = store.connect(tmp_path / "v15.db")
+    conn.execute("PRAGMA foreign_keys = OFF")   # ce test cible le CHECK de `status`, pas la FK task_id
+    conn.executescript(
+        "CREATE TABLE dispatch_jobs ("
+        " id TEXT PRIMARY KEY,"
+        " task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,"
+        " worktree_path TEXT NOT NULL, port INTEGER, pid INTEGER,"
+        " status TEXT NOT NULL DEFAULT 'pending'"
+        "   CHECK (status IN ('pending','running','done','failed','killed','rate_limited')),"
+        " kind TEXT NOT NULL DEFAULT 'task' CHECK (kind IN ('task','review','toolchain','fix')),"
+        " log_path TEXT, session_id TEXT, num_turns INTEGER, cost_usd REAL, wall_s REAL, engine TEXT,"
+        " input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER,"
+        " cache_creation_tokens INTEGER, model TEXT, error TEXT, started_at TEXT, ended_at TEXT);")
+    conn.execute("INSERT INTO dispatch_jobs (id, task_id, worktree_path, status) "
+                 "VALUES ('j1','tk1','/wt','rate_limited')")   # un statut v15 → doit être préservé
+    conn.execute("PRAGMA user_version = 15")
+    conn.commit()
+    # avant migration : le CHECK v15 rejette `interrupted`
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO dispatch_jobs (id, task_id, worktree_path, status) "
+                     "VALUES ('j2','tk1','/wt','interrupted')")
+    conn.rollback()
+
+    assert store.migrate(conn) == schema.SCHEMA_VERSION                     # migre → v16 (rebuild de table)
+    ddl = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='dispatch_jobs'").fetchone()[0]
+    assert "interrupted" in ddl and "rate_limited" in ddl                  # le CHECK porte les DEUX ajouts
+    assert conn.execute(                                                   # donnée v15 préservée
+        "SELECT status FROM dispatch_jobs WHERE id='j1'").fetchone()[0] == "rate_limited"
+    # après migration : `interrupted` est accepté côté DB
+    conn.execute("INSERT INTO dispatch_jobs (id, task_id, worktree_path, status) "
+                 "VALUES ('j3','tk1','/wt','interrupted')")
+    conn.commit()
+    assert conn.execute("SELECT status FROM dispatch_jobs WHERE id='j3'").fetchone()[0] == "interrupted"
+    assert store.migrate(conn) == schema.SCHEMA_VERSION                     # idempotent
+    conn.close()
+
+
 def test_ensure_columns_migrates_v8_to_v9_in_place(tmp_path: Path):
     """Une base v8 (features avec facet, sans blueprint) migre en place : `ensure_columns` ajoute la colonne
     `blueprint` (nullable, aucun défaut → NULL pour l'existant). Additif, idempotent (2ᵉ appel no-op)."""
