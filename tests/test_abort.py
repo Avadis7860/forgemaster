@@ -65,6 +65,24 @@ def test_request_abort_kills_worker_and_requeues(ctx):
     assert abort.abort_requested(settings, "proj")
 
 
+def test_abort_finalizes_completed_worker_as_done_not_aborted(ctx):
+    """Course `ProcessLookupError` : un worker qui a FINI (émis son `result`) juste avant que le kill ne
+    l'atteigne ne doit pas être étiqueté `killed`/« aborted by human ». `mark_job_orphan` le finalise `done`
+    depuis son transcript ; l'abort ne pose PAS le marqueur humain sur un run abouti."""
+    settings, conn = ctx
+    job_id, task_id = _seed_running_job(conn, settings)
+    log_path = jobs.dispatch_log_path(settings, "s1")      # le worker a terminé : verdict de succès au log
+    log_path.write_text('{"type":"result","is_error":false,"result":"ok","session_id":"s1",'
+                        '"num_turns":7,"total_cost_usd":0.4,"duration_ms":90000}\n', encoding="utf-8")
+    conn.execute("UPDATE dispatch_jobs SET log_path=? WHERE id=?", (str(log_path), job_id))
+    conn.commit()
+    abort.request_abort(settings, project="proj", killer=_RecordingKiller(), grace_s=0, conn=conn)
+    row = jobs.get_job(conn, job_id)
+    assert row["status"] == "done"                          # finalisé depuis le résultat, pas killed
+    assert row["error"] is None                             # jamais « aborted by human » sur un run abouti
+    assert row["num_turns"] == 7 and row["cost_usd"] == 0.4
+
+
 def test_request_abort_idempotent(ctx):
     settings, conn = ctx
     _seed_running_job(conn, settings)

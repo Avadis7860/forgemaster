@@ -86,7 +86,8 @@ def build_app(settings: Settings) -> FastAPI:
             orphans = reconcile.reconcile_orphans(conn)
             if orphans:
                 logging.getLogger("cockpit").warning(
-                    "réconcilié %d job(s) de dispatch orphelin(s) au boot (running→killed, task→todo) : %s",
+                    "réconcilié %d job(s) de dispatch interrompu(s) au boot "
+                    "(finalisé depuis leur transcript si verdict présent, sinon killed ; task→todo) : %s",
                     len(orphans), orphans)
         finally:
             conn.close()

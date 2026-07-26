@@ -432,6 +432,79 @@ def test_dispatch_finalizes_job_on_unexpected_exception(ctx):
     assert conn.execute("SELECT status FROM tasks WHERE slug='schema'").fetchone()["status"] == "todo"
 
 
+# -- D3 : la réconciliation PRÉFÈRE le résultat (un run fini n'est jamais écrasé killed/NULL) --------
+
+def _running_job_with_log(conn, settings, log_text, *, task_slug="schema", session_id="sess-drain"):
+    """Pose un job `running` + task `in_progress`, et écrit `log_text` dans son log streamé (le fichier que la
+    réconciliation lit pour décider `done|failed` depuis le verdict, ou `killed` faute de verdict)."""
+    task_id = conn.execute("SELECT id FROM tasks WHERE slug=?", (task_slug,)).fetchone()["id"]
+    conn.execute("UPDATE tasks SET status='in_progress' WHERE id=?", (task_id,))
+    conn.commit()
+    log_path = jobs.dispatch_log_path(settings, session_id)
+    log_path.write_text(log_text, encoding="utf-8")
+    job_id = jobs.record_start(conn, task_id=task_id, worktree="/tmp/wt", session_id=session_id,
+                               log_path=str(log_path))
+    return job_id, task_id
+
+
+# stream-json d'un run RÉUSSI (mirroir du défaut miné D3 : 31 tours, $3.45), verdict terminal `result`.
+_DRAIN_SUCCESS_LOG = (
+    '{"type":"system","subtype":"init","session_id":"s1"}\n'
+    '{"type":"assistant","message":{"content":[{"type":"text","text":"livré"}]}}\n'
+    '{"type":"result","subtype":"success","is_error":false,"result":"livré","session_id":"s1",'
+    '"num_turns":31,"total_cost_usd":3.45,"duration_ms":740000,'
+    '"usage":{"input_tokens":10,"output_tokens":55098,"cache_read_input_tokens":1850898,'
+    '"cache_creation_input_tokens":113784}}\n'
+)
+
+
+def test_reconcile_finalizes_done_from_terminal_result(ctx):
+    """D3 : un worker qui a ÉMIS son `result` de succès mais dont `record_finish` a manqué (daemon
+    mort/redémarré) ne doit PAS être écrasé `killed`/NULL. La réconciliation le finalise `done` + métriques
+    réelles DEPUIS son transcript — la trace ne ment jamais sur un succès (sinon poison de l'instrumentation
+    d'outcome aval)."""
+    from cockpit.dispatch import reconcile
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    job_id, _ = _running_job_with_log(conn, settings, _DRAIN_SUCCESS_LOG)
+    assert reconcile.reconcile_orphans(conn) == [job_id]
+    job = jobs.get_job(conn, job_id)
+    assert job["status"] == "done"                         # jamais killed
+    assert job["num_turns"] == 31 and job["cost_usd"] == 3.45
+    assert job["wall_s"] == 740.0                          # duration_ms/1000 → wall non-null
+    assert job["output_tokens"] == 55098                   # métriques persistées, pas NULL
+    assert job["error"] is None
+
+
+def test_reconcile_finalizes_failed_from_error_result(ctx):
+    """Symétrie honnête : si le transcript porte un `result` d'ÉCHEC réel (`is_error:true`), la réconciliation
+    finalise `failed` + `error` (pas `killed`) — l'échec du run est journalisé, jamais travesti en kill."""
+    from cockpit.dispatch import reconcile
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    log = ('{"type":"result","is_error":true,"subtype":"error_max_turns","session_id":"s",'
+           '"num_turns":5,"total_cost_usd":1.2}\n')
+    job_id, _ = _running_job_with_log(conn, settings, log)
+    assert reconcile.reconcile_orphans(conn) == [job_id]
+    job = jobs.get_job(conn, job_id)
+    assert job["status"] == "failed" and job["error"]
+    assert job["num_turns"] == 5 and job["cost_usd"] == 1.2
+
+
+def test_reconcile_kills_job_without_terminal_result(ctx):
+    """Symétrie : un log qui s'ARRÊTE avant le verdict (worker réellement tué en cours — aucun event `result`)
+    reste `killed` + task→`todo`. On ne fabrique jamais un succès à partir d'un transcript coupé."""
+    from cockpit.dispatch import reconcile
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    partial = ('{"type":"system","subtype":"init"}\n'
+               '{"type":"assistant","message":{"content":[{"type":"text","text":"en cours"}]}}\n')
+    job_id, _ = _running_job_with_log(conn, settings, partial)
+    assert reconcile.reconcile_orphans(conn) == [job_id]
+    assert jobs.get_job(conn, job_id)["status"] == "killed"
+    assert conn.execute("SELECT status FROM tasks WHERE slug='schema'").fetchone()["status"] == "todo"
+
+
 # -- P3 : transcript live (stream-json streamé vers log_path) ---------------------------------------
 
 def test_run_streaming_writes_stdout_live_to_out_path(tmp_path: Path):

@@ -104,7 +104,11 @@ def request_abort(settings: Settings, *, project: str, feature: str | None = Non
         jobs_running = _running_jobs(conn, project, feature)
         _kill_groups([j["pid"] for j in jobs_running if j.get("pid")], killer, grace_s=grace_s)
         for job in jobs_running:
-            if reconcile.mark_job_orphan(conn, job["job_id"]):
+            # `mark_job_orphan` PRÉFÈRE le résultat : un worker fini juste avant le kill (course
+            # `ProcessLookupError` de `_kill_groups`) se finalise `done|failed` depuis son transcript. On ne
+            # marque `error='aborted by human'` QUE s'il a réellement été tué en cours (`killed`) — sinon on
+            # étiquetterait « aborté » un run qui avait abouti.
+            if reconcile.mark_job_orphan(conn, job["job_id"]) == "killed":
                 conn.execute("UPDATE dispatch_jobs SET error = ? WHERE id = ?",
                              (_ABORTED_REASON, job["job_id"]))
                 conn.commit()

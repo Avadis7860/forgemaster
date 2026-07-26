@@ -271,3 +271,114 @@ def normalize_line(line: str) -> dict | None:
         return None
 
     return None
+
+
+# -- parseur du résultat `claude -p` (PUR ; foyer avec `normalize_line`, sibling pur ; consommé par
+#    `record_finish` ET par la réconciliation d'orphelin `reconcile._terminal_result`) -----------------
+
+def _trailing_json_object(text: str) -> dict | None:
+    """Extrait l'objet JSON FINAL d'un stdout précédé d'un préambule non-JSON (sentinelle de prep, bannière
+    `bash -lc`…). `--output-format json` émet exactement un objet, en dernier. PUR (porté verbatim)."""
+    for i, ch in enumerate(text):
+        if ch == "{":
+            try:
+                obj = json.loads(text[i:])
+            except (ValueError, TypeError):
+                continue
+            if isinstance(obj, dict):
+                return obj
+    return None
+
+
+def _result_event(text: str) -> dict | None:
+    """L'objet-résultat de `claude -p`. `--output-format json` émet **un seul** objet (runner de test aussi) ;
+    `stream-json` émet du **NDJSON** dont l'événement `{"type":"result",…}` porte le verdict final. On le
+    retrouve **par ligne** (rapide) plutôt que par un scan char-à-char O(n²) sur un gros transcript. Ordre :
+    objet unique → dernier `type==result` → dernier objet valide → fallback préambule. PUR."""
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return obj                       # objet unique (--output-format json / runner injecté)
+    except (ValueError, TypeError):
+        pass
+    result_ev: dict | None = None
+    last: dict | None = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            o = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(o, dict):
+            last = o
+            if o.get("type") == "result":
+                result_ev = o
+    return result_ev or last or _trailing_json_object(text)
+
+
+# Clés d'usage token à persister (v13). Toujours présentes dans le dict retourné (None si absent) → un run
+# raté ne fabrique jamais un faux zéro ; `record_finish` les lit par `.get()`.
+_USAGE_KEYS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens", "model")
+
+
+def _usage_fields(obj: dict) -> dict:
+    """Extrait de l'event `result` l'usage token CUMULÉ (`usage`) + le modèle DOMINANT (`modelUsage`, clé au
+    `costUSD` max ; à défaut de coût, la 1ʳᵉ clé). PUR. Chaque champ absent/mal typé → None : on ne synthétise
+    pas de zéro (l'absence d'usage est honnête, distincte d'un run à 0 token). Le $ n'est PAS relu ici — il
+    reste `total_cost_usd` (cf. `cost_usd`), pas de table de prix locale."""
+    usage = obj.get("usage")
+    u: dict = usage if isinstance(usage, dict) else {}
+
+    def _int(v: object) -> int | None:
+        return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+    model: str | None = None
+    mu = obj.get("modelUsage")
+    if isinstance(mu, dict) and mu:
+        priced = [(k, v["costUSD"]) for k, v in mu.items()
+                  if isinstance(v, dict) and isinstance(v.get("costUSD"), (int, float))
+                  and not isinstance(v.get("costUSD"), bool)]
+        model = max(priced, key=lambda kv: kv[1])[0] if priced else next(iter(mu))
+    return {"input_tokens": _int(u.get("input_tokens")),
+            "output_tokens": _int(u.get("output_tokens")),
+            "cache_read_tokens": _int(u.get("cache_read_input_tokens")),
+            "cache_creation_tokens": _int(u.get("cache_creation_input_tokens")),
+            "model": model}
+
+
+def parse_headless_result(stdout: str, returncode: int = 0) -> dict:
+    """Normalise la sortie de `claude -p` (`--output-format json` OU `stream-json` NDJSON → event `result`).
+    PUR. Fail-LOUD : rc≠0, sortie vide, JSON illisible, `is_error`/`api_error_status` → `ok=False` + `error`
+    (jamais de faux-vert). Tolérant au préambule. Retour : {ok, is_error, result, session_id, cost_usd,
+    num_turns, duration_ms, error, raw} + l'usage token (`input_tokens`/`output_tokens`/`cache_read_tokens`/
+    `cache_creation_tokens`/`model`, cf. `_usage_fields`). `duration_ms` (wall du run rapporté par Claude,
+    None si absent) sert notamment à donner un `wall_s` non-null quand un job est finalisé depuis son
+    transcript (réconciliation d'orphelin)."""
+    none_usage = dict.fromkeys(_USAGE_KEYS)
+    base = {"ok": False, "is_error": True, "result": None, "session_id": None,
+            "cost_usd": None, "num_turns": None, "duration_ms": None, "error": None, "raw": stdout,
+            **none_usage}
+    if returncode != 0:
+        snippet = (stdout or "").strip()[:200] or "(vide)"
+        return {**base, "error": f"claude -p rc={returncode} : {snippet}"}
+    text = (stdout or "").strip()
+    if not text:
+        return {**base, "error": "sortie vide de claude -p"}
+    obj = _result_event(text)                # objet unique OU événement `result` du NDJSON stream-json
+    if obj is None:
+        return {**base, "error": f"sortie non-JSON : {text[:200]}"}
+    if not isinstance(obj, dict):
+        return {**base, "error": f"JSON inattendu (pas un objet) : {text[:120]}"}
+    is_error = bool(obj.get("is_error")) or (obj.get("api_error_status") not in (None, ""))
+    err = None
+    if is_error:
+        err = obj.get("api_error_status") or obj.get("subtype") or "claude a signalé is_error"
+    duration = obj.get("duration_ms")
+    return {"ok": not is_error, "is_error": is_error, "result": obj.get("result"),
+            "session_id": obj.get("session_id"), "cost_usd": obj.get("total_cost_usd"),
+            "num_turns": obj.get("num_turns"),
+            "duration_ms": duration if isinstance(duration, (int, float))
+            and not isinstance(duration, bool) else None,
+            "error": err, "raw": stdout, **_usage_fields(obj)}
