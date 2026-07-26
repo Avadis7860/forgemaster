@@ -28,7 +28,7 @@ from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 
 from cockpit import auth, interview
 from cockpit.config import Settings
-from cockpit.db import store
+from cockpit.db import alerts, store
 from cockpit.dispatch import abort, reviewer, worker
 from cockpit.dispatch import worktree as worktree_mod
 from cockpit.gate import merge as merge_gate
@@ -49,6 +49,34 @@ _INERT_FEATURE_STATUS = frozenset({"merged", "cancelled"})
 # États du DAG INTER-feature (v10) qui interdisent le dispatch : prérequis non-mergé (BLOCKED_DEPS) ou graphe
 # malformé (ERROR/CYCLE, déjà flagué par `check`, défensif ici). READY/ACTIVE passent (feature drainable).
 _BLOCKED_FEATURE_STATES = frozenset({"BLOCKED_DEPS", "ERROR", "CYCLE"})
+
+# Alertes (v17, no-silent-block) : motifs de blocage de niveau WORKER (tenus / échoués au drain). Résolus
+# quand la feature draine (cf. resolve après `_dispositions`) — par opposition à `gate_red`, dont le cycle
+# vit dans `finalize_feature` / `run_merge` (émis rouge, résous vert).
+_WORKER_ALERT_KINDS = ("worker_failed", "rate_limited", "interrupted", "interview_hold", "socle_hold")
+
+
+def _emit_report_alert(conn: sqlite3.Connection, project: str, slug: str, report: dict) -> None:
+    """Traduit un rapport de run BLOQUANT en alerte actionnable — émis PENDANT le drain, au fil des runs (pas
+    un batch en fin), pour qu'un blocage remonte tant que d'autres features drainent encore. Ordre = celui de
+    l'orchestrateur : interview / rate-limit / interrupt (tenus, `warn`) puis échec worker (`blocker`). No-op
+    si le run a réussi. Best-effort (via `alerts.emit_alert`)."""
+    ref = f"{project}/{slug}"
+    if report.get("needs_terminal"):
+        alerts.emit_alert(conn, project=project, feature_ref=ref, feature=slug, kind="interview_hold",
+                          severity="warn",
+                          reason="interview terminale requise (task interactive, non-headless)")
+    elif report.get("rate_limited"):
+        alerts.emit_alert(conn, project=project, feature_ref=ref, feature=slug, kind="rate_limited",
+                          severity="warn",
+                          reason="plafond rate-limit 5 h de l'org atteint — tenue, re-runnable après reset")
+    elif report.get("interrupted"):
+        alerts.emit_alert(conn, project=project, feature_ref=ref, feature=slug, kind="interrupted",
+                          severity="warn",
+                          reason="interrompue par un signal externe (teardown/OOM/session) — re-runnable")
+    elif not report.get("ok"):
+        alerts.emit_alert(conn, project=project, feature_ref=ref, feature=slug, kind="worker_failed",
+                          severity="blocker", reason=report.get("reason") or "run worker en échec")
 
 
 def _discoverable_features(conn: sqlite3.Connection, project: str,
@@ -156,8 +184,18 @@ def finalize_feature(conn: sqlite3.Connection, settings: Settings, project: str,
             verify.autoverify_feature(conn, settings, project=project, feature=feature, sha=sha)
     ev = merge_gate.evaluate_gate(conn, settings, feature_ref=feature_ref, human_go=False, git=git)
     decision = ev.get("decision") or {}
-    return {"feature": feature, "merge_ready": bool(decision.get("gate_green")),
-            "blockers": list(decision.get("blockers", [])), "review": review_report}
+    green = bool(decision.get("gate_green"))
+    blockers = list(decision.get("blockers", []))
+    # Cycle de vie de l'alerte `gate_red` (aucun blocage silencieux) : gate rouge → une alerte actionnable
+    # (findings = les blockers) ; gate redevenu vert (après un refix / une review fournie) → on résout la
+    # `gate_red` ouverte. Best-effort — ne casse jamais la finalisation.
+    if green:
+        alerts.resolve_alerts(conn, project=project, feature_ref=feature_ref, kinds=("gate_red",))
+    elif blockers:
+        alerts.emit_alert(conn, project=project, feature_ref=feature_ref, feature=feature, kind="gate_red",
+                          severity="blocker", reason=blockers[0], tier=merge_gate.blocker_tier(blockers),
+                          findings=blockers)
+    return {"feature": feature, "merge_ready": green, "blockers": blockers, "review": review_report}
 
 
 def run_project(conn: sqlite3.Connection, settings: Settings, *, project: str,
@@ -209,6 +247,11 @@ def run_project(conn: sqlite3.Connection, settings: Settings, *, project: str,
                                                failed | needs_interview | held_for_socle
                                                | rate_limited | interrupted):
                 if socle_blocking and slug != socle_slug:
+                    if slug not in held_for_socle:      # émis une fois (l'UPSERT dédup, mais évite le spam)
+                        alerts.emit_alert(conn, project=project, feature_ref=f"{project}/{slug}",
+                                          feature=slug, kind="socle_hold", severity="warn",
+                                          reason="en attente du merge du socle (design requis avant de "
+                                                 "brancher depuis dev)")
                     held_for_socle.add(slug)            # feature de travail : attend le merge du socle
                     continue
                 if len(in_flight) >= max_parallel:
@@ -223,6 +266,7 @@ def run_project(conn: sqlite3.Connection, settings: Settings, *, project: str,
                 in_flight.discard(slug)
                 report = fut.result()                   # _dispatch_one ne lève jamais
                 reports.append(report)
+                _emit_report_alert(conn, project, slug, report)   # v17 : blocage → alerte, PENDANT le drain
                 if report.get("needs_terminal"):
                     needs_interview.add(slug)           # tenue pour `cockpit interview` — pas un échec
                 elif report.get("rate_limited"):
@@ -247,6 +291,11 @@ def run_project(conn: sqlite3.Connection, settings: Settings, *, project: str,
     dispositions = _dispositions(conn, project, drained=set(worked), failed=failed,
                                  interview=needs_interview, held_socle=held_for_socle,
                                  rate_limited=rate_limited, interrupted=interrupted)
+    # Reconcile : une feature qui a DRAINÉ son travail ce run n'est plus tenue/échouée au niveau worker → on
+    # résout ses alertes worker-level ouvertes (pas `gate_red` : son cycle vit dans `finalize_feature`).
+    for slug in dispositions.get("drained", []):
+        alerts.resolve_alerts(conn, project=project, feature_ref=f"{project}/{slug}",
+                              kinds=_WORKER_ALERT_KINDS)
     return _summarize(project, reports, failed, finalizations, needs_interview=needs_interview,
                       held_for_socle=held_for_socle, rate_limited=rate_limited, interrupted=interrupted,
                       dispositions=dispositions, aborted=aborted)
@@ -273,6 +322,9 @@ def run_feature(conn: sqlite3.Connection, settings: Settings, *, project: str, f
     # lui-même n'est pas gaté (il doit pouvoir être drainé/tenu pour l'interview).
     socle = interview.socle_feature(conn, project)
     if socle is not None and socle["status"] != "merged" and feature != socle["slug"]:
+        alerts.emit_alert(conn, project=project, feature_ref=f"{project}/{feature}", feature=feature,
+                          kind="socle_hold", severity="warn",
+                          reason="en attente du merge du socle (design requis avant de brancher depuis dev)")
         return _summarize(project, [], set(), [], held_for_socle={feature})
     feature_ref = f"{project}/{feature}"
     abort.clear_abort(settings, project)   # (web) run frais : purge une sentinelle éventée
@@ -300,6 +352,8 @@ def run_feature(conn: sqlite3.Connection, settings: Settings, *, project: str, f
     interrupted: set[str] = {feature} if last_interrupt else set()
     failed: set[str] = ({feature} if (reports and not reports[-1]["ok"] and not last_held and not last_rate
                                       and not last_interrupt) else set())
+    if reports:
+        _emit_report_alert(conn, project, feature, reports[-1])   # v17 : blocage de la feature → alerte
     worked = _worked_complete_features(conn, project,
                                        failed | needs_interview | rate_limited | interrupted)
     finalizations = ([finalize_feature(conn, settings, project, feature, review_runner=review_runner)]
@@ -307,6 +361,9 @@ def run_feature(conn: sqlite3.Connection, settings: Settings, *, project: str, f
     dispositions = _dispositions(conn, project, drained=set(worked), failed=failed,
                                  interview=needs_interview, held_socle=set(), rate_limited=rate_limited,
                                  interrupted=interrupted)
+    for slug in dispositions.get("drained", []):   # v17 : feature drainée → résout ses alertes worker-level
+        alerts.resolve_alerts(conn, project=project, feature_ref=f"{project}/{slug}",
+                              kinds=_WORKER_ALERT_KINDS)
     return _summarize(project, reports, failed, finalizations, needs_interview=needs_interview,
                       rate_limited=rate_limited, interrupted=interrupted, dispositions=dispositions,
                       aborted=aborted)

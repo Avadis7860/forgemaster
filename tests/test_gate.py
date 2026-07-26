@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from cockpit.config import Settings
-from cockpit.db import store
+from cockpit.db import alerts, store
 from cockpit.dispatch import ports, worktree
 from cockpit.gate import merge, review, toolchain, verify
 from cockpit.git.identity import resolve_identity
@@ -772,3 +772,45 @@ def test_run_merge_front_change_blocked_without_toolchain_verdict(ctx):
     toolchain.write_verdict(settings, "proj", "feat", [{"name": "npm-run-gate", "ok": True}], sha=head_sha)
     done = merge.run_merge(conn, settings, feature_ref="proj/feat", human_go=True, git=git)
     assert done["merged"] is True and git.feature_sha(sot, "dev") == head_sha
+
+
+# -- alertes (v17, no-silent-block) : gate rouge au merge → alerte ; merge réussi → résolution -----
+
+def test_run_merge_red_gate_emits_gate_red_alert(ctx):
+    """Un `cockpit merge` refusé sur gate ROUGE (🔴 reviewer frais) persiste une alerte `gate_red`
+    actionnable (findings = les blockers, tier de contexte) — aucun blocage silencieux. Rien n'est muté."""
+    settings, conn = ctx
+    git = InternalGit()
+    _seed_committed_feature(conn, settings, git, red_finding=True)
+    rep = merge.run_merge(conn, settings, feature_ref="proj/feat", human_go=True, git=git)
+    assert rep["merged"] is False and rep["decision"]["gate_green"] is False
+    opened = {a["kind"]: a for a in alerts.list_alerts(conn, "open")}
+    assert "gate_red" in opened
+    a = opened["gate_red"]
+    assert a["feature"] == "feat" and a["severity"] == "blocker" and a["tier"] == "tier1"
+    assert isinstance(a["findings"], list) and a["findings"]      # les blockers portés en findings
+
+
+def test_run_merge_green_hold_without_go_emits_no_alert(ctx):
+    """Un gate VERT sans GO humain est un `hold` (bouton en attente), PAS un blocage → aucune alerte
+    `gate_red` (on ne crie pas au loup sur un gate propre)."""
+    settings, conn = ctx
+    git = InternalGit()
+    _seed_committed_feature(conn, settings, git)          # feature propre (gate vert)
+    merge.run_merge(conn, settings, feature_ref="proj/feat", human_go=False, git=git)
+    assert alerts.list_alerts(conn, "open") == []
+
+
+def test_run_merge_success_resolves_open_alerts(ctx):
+    """Ancre de résolution définitive : une feature mergée (GO humain) voit TOUTE alerte ouverte résolue —
+    une feature mergée ne re-bloque jamais, le compteur du badge doit tomber."""
+    settings, conn = ctx
+    git = InternalGit()
+    _seed_committed_feature(conn, settings, git)          # feature propre → mergeable
+    alerts.emit_alert(conn, project="proj", feature_ref="proj/feat", feature="feat",
+                      kind="worker_failed", reason="échec d'un run précédent")   # alerte héritée d'avant
+    assert alerts.list_alerts(conn, "open")               # bien ouverte au départ
+    done = merge.run_merge(conn, settings, feature_ref="proj/feat", human_go=True, git=git)
+    assert done["merged"] is True
+    assert alerts.list_alerts(conn, "open") == []         # résolue au merge
+    assert any(a["kind"] == "worker_failed" for a in alerts.list_alerts(conn, "resolved"))

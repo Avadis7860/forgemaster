@@ -816,3 +816,38 @@ def test_ensure_columns_migrates_v11_to_v12_adds_task_mode_in_place(tmp_path: Pa
     schema.ensure_columns(conn)                                            # 2ᵉ appel : no-op (ALTER gardé)
     assert conn.execute("SELECT mode FROM tasks WHERE id='t1'").fetchone()["mode"] == "headless"
     conn.close()
+
+
+def test_migrate_v16_to_v17_adds_alerts_table_in_place(tmp_path: Path):
+    """v17 (no-silent-block) : la table `alerts` est BRAND-NEW → ajoutée en place sur une base v16 par
+    `CREATE IF NOT EXISTS` (précédent v11 `non_runs`), SANS rebuild. Données préservées, index unique partiel
+    `ux_alerts_open` posé, migration idempotente."""
+    import sqlite3
+
+    from cockpit.db import schema, store
+    conn = store.connect(tmp_path / "v16.db")
+    schema.create_schema(conn)                          # base à jour…
+    conn.execute("DROP INDEX ux_alerts_open")
+    conn.execute("DROP TABLE alerts")                   # …qu'on ramène à un état « pré-v17 » (sans alerts)
+    conn.execute("PRAGMA user_version = 16")
+    conn.commit()
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "alerts" not in tables
+
+    assert store.migrate(conn) == schema.SCHEMA_VERSION == 17   # migre en place → v17
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    idx = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+    assert "alerts" in tables and "ux_alerts_open" in idx and "ix_alerts_status" in idx
+    # l'index unique partiel tient : une 2e ligne OUVERTE de même (project, feature_ref, kind) est rejetée
+    conn.execute("INSERT INTO alerts (id, project, feature_ref, feature, kind, reason, status, "
+                 "created_at, updated_at) VALUES ('a1','p','p/f','f','gate_red','r','open','t','t')")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO alerts (id, project, feature_ref, feature, kind, reason, status, "
+                     "created_at, updated_at) VALUES ('a2','p','p/f','f','gate_red','r2','open','t','t')")
+    conn.rollback()
+    conn.execute("INSERT INTO alerts (id, project, feature_ref, feature, kind, reason, status, "
+                 "created_at, updated_at) VALUES ('a1','p','p/f','f','gate_red','r','open','t','t')")
+    conn.commit()
+    assert store.migrate(conn) == 17                    # idempotent
+    assert conn.execute("SELECT reason FROM alerts WHERE id='a1'").fetchone()[0] == "r"   # donnée préservée
+    conn.close()

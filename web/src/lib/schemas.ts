@@ -1012,3 +1012,32 @@ export const DeploymentLogsSchema = z.object({
   lines: z.array(z.string()),
 })
 export type DeploymentLogs = z.infer<typeof DeploymentLogsSchema>
+
+// Alertes (v17, no-silent-block) : un blocage de drain persisté, actionnable, poussé au centre du header.
+// `findings` = payload JSON libre (blockers[]/findings[]) → `unknown` nullable (le front l'affiche compact).
+export const AlertSchema = z.object({
+  id: z.string(),
+  project: z.string(),
+  feature_ref: z.string(),
+  feature: z.string(),
+  kind: z.enum([
+    'gate_red',
+    'worker_failed',
+    'rate_limited',
+    'interrupted',
+    'socle_hold',
+    'interview_hold',
+  ]),
+  tier: z.string().nullable(),
+  severity: z.enum(['blocker', 'warn', 'info']),
+  reason: z.string(),
+  findings: z.unknown().nullable(),
+  status: z.enum(['open', 'acked', 'resolved']),
+  created_at: z.string(),
+  updated_at: z.string(),
+  resolved_at: z.string().nullable(),
+})
+export type Alert = z.infer<typeof AlertSchema>
+
+export const AlertsListSchema = z.object({ alerts: z.array(AlertSchema), count: z.number() })
+export type AlertsList = z.infer<typeof AlertsListSchema>

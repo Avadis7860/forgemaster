@@ -16,7 +16,7 @@ from starlette.websockets import WebSocketDisconnect
 from cockpit.config import Settings
 from cockpit.core import run
 from cockpit.daemon import app as app_mod
-from cockpit.db import store
+from cockpit.db import alerts, store
 from cockpit.dispatch import jobs, worker, worktree
 from cockpit.gate import toolchain
 from cockpit.git.identity import resolve_identity
@@ -1291,3 +1291,32 @@ def test_missing_ui_serves_loud_placeholder_not_silent_404(tmp_path, monkeypatch
     r = c.get("/")
     assert r.status_code == 200
     assert "cockpit setup" in r.text and "non buildée" in r.text
+
+
+# -- alertes (v17, no-silent-block) : lecture + acquittement via HTTP ------------------------------
+
+def test_alerts_api_lists_open_and_acks(client):
+    """GET /api/alerts rend les alertes ouvertes + leur compte (badge/centre du header) ; POST
+    /api/alerts/{id}/ack les acquitte (open→acked, sortent du compteur) ; un id inconnu → 404."""
+    c, settings = client
+    conn = store.open_db(settings)
+    try:
+        alerts.emit_alert(conn, project="proj", feature_ref="proj/feat", feature="feat", kind="gate_red",
+                          reason="Tier-1 : aucune revue", tier="tier1", findings=["b1"])
+        alerts.emit_alert(conn, project="proj", feature_ref="proj/other", feature="other",
+                          kind="worker_failed", reason="boom")
+    finally:
+        conn.close()
+
+    r = c.get("/api/alerts")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["count"] == 2 and {a["kind"] for a in body["alerts"]} == {"gate_red", "worker_failed"}
+    gate = next(a for a in body["alerts"] if a["kind"] == "gate_red")
+    assert gate["feature"] == "feat" and gate["tier"] == "tier1" and gate["findings"] == ["b1"]
+
+    aid = gate["id"]
+    ack = c.post(f"/api/alerts/{aid}/ack")
+    assert ack.status_code == 200 and ack.json()["status"] == "acked"
+    assert c.get("/api/alerts").json()["count"] == 1              # l'acquittée sort du compteur
+    assert c.post("/api/alerts/does-not-exist/ack").status_code == 404   # KeyError → 404 (handler global)

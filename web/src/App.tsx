@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, Outlet, useLocation, useParams } from '@tanstack/react-router'
 import { HealthDot } from '@/components/HealthDot'
+import { NotificationCenter } from '@/components/NotificationCenter'
 import { OnboardingBanner } from '@/components/OnboardingBanner'
 import { ProjectRail } from '@/components/ProjectRail'
 import { Badge } from '@/components/ui'
@@ -52,6 +53,7 @@ export function AppShell() {
             Réglages
             {settingsIncomplete && <Badge tone="warn" dot>à régler</Badge>}
           </Link>
+          <NotificationCenter />
           <HealthDot />
         </div>
       </header>

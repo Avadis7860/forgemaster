@@ -70,12 +70,21 @@ interrupted by user]`) est classé À PART — ce n'est pas un échec de la task
 re-dispatchable), et un faux `failed` (`claude -p rc=143`) poisonnerait l'instrumentation d'outcome comme un
 rate-limit (v15) ou un succès relu killed (D3). SQLite ne sait pas ALTER un CHECK → rebuild de table
 (`_migrate_v16_...`, patron v8/v15), gardé + idempotent. Classé par `parse_headless_result`/`record_finish`.
+v17 (no-silent-block / alerts) = nouvelle table `alerts` : persiste TOUT blocage de drain actionnable (gate
+rouge, hold socle, worker failed, rate_limited, interrupted, interview requise) → centre d'alertes poussé
+(doctrine « aucun blocage silencieux »). Table neuve → créée sur base existante par `CREATE IF NOT EXISTS`
+(précédent v11 `non_runs`/`gate_verdicts` ; pas de rebuild, pas d'`ensure_columns`). Dédup par index UNIQUE
+PARTIEL `ux_alerts_open(project, feature_ref, kind) WHERE status='open'` : au plus UNE alerte ouverte / motif
+(`emit_alert` UPSERT sur ce conflit, jamais un doublon). Lifecycle `open|acked|resolved` : `resolve_alerts`
+ferme au succès (merge réussi / feature drainée / gate redevenue verte) pour que le compteur dise vrai. Émis
+chokepoint de décision (orchestrateur/merge), best-effort (cf. `db/alerts.py`) — une alerte ratée ne casse
+jamais un drain. Lu par le daemon (`GET /api/alerts`), poussé au header web (poll court).
 """
 from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 # Ordre = ordre de création (les FK pointent vers des tables déjà créées). Chaque table porte les
 # invariants durs en contraintes SQL (NOT NULL, UNIQUE, FK, CHECK sur les enums de statut).
@@ -214,6 +223,28 @@ DDL: tuple[str, ...] = (
         created_at  TEXT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS alerts (
+        id          TEXT PRIMARY KEY,
+        project     TEXT NOT NULL,                 -- slug projet (scope + deep-link)
+        feature_ref TEXT NOT NULL,                 -- "projet/feature" — scope de dedup/resolve (journal pur)
+        feature     TEXT NOT NULL,                 -- slug feature (deep-link ?feature=<slug>)
+        kind        TEXT NOT NULL                  -- taxonomie de motif de blocage (enum serré : 6 émis)
+                        CHECK (kind IN ('gate_red', 'worker_failed', 'rate_limited',
+                                        'interrupted', 'socle_hold', 'interview_hold')),
+        tier        TEXT                           -- contexte gate ; NULL hors-gate
+                        CHECK (tier IS NULL OR tier IN ('tier0', 'tier1', 'tier1.5', 'native')),
+        severity    TEXT NOT NULL DEFAULT 'blocker'
+                        CHECK (severity IN ('blocker', 'warn', 'info')),
+        reason      TEXT NOT NULL,                 -- motif court, 1 ligne lisible
+        findings    TEXT,                          -- JSON optionnel : blockers[]/findings[] structurés
+        status      TEXT NOT NULL DEFAULT 'open'
+                        CHECK (status IN ('open', 'acked', 'resolved')),
+        created_at  TEXT NOT NULL,                 -- 1re détection (ts INJECTÉ par l'appelant, jamais _now())
+        updated_at  TEXT NOT NULL,                 -- dernière ré-détection (refresh d'upsert)
+        resolved_at TEXT                           -- NULL tant que open/acked
+    )
+    """,
 )
 
 # Colonnes ajoutées à une table pré-existante après sa v1 (chemin ALTER idempotent — cf. `ensure_columns`).
@@ -268,6 +299,11 @@ INDEXES: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS ix_deployments_project ON deployments(project_id)",
     "CREATE INDEX IF NOT EXISTS ix_non_runs_feature ON non_runs(feature_ref)",
     "CREATE INDEX IF NOT EXISTS ix_gate_verdicts_feature ON gate_verdicts(project, feature)",
+    # Dédup : au plus UNE alerte OUVERTE par (projet, feature, motif) — cible de l'upsert d'`emit_alert`
+    # (partiel `WHERE status='open'` → acked/resolved sortent de l'index ; une re-blocage ré-ouvre net).
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_alerts_open ON alerts(project, feature_ref, kind) "
+    "WHERE status = 'open'",
+    "CREATE INDEX IF NOT EXISTS ix_alerts_status ON alerts(status)",
 )
 
 

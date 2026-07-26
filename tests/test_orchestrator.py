@@ -13,7 +13,7 @@ import pytest
 
 from cockpit.config import Settings
 from cockpit.core import run
-from cockpit.db import store
+from cockpit.db import alerts, store
 from cockpit.dispatch import orchestrator
 from cockpit.git.internal import InternalGit
 from cockpit.projects import registry
@@ -674,3 +674,74 @@ def test_run_feature_stops_and_not_ready_on_worker_failure(ctx):
     assert r.calls == ["feat"]                           # exactement UNE tentative — pas de re-dispatch
     assert _statuses(conn, "feat") == {"t1": "todo", "t2": "todo"}
     assert summary["merge_ready"] == []
+
+
+# -- alertes (v17, no-silent-block) : tout blocage de drain persiste une alerte actionnable --------
+
+def _open_alerts(conn) -> dict[str, dict]:
+    """Alertes ouvertes indexées par `(feature, kind)` (lecture directe de la couche `alerts`)."""
+    return {(a["feature"], a["kind"]): a for a in alerts.list_alerts(conn, "open")}
+
+
+def test_run_project_emits_worker_failed_alert_and_none_for_healthy(ctx):
+    """Une feature dont le run échoue laisse une alerte `worker_failed` (blocker) ; la feature saine drainée
+    n'a AUCUNE alerte ouverte (aucun blocage silencieux, mais pas de faux positif non plus)."""
+    settings, conn = ctx
+    _new_project(conn, settings, "proj")
+    _seed(conn, settings, "proj", "good", [("t", [])])
+    _seed(conn, settings, "proj", "bad", [("t", [])])
+    orchestrator.run_project(conn, settings, project="proj", git=InternalGit(), runner=_Runner(fail=("bad",)))
+    opened = _open_alerts(conn)
+    assert ("bad", "worker_failed") in opened
+    assert opened[("bad", "worker_failed")]["severity"] == "blocker"
+    assert not any(f == "good" for (f, _k) in opened)     # feature saine → pas d'alerte
+
+
+def test_run_feature_emits_rate_limited_alert(ctx):
+    """D1 : un rejet rate-limit → alerte `rate_limited` tenue (severity warn, re-runnable)."""
+    settings, conn = ctx
+    _new_project(conn, settings, "proj")
+    _seed(conn, settings, "proj", "work", [("t", [])])
+    orchestrator.run_feature(conn, settings, project="proj", feature="work",
+                             git=InternalGit(), runner=_RateLimitRunner(rl=("work",)))
+    a = _open_alerts(conn).get(("work", "rate_limited"))
+    assert a is not None and a["severity"] == "warn"
+
+
+def test_run_feature_emits_interrupted_alert(ctx):
+    """D2 : un SIGTERM externe → alerte `interrupted` tenue (severity warn, re-runnable)."""
+    settings, conn = ctx
+    _new_project(conn, settings, "proj")
+    _seed(conn, settings, "proj", "work", [("t", [])])
+    orchestrator.run_feature(conn, settings, project="proj", feature="work",
+                             git=InternalGit(), runner=_InterruptRunner(interrupt=("work",)))
+    a = _open_alerts(conn).get(("work", "interrupted"))
+    assert a is not None and a["severity"] == "warn"
+
+
+def test_run_project_emits_socle_hold_and_interview_hold_alerts(ctx):
+    """Un socle interactif NON-mergé : la feature de travail est tenue → alerte `socle_hold` ; le socle
+    lui-même a une next task interactive → alerte `interview_hold`. Les deux motifs remontent, en `warn`."""
+    settings, conn = ctx
+    _new_project(conn, settings, "proj")
+    _mk_socle(conn, "proj", merged=False, worked=False)   # socle interactif à FAIRE (cadrage todo), non-mergé
+    _seed(conn, settings, "proj", "work", [("t", [])])
+    orchestrator.run_project(conn, settings, project="proj", git=InternalGit(), runner=_Runner())
+    opened = _open_alerts(conn)
+    assert ("work", "socle_hold") in opened and opened[("work", "socle_hold")]["severity"] == "warn"
+    assert ("socle", "interview_hold") in opened
+
+
+def test_run_project_resolves_worker_alert_once_feature_drains(ctx):
+    """Auto-resolve : une feature qui échoue (alerte `worker_failed` ouverte) puis DRAINE au run suivant voit
+    son alerte worker-level résolue → le compteur du badge redevient honnête."""
+    settings, conn = ctx
+    _new_project(conn, settings, "proj")
+    _seed(conn, settings, "proj", "flaky", [("t", [])])
+    orchestrator.run_project(conn, settings, project="proj", git=InternalGit(),
+                             runner=_Runner(fail=("flaky",)))
+    assert ("flaky", "worker_failed") in _open_alerts(conn)      # 1er run : échec → alerte ouverte
+    orchestrator.run_project(conn, settings, project="proj", git=InternalGit(), runner=_Runner())
+    assert ("flaky", "worker_failed") not in _open_alerts(conn)  # 2e run : drainée → résolue
+    assert any(a["kind"] == "worker_failed" and a["status"] == "resolved"
+               for a in alerts.list_alerts(conn, "resolved"))

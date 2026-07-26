@@ -13,6 +13,8 @@ import {
   CapitalSectionsSchema,
   CapitalBodySchema,
   AbortResultSchema,
+  AlertSchema,
+  AlertsListSchema,
   DeploymentActionSchema,
   DeploymentLogsSchema,
   DeploymentsSchema,
@@ -413,4 +415,10 @@ export const api = {
   getBootstrap: () => request('/api/bootstrap', BootstrapPreviewSchema),
   runBootstrap: (body: BootstrapRunInput = {}) =>
     request('/api/bootstrap', BootstrapReportSchema, { method: 'POST', body: JSON.stringify(body) }),
+
+  // Alertes (v17, no-silent-block) : blocages de drain persistés, poussés au centre du header (poll court).
+  // GET idempotent (lecture pure) ; POST ack = mutation utilisateur (open→acked), corps vide (calque abortRun).
+  listAlerts: () => request('/api/alerts', AlertsListSchema),
+  ackAlert: (id: string) =>
+    request(`/api/alerts/${encodeURIComponent(id)}/ack`, AlertSchema, { method: 'POST', body: '{}' }),
 }

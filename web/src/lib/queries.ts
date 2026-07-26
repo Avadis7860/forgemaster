@@ -49,6 +49,7 @@ export const qk = {
   gate: (project: string, feature: string) => ['gate', project, feature] as const,
   onboarding: ['onboarding'] as const,
   bootstrap: ['bootstrap'] as const,
+  alerts: ['alerts'] as const,
 }
 
 export function useHealth() {
@@ -619,5 +620,22 @@ export function useRunBootstrap() {
       qc.invalidateQueries({ queryKey: qk.projects })
       qc.invalidateQueries({ queryKey: qk.onboarding })
     },
+  })
+}
+
+// Alertes (v17, no-silent-block) : le centre d'alertes du header. Poll court (~5 s) — toujours monté, il
+// pousse tout blocage de drain sans que l'humain navigue vers la page de la feature bloquée. `staleTime` 0 :
+// le badge doit dire vrai. Retourne { alerts, count } (vide honnête si le daemon est injoignable → error géré).
+export function useAlerts() {
+  return useQuery({ queryKey: qk.alerts, queryFn: api.listAlerts, refetchInterval: 5_000, retry: 1 })
+}
+
+// Acquitter une alerte (open→acked) : elle sort du compteur. Invalide la liste au settle pour rafraîchir
+// le badge immédiatement (sans attendre le prochain poll).
+export function useAckAlert() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.ackAlert(id),
+    onSettled: () => qc.invalidateQueries({ queryKey: qk.alerts }),
   })
 }

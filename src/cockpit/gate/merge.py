@@ -26,6 +26,7 @@ import sqlite3
 from pathlib import Path
 
 from cockpit.config import Settings
+from cockpit.db import alerts
 from cockpit.dispatch import worktree
 from cockpit.gate import history, review, toolchain, verify
 from cockpit.git.identity import resolve_identity
@@ -36,6 +37,20 @@ from cockpit.secrets import cred_resolver
 
 BASE_BRANCH = "dev"     # base du cycle de merge (discipline de branche)
 MAIN_BRANCH = "main"    # branche promue (ff depuis dev — main-suit-dev)
+
+
+def blocker_tier(blockers: list[str]) -> str | None:
+    """Déduit le tier de CONTEXTE (le plus fondamental) d'une liste de blockers de `compose_merge_decision`,
+    pour l'affichage d'une alerte `gate_red`. None si aucun tier reconnu. Ordre : tier0 (filet dur) → tier1.5
+    → tier1 ; « tier-1.5 » testé AVANT « tier-1 » (le second est un sous-mot du premier)."""
+    joined = " ".join(blockers).lower()
+    if "tier-0" in joined:
+        return "tier0"
+    if "tier-1.5" in joined:
+        return "tier1.5"
+    if "tier-1" in joined:
+        return "tier1"
+    return None
 
 
 # -- cœur PUR : la chaîne d'autorité (portée verbatim de worker_merge_gate.compose_merge_decision) --
@@ -251,6 +266,12 @@ def run_merge(conn: sqlite3.Connection, settings: Settings, *, feature_ref: str,
     if not decision["allow"]:                             # garde de sûreté : rien ne mute
         report["reason"] = ("en attente du GO humain" if decision["gate_green"]
                             else "gate rouge — " + "; ".join(decision["blockers"]))
+        if not decision["gate_green"]:                    # gate ROUGE (≠ vert-sans-GO, pas un blocage)
+            blk = decision["blockers"]
+            alerts.emit_alert(conn, project=project_slug, feature_ref=feature_ref, feature=feature_slug,
+                              kind="gate_red", severity="blocker",
+                              reason=blk[0] if blk else "gate incomplet",
+                              tier=blocker_tier(blk), findings=blk)
         return report
 
     # (1a) réalignement anti-stale-base (cockpit-merge-batched-sibling-stale-base) : quand ≥2 features
@@ -283,6 +304,8 @@ def run_merge(conn: sqlite3.Connection, settings: Settings, *, feature_ref: str,
     history.prune_verdicts(conn, project_slug, feature_slug)
     # (4) clôture DB : feature merged, tasks landées done.
     report["closed_tasks"] = _close_feature_tasks(conn, feature["id"])
+    # Ancre de résolution DÉFINITIVE : une feature mergée ne re-bloque jamais → toute alerte ouverte tombe.
+    alerts.resolve_alerts(conn, project=project_slug, feature_ref=feature_ref)
     report["pending_tasks"] = [r["slug"] for r in conn.execute(
         "SELECT slug FROM tasks WHERE feature_id = ? AND status = 'todo'", (feature["id"],)).fetchall()]
     report.update(merged=True, merge_sha=head_sha, reason="merge")
