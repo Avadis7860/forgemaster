@@ -505,6 +505,19 @@ def test_reconcile_kills_job_without_terminal_result(ctx):
     assert conn.execute("SELECT status FROM tasks WHERE slug='schema'").fetchone()["status"] == "todo"
 
 
+def test_reconcile_finalizes_rate_limited_from_terminal_result(ctx):
+    """D1×D3 : un orphelin dont le transcript porte un rejet rate-limit est finalisé `rate_limited` (pas
+    `killed`, pas `failed`) — la classification survit à la réconciliation d'orphelin (composition des deux
+    fixes drain). La task revient `todo` (re-dispatchable après reset)."""
+    from cockpit.dispatch import reconcile
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    job_id, _ = _running_job_with_log(conn, settings, _DRAIN_RATE_LIMIT_LOG)
+    assert reconcile.reconcile_orphans(conn) == [job_id]
+    assert jobs.get_job(conn, job_id)["status"] == "rate_limited"
+    assert conn.execute("SELECT status FROM tasks WHERE slug='schema'").fetchone()["status"] == "todo"
+
+
 # -- P3 : transcript live (stream-json streamé vers log_path) ---------------------------------------
 
 def test_run_streaming_writes_stdout_live_to_out_path(tmp_path: Path):
@@ -621,6 +634,36 @@ def test_parse_headless_result_stream_json_error_event_is_fail_loud():
     nd = '{"type":"result","is_error":true,"subtype":"error_max_turns","session_id":"s"}'
     parsed = worker.parse_headless_result(nd, 0)
     assert not parsed["ok"] and parsed["error"]
+
+
+# stream-json d'un run rejeté par le plafond 5h de l'org (miroir du défaut miné D1 : rc=1, rejet immédiat).
+_DRAIN_RATE_LIMIT_LOG = (
+    '{"type":"system","subtype":"init","session_id":"s"}\n'
+    '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"five_hour",'
+    '"overageStatus":"rejected","overageDisabledReason":"org_level_disabled","isUsingOverage":false}}\n'
+    '{"type":"assistant","message":{"model":"<synthetic>","content":[]}}\n'
+    '{"type":"result","is_error":true,"num_turns":1,"total_cost_usd":0,"session_id":"s"}\n'
+)
+
+
+def test_parse_headless_result_flags_rate_limit_rejection():
+    """D1 : un rejet rate-limit (`rate_limit_event status:"rejected"`, ligne NDJSON DISTINCTE du `result`) est
+    CLASSÉ `rate_limited` — pas un échec de task. `rc=1` accompagne le rejet (comme le défaut miné) mais la
+    classification rate-limit PRIME (sinon un `claude -p rc=1` générique masquerait la vraie cause)."""
+    parsed = worker.parse_headless_result(_DRAIN_RATE_LIMIT_LOG, 1)
+    assert parsed["rate_limited"] is True
+    assert parsed["rate_limit_info"]["rateLimitType"] == "five_hour"
+    assert not parsed["ok"] and "rate-limit" in parsed["error"]
+
+
+def test_parse_no_rate_limit_flag_on_plain_failure():
+    """Garde STRICTE : un vrai échec (`result is_error:true`) SANS `rate_limit_event` n'est jamais pris pour
+    un rate-limit — il reste un échec classique (`rate_limited=False`), donc la feature est bien exclue
+    (`failed`), pas gardée « dispatchable » à tort."""
+    nd = '{"type":"result","is_error":true,"subtype":"error_during_execution","session_id":"s","num_turns":1}'
+    parsed = worker.parse_headless_result(nd, 0)
+    assert parsed["rate_limited"] is False and parsed["rate_limit_info"] is None
+    assert not parsed["ok"]
 
 
 def test_dispatch_log_path_is_under_logs_dir_not_claude_transcript(ctx):
@@ -1077,3 +1120,17 @@ def test_record_finish_persists_error_on_failure(ctx):
     row = jobs.get_job(conn, job_id)
     assert row["status"] == "failed" and row["error"] == "claude -p rc=1 : boom"
     assert row["kind"] == "task"
+
+
+def test_record_finish_classifies_rate_limited_not_failed(ctx):
+    """D1 : un run rate-limité (`parsed.rate_limited`) est enregistré `rate_limited` — statut DISTINCT de
+    `failed` (v15). Sans ça, le plafond 5h de l'org compterait comme un échec de task et poisonnerait
+    l'instrumentation d'outcome (E2)."""
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    task_id = conn.execute("SELECT id FROM tasks WHERE slug='schema'").fetchone()["id"]
+    job_id = jobs.record_start(conn, task_id=task_id, worktree="/tmp/wt", session_id="s1")
+    jobs.record_finish(conn, job_id, {"ok": False, "rate_limited": True, "num_turns": 1, "cost_usd": 0,
+                                      "error": "rate-limit five_hour rejeté (overage rejected)"})
+    row = jobs.get_job(conn, job_id)
+    assert row["status"] == "rate_limited" and row["error"].startswith("rate-limit")

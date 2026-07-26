@@ -633,6 +633,50 @@ def test_migrate_v8_drops_project_type_check(tmp_path: Path):
     conn.close()
 
 
+def test_migrate_v15_adds_rate_limited_to_dispatch_status_check(tmp_path: Path):
+    """Une base v14 dont `dispatch_jobs.status` porte l'ancien CHECK (sans `rate_limited`) migre en v15 par
+    rebuild de table : le nouveau statut est accepté, les données sont préservées, et l'ancien enum reste
+    valable. SQLite ne sait pas ALTER un CHECK → rebuild (patron v8). Gardé + idempotent."""
+    import sqlite3
+
+    from cockpit.db import schema, store
+    conn = store.connect(tmp_path / "v14.db")
+    conn.execute("PRAGMA foreign_keys = OFF")   # ce test cible le CHECK de `status`, pas la FK task_id
+    conn.executescript(
+        "CREATE TABLE dispatch_jobs ("
+        " id TEXT PRIMARY KEY,"
+        " task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,"
+        " worktree_path TEXT NOT NULL, port INTEGER, pid INTEGER,"
+        " status TEXT NOT NULL DEFAULT 'pending'"
+        "   CHECK (status IN ('pending','running','done','failed','killed')),"
+        " kind TEXT NOT NULL DEFAULT 'task' CHECK (kind IN ('task','review','toolchain','fix')),"
+        " log_path TEXT, session_id TEXT, num_turns INTEGER, cost_usd REAL, wall_s REAL, engine TEXT,"
+        " input_tokens INTEGER, output_tokens INTEGER, cache_read_tokens INTEGER,"
+        " cache_creation_tokens INTEGER, model TEXT, error TEXT, started_at TEXT, ended_at TEXT);")
+    conn.execute("INSERT INTO dispatch_jobs (id, task_id, worktree_path, status) "
+                 "VALUES ('j1','tk1','/wt','done')")
+    conn.execute("PRAGMA user_version = 14")
+    conn.commit()
+    # avant migration : l'ancien CHECK rejette `rate_limited`
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO dispatch_jobs (id, task_id, worktree_path, status) "
+                     "VALUES ('j2','tk1','/wt','rate_limited')")
+    conn.rollback()
+
+    assert store.migrate(conn) == schema.SCHEMA_VERSION                     # migre → v15 (rebuild de table)
+    ddl = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='dispatch_jobs'").fetchone()[0]
+    assert "rate_limited" in ddl                                           # le CHECK a gagné le statut
+    assert conn.execute("SELECT status FROM dispatch_jobs WHERE id='j1'").fetchone()[0] == "done"  # préservé
+    # après migration : `rate_limited` est accepté côté DB
+    conn.execute("INSERT INTO dispatch_jobs (id, task_id, worktree_path, status) "
+                 "VALUES ('j3','tk1','/wt','rate_limited')")
+    conn.commit()
+    assert conn.execute("SELECT status FROM dispatch_jobs WHERE id='j3'").fetchone()[0] == "rate_limited"
+    assert store.migrate(conn) == schema.SCHEMA_VERSION                     # idempotent
+    conn.close()
+
+
 def test_ensure_columns_migrates_v8_to_v9_in_place(tmp_path: Path):
     """Une base v8 (features avec facet, sans blueprint) migre en place : `ensure_columns` ajoute la colonne
     `blueprint` (nullable, aucun défaut → NULL pour l'existant). Additif, idempotent (2ᵉ appel no-op)."""

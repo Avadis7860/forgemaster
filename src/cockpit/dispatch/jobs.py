@@ -65,8 +65,11 @@ def record_finish(conn: sqlite3.Connection, job_id: str, parsed: dict, *,
     si un abort concurrent a déjà posé `killed` (course `record_finish` vs abort), on ne le **clobbe pas** en
     `failed` — un job déjà finalisé ne se re-finalise jamais. L'usage token (v13 : input/output/cache + modèle
     dominant, extrait par `parse_headless_result`) est persisté ici — NULL sur un run raté (parsed sans
-    usage), jamais un faux zéro. Le $ reste `cost_usd` (= total_cost_usd de Claude), non recalculé."""
-    final = status or ("done" if parsed.get("ok") else "failed")
+    usage), jamais un faux zéro. Le $ reste `cost_usd` (= total_cost_usd de Claude), non recalculé. Un run
+    **rate-limité** (`parsed.rate_limited`, v15) est classé `rate_limited` — distinct de `failed` : le plafond
+    5 h de l'org rejette `claude -p`, ce n'est pas un échec de la task (l'orchestrateur TIENT la feature)."""
+    final = status or ("rate_limited" if parsed.get("rate_limited")
+                       else "done" if parsed.get("ok") else "failed")
     conn.execute(
         "UPDATE dispatch_jobs SET status = ?, num_turns = ?, cost_usd = ?, wall_s = ?, "
         "input_tokens = ?, output_tokens = ?, cache_read_tokens = ?, cache_creation_tokens = ?, model = ?, "
@@ -318,6 +321,28 @@ def _result_event(text: str) -> dict | None:
     return result_ev or last or _trailing_json_object(text)
 
 
+def _rate_limit_rejection(text: str) -> dict | None:
+    """Le `rate_limit_info` du **dernier** event `{"type":"rate_limit_event", …}` du stream dont le statut est
+    `"rejected"` — le plafond (`five_hour` org, overage désactivé) qui fait rejeter `claude -p` AVANT tout
+    travail. C'est une ligne NDJSON **distincte** de l'event `result` (que `_result_event` lit), d'où sa
+    propre passe. STRICT : seul `status=='rejected'` compte (un event rate-limit informatif, non rejeté, ne
+    classe rien) → un vrai échec instantané n'est jamais confondu avec un rate-limit. PUR."""
+    hit: dict | None = None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or '"rate_limit_event"' not in line:
+            continue
+        try:
+            o = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        info = o.get("rate_limit_info") if isinstance(o, dict) else None
+        if o.get("type") == "rate_limit_event" and isinstance(info, dict) \
+                and info.get("status") == "rejected":
+            hit = info
+    return hit
+
+
 # Clés d'usage token à persister (v13). Toujours présentes dans le dict retourné (None si absent) → un run
 # raté ne fabrique jamais un faux zéro ; `record_finish` les lit par `.get()`.
 _USAGE_KEYS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens", "model")
@@ -351,19 +376,30 @@ def _usage_fields(obj: dict) -> dict:
 def parse_headless_result(stdout: str, returncode: int = 0) -> dict:
     """Normalise la sortie de `claude -p` (`--output-format json` OU `stream-json` NDJSON → event `result`).
     PUR. Fail-LOUD : rc≠0, sortie vide, JSON illisible, `is_error`/`api_error_status` → `ok=False` + `error`
-    (jamais de faux-vert). Tolérant au préambule. Retour : {ok, is_error, result, session_id, cost_usd,
-    num_turns, duration_ms, error, raw} + l'usage token (`input_tokens`/`output_tokens`/`cache_read_tokens`/
+    (jamais de faux-vert). Un **rejet rate-limit** (`rate_limit_event status:"rejected"`) est classé À PART :
+    `rate_limited=True` + `rate_limit_info` (plafond org, pas un échec) — cf. `_rate_limit_rejection`.
+    Tolérant au préambule. Retour : {ok, is_error, result, session_id, cost_usd,
+    num_turns, duration_ms, error, rate_limited, rate_limit_info, raw} + l'usage token
+    (`input_tokens`/`output_tokens`/`cache_read_tokens`/
     `cache_creation_tokens`/`model`, cf. `_usage_fields`). `duration_ms` (wall du run rapporté par Claude,
     None si absent) sert notamment à donner un `wall_s` non-null quand un job est finalisé depuis son
     transcript (réconciliation d'orphelin)."""
     none_usage = dict.fromkeys(_USAGE_KEYS)
     base = {"ok": False, "is_error": True, "result": None, "session_id": None,
             "cost_usd": None, "num_turns": None, "duration_ms": None, "error": None, "raw": stdout,
-            **none_usage}
+            "rate_limited": False, "rate_limit_info": None, **none_usage}
+    text = (stdout or "").strip()
+    # Rejet rate-limit : classé AVANT le verdict générique (rc≠0 / is_error) — le plafond 5 h de l'org
+    # rejette `claude -p` sans que ce soit un échec de la task (détecté sur l'event explicite). La feature
+    # sera TENUE (pas `failed`), re-dispatchable après reset (cf. orchestrator).
+    rl = _rate_limit_rejection(text)
+    if rl is not None:
+        return {**base, "rate_limited": True, "rate_limit_info": rl,
+                "error": f"rate-limit {rl.get('rateLimitType') or '?'} rejeté "
+                         f"(overage {rl.get('overageStatus') or '?'})"}
     if returncode != 0:
         snippet = (stdout or "").strip()[:200] or "(vide)"
         return {**base, "error": f"claude -p rc={returncode} : {snippet}"}
-    text = (stdout or "").strip()
     if not text:
         return {**base, "error": "sortie vide de claude -p"}
     obj = _result_event(text)                # objet unique OU événement `result` du NDJSON stream-json
@@ -381,4 +417,5 @@ def parse_headless_result(stdout: str, returncode: int = 0) -> dict:
             "num_turns": obj.get("num_turns"),
             "duration_ms": duration if isinstance(duration, (int, float))
             and not isinstance(duration, bool) else None,
-            "error": err, "raw": stdout, **_usage_fields(obj)}
+            "error": err, "raw": stdout, "rate_limited": False, "rate_limit_info": None,
+            **_usage_fields(obj)}

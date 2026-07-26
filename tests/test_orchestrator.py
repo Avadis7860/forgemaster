@@ -278,6 +278,66 @@ def test_run_project_terminates_when_next_always_fails(ctx):
     assert _statuses(conn, "stuck") == {"t1": "todo", "t2": "todo"}
 
 
+# -- rate-limit 5h org (D1) : tenue, pas exclue ; le drain s'arrête (org-global) --------------------
+
+# stdout d'un run rejeté par le plafond 5h de l'org (rate_limit_event distinct du result event).
+_RATE_LIMIT_STDOUT = (
+    '{"type":"system","subtype":"init","session_id":"s"}\n'
+    '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"five_hour",'
+    '"overageStatus":"rejected","overageDisabledReason":"org_level_disabled"}}\n'
+    '{"type":"result","is_error":true,"num_turns":1,"total_cost_usd":0,"session_id":"s"}\n'
+)
+
+
+class _RateLimitRunner:
+    """Runner injecté qui simule un rejet rate-limit (rc=1 + `rate_limit_event rejected`) pour les features de
+    `rl`, et un succès sinon. Trace l'ordre des features appelées (`calls`)."""
+    def __init__(self, *, rl: tuple[str, ...] = ()):
+        self.rl = set(rl)
+        self.calls: list[str] = []
+
+    def __call__(self, argv, *, cwd, input_text, timeout, env=None):
+        feature = Path(cwd).name
+        self.calls.append(feature)
+        sid = argv[argv.index("--session-id") + 1]
+        if feature in self.rl:
+            return run.RunResult(argv=list(argv), returncode=1, stdout=_RATE_LIMIT_STDOUT, stderr="")
+        out = json.dumps({"is_error": False, "result": "ok", "session_id": sid,
+                          "total_cost_usd": 0.01, "num_turns": 1})
+        return run.RunResult(argv=list(argv), returncode=0, stdout=out, stderr="")
+
+
+def test_run_feature_holds_rate_limited_not_failed(ctx):
+    """D1 : une feature dont le run est rejeté par le rate-limit 5h N'EST PAS marquée `failed` — elle est
+    TENUE (disposition `rate_limited`), la task revient `todo` (re-dispatchable après reset), et le run n'est
+    pas compté en échec."""
+    settings, conn = ctx
+    _new_project(conn, settings, "proj")
+    _seed(conn, settings, "proj", "work", [("t", [])])
+    summary = orchestrator.run_feature(conn, settings, project="proj", feature="work",
+                                       git=InternalGit(), runner=_RateLimitRunner(rl=("work",)))
+    assert summary["failed_features"] == [] and summary["failed"] == 0
+    assert summary["rate_limited"] == ["work"] and summary["counts"]["rate_limited"] == 1
+    assert _statuses(conn, "work") == {"t": "todo"}      # revenue todo → re-dispatchable au reset
+
+
+def test_run_project_rate_limit_stops_drain(ctx):
+    """D1 : le plafond 5h est org-GLOBAL — dès qu'un run est rejeté, la boucle CESSE d'assigner (les autres
+    features rejetteraient aussi). La feature rejetée est tenue (pas `failed`) ; une feature saine non encore
+    dispatchée n'est pas comptée en échec (elle sera reprise au run suivant)."""
+    settings, conn = ctx
+    _new_project(conn, settings, "proj")
+    _seed(conn, settings, "proj", "aaa", [("t", [])])    # slug tôt dans l'ordre → dispatché en 1er
+    _seed(conn, settings, "proj", "zzz", [("t", [])])
+    r = _RateLimitRunner(rl=("aaa", "zzz"))
+    summary = orchestrator.run_project(conn, settings, project="proj", max_parallel=1,
+                                       git=InternalGit(), runner=r)
+    assert "aaa" in summary["rate_limited"]              # rejetée → tenue
+    assert summary["failed_features"] == []              # aucun échec fabriqué
+    assert r.calls == ["aaa"]                            # le drain s'est ARRÊTÉ — zzz jamais dispatchée
+    assert _statuses(conn, "aaa") == {"t": "todo"}       # re-dispatchable
+
+
 # -- enforcement du DAG INTER-feature (v10) : design→code -------------------------------------------
 
 def test_run_project_blocks_feature_until_prereq_merged(ctx):

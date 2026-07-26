@@ -59,12 +59,17 @@ v14 (cost-includes-interview) = `projects` gagne `interview_session_ids` (TEXT, 
 n'émet PAS d'event `result` (donc **pas de $** : `total_cost_usd`/`modelUsage` absents) mais son transcript
 (`~/.claude/projects/…/<sid>.jsonl`) porte l'usage token par-tour → `dispatch/cost.py` le somme en une ligne
 « interview / cadrage » **tokens-only** (le $ reste celui du drain). ALTER-safe ; NULL = aucune interview.
+v15 (rate-limit-not-failure) = le `CHECK` de `dispatch_jobs.status` gagne `rate_limited` : un run rejeté par
+le plafond 5 h de l'org (`rate_limit_event status:"rejected"`) est classé À PART — ce n'est pas un échec de la
+task (l'orchestrateur TIENT la feature, re-dispatchable après reset), et un faux `failed` poisonnerait
+l'instrumentation d'outcome. SQLite ne sait pas ALTER un CHECK → rebuild de table (`_migrate_v15_...`, patron
+v8), gardé + idempotent. Classé par `parse_headless_result`/`record_finish` (cf. `dispatch/jobs.py`).
 """
 from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 # Ordre = ordre de création (les FK pointent vers des tables déjà créées). Chaque table porte les
 # invariants durs en contraintes SQL (NOT NULL, UNIQUE, FK, CHECK sur les enums de statut).
@@ -131,7 +136,8 @@ DDL: tuple[str, ...] = (
         port          INTEGER,                       -- port couplé au worktree (spec worktree-cleanup)
         pid           INTEGER,
         status        TEXT NOT NULL DEFAULT 'pending'
-                          CHECK (status IN ('pending', 'running', 'done', 'failed', 'killed')),
+                          CHECK (status IN ('pending', 'running', 'done', 'failed', 'killed',
+                                            'rate_limited')),
         kind          TEXT NOT NULL DEFAULT 'task'   -- identité du run (v11) : ouvrier de task vs reviewer/…
                           CHECK (kind IN ('task', 'review', 'toolchain', 'fix')),
         log_path      TEXT,                          -- transcript JSONL local (dérivé de session_id)
@@ -270,6 +276,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
         conn.execute(stmt)
     ensure_columns(conn)
     _migrate_v8_drop_project_type_check(conn)
+    _migrate_v15_dispatch_status_rate_limited(conn)
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     conn.commit()
 
@@ -320,6 +327,58 @@ def _migrate_v8_drop_project_type_check(conn: sqlite3.Connection) -> None:
         " credential_ref, source_url, project_type, created_at FROM projects;\n"
         "DROP TABLE projects;\n"
         "ALTER TABLE projects_new RENAME TO projects;\n"
+        "COMMIT;\n"
+    )
+    if fk_prev:
+        conn.execute("PRAGMA foreign_keys=ON")
+
+
+def _migrate_v15_dispatch_status_rate_limited(conn: sqlite3.Connection) -> None:
+    """v14→v15 : le `CHECK` de `dispatch_jobs.status` gagne `rate_limited` (un rejet rate-limit 5 h de l'org
+    n'est PAS un échec de task — cf. `record_finish`/orchestrator). SQLite ne sait pas ALTER un CHECK →
+    **rebuild de table** (même patron que `_migrate_v8_...`). GARDÉ (no-op si le CHECK contient déjà
+    `rate_limited` — base neuve v15 par DDL, ou déjà migrée) et IDEMPOTENT. Rien ne référence `dispatch_jobs`
+    en FK enfant ; sa propre FK (`task_id → tasks.id`) est préservée (id conservé, FK OFF au rebuild)."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='dispatch_jobs'").fetchone()
+    if row is None or "rate_limited" in row[0]:
+        return                              # base neuve v15 (CHECK à jour) ou déjà migrée → no-op
+    fk_prev = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+    conn.commit()                           # clôt toute transaction (PRAGMA FK est no-op en transaction)
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.executescript(
+        "BEGIN;\n"
+        "CREATE TABLE dispatch_jobs_new (\n"
+        "    id            TEXT PRIMARY KEY,\n"
+        "    task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,\n"
+        "    worktree_path TEXT NOT NULL,\n"
+        "    port          INTEGER,\n"
+        "    pid           INTEGER,\n"
+        "    status        TEXT NOT NULL DEFAULT 'pending'\n"
+        "                      CHECK (status IN ('pending', 'running', 'done', 'failed', 'killed',\n"
+        "                                        'rate_limited')),\n"
+        "    kind          TEXT NOT NULL DEFAULT 'task'\n"
+        "                      CHECK (kind IN ('task', 'review', 'toolchain', 'fix')),\n"
+        "    log_path      TEXT,\n"
+        "    session_id    TEXT,\n"
+        "    num_turns     INTEGER,\n"
+        "    cost_usd      REAL,\n"
+        "    wall_s        REAL,\n"
+        "    engine        TEXT,\n"
+        "    input_tokens          INTEGER,\n"
+        "    output_tokens         INTEGER,\n"
+        "    cache_read_tokens     INTEGER,\n"
+        "    cache_creation_tokens INTEGER,\n"
+        "    model         TEXT,\n"
+        "    error         TEXT,\n"
+        "    started_at    TEXT,\n"
+        "    ended_at      TEXT\n"
+        ");\n"
+        "INSERT INTO dispatch_jobs_new SELECT id, task_id, worktree_path, port, pid, status, kind, log_path,"
+        " session_id, num_turns, cost_usd, wall_s, engine, input_tokens, output_tokens, cache_read_tokens,"
+        " cache_creation_tokens, model, error, started_at, ended_at FROM dispatch_jobs;\n"
+        "DROP TABLE dispatch_jobs;\n"
+        "ALTER TABLE dispatch_jobs_new RENAME TO dispatch_jobs;\n"
         "COMMIT;\n"
     )
     if fk_prev:

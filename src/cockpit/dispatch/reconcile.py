@@ -43,14 +43,17 @@ def _terminal_result(log_path: str | None) -> dict | None:
     AVANT ce verdict (worker réellement tué en cours → orphelin légitime). **Strict** : on ne retombe PAS sur
     le dernier objet quelconque (un transcript coupé en plein `assistant`/`tool_result` ne doit jamais passer
     pour un succès) — d'où le scan explicite d'une ligne `type==result` avant de déléguer l'extraction (usage,
-    coût, tours, durée) à `jobs.parse_headless_result`."""
+    coût, tours, durée, ET la classification rate-limit qui vit sur une ligne `rate_limit_event` DISTINCTE) à
+    `jobs.parse_headless_result` sur le **texte complet** — pas juste la ligne `result`, sinon le
+    `rate_limit_event` échapperait (un rejet 5h serait relu `failed` au lieu de `rate_limited`)."""
     if not log_path:
         return None
     p = Path(log_path)
     if not p.is_file():
         return None
-    result_line: str | None = None
-    for raw in p.read_text(encoding="utf-8", errors="replace").splitlines():
+    text = p.read_text(encoding="utf-8", errors="replace")
+    has_result = False
+    for raw in text.splitlines():
         line = raw.strip()
         if not line:
             continue
@@ -59,10 +62,10 @@ def _terminal_result(log_path: str | None) -> dict | None:
         except (ValueError, TypeError):
             continue
         if isinstance(o, dict) and o.get("type") == "result":
-            result_line = line          # garde le DERNIER event `result` (le verdict final du run)
-    if result_line is None:
+            has_result = True           # gate strict : un verdict terminal existe (pas un transcript coupé)
+    if not has_result:
         return None
-    return jobs.parse_headless_result(result_line)
+    return jobs.parse_headless_result(text)
 
 
 def mark_job_orphan(conn: sqlite3.Connection, job_id: str) -> str | None:
@@ -85,7 +88,10 @@ def mark_job_orphan(conn: sqlite3.Connection, job_id: str) -> str | None:
         wall = parsed.get("duration_ms")
         jobs.record_finish(conn, job_id, parsed,
                            wall_s=(wall / 1000) if isinstance(wall, (int, float)) else None)
-        final = "done" if parsed.get("ok") else "failed"
+        # Miroir de la classification de `record_finish` (le retour pilote `abort.py` + la truthiness du
+        # collecteur) : un rejet rate-limit est `rate_limited`, pas `failed` (D1×D3).
+        final = ("rate_limited" if parsed.get("rate_limited")
+                 else "done" if parsed.get("ok") else "failed")
     else:
         conn.execute(
             "UPDATE dispatch_jobs SET status = 'killed', ended_at = ? WHERE id = ? AND status = 'running'",
