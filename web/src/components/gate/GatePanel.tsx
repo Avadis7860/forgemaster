@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Alert, Button, Card, EmptyState, Input, LoadingState, RefreshButton } from '@/components/ui'
+import { ConsultativeFindings } from '@/components/gate/ConsultativeFindings'
 import { DecisionBanner, ReviewEvidence, VerifyEvidence } from '@/components/gate/GateReport'
 import { ApiError } from '@/lib/api'
 import { useGate, useMerge, useRefixDispatch, useReviewDispatch } from '@/lib/queries'
@@ -85,6 +86,12 @@ export function GatePanel({ project, feature }: { project: string; feature: Feat
         <ReviewEvidence review={data.review} />
         <VerifyEvidence verify={data.verify} uiTouched={data.ui_touched} />
       </div>
+
+      <ConsultativeFindings
+        project={project}
+        feature={feature.slug}
+        count={(data.review.counts?.yellow ?? 0) + (data.review.counts?.purple ?? 0)}
+      />
 
       {(!data.review.present || !data.review.fresh) && (
         <div className="space-y-3 rounded-card border border-border px-4 py-3">

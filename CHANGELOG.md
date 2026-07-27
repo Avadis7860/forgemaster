@@ -5,6 +5,27 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Signal du gate honnête (fiabilité qualifiée + findings consultatifs surfacés) — **bump SQLite v18 → v19**
+- **Problème** (relevé au drain vitrine `avagency`) : le dashboard montrait des signaux **faussement verts**. (1)
+  La **fiabilité** affichait `100%` alors qu'aucune issue n'était marquée ET qu'une feature était 🔴-bloquée — le
+  taux `(n − n_adverse)/n` vaut 100 % dès que rien n'est marqué mauvais, et une feature bloquée n'entre jamais
+  dans `merge_outcomes` (invisible). (2) Les findings **🟡/🟣 consultatifs** du reviewer Tier-1 ne remontaient
+  nulle part durablement — un défaut jaune mourait dans la preview éphémère du gate.
+- **Fiabilité qualifiée** (`db/merge_outcomes`, aucun bump — lecture) : `_tally` expose `provisional`
+  (`n_adverse=0` → le taux est une borne optimiste, pas « santé verte prouvée »), `n_marked`, `n_held` (= non
+  jugés) ; `reliability` **tempère** par les blockers ouverts via un read des `alerts` (`kind='gate_red'`) →
+  `n_blocked_open` + `blocked_features`, SANS les injecter dans `taux`. CLI `reliability` en miroir.
+- **Findings consultatifs surfacés** (**v19**) : le `CHECK` d'`alerts.kind` gagne `review_findings` (rebuild de
+  table `_migrate_v19_...`, gardé + idempotent ; **recrée `ux_alerts_open`/`ix_alerts_status` dans la migration**
+  — divergence correcte du patron v15/v16 car l'index unique est la cible de l'`ON CONFLICT` d'`emit_alert`).
+  `gate/review.write_verdict` émet une alerte `review_findings` (`severity='info'`) quand un verdict porte des
+  🟡/🟣, la résout sur ré-review propre ; n'émet pas sur 🔴 (déjà couvert par `gate_red` au merge).
+- **Front** : `ReliabilityStrip` rend le taux **qualifié** (badge « provisoire », bandeau features bloquées, jamais
+  vert quand non prouvé) ; `GatePanel` gagne un panneau dépliable listant les corps des findings consultatifs (via
+  `GET …/verdicts`) ; `NotificationCenter`/`AlertSchema` (zod) gagnent le kind `review_findings` (lockstep). Change
+  visuel → `.cockpit/verify-markers.json` (Tier-1.5).
+- Schéma SQLite → additif, versionné (`docs/schema-contract.md`) ; front zod/`KIND_LABEL` en lockstep du CHECK.
+
 ### Terminal/WS/UI — frame `exit` : l'end-state d'interview distingue crash-au-démarrage de incomplète — pas de bump
 - L'état de fin d'interview (`InterviewEndState`) dérivait la fin de la **seule roadmap** (`productive =
   stage.current >= 2`, sinon « Interview incomplète » en `warn`). Un **crash au démarrage** — le PTY lance

@@ -443,6 +443,33 @@ export const ReviewStatusSchema = z.object({
 })
 export type ReviewStatus = z.infer<typeof ReviewStatusSchema>
 
+// Un finding de review (verdict COMPLET, `GET …/verdicts`) : sévérité + citation vérifiable. `passthrough`
+// (le verdict porte d'autres clés — reviewer, ts — qu'on ne modélise pas ici).
+export const ReviewFindingSchema = z.object({
+  severity: z.string(),                                             // 🔴 / 🟡 / 🟣
+  category: z.string().nullish(),
+  file: z.string().nullish(),
+  line: z.union([z.number(), z.string()]).nullish(),
+  claim: z.string().nullish(),
+  evidence: z.string().nullish(),
+  verify_note: z.string().nullish(),
+}).passthrough()
+export type ReviewFinding = z.infer<typeof ReviewFindingSchema>
+
+// Réponse de `GET /api/gate/{p}/{f}/verdicts` : le verdict Tier-1 COMPLET (corps des findings) — distinct de
+// `review.status` (entrée-de-gate, counts seuls). `review`/`toolchain` nuls si aucun verdict courant.
+export const ReviewVerdictSchema = z.object({
+  reviewed_sha: z.string().nullish(),
+  counts: GateCountsSchema.nullish(),
+  findings: z.array(ReviewFindingSchema).default([]),
+}).passthrough()
+
+export const GateVerdictsSchema = z.object({
+  review: ReviewVerdictSchema.nullable(),
+  toolchain: z.unknown().nullable(),
+})
+export type GateVerdicts = z.infer<typeof GateVerdictsSchema>
+
 // Statut du verdict Tier-1.5 (verify.status) : rendu prouvé (feature-verified). N/A hors surface UI.
 export const VerifyStatusSchema = z.object({
   present: z.boolean(),
@@ -1027,6 +1054,7 @@ export const AlertSchema = z.object({
     'interrupted',
     'socle_hold',
     'interview_hold',
+    'review_findings',        // v19 : findings 🟡/🟣 consultatifs d'une review (info, non-bloquant)
   ]),
   tier: z.string().nullable(),
   severity: z.enum(['blocker', 'warn', 'info']),
@@ -1058,19 +1086,33 @@ export const ReliabilityFeatureSchema = z.object({
 })
 export type ReliabilityFeature = z.infer<typeof ReliabilityFeatureSchema>
 
+// v19 — signal honnête : `provisional` (aucune marque adverse → le taux est une borne optimiste, pas « santé
+// verte prouvée ») ; `n_marked` (marques confirmées) vs `n_held` (non jugés) ; `n_blocked_open` = features
+// 🔴-bloquées (hors `merge_outcomes`, donc hors taux) remontées à part pour ne pas lire un 100 % comme vert.
 const ReliabilityTallySchema = z.object({
   n_merges_verts: z.number(),
   n_reverted: z.number(),
   n_refixed: z.number(),
   n_adverse: z.number(),
   n_held: z.number(),
+  n_marked: z.number(),
+  provisional: z.boolean(),
+  n_blocked_open: z.number(),
   taux: z.number().nullable(),
 })
+
+export const BlockedFeatureSchema = z.object({
+  feature_ref: z.string(),
+  feature: z.string(),
+  reason: z.string(),
+})
+export type BlockedFeature = z.infer<typeof BlockedFeatureSchema>
 
 export const ReliabilitySchema = ReliabilityTallySchema.extend({
   scope: z.string(),
   project: z.string().optional(),                                   // présent en scope 'project'
   features: z.array(ReliabilityFeatureSchema).optional(),          // scope 'project' : une ligne / merge vert
+  blocked_features: z.array(BlockedFeatureSchema).optional(),      // scope 'project' : features 🔴-bloquées
   projects: z.array(ReliabilityTallySchema.extend({ project: z.string() })).optional(),   // scope 'global'
 })
 export type Reliability = z.infer<typeof ReliabilitySchema>

@@ -839,3 +839,35 @@ def test_run_merge_red_gate_records_no_merge_outcome(ctx):
     rep = merge.run_merge(conn, settings, feature_ref="proj/feat", human_go=True, git=git)
     assert rep["merged"] is False
     assert merge_outcomes.reliability(conn, "proj")["n_merges_verts"] == 0
+
+
+# -- v19 : findings consultatifs 🟡/🟣 → alerte review_findings (surface durable) ------------------
+
+def test_write_verdict_emits_and_resolves_review_findings_alert(ctx):
+    """v19 — un verdict Tier-1 avec findings 🟡/🟣 CONSULTATIFS émet une alerte `review_findings` (info) au
+    centre d'alertes (surface durable, pas la seule preview du gate). Une ré-review PROPRE (0 consultatif)
+    RÉSOUT l'alerte."""
+    settings, conn = ctx
+    payload = {"findings": [
+        {"severity": "🟡", "file": "contrast.ts", "line": 41, "claim": "ratio 3.9:1 sur titre"},
+        {"severity": "🟣", "file": "tokens.test.ts", "line": 12, "claim": "token orphelin"},
+    ]}
+    review.write_verdict(settings, "p", "f", payload, sha="s1", conn=conn)   # sans diff_text → tels quels
+    rf = [a for a in alerts.list_alerts(conn, "open") if a["kind"] == "review_findings"]
+    assert len(rf) == 1
+    a = rf[0]
+    assert a["severity"] == "info" and a["tier"] == "tier1"
+    assert a["feature"] == "f" and a["feature_ref"] == "p/f"
+    assert any("contrast.ts:41" in line for line in a["findings"])          # corps compact du finding
+    # ré-review PROPRE au SHA suivant → alerte résolue (kind ciblé)
+    review.write_verdict(settings, "p", "f", {"findings": []}, sha="s2", conn=conn)
+    assert not [a for a in alerts.list_alerts(conn, "open") if a["kind"] == "review_findings"]
+
+
+def test_write_verdict_red_only_does_not_emit_review_findings(ctx):
+    """Un verdict 🔴 n'émet PAS `review_findings` (le rouge a son `gate_red` au merge) : seul le
+    consultatif 🟡/🟣 remonte ici."""
+    settings, conn = ctx
+    payload = {"findings": [{"severity": "🔴", "file": "x.py", "line": 1, "claim": "bug"}]}
+    review.write_verdict(settings, "p", "g", payload, sha="s1", conn=conn)
+    assert not [a for a in alerts.list_alerts(conn, "open") if a["kind"] == "review_findings"]

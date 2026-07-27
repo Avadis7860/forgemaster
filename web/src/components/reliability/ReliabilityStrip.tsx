@@ -45,14 +45,47 @@ export function ReliabilityStrip({ project }: { project: string }) {
             {error instanceof ApiError ? error.detail : String(error)}
           </Alert>
         </div>
-      ) : data.n_merges_verts === 0 ? (
-        <div className="px-3 py-3">
-          <EmptyState title="Aucun merge vert encore"
-            description="Mène un drain jusqu'au merge : chaque merge vert devient un point de mesure." />
-        </div>
       ) : (
-        <ReliabilityBody project={project} data={data} />
+        <>
+          {/* Tempère AVANT le taux : une feature 🔴-bloquée est hors `merge_outcomes` → invisible au taux.
+              Rendu même à 0 merge vert (sinon l'EmptyState lirait « tout va bien » sur un projet qui bloque). */}
+          {data.n_blocked_open > 0 && <BlockedBanner data={data} />}
+          {data.n_merges_verts === 0 ? (
+            <div className="px-3 py-3">
+              <EmptyState title="Aucun merge vert encore"
+                description="Mène un drain jusqu'au merge : chaque merge vert devient un point de mesure." />
+            </div>
+          ) : (
+            <ReliabilityBody project={project} data={data} />
+          )}
+        </>
       )}
+    </div>
+  )
+}
+
+/** Bandeau tempérant : features 🔴-bloquées (hors `merge_outcomes`, donc hors taux) — remontées pour qu'un
+ *  `100%` ne se lise jamais « santé verte » sur un projet qui bloque. Ton `warn`, tissu (rangées). */
+function BlockedBanner({ data }: { data: Reliability }) {
+  const blocked = data.blocked_features ?? []
+  return (
+    <div className="px-3 py-3">
+      <Alert tone="warn" title={`${data.n_blocked_open} feature(s) 🔴-bloquée(s) — hors taux`}>
+        <p className="text-sm">
+          Une feature bloquée n'est jamais mergée : elle n'entre pas dans le taux ci-dessous (qui ne couvre
+          que les merges verts). Le signal n'est donc pas « tout vert » tant qu'elles bloquent.
+        </p>
+        {blocked.length > 0 && (
+          <ul className="mt-1 space-y-0.5 text-sm">
+            {blocked.map((b) => (
+              <li key={b.feature_ref} className="flex min-w-0 gap-2">
+                <span className="shrink-0 font-medium text-fg">{b.feature}</span>
+                <span className="min-w-0 truncate text-faint">{b.reason}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Alert>
     </div>
   )
 }
@@ -61,17 +94,26 @@ function ReliabilityBody({ project, data }: { project: string; data: Reliability
   const features = data.features ?? []
   return (
     <div>
-      {/* Héro : taux (en relief, ton advisory) + compte verts/adverse, puis barre tenu/adverse. */}
+      {/* Héro : taux QUALIFIÉ (neutre + badge « provisoire » si aucune marque → borne optimiste, pas preuve)
+          + compte verts/adverse/non-jugés, puis barre tenu/adverse. */}
       <div className="space-y-2 px-3 py-3">
         <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-          <span className={cn('text-lg font-semibold tabular-nums', toneText(tauxTone(data.taux)))}>
+          <span className={cn('text-lg font-semibold tabular-nums',
+            toneText(data.provisional ? 'neutral' : tauxTone(data.taux)))}>
             {fmtTaux(data.taux)}
           </span>
+          {data.provisional && (
+            <Badge tone="warn"
+              title="aucune issue aval marquée — le taux est une borne optimiste, pas une fiabilité prouvée">
+              provisoire
+            </Badge>
+          )}
           <span className="text-sm text-muted">
             fiabilité — {data.n_merges_verts} merge{data.n_merges_verts > 1 ? 's' : ''} vert
             {data.n_merges_verts > 1 ? 's' : ''}
             <span className="text-faint"> · {data.n_adverse} adverse
-              {data.n_adverse > 0 && ` (${data.n_reverted} revert · ${data.n_refixed} refix)`}</span>
+              {data.n_adverse > 0 && ` (${data.n_reverted} revert · ${data.n_refixed} refix)`}
+              {' '}· {data.n_held} non jugé{data.n_held > 1 ? 's' : ''}</span>
           </span>
         </div>
         <HeldBar held={data.n_held} adverse={data.n_adverse} />

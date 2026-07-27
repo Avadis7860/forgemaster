@@ -23,7 +23,10 @@ describe('ReliabilitySchema', () => {
   it('parse un payload représentatif (scope projet, champs extra ignorés)', () => {
     const r = ReliabilitySchema.parse({
       scope: 'project', project: 'atlas', n_merges_verts: 2, n_reverted: 1, n_refixed: 0,
-      n_adverse: 1, n_held: 1, taux: 0.5,
+      n_adverse: 1, n_held: 1, n_marked: 1, provisional: false, n_blocked_open: 1, taux: 0.5,
+      blocked_features: [
+        { feature_ref: 'atlas/design-system', feature: 'design-system', reason: 'Tier-1.5 rouge' },
+      ],
       features: [
         { id: 'x', project: 'atlas', feature: 'corridor', feature_ref: 'atlas/corridor', sha: 'abc',
           human_go: true, outcome: 'reverted', suggested: null, note: 'ko',
@@ -31,13 +34,15 @@ describe('ReliabilitySchema', () => {
       ],
     })
     expect(r.taux).toBe(0.5)
+    expect(r.provisional).toBe(false)
+    expect(r.blocked_features?.[0].feature).toBe('design-system')
     expect(r.features?.[0].outcome).toBe('reverted')
   })
 
   it('accepte un taux null (honnête-vide) et un scope global sans features', () => {
     const r = ReliabilitySchema.parse({
       scope: 'global', n_merges_verts: 0, n_reverted: 0, n_refixed: 0, n_adverse: 0, n_held: 0,
-      taux: null, projects: [],
+      n_marked: 0, provisional: false, n_blocked_open: 0, taux: null, projects: [],
     })
     expect(r.taux).toBeNull()
   })

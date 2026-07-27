@@ -24,6 +24,7 @@ import {
   ReviewerDispatchReportSchema,
   DocsSchema,
   GateStatusSchema,
+  GateVerdictsSchema,
   GitBlobSchema,
   GitCommitDetailSchema,
   GitDiffSchema,
@@ -366,6 +367,13 @@ export const api = {
     request(
       `/api/gate/${encodeURIComponent(project)}/${encodeURIComponent(feature)}`,
       GateStatusSchema,
+    ),
+  // Vue de LECTURE détaillée : le verdict Tier-1 COMPLET (corps des findings) — pour surfacer les 🟡/🟣
+  // consultatifs par feature (le gate n'en montre que les counts). GET idempotent, aucun effet.
+  getGateVerdicts: (project: string, feature: string) =>
+    request(
+      `/api/gate/${encodeURIComponent(project)}/${encodeURIComponent(feature)}/verdicts`,
+      GateVerdictsSchema,
     ),
   // POST review-dispatch — (re)produit le verdict Tier-1 (reviewer `claude -p` read-only). Filet quand la
   // review est absente/périmée (auto-produite au dispatch, mais best-effort/SHA-bound). 403 si pas d'auth.

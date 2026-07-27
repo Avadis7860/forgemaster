@@ -886,3 +886,52 @@ def test_migrate_v17_to_v18_adds_merge_outcomes_table_in_place(tmp_path: Path):
     assert store.migrate(conn) == schema.SCHEMA_VERSION   # idempotent
     assert conn.execute("SELECT outcome FROM merge_outcomes WHERE id='m1'").fetchone()[0] == "held"
     conn.close()
+
+
+def test_migrate_v18_to_v19_adds_review_findings_to_alerts_kind_check(tmp_path: Path):
+    """Une base v18 dont `alerts.kind` porte l'ancien CHECK (6 kinds, sans `review_findings`) migre en v19 par
+    rebuild de table : le nouveau kind est accepté, les données préservées, l'ancien enum reste valable.
+    CRITIQUE : le rebuild DROP la table → les index sont recréés DANS la migration (contrairement à v15/v16),
+    car `ux_alerts_open` est la cible de l'`ON CONFLICT` d'`emit_alert` (sans lui l'UPSERT casserait)."""
+    import sqlite3
+
+    from cockpit.db import alerts, schema, store
+    conn = store.connect(tmp_path / "v18.db")
+    conn.executescript(
+        "CREATE TABLE alerts ("
+        " id TEXT PRIMARY KEY, project TEXT NOT NULL, feature_ref TEXT NOT NULL, feature TEXT NOT NULL,"
+        " kind TEXT NOT NULL CHECK (kind IN ('gate_red','worker_failed','rate_limited','interrupted',"
+        "   'socle_hold','interview_hold')),"
+        " tier TEXT CHECK (tier IS NULL OR tier IN ('tier0','tier1','tier1.5','native')),"
+        " severity TEXT NOT NULL DEFAULT 'blocker' CHECK (severity IN ('blocker','warn','info')),"
+        " reason TEXT NOT NULL, findings TEXT,"
+        " status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','acked','resolved')),"
+        " created_at TEXT NOT NULL, updated_at TEXT NOT NULL, resolved_at TEXT);"
+        "CREATE UNIQUE INDEX ux_alerts_open ON alerts(project,feature_ref,kind) WHERE status='open';"
+        "CREATE INDEX ix_alerts_status ON alerts(status);")
+    conn.execute("INSERT INTO alerts (id,project,feature_ref,feature,kind,severity,reason,status,"
+                 "created_at,updated_at) VALUES ('a1','p','p/f','f','gate_red','blocker','r','open','t','t')")
+    conn.execute("PRAGMA user_version = 18")
+    conn.commit()
+    # avant migration : l'ancien CHECK rejette `review_findings`
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO alerts (id,project,feature_ref,feature,kind,severity,reason,status,"
+                     "created_at,updated_at) VALUES ('a2','p','p/g','g','review_findings','info','r','open',"
+                     "'t','t')")
+    conn.rollback()
+
+    assert store.migrate(conn) == schema.SCHEMA_VERSION                     # migre → v19 (rebuild de table)
+    ddl = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='alerts'").fetchone()[0]
+    assert "review_findings" in ddl                                        # le CHECK a gagné le kind
+    assert conn.execute("SELECT kind FROM alerts WHERE id='a1'").fetchone()[0] == "gate_red"   # préservé
+    # les index CORRECTNESS survivent au rebuild (recréés dans la migration)
+    idx = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index' "
+                                      "AND tbl_name='alerts'")}
+    assert "ux_alerts_open" in idx and "ix_alerts_status" in idx
+    # l'UPSERT d'`emit_alert` (ON CONFLICT sur ux_alerts_open) fonctionne pour le nouveau kind
+    alerts.emit_alert(conn, project="p", feature_ref="p/g", feature="g", kind="review_findings",
+                      reason="1 🟡", severity="info", findings=["🟡 x.ts:1 — foo"])
+    row = conn.execute("SELECT severity,findings FROM alerts WHERE kind='review_findings'").fetchone()
+    assert row[0] == "info" and "x.ts:1" in row[1]
+    assert store.migrate(conn) == schema.SCHEMA_VERSION                     # idempotent
+    conn.close()

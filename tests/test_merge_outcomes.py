@@ -8,7 +8,7 @@ import sqlite3
 import pytest
 
 from cockpit.core import ids
-from cockpit.db import merge_outcomes, schema
+from cockpit.db import alerts, merge_outcomes, schema
 
 
 class _BoomConn:
@@ -150,6 +150,38 @@ def test_reliability_global_rolls_up_by_project(conn):
     assert g["taux"] == round(2 / 3, 4)
     by = {p["project"]: p for p in g["projects"]}
     assert by["p"]["taux"] == 1.0 and by["q"]["taux"] == 0.0
+
+
+def test_reliability_provisional_when_no_adverse_mark(conn):
+    """Honnêteté du signal : 2 merges verts, AUCUNE marque → `provisional=True` (le taux 100 % est vacant, il
+    ne dit que « rien marqué mauvais »). Dès qu'une issue adverse est marquée → `provisional=False`."""
+    _seed_chain(conn, "p", "a")
+    _record(conn, feature="a", sha="a")
+    _record(conn, feature="b", sha="b")
+    r = merge_outcomes.reliability(conn, "p")
+    assert r["taux"] == 1.0 and r["provisional"] is True and r["n_marked"] == 0 and r["n_held"] == 2
+    merge_outcomes.mark_outcome(conn, project="p", feature="a", outcome="reverted")
+    r2 = merge_outcomes.reliability(conn, "p")
+    assert r2["provisional"] is False and r2["n_marked"] == 1
+
+
+def test_reliability_tempered_by_open_blockers(conn):
+    """Une feature 🔴-bloquée (alerte `gate_red` ouverte) n'entre JAMAIS dans `merge_outcomes` → invisible au
+    taux. `reliability` la remonte à part (`n_blocked_open` + `blocked_features`) SANS l'injecter dans `taux`
+    (le taux reste sur les seuls merges verts) — pour qu'un 100 % ne se lise pas « vert-santé » sur un projet
+    qui bloque. Une alerte non-`gate_red` (ex. `review_findings`) ne compte pas comme blocker."""
+    _seed_chain(conn, "p", "ok")
+    _record(conn, project="p", feature="ok", sha="ok")     # 1 merge vert → taux 100 %
+    alerts.emit_alert(conn, project="p", feature_ref="p/broken", feature="broken", kind="gate_red",
+                      reason="Tier-1.5 rouge", severity="blocker")
+    alerts.emit_alert(conn, project="p", feature_ref="p/ok", feature="ok", kind="review_findings",
+                      reason="2 🟡", severity="info")
+    r = merge_outcomes.reliability(conn, "p")
+    assert r["taux"] == 1.0 and r["n_merges_verts"] == 1           # taux inchangé (verts seulement)
+    assert r["n_blocked_open"] == 1                                # SEUL le gate_red compte
+    assert [b["feature"] for b in r["blocked_features"]] == ["broken"]
+    g = merge_outcomes.reliability(conn, None)                     # remonte aussi au global
+    assert g["n_blocked_open"] == 1
 
 
 def test_record_merge_best_effort_on_db_error():

@@ -48,6 +48,7 @@ export const qk = {
   jobs: (project: string, feature: string) => ['jobs', project, feature] as const,
   job: (jobId: string) => ['job', jobId] as const,
   gate: (project: string, feature: string) => ['gate', project, feature] as const,
+  gateVerdicts: (project: string, feature: string) => ['gate-verdicts', project, feature] as const,
   onboarding: ['onboarding'] as const,
   bootstrap: ['bootstrap'] as const,
   alerts: ['alerts'] as const,
@@ -532,6 +533,16 @@ export function useGate(project: string, feature: string) {
     queryKey: qk.gate(project, feature),
     queryFn: () => api.getGate(project, feature),
     enabled: Boolean(project && feature),
+  })
+}
+
+// Verdict Tier-1 COMPLET (corps des findings) — surface les 🟡/🟣 consultatifs par feature (le gate n'en donne
+// que les counts). Activé à la demande (le panneau ne fetch que déplié). GET idempotent, pas de poll.
+export function useGateVerdicts(project: string, feature: string, enabled = true) {
+  return useQuery({
+    queryKey: qk.gateVerdicts(project, feature),
+    queryFn: () => api.getGateVerdicts(project, feature),
+    enabled: Boolean(project && feature) && enabled,
   })
 }
 

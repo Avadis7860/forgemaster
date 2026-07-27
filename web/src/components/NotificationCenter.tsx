@@ -19,6 +19,7 @@ const KIND_LABEL: Record<AlertRow['kind'], string> = {
   interrupted: 'interrompu',
   socle_hold: 'attente socle',
   interview_hold: 'interview',
+  review_findings: 'findings review',
 }
 
 const SEVERITY_TONE: Record<AlertRow['severity'], Tone> = {

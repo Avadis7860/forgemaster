@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from cockpit.config import Settings
+from cockpit.db import alerts
 from cockpit.gate import history
 
 CONTRACT_VERSION = "review-gate-v2"
@@ -173,7 +174,38 @@ def write_verdict(settings: Settings, project: str, feature: str, payload: dict,
     sp.write_text(json.dumps(verdict, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     if conn is not None:
         history.record_verdict(conn, project, feature, "review", verdict)
+        _emit_or_resolve_review_findings(conn, project, feature, verdict)
     return verdict
+
+
+def _finding_line(f: dict) -> str:
+    """Ligne compacte d'un finding consultatif pour le payload d'alerte (le centre d'alertes aplatit la liste
+    de chaînes en `a · b · c`). Le détail riche (evidence, verify_note) reste lisible via `GET …/verdicts`."""
+    loc = f.get("file") or "?"
+    line = f.get("line")
+    where = f"{loc}:{line}" if line not in (None, "") else loc
+    return f"{f.get('severity') or '•'} {where} — {f.get('claim') or f.get('category') or 'finding'}"
+
+
+def _emit_or_resolve_review_findings(conn: sqlite3.Connection, project: str, feature: str,
+                                     verdict: dict) -> None:
+    """Remonte au centre d'alertes les findings 🟡/🟣 CONSULTATIFS d'une review (non-bloquants : ne tiennent
+    JAMAIS le merge) — surface durable au lieu de la seule preview éphémère du gate (v19, « aucun signal
+    faussement vert »). Aucun consultatif (verdict propre) → RÉSOUT l'alerte (kind ciblé, ré-review nettoyée).
+    N'émet PAS sur 🔴 : le rouge a déjà son `gate_red` au merge. `severity='info'` → ne gonfle pas le ton
+    blocker de la cloche. Best-effort (emit/resolve avalent leurs erreurs) : une alerte ratée ne fait jamais
+    échouer une review."""
+    feature_ref = f"{project}/{feature}"
+    consultative = [f for f in verdict.get("findings", []) if f.get("severity") in ("🟡", "🟣")]
+    if not consultative:
+        alerts.resolve_alerts(conn, project=project, feature_ref=feature_ref, kinds=("review_findings",))
+        return
+    counts = verdict.get("counts", {})
+    reason = (f"{counts.get('yellow', 0)} 🟡 · {counts.get('purple', 0)} 🟣 consultatif(s) "
+              "— review Tier-1 (non-bloquant)")
+    alerts.emit_alert(conn, project=project, feature_ref=feature_ref, feature=feature,
+                      kind="review_findings", reason=reason, tier="tier1", severity="info",
+                      findings=[_finding_line(f) for f in consultative])
 
 
 def read_verdict(settings: Settings, project: str, feature: str) -> dict | None:

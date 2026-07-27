@@ -89,12 +89,19 @@ dédiée, hors du journal borné `gate_verdicts`). Table neuve → `CREATE IF NO
 pas de rebuild, pas d'`ensure_columns`). Dédup par index UNIQUE `ux_merge_outcome(project, feature, sha)` (≤1
 ligne / merge vert ; `record_merge` = `INSERT OR IGNORE`). Une agrégation (`reliability`, fold Python) expose
 `(n_merges_verts, n_adverse, taux)` par projet ET global — lu par le daemon (`GET /api/reliability`).
+v19 (honest-signal / review_findings) = le `CHECK` d'`alerts.kind` gagne `review_findings` : les findings
+🟡/🟣 CONSULTATIFS d'une review Tier-1 (non-bloquants — ils ne tiennent JAMAIS le merge) deviennent une
+alerte `severity='info'` pour REMONTER au centre d'alertes (« aucun signal faussement vert » : un défaut
+jaune ne doit pas mourir dans la preview éphémère du gate). SQLite ne sait pas ALTER un CHECK → **rebuild**
+(`_migrate_v19_...`, patron v8/v15/v16), gardé + idempotent. Résolue au changement de SHA / verdict redevenu
+propre (`resolve_alerts`) ; hors `_WORKER_ALERT_KINDS` (portée par la review, pas le drain). Lockstep front :
+`web/src/lib/schemas.ts` (zod `AlertSchema.kind`) + `NotificationCenter.tsx` (`KIND_LABEL`).
 """
 from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 # Ordre = ordre de création (les FK pointent vers des tables déjà créées). Chaque table porte les
 # invariants durs en contraintes SQL (NOT NULL, UNIQUE, FK, CHECK sur les enums de statut).
@@ -239,9 +246,10 @@ DDL: tuple[str, ...] = (
         project     TEXT NOT NULL,                 -- slug projet (scope + deep-link)
         feature_ref TEXT NOT NULL,                 -- "projet/feature" — scope de dedup/resolve (journal pur)
         feature     TEXT NOT NULL,                 -- slug feature (deep-link ?feature=<slug>)
-        kind        TEXT NOT NULL                  -- taxonomie de motif de blocage (enum serré : 6 émis)
+        kind        TEXT NOT NULL                  -- enum : 6 blocages + 1 consultatif
                         CHECK (kind IN ('gate_red', 'worker_failed', 'rate_limited',
-                                        'interrupted', 'socle_hold', 'interview_hold')),
+                                        'interrupted', 'socle_hold', 'interview_hold',
+                                        'review_findings')),
         tier        TEXT                           -- contexte gate ; NULL hors-gate
                         CHECK (tier IS NULL OR tier IN ('tier0', 'tier1', 'tier1.5', 'native')),
         severity    TEXT NOT NULL DEFAULT 'blocker'
@@ -350,6 +358,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     _migrate_v8_drop_project_type_check(conn)
     _migrate_v15_dispatch_status_rate_limited(conn)
     _migrate_v16_dispatch_status_interrupted(conn)
+    _migrate_v19_alerts_kind_review_findings(conn)
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     conn.commit()
 
@@ -509,6 +518,56 @@ def _migrate_v16_dispatch_status_interrupted(conn: sqlite3.Connection) -> None:
     )
     if fk_prev:
         conn.execute("PRAGMA foreign_keys=ON")
+
+
+def _migrate_v19_alerts_kind_review_findings(conn: sqlite3.Connection) -> None:
+    """v18→v19 : le `CHECK` d'`alerts.kind` gagne `review_findings` (findings 🟡/🟣 CONSULTATIFS d'une review
+    Tier-1 remontés au centre d'alertes en `severity='info'` — cf. `db/alerts`/`gate/review`). SQLite ne sait
+    pas ALTER un CHECK → **rebuild** (patron `_migrate_v15_...`/`_migrate_v16_...`). GARDÉ (no-op si le CHECK
+    contient déjà `review_findings` — base neuve v19 par DDL, ou déjà migrée) et IDEMPOTENT.
+
+    DIVERGENCE (correcte) du patron : `alerts` porte un index UNIQUE PARTIEL `ux_alerts_open`, CIBLE de l'`ON
+    CONFLICT` d'`emit_alert` (correctness, pas perf). Le rebuild DROP la table → perd ses index, et
+    `create_schema` a passé son bloc INDEXES AVANT les migrations → sans recréation ici, l'UPSERT d'alerte
+    casserait sur la base migrée (index absent). On RECRÉE donc les deux index dans l'`executescript`
+    (contrairement à v15/v16 dont `ix_jobs_task` n'est que perf). `alerts` n'a aucune FK enfant ni parent."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='alerts'").fetchone()
+    if row is None or "review_findings" in row[0]:
+        return                              # base neuve v19 (CHECK à jour) ou déjà migrée → no-op
+    conn.commit()                           # clôt toute transaction avant l'executescript
+    conn.executescript(
+        "BEGIN;\n"
+        "CREATE TABLE alerts_new (\n"
+        "    id          TEXT PRIMARY KEY,\n"
+        "    project     TEXT NOT NULL,\n"
+        "    feature_ref TEXT NOT NULL,\n"
+        "    feature     TEXT NOT NULL,\n"
+        "    kind        TEXT NOT NULL\n"
+        "                    CHECK (kind IN ('gate_red', 'worker_failed', 'rate_limited',\n"
+        "                                    'interrupted', 'socle_hold', 'interview_hold',\n"
+        "                                    'review_findings')),\n"
+        "    tier        TEXT\n"
+        "                    CHECK (tier IS NULL OR tier IN ('tier0', 'tier1', 'tier1.5', 'native')),\n"
+        "    severity    TEXT NOT NULL DEFAULT 'blocker'\n"
+        "                    CHECK (severity IN ('blocker', 'warn', 'info')),\n"
+        "    reason      TEXT NOT NULL,\n"
+        "    findings    TEXT,\n"
+        "    status      TEXT NOT NULL DEFAULT 'open'\n"
+        "                    CHECK (status IN ('open', 'acked', 'resolved')),\n"
+        "    created_at  TEXT NOT NULL,\n"
+        "    updated_at  TEXT NOT NULL,\n"
+        "    resolved_at TEXT\n"
+        ");\n"
+        "INSERT INTO alerts_new SELECT id, project, feature_ref, feature, kind, tier, severity, reason,"
+        " findings, status, created_at, updated_at, resolved_at FROM alerts;\n"
+        "DROP TABLE alerts;\n"
+        "ALTER TABLE alerts_new RENAME TO alerts;\n"
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_alerts_open ON alerts(project, feature_ref, kind)"
+        " WHERE status = 'open';\n"
+        "CREATE INDEX IF NOT EXISTS ix_alerts_status ON alerts(status);\n"
+        "COMMIT;\n"
+    )
 
 
 def schema_version(conn: sqlite3.Connection) -> int:

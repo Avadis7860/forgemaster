@@ -15,6 +15,7 @@ vi.mock('@/lib/queries', () => ({
     isLoading: false, isError: false, isFetching: false, error: null,
     data: h.gateData, refetch: vi.fn(),
   }),
+  useGateVerdicts: () => ({ isLoading: false, isError: false, error: null, data: undefined }),
   useMerge: () => ({ isPending: false, isError: false, error: null, data: undefined, mutate: vi.fn() }),
   useReviewDispatch: () => ({ isPending: false, isError: false, error: null, data: undefined, mutate: vi.fn() }),
   useRefixDispatch: () => ({

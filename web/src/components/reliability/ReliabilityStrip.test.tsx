@@ -29,7 +29,8 @@ function mkFeat(over: Partial<ReliabilityFeature> = {}): ReliabilityFeature {
 function mkData(over: Partial<Reliability> = {}): Reliability {
   return {
     scope: 'project', project: 'atlas', n_merges_verts: 1, n_reverted: 0, n_refixed: 0,
-    n_adverse: 0, n_held: 1, taux: 1, features: [mkFeat()], ...over,
+    n_adverse: 0, n_held: 1, n_marked: 1, provisional: false, n_blocked_open: 0,
+    taux: 1, features: [mkFeat()], ...over,
   }
 }
 
@@ -67,6 +68,26 @@ describe('ReliabilityStrip — fiabilité du gate vert', () => {
     h.data = mkData({ features: [mkFeat({ suggested: 'refixed' })] })
     render(<ReliabilityStrip project="atlas" />)
     expect(screen.getByText('rework détecté ?')).toBeInTheDocument()
+  })
+
+  it('provisoire (aucune marque) → badge « provisoire », le 100% ne se lit pas vert-santé', () => {
+    h.data = mkData({ n_merges_verts: 3, n_adverse: 0, n_held: 3, n_marked: 0, provisional: true, taux: 1 })
+    render(<ReliabilityStrip project="atlas" />)
+    expect(screen.getByText('100%')).toBeInTheDocument()
+    expect(screen.getByText('provisoire')).toBeInTheDocument()
+    expect(screen.getByText(/3 non jugés/)).toBeInTheDocument()
+  })
+
+  it('feature 🔴-bloquée → bandeau « hors taux », même à 0 merge vert', () => {
+    h.data = mkData({
+      n_merges_verts: 0, n_held: 0, taux: null, features: [], n_blocked_open: 1,
+      blocked_features: [{ feature_ref: 'atlas/design-system', feature: 'design-system',
+        reason: 'Tier-1.5 : 1 cible non rendue' }],
+    })
+    render(<ReliabilityStrip project="atlas" />)
+    expect(screen.getByText(/1 feature\(s\) 🔴-bloquée\(s\) — hors taux/)).toBeInTheDocument()
+    expect(screen.getByText('design-system')).toBeInTheDocument()
+    expect(screen.getByText('Aucun merge vert encore')).toBeInTheDocument()   // les deux coexistent
   })
 
   it('un merge marqué reverted porte son badge, pas de bouton de marque', () => {

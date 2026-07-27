@@ -129,14 +129,35 @@ def list_outcomes(conn: sqlite3.Connection, project: str | None = None) -> list[
 
 def _tally(entries: list[dict]) -> dict:
     """Compte + taux de FIABILITÉ sur une liste de vues. `taux = (n_verts - n_adverse) / n_verts`, `None` si
-    n_verts=0 (honnête-vide, jamais 0/0). `n_adverse` = marques confirmées (reverted+refixed), pas suggest."""
+    n_verts=0 (honnête-vide, jamais 0/0). `n_adverse` = marques confirmées (reverted+refixed), pas suggest.
+
+    **Honnêteté du signal** : dans ce schéma seule une marque ADVERSE laisse une trace durable (`marked_at`) ;
+    un `held` est indistinguable d'un merge NON JUGÉ (`n_held` = non jugés). Donc `taux` est une **borne
+    optimiste** (suppose tout `held` = bon). `provisional=True` quand `n_adverse=0` : le `taux` vaut alors
+    100 % *uniquement* parce que rien n'a été marqué mauvais — jamais à lire comme « santé verte prouvée »."""
     n = len(entries)
     n_reverted = sum(1 for e in entries if e["outcome"] == "reverted")
     n_refixed = sum(1 for e in entries if e["outcome"] == "refixed")
     n_adverse = n_reverted + n_refixed
     return {"n_merges_verts": n, "n_reverted": n_reverted, "n_refixed": n_refixed,
-            "n_adverse": n_adverse, "n_held": n - n_adverse,
+            "n_adverse": n_adverse, "n_held": n - n_adverse, "n_marked": n_adverse,
+            "provisional": n > 0 and n_adverse == 0,
             "taux": None if n == 0 else round((n - n_adverse) / n, 4)}
+
+
+def _open_blockers(conn: sqlite3.Connection, project: str) -> list[dict]:
+    """Features 🔴-bloquées d'un projet (`alerts.kind='gate_red'`, `status='open'`), lues pour TEMPÉRER la
+    fiabilité au read : une feature bloquée n'entre jamais dans `merge_outcomes` (jamais mergée) → hors taux.
+    On la remonte à part pour qu'un `100%` ne passe pas « vert-santé » sur un projet qui bloque.
+    Best-effort : la table `alerts` peut manquer (schéma partiel) → liste vide, jamais d'échec."""
+    try:
+        rows = conn.execute(
+            "SELECT feature_ref, feature, reason FROM alerts "
+            "WHERE project = ? AND kind = 'gate_red' AND status = 'open' "
+            "ORDER BY created_at DESC, id DESC", (project,)).fetchall()
+    except sqlite3.Error:
+        return []
+    return [{"feature_ref": r["feature_ref"], "feature": r["feature"], "reason": r["reason"]} for r in rows]
 
 
 def reliability(conn: sqlite3.Connection, project: str | None = None) -> dict:
@@ -147,7 +168,9 @@ def reliability(conn: sqlite3.Connection, project: str | None = None) -> dict:
         if conn.execute("SELECT 1 FROM projects WHERE slug = ?", (project,)).fetchone() is None:
             raise KeyError(project)
         entries = list_outcomes(conn, project)
-        return {"scope": "project", "project": project, **_tally(entries), "features": entries}
+        blocked = _open_blockers(conn, project)
+        return {"scope": "project", "project": project, **_tally(entries),
+                "n_blocked_open": len(blocked), "blocked_features": blocked, "features": entries}
     entries = list_outcomes(conn, None)
     by_project: dict[str, list[dict]] = {}
     order: list[str] = []
@@ -156,8 +179,10 @@ def reliability(conn: sqlite3.Connection, project: str | None = None) -> dict:
             by_project[e["project"]] = []
             order.append(e["project"])
         by_project[e["project"]].append(e)
-    projects = [{"project": p, **_tally(by_project[p])} for p in order]
-    return {"scope": "global", **_tally(entries), "projects": projects}
+    projects = [{"project": p, **_tally(by_project[p]),
+                 "n_blocked_open": len(_open_blockers(conn, p))} for p in order]
+    return {"scope": "global", **_tally(entries),
+            "n_blocked_open": sum(p["n_blocked_open"] for p in projects), "projects": projects}
 
 
 # -- surface CLI ------------------------------------------------------------------------------------
@@ -169,8 +194,16 @@ def _fmt_taux(taux: float | None) -> str:
 
 def _print_reliability(data: dict) -> None:
     head = data["project"] if data["scope"] == "project" else "global"
+    qual = " ⚠ provisoire (0 marque — borne optimiste)" if data.get("provisional") else ""
     print(f"{head} — fiabilité {_fmt_taux(data['taux'])} "
-          f"({data['n_merges_verts']} merges verts · {data['n_adverse']} adverse)")
+          f"({data['n_merges_verts']} merges verts · {data['n_adverse']} adverse · "
+          f"{data['n_held']} non jugés){qual}")
+    blocked = data.get("blocked_features") or []
+    if data.get("n_blocked_open"):
+        print(f"  ⛔ {data['n_blocked_open']} feature(s) 🔴-bloquée(s) — HORS taux "
+              f"(jamais mergée{'s' if data['n_blocked_open'] > 1 else ''}) :")
+        for b in blocked:
+            print(f"     {b['feature']:<26} {b['reason']}")
     if data["n_merges_verts"] == 0:
         print("  (aucun merge vert encore — lance un drain)")
         return
