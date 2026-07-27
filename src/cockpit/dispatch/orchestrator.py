@@ -74,6 +74,13 @@ def _emit_report_alert(conn: sqlite3.Connection, project: str, slug: str, report
         alerts.emit_alert(conn, project=project, feature_ref=ref, feature=slug, kind="interrupted",
                           severity="warn",
                           reason="interrompue par un signal externe (teardown/OOM/session) — re-runnable")
+    elif report.get("needs_redrain"):
+        # Base périmée non réalignable (fondations en conflit avec un sibling mergé). Kind `worker_failed`
+        # (déjà dans le CHECK → zéro migration) mais raison ACTIONNABLE pointant sur la recette supportée.
+        alerts.emit_alert(conn, project=project, feature_ref=ref, feature=slug, kind="worker_failed",
+                          severity="blocker",
+                          reason=f"base périmée non réalignable (fondations en conflit) — re-drain requis : "
+                                 f"`cockpit redrain {ref}`")
     elif not report.get("ok"):
         alerts.emit_alert(conn, project=project, feature_ref=ref, feature=slug, kind="worker_failed",
                           severity="blocker", reason=report.get("reason") or "run worker en échec")
@@ -113,7 +120,17 @@ def _dispatch_one(settings: Settings, project: str, feature: str,
     conn = store.connect(settings.db_path)   # thread-local (check_same_thread) ; base déjà migrée
     try:
         feature_ref = f"{project}/{feature}"
-        report = worker.dispatch_next(conn, settings, feature_ref=feature_ref, git=git, runner=runner)
+        try:
+            report = worker.dispatch_next(conn, settings, feature_ref=feature_ref, git=git, runner=runner)
+        except GitOpError as exc:
+            # Base PÉRIMÉE non réalignable : `worktree.reserve → rebase_onto` a fait `rebase --abort` puis
+            # levé (un sibling a avancé dev sur des fichiers FONDATIONNELS en conflit). DISPOSITION gérée, non
+            # un crash : on la retourne au lieu de la laisser remonter par `fut.result()` (contrat « jamais
+            # d'exception vers la boucle ») → le drain continue les autres features et SURFACE le besoin de
+            # re-drain (alerte actionnable + `cockpit redrain <p>/<f>`).
+            return {"feature": feature, "task": None, "ok": False, "needs_redrain": True,
+                    "reason": str(exc), "needs_terminal": False, "rate_limited": False,
+                    "interrupted": False}
         ok = bool(report.get("dispatched") and report.get("result", {}).get("ok"))
         if ok:
             # dispatch_next a laissé la task `in_progress` (+ committé le worktree) → la boucle la clôt.
@@ -121,7 +138,7 @@ def _dispatch_one(settings: Settings, project: str, feature: str,
             conn.execute("UPDATE tasks SET status = 'done' WHERE feature_id = ? AND slug = ?",
                          (feat["id"], report["task"]))
             conn.commit()
-        return {"feature": feature, "task": report.get("task"), "ok": ok,
+        return {"feature": feature, "task": report.get("task"), "ok": ok, "needs_redrain": False,
                 "reason": report.get("reason", "?"),
                 "needs_terminal": bool(report.get("needs_terminal")),   # v12 : task interactive → interview
                 "rate_limited": bool(report.get("result", {}).get("rate_limited")),   # v15 : plafond 5h org

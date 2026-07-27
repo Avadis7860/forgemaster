@@ -15,7 +15,7 @@ from cockpit.config import Settings
 from cockpit.core import run
 from cockpit.db import alerts, store
 from cockpit.dispatch import orchestrator
-from cockpit.git.internal import InternalGit
+from cockpit.git.internal import GitOpError, InternalGit
 from cockpit.projects import registry
 from cockpit.roadmap import model
 
@@ -745,3 +745,54 @@ def test_run_project_resolves_worker_alert_once_feature_drains(ctx):
     assert ("flaky", "worker_failed") not in _open_alerts(conn)  # 2e run : drainée → résolue
     assert any(a["kind"] == "worker_failed" and a["status"] == "resolved"
                for a in alerts.list_alerts(conn, "resolved"))
+
+
+# -- A2 : base périmée non réalignable → disposition gérée, le drain ne casse pas ------------------
+
+class _ConflictGit(InternalGit):
+    """Git réel SAUF `add_worktree`, qui lève le `GitOpError` de base-périmée (symétrise le `rebase_onto` qui
+    fait `rebase --abort` puis lève). Le point d'échec est le même que le terrain : `worktree.reserve`."""
+    def add_worktree(self, sot, worktree, *, branch, base):
+        raise GitOpError("rebase sur dev : conflit non trivial (base périmée non réalignable "
+                         "automatiquement) — re-drainer la feature")
+
+
+def test_run_feature_survives_stale_base_conflict_as_needs_redrain(ctx):
+    """A2 : un `GitOpError` de `worktree.reserve` (base périmée non réalignable, fondations en conflit) NE
+    casse PAS le run — `_dispatch_one` le capture et le retourne en disposition `needs_redrain`, la feature
+    est tenue en échec-géré et une alerte ACTIONNABLE (`worker_failed`, raison → `cockpit redrain`) est posée.
+    Avant le fix, l'exception remontait crue par `fut.result()` et faisait un HTTP 500."""
+    settings, conn = ctx
+    _new_project(conn, settings, "proj")
+    _seed(conn, settings, "proj", "feat", [("t", [])])          # pas de task interactive → pas de gate socle
+    summary = orchestrator.run_feature(conn, settings, project="proj", feature="feat",
+                                       git=_ConflictGit(), runner=_Runner())
+    assert "feat" in summary["failed_features"]                 # tenue en échec, PAS d'exception qui casse
+    assert summary["runs"][-1]["needs_redrain"] is True         # disposition explicite
+    opened = _open_alerts(conn)
+    assert ("feat", "worker_failed") in opened
+    assert "redrain" in opened[("feat", "worker_failed")]["reason"]   # raison actionnable
+
+
+def test_run_project_isolates_stale_feature_and_drains_the_others(ctx):
+    """A2 : dans un run PARALLÈLE, une feature à base périmée devient `needs_redrain` sans emporter les
+    saines — les autres drainent normalement (le contrat « jamais d'exception vers la boucle » tient)."""
+    settings, conn = ctx
+    _new_project(conn, settings, "proj")
+    _seed(conn, settings, "proj", "stale", [("t", [])])
+    _seed(conn, settings, "proj", "good", [("t", [])])
+
+    class _OneStaleGit(InternalGit):
+        def add_worktree(self, sot, worktree, *, branch, base):
+            if branch == "feature/stale":
+                raise GitOpError("base périmée non réalignable — re-drainer la feature")
+            return super().add_worktree(sot, worktree, branch=branch, base=base)
+
+    # max_parallel=1 : on teste l'ISOLATION (une feature stale n'emporte pas les autres), pas la concurrence
+    # d'écriture SQLite (hors sujet ici) — le drain reste séquentiel, la stale devient needs_redrain, la saine
+    # draine ensuite.
+    summary = orchestrator.run_project(conn, settings, project="proj", git=_OneStaleGit(), runner=_Runner(),
+                                       max_parallel=1)
+    assert "stale" in summary["failed_features"]                # isolée
+    assert _statuses(conn, "good") == {"t": "done"}             # la saine draine quand même
+    assert ("stale", "worker_failed") in _open_alerts(conn)

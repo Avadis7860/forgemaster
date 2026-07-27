@@ -14,7 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from cockpit import auth, interview
 from cockpit.daemon.deps import Deps, get_deps
 from cockpit.daemon.wsguard import authorize_ws
-from cockpit.dispatch import abort, jobs, orchestrator, stream
+from cockpit.dispatch import abort, jobs, orchestrator, redrain, stream
 from cockpit.roadmap import model
 
 
@@ -45,6 +45,22 @@ def make_dispatch_router() -> APIRouter:
             conn = deps.open_db()
             try:
                 return interview.reconcile_socle_report(conn, deps.settings, project=project)
+            finally:
+                conn.close()
+        return await run_in_threadpool(_run)
+
+    @router.post("/api/dispatch/{project}/{feature}/redrain")
+    async def redrain_route(project: str, feature: str, deps: Deps = Depends(get_deps)) -> dict:
+        """**Re-draine** une feature à base périmée non-réalignable (recouvrement du conflit de fondations
+        partagées, cf. le `GitOpError` de `rebase_onto`) : purge son worktree (branche réinitialisée sur `dev`
+        au prochain dispatch via `add_worktree -B`), remet ses tasks `todo`, repasse la feature `planned`,
+        résout ses alertes stale. **Idempotent**, `dev`/`main` intouchés. **Pas de gate d'auth** (aucun spawn
+        `claude`, mutation locale — comme `abort`/`reconcile-socle`). Git = bloquant → threadpool. Déclarée
+        AVANT `/{project}/{feature}` par cohérence de lecture. Feature absente → `KeyError` → 404."""
+        def _run() -> dict:
+            conn = deps.open_db()
+            try:
+                return redrain.redrain_feature(conn, deps.settings, project=project, feature=feature)
             finally:
                 conn.close()
         return await run_in_threadpool(_run)

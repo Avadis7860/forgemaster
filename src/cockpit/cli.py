@@ -179,6 +179,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_refix.add_argument("project")
     p_refix.add_argument("feature")
 
+    # -- redrain ------------------------------------------------------------------------------------
+    p_redrain = sub.add_parser("redrain", parents=[common],
+                               help="re-drainer une feature à base périmée (worktree purgé, tasks → todo, "
+                                    "branche réinitialisée sur dev au prochain dispatch)")
+    p_redrain.add_argument("project")
+    p_redrain.add_argument("feature")
+
     # -- interview ----------------------------------------------------------------------------------
     p_interview = sub.add_parser("interview", parents=[common],
                                  help="mener l'interview terminale interactive du socle (1ʳᵉ session)")
@@ -367,6 +374,11 @@ def _h_refix(settings: Settings, args: argparse.Namespace) -> int:
     return refix.cli_dispatch(settings, args)
 
 
+def _h_redrain(settings: Settings, args: argparse.Namespace) -> int:
+    from cockpit.dispatch import redrain
+    return redrain.cli_dispatch(settings, args)
+
+
 def _h_interview(settings: Settings, args: argparse.Namespace) -> int:
     from cockpit import interview
     return interview.cli_dispatch(settings, args)
@@ -481,6 +493,7 @@ _HANDLERS = {
     "run": _h_run,
     "abort": _h_abort,
     "refix": _h_refix,
+    "redrain": _h_redrain,
     "interview": _h_interview,
     "inspire": _h_inspire,
     "deploy": _h_deploy,

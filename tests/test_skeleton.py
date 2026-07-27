@@ -106,8 +106,8 @@ def test_cli_parser_wires_all_subcommands():
     sub = next(a for a in parser._actions if a.dest == "command")  # noqa: SLF001 (introspection de test)
     assert set(sub.choices) == {
         "project", "tool", "tools", "bundle", "roadmap", "task", "dispatch", "cost", "reliability", "run",
-        "abort", "refix", "interview", "inspire", "deploy", "gate", "merge", "onboard", "bootstrap", "serve",
-        "setup", "install-service", "doctor", "mcp",
+        "abort", "refix", "redrain", "interview", "inspire", "deploy", "gate", "merge", "onboard",
+        "bootstrap", "serve", "setup", "install-service", "doctor", "mcp",
     }
 
 
