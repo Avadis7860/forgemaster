@@ -364,6 +364,47 @@ class InternalGit:
             raise GitOpError(f"seed mktree @ {sot}: {tree.stderr.strip()[:200]}")
         return tree.stdout.strip()
 
+    def overlay_commit(self, sot: Path, *, branch: str, files: Mapping[str, str], message: str,
+                       identity: tuple[str, str]) -> str | None:
+        """Superpose `files` (`chemin-relatif → contenu`) sur l'arbre courant de `branch` et committe
+        l'overlay comme ENFANT de la pointe de `branch`, avançant la ref. **Préservation par construction** :
+        on part de l'arbre de `branch` (`read-tree`), on n'ajoute/remplace QUE les chemins de `files`, on ne
+        supprime rien → tout le reste de l'arbre est conservé intact. **Bare-safe** : passe par un index
+        temporaire (`GIT_INDEX_FILE`), ni worktree ni index par défaut du dépôt touché — plumbing pur comme
+        `_seed_base`. **Idempotent** : si l'overlay ne change pas l'arbre (contenus déjà identiques), aucun
+        commit n'est créé, la ref n'avance pas → retour `None` ; sinon le SHA du commit d'overlay. Identité
+        INJECTÉE (non persistée). Sérialisé par le flock du SoT. Lève `GitOpError` si `files` est vide ou si
+        `branch` est absente."""
+        if not files:
+            raise GitOpError("overlay_commit: aucun fichier à superposer")
+        env = writeback_env(identity)
+        with _worktree_lock(sot):
+            head = _git(sot, "rev-parse", "--verify", f"refs/heads/{branch}", env=env)
+            if not head.ok:
+                raise GitOpError(f"overlay_commit: branche {branch!r} absente @ {sot}")
+            parent = head.stdout.strip()
+            with tempfile.TemporaryDirectory() as tmp:
+                idx_env = {**env, "GIT_INDEX_FILE": str(Path(tmp) / "index")}
+                _checked(sot, "read-tree", parent, env=idx_env)     # index = arbre courant de `branch`
+                for rel, content in sorted(files.items()):
+                    blob = run.run(["git", "-C", str(sot), "hash-object", "-w", "--stdin"],
+                                   input_text=content, env=env)
+                    if not blob.ok:
+                        raise GitOpError(f"overlay hash-object {rel!r} @ {sot}: {blob.stderr.strip()[:200]}")
+                    _checked(sot, "update-index", "--add", "--cacheinfo",
+                             f"100644,{blob.stdout.strip()},{rel}", env=idx_env)
+                tree = _checked(sot, "write-tree", env=idx_env).stdout.strip()
+            parent_tree = _checked(sot, "rev-parse", f"{parent}^{{tree}}", env=env).stdout.strip()
+            if tree == parent_tree:
+                return None                                          # idempotent : rien n'a changé
+            commit = run.run(
+                ["git", "-C", str(sot), "commit-tree", tree, "-p", parent, "-m", message], env=env)
+            if not commit.ok:
+                raise GitOpError(f"overlay commit-tree @ {sot}: {commit.stderr.strip()[:200]}")
+            sha = commit.stdout.strip()
+            _checked(sot, "update-ref", f"refs/heads/{branch}", sha, parent)   # CAS sur parent (anti-course)
+            return sha
+
     def add_worktree(self, sot: Path, worktree: Path, *, branch: str, base: str) -> None:
         """Crée un worktree attaché au SoT sur `branch`, ancré sur `base` (`add -B <branch> <path> <base>`,
         jamais `checkout -B <base>`). Sérialisé par flock (spec sot-local, #7/#12)."""

@@ -5,6 +5,11 @@ facets = ["frontend", "content", "deploy", "doc"]
 default_facet = "frontend"
 archetype = "app"           # gate de profondeur : axes UX d'un site présentational (cf. depth-axes.yaml)
 
+# reseed_owned — le contrat de RUN possédé par le cockpit (build web + service nginx), re-matérialisable dans
+# un projet EXISTANT par `cockpit scaffold reseed` (préserve le travail worker : `web/`, contenu, docs). Ces
+# fichiers-là sont l'infra scaffold, jamais édités par le worker → sûrs à réécrire depuis le bundle corrigé.
+reseed_owned = ["Dockerfile", "compose.yaml", "nginx.conf", ".dockerignore"]
+
 # Déclaration MCP sèche (sans secret ni endpoint). `corpus = true` = ce type bénéficie du capital-token servi.
 # Un overlay surcharge `bundle.toml` en whole-file → sans ce bloc, le `corpus = true` de la base est PERDU.
 # Silos tech pertinents (astro·tailwind·react·mdx·motion·typescript·vitest·wai-aria-apg) : nommés dans la prose

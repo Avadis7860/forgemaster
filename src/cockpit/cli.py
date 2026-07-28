@@ -84,6 +84,15 @@ def build_parser() -> argparse.ArgumentParser:
     bdv.add_argument("--check", action="store_true",
                      help="ne rien écrire : exit 1 si l'overlay a dérivé de son template (drift)")
 
+    # -- scaffold -----------------------------------------------------------------------------------
+    p_scaffold = sub.add_parser("scaffold", parents=[common],
+                                help="maintenance du scaffold d'un projet (re-semer le contrat de run)")
+    p_scaffold_sub = p_scaffold.add_subparsers(dest="action", required=True, metavar="<action>")
+    psr = p_scaffold_sub.add_parser("reseed", parents=[common],
+                                    help="re-matérialiser les fichiers scaffold-owned dans le SoT (dev) — "
+                                         "préserve le travail worker ; idempotent")
+    psr.add_argument("project")
+
     # -- roadmap ------------------------------------------------------------------------------------
     p_roadmap = sub.add_parser("roadmap", parents=[common], help="roadmap in-repo (features + tasks)")
     p_roadmap_sub = p_roadmap.add_subparsers(dest="action", required=True, metavar="<action>")
@@ -379,6 +388,11 @@ def _h_redrain(settings: Settings, args: argparse.Namespace) -> int:
     return redrain.cli_dispatch(settings, args)
 
 
+def _h_scaffold(settings: Settings, args: argparse.Namespace) -> int:
+    from cockpit.provision import reseed
+    return reseed.cli_dispatch(settings, args)
+
+
 def _h_interview(settings: Settings, args: argparse.Namespace) -> int:
     from cockpit import interview
     return interview.cli_dispatch(settings, args)
@@ -494,6 +508,7 @@ _HANDLERS = {
     "abort": _h_abort,
     "refix": _h_refix,
     "redrain": _h_redrain,
+    "scaffold": _h_scaffold,
     "interview": _h_interview,
     "inspire": _h_inspire,
     "deploy": _h_deploy,

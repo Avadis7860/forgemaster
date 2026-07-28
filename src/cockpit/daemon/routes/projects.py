@@ -90,6 +90,20 @@ def make_projects_router() -> APIRouter:
         finally:
             conn.close()
 
+    @router.post("/{slug}/scaffold/reseed")
+    def reseed_scaffold(slug: str, deps: Deps = Depends(get_deps)) -> dict:
+        """Re-matérialise les fichiers **scaffold-owned** (contrat de run) du type du projet dans son SoT
+        (`dev`), en préservant le travail worker (`web/`, contenu, docs). **Idempotent** (rien à jour → aucun
+        commit). `main`/worktrees en vol intouchés (une feature hérite le fix à son prochain redrain). **Pas
+        de gate d'auth** (aucun spawn `claude`, mutation git locale — comme redrain). Projet absent → 404 ;
+        type sans `reseed_owned` → 400 (ValueError, handler global)."""
+        from cockpit.provision import reseed
+        conn = deps.open_db()
+        try:
+            return reseed.reseed_project(conn, deps.settings, project=slug)
+        finally:
+            conn.close()
+
     @router.patch("/{slug}")
     def patch_project(slug: str, body: ProjectPatch, deps: Deps = Depends(get_deps)) -> dict:
         """Édite un projet (partiel). Aujourd'hui : le **miroir GitHub** (rendre GitHub-backed) — `null`/vide

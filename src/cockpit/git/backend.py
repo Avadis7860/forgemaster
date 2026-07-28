@@ -13,7 +13,7 @@ les stubs à porter. Décisions verrouillées reflétées dans les signatures (c
 """
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -108,4 +108,13 @@ class GitBackend(Protocol):
     def commit_worktree(self, worktree: Path, *, message: str, identity: tuple[str, str]) -> str | None:
         """Committe le travail de l'ouvrier (le worker ne fait pas de git — la forge committe après son run).
         Identité injectée le temps de l'op. Arbre propre → None (no-op)."""
+        ...
+
+    def overlay_commit(self, sot: Path, *, branch: str, files: Mapping[str, str], message: str,
+                       identity: tuple[str, str]) -> str | None:
+        """Superpose `files` (`chemin → contenu`) sur l'arbre courant de `branch` et committe l'overlay comme
+        enfant de sa pointe (préservation par construction : seuls ces chemins sont réécrits, rien n'est
+        supprimé). Bare-safe (index temporaire). Identité injectée. **Idempotent** : arbre inchangé → None,
+        la ref n'avance pas ; sinon le SHA du commit. Sert le re-seed du scaffold possédé dans un SoT
+        existant (`provision.reseed`)."""
         ...

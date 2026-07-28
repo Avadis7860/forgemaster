@@ -108,6 +108,17 @@ def read_bundle_manifest(project_type: str = "generic") -> dict:
     return _parse_manifest(load_bundle(project_type), project_type)
 
 
+def read_reseed_owned(project_type: str = "generic") -> list[str]:
+    """La liste FERMÉE des chemins « scaffold-owned » d'un type — les fichiers du **contrat de run** possédés
+    par le cockpit (Dockerfile, compose.yaml, nginx.conf…) que la primitive `reseed` re-matérialise dans un
+    projet **existant**. Tout chemin HORS de cette liste (`web/src`, `docs`, contenu, tasks…) est **préservé**
+    par construction : `reseed` n'écrit QUE l'owned. `[]` par défaut (un type sans contrat de run n'a rien à
+    re-semer). Lue de `[bundle].reseed_owned` du bundle composé `base ⊕ overlay(type)` (validée à la source
+    par `validate_bundle` : liste de chemins, chacun présent dans le bundle)."""
+    owned = read_bundle_manifest(project_type).get("reseed_owned", [])
+    return list(owned) if isinstance(owned, list) else []
+
+
 def validate_bundle(project_type: str = "generic") -> None:
     """Valide un bundle **avant toute copie** (fail-closed). Lève `BundleError` si : type hors registre ;
     manifeste absent/illisible ; `version` manquante ; `project_type` du manifeste ≠ nom du dossier ;
@@ -141,6 +152,14 @@ def validate_bundle(project_type: str = "generic") -> None:
         corpus = mcp_decl.get("corpus")
         if corpus is not None and not isinstance(corpus, bool):
             raise BundleError(f"bundle {project_type!r} : `mcp.corpus` doit être un booléen")
+    owned = manifest.get("reseed_owned")                       # liste des fichiers scaffold-owned (optionnel)
+    if owned is not None:
+        if not isinstance(owned, list) or not all(isinstance(p, str) for p in owned):
+            raise BundleError(f"bundle {project_type!r} : `reseed_owned` doit être une liste de chemins")
+        for path in owned:
+            if path not in files:                              # on ne peut posséder un fichier non semé
+                raise BundleError(
+                    f"bundle {project_type!r} : reseed_owned={path!r} absent du bundle composé")
 
 
 def list_valid_types() -> list[dict]:
