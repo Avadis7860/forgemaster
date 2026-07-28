@@ -4,7 +4,11 @@
 FROM node:22-alpine AS build
 WORKDIR /app/web
 COPY web/package.json web/package-lock.json* ./
-RUN npm ci
+# `npm ci` exige un lockfile ; le scaffold site-vitrine n'en sème pas (le glob `*` ci-dessus masque son
+# absence). On calque la logique de référence `webbuild.py` : `npm ci` (reproductible) SI un lockfile est là,
+# sinon `npm install`. Un `if/else` — pas un `npm ci || npm install` qui masquerait un échec `npm ci` légitime
+# (lockfile désynchro).
+RUN if [ -f package-lock.json ]; then npm ci; else npm install; fi
 COPY web/ ./
 RUN npm run build
 

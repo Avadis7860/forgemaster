@@ -540,6 +540,40 @@ def test_deploy_preview_refuses_missing_worktree_or_compose(ctx):
         engine.deploy_preview(conn, settings, slug="svc", feature="nocompose", backend=FakeBackend())
 
 
+@pytest.mark.parametrize("dead_rows", [[], [{"State": "exited"}], [{"Status": "Exited (1)"}]])
+def test_deploy_preview_false_green_fails_close_when_no_container_running(ctx, dead_rows):
+    """Faux-vert du preview : `up --build` sort exit 0 même build KO (0 conteneur) → `deploy_preview` DOIT
+    sonder l'état réel (`ps`) et lever un `ValueError` HONNÊTE + relâcher le port, jamais rendre une URL vers
+    rien (sinon le Tier-1.5 voit `ERR_CONNECTION_REFUSED` au lieu d'un « build échoué » honnête)."""
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="svc")
+    _seed_worktree(settings, "svc", "feat")
+    be = FakeBackend(ps_rows=dead_rows)                     # up « réussit » (exit 0), 0 conteneur vivant
+    with pytest.raises(ValueError, match="aucun conteneur en marche"):
+        engine.deploy_preview(conn, settings, slug="svc", feature="feat", backend=be)
+    assert be.calls[0][0] == "up" and any(c[0] == "ps" for c in be.calls)   # up tenté, PUIS état réel sondé
+    held = [r["purpose"] for r in ports.list_reservations(conn, project="svc")]
+    assert "preview:feat" not in held                       # port relâché → pas de fuite sur build KO
+
+
+def test_deploy_preview_unhealthy_when_ps_introspection_fails(ctx):
+    """Si l'introspection post-`up` échoue (`ps` lève ComposeError), `deploy_preview` lève un `ValueError`
+    actionnable + relâche le port, plutôt que de rendre une URL en aveugle."""
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="svc")
+    _seed_worktree(settings, "svc", "feat")
+
+    class _PsBoom(FakeBackend):
+        def ps(self, name: Path, workdir: Path, *, env: dict | None = None) -> list[dict]:
+            self.calls.append(("ps", name, str(workdir), dict(env or {})))
+            raise backend_mod.ComposeError("ps injoignable")
+
+    with pytest.raises(ValueError, match="inintrospectable"):
+        engine.deploy_preview(conn, settings, slug="svc", feature="feat", backend=_PsBoom())
+    held = [r["purpose"] for r in ports.list_reservations(conn, project="svc")]
+    assert "preview:feat" not in held                       # port relâché même sur ps KO
+
+
 # -- autoverify : preview-deploy + preuve de rendu, auto-suffisant (Tier-1.5 pré-merge) -------------
 
 def test_autoverify_feature_writes_fresh_verdict_and_always_tears_down(ctx, monkeypatch):

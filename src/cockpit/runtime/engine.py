@@ -234,6 +234,22 @@ def deploy_preview(conn: sqlite3.Connection, settings: Settings, *, slug: str, f
     except ComposeError as exc:
         ports.release(conn, project=slug, purpose=_preview_purpose(feature))
         raise ValueError(f"preview-deploy échoué ({slug}/{feature}) : {exc}") from exc
+
+    # `podman-compose up --build` retourne exit 0 même quand le BUILD échoue (aucun conteneur créé) → `up` ne
+    # lève pas ; on retournerait alors une URL vers rien et le Tier-1.5 verrait `ERR_CONNECTION_REFUSED` au
+    # lieu d'un « build échoué » honnête. Même sonde que `deploy()` (cf. deploy-up-false-green) : on confirme
+    # l'état RÉEL avant de rendre l'URL. Échec build → release port + `ValueError` (jamais un faux-vert).
+    try:
+        rows = backend.ps(name, wt, env={"COMPOSE_PROJECT_NAME": name})
+    except ComposeError as exc:
+        ports.release(conn, project=slug, purpose=_preview_purpose(feature))
+        raise ValueError(
+            f"preview-deploy échoué ({slug}/{feature}) : conteneur inintrospectable ({exc})") from exc
+    if not any(is_running(r) for r in rows):
+        ports.release(conn, project=slug, purpose=_preview_purpose(feature))
+        raise ValueError(f"preview-deploy échoué ({slug}/{feature}) : aucun conteneur en marche après `up` "
+                         "(build probablement échoué malgré un exit 0 de compose)")
+
     return {"url": f"http://127.0.0.1:{port}", "port": port, "name": name, "workdir": str(wt)}
 
 
