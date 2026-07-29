@@ -603,6 +603,26 @@ def test_autoverify_feature_writes_fresh_verdict_and_always_tears_down(ctx, monk
     assert verify.status(settings, "svc", "feat", current_sha="abc123")["fresh"] is True
 
 
+def test_autoverify_feature_probes_declared_route(ctx, monkeypatch):
+    """Le contrat peut déclarer une `path` : `autoverify_feature` sonde `<url racine> + path` (pas seulement
+    `/`) — le cas qui bloquait `avagency/design-system` (showcase sur `/design-system`). Défaut `/` couvert
+    par le test au-dessus."""
+    from cockpit.gate import verify
+    settings, conn = ctx
+    registry.create_project(conn, settings, slug="svc")
+    wt = _seed_worktree(settings, "svc", "feat")
+    (wt / ".cockpit").mkdir()
+    (wt / ".cockpit" / "verify-markers.json").write_text(
+        '{"markers": ["Design system"], "path": "/design-system"}', encoding="utf-8")
+    seen: dict = {}
+    monkeypatch.setattr(verify, "_wait_http_ready", lambda url, **k: True)
+    monkeypatch.setattr(verify, "verify_target",
+                        lambda settings_, url, markers, *, name=None, **k: seen.update(url=url)
+                        or {"name": name, "ok": True, "found": markers, "missing": []})
+    verify.autoverify_feature(conn, settings, project="svc", feature="feat", sha="s", backend=FakeBackend())
+    assert seen["url"].endswith("/design-system") and "//design-system" not in seen["url"]
+
+
 def test_autoverify_feature_tears_down_even_when_verify_raises(ctx, monkeypatch):
     """Le `finally` démonte TOUJOURS (jamais de fuite de port/conteneur), même si la vérif explose."""
     from cockpit.gate import verify

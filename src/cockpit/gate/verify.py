@@ -148,6 +148,16 @@ def _clean_clicks(value: object) -> list[dict]:
     return out
 
 
+def _clean_path(value: object) -> str:
+    """Route (chemin URL) où sonder la preuve, **normalisée avec un `/` de tête**. Défaut `/` (racine) — un
+    contrat legacy sans `path` sonde exactement comme avant (rétro-compat). Robuste aux entrées sales → `/`.
+    PUR. Ne couvre qu'UNE route (une feature = une surface de preuve) ; multi-route = `targets:[]` futur."""
+    if not isinstance(value, str) or not value.strip():
+        return "/"
+    p = value.strip()
+    return p if p.startswith("/") else "/" + p
+
+
 def _clean_canvas(value: object) -> dict:
     """Contrat **plancher canvas** : `{"selector": "<css>", "non_blank": true}` — prouve qu'un rendu
     `<canvas>`/WebGL (innerText vide, invisible au match textuel) a réellement peint. Robuste aux entrées
@@ -170,10 +180,13 @@ def read_verify_contract(workdir: Path) -> dict:
       une TRANSITION : le runner joue `clicks`, exige `after_markers` APRÈS le geste ET assert qu'ils étaient
       ABSENTS at-rest (`pre_present` non vide ⇒ transition non prouvée ⇒ 🔴).
 
+    Champ **optionnel `"path"`** (ADDITIF, défaut `/`) : la route où sonder la preuve quand l'écran vit sous
+    un sous-chemin (ex. un showcase sur `/design-system`). Absent ⇒ racine `/`, exactement comme avant.
+
     PUR, ne lève JAMAIS. Absent / JSON invalide / forme inattendue → tout vide (dégrade honnête ; `markers`
     vide reste fail-closed en aval via `build_verdict`, jamais blanchi par absence de cible)."""
     empty: dict = {"markers": [], "clicks": [], "after_markers": [], "wait_for_text": None,
-                   "wait_timeout_ms": None, "canvas": {}}
+                   "wait_timeout_ms": None, "canvas": {}, "path": "/"}
     path = workdir / MARKERS_FILE
     if not path.is_file():
         return empty
@@ -186,6 +199,7 @@ def read_verify_contract(workdir: Path) -> dict:
     contract: dict = dict(empty)
     contract["markers"] = _clean_str_list(data.get("markers"))
     contract["canvas"] = _clean_canvas(data.get("canvas"))
+    contract["path"] = _clean_path(data.get("path"))
     interaction = data.get("interaction")
     if isinstance(interaction, dict):
         contract["clicks"] = _clean_clicks(interaction.get("clicks"))
@@ -378,9 +392,10 @@ def autoverify_feature(conn: sqlite3.Connection, settings: Settings, *, project:
 
     preview = deploy_preview(conn, settings, slug=project, feature=feature, backend=backend)
     try:
-        _wait_http_ready(preview["url"])
+        _wait_http_ready(preview["url"])                       # readiness sur la racine (toute réponse = up)
         contract = read_verify_contract(Path(preview["workdir"]))
-        res = verify_target(settings, preview["url"], contract["markers"], name=feature,
+        target_url = preview["url"].rstrip("/") + contract["path"]   # sonde la route déclarée (défaut `/`)
+        res = verify_target(settings, target_url, contract["markers"], name=feature,
                             clicks=contract["clicks"], after_markers=contract["after_markers"],
                             wait_for_text=contract["wait_for_text"],
                             wait_timeout_ms=contract["wait_timeout_ms"], canvas=contract["canvas"])

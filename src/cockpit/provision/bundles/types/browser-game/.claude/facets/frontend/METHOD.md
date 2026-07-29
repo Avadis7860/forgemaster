@@ -5,7 +5,8 @@
 2. **Preuve de rendu (Tier-1.5)** — émets `.cockpit/verify-markers.json`.
    - **Écran at-rest** (menu, tableau, réglages) : `{"markers":[…]}` = les chaînes FR **littérales** que ton
      écran rend (titres, labels de ton `acceptance`). La gate cherche ces marqueurs dans le DOM du
-     preview-deploy — déclare le vrai, pas un vœu (un marqueur non rendu ⇒ gate rouge).
+     preview-deploy — déclare le vrai, pas un vœu (un marqueur non rendu ⇒ gate rouge). **Route** : écran sous
+     un sous-chemin → ajoute `"path":"/ta-route"` (défaut `/`, sinon le gate sonde la racine).
    - **Jalon jouable** (« jouable = observable **après un geste** ») : un écran statique ne prouve rien.
      Ajoute un bloc `interaction` à DEUX temps —
      ```json

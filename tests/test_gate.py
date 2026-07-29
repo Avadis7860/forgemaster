@@ -278,7 +278,7 @@ def test_verify_read_declared_markers(tmp_path):
 
 
 _EMPTY_CONTRACT = {"markers": [], "clicks": [], "after_markers": [], "wait_for_text": None,
-                   "wait_timeout_ms": None, "canvas": {}}
+                   "wait_timeout_ms": None, "canvas": {}, "path": "/"}
 
 
 def test_verify_read_verify_contract(tmp_path):
@@ -315,6 +315,15 @@ def test_verify_read_verify_contract(tmp_path):
     assert verify.read_verify_contract(tmp_path)["canvas"] == {}
     _write_markers(tmp_path, '{"canvas": "nope"}')                      # canvas non-objet → {}
     assert verify.read_verify_contract(tmp_path)["canvas"] == {}
+    # path : absent → "/" (rétro-compat) ; déclaré → tel quel ; sans slash de tête → normalisé ; sale → "/".
+    _write_markers(tmp_path, '{"markers": ["A"]}')
+    assert verify.read_verify_contract(tmp_path)["path"] == "/"
+    _write_markers(tmp_path, '{"markers": ["A"], "path": "/design-system"}')
+    assert verify.read_verify_contract(tmp_path)["path"] == "/design-system"
+    _write_markers(tmp_path, '{"markers": ["A"], "path": "  design-system "}')
+    assert verify.read_verify_contract(tmp_path)["path"] == "/design-system"
+    _write_markers(tmp_path, '{"markers": ["A"], "path": 42}')
+    assert verify.read_verify_contract(tmp_path)["path"] == "/"
     # racine pas un objet → tout vide.
     _write_markers(tmp_path, "[]")
     assert verify.read_verify_contract(tmp_path) == _EMPTY_CONTRACT
