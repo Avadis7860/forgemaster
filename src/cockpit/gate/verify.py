@@ -388,6 +388,7 @@ def autoverify_feature(conn: sqlite3.Connection, settings: Settings, *, project:
     écrit le verdict SHA-bound, **démonte TOUJOURS** (finally). `deploy_preview` lève `ValueError`
     (worktree/compose absent = type non hébergeable) → propagé : pas de preuve possible, mais aucun faux-vert.
     Imports paresseux de `runtime.engine` → coupe le cycle gate↔runtime."""
+    from cockpit.gate.advertised_authority import check_served_authority
     from cockpit.runtime.engine import deploy_preview, teardown_preview
 
     preview = deploy_preview(conn, settings, slug=project, feature=feature, backend=backend)
@@ -399,6 +400,14 @@ def autoverify_feature(conn: sqlite3.Connection, settings: Settings, *, project:
                             clicks=contract["clicks"], after_markers=contract["after_markers"],
                             wait_for_text=contract["wait_for_text"],
                             wait_timeout_ms=contract["wait_timeout_ms"], canvas=contract["canvas"])
+        # Dimension type-agnostique (gate/advertised_authority) : l'artefact servi ne doit jamais advertise
+        # une autorité absolue ≠ celle atteinte (loopback / port interne / host en dur fui dans un redirect).
+        # Sondée sur l'origine RÉELLE (le port publié) → tout finding rend le target 🔴 avec un diagnostic
+        # précis, quel que soit le type de projet. Positif par catégorie, jamais un denylist de valeurs.
+        leaks = check_served_authority(preview["url"], [contract["path"], "/"])
+        if leaks:
+            res["ok"] = False
+            res["authority_leaks"] = leaks
         return write_verdict(settings, project, feature, [res], sha=sha)
     finally:
         teardown_preview(conn, settings, slug=project, feature=feature, backend=backend)
@@ -417,6 +426,9 @@ def _print_verdict(results: list[dict], verdict: dict, sha: str | None) -> None:
         failed_clicks = [c.get("step") for c in t.get("clicks", []) if not c.get("ok")]
         if failed_clicks:
             extra += f" clics échoués={failed_clicks}"
+        for leak in t.get("authority_leaks", []):
+            extra += (f" [autorité fuitée: {leak.get('request_url')} → {leak.get('status')} "
+                      f"Location advertise {leak.get('advertised')} ≠ {leak.get('reached')}]")
         extra += f" ({t['error']})" if t.get("error") else ""
         print(f"  {mark} {t.get('name') or t['url']}{extra}")
     print(f"feature-verify : {'🟢 vert' if verdict['ok'] else '🔴 échec'} "
