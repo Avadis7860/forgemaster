@@ -115,6 +115,8 @@ class GitBackend(Protocol):
         """Superpose `files` (`chemin → contenu`) sur l'arbre courant de `branch` et committe l'overlay comme
         enfant de sa pointe (préservation par construction : seuls ces chemins sont réécrits, rien n'est
         supprimé). Bare-safe (index temporaire). Identité injectée. **Idempotent** : arbre inchangé → None,
-        la ref n'avance pas ; sinon le SHA du commit. Sert le re-seed du scaffold possédé dans un SoT
-        existant (`provision.reseed`)."""
+        la ref n'avance pas ; sinon le SHA du commit. **Worktree-safe** : si `branch` est sortie dans un
+        worktree vivant, les chemins overlayés y sont resynchronisés vers le nouveau commit (un build depuis
+        ce worktree verrait sinon l'ancien contenu) — travail worker hors de ces chemins intact. Sert le
+        re-seed du scaffold possédé dans un SoT existant (`provision.reseed`)."""
         ...

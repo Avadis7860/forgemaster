@@ -7,8 +7,9 @@ Quand le scaffold d'un type est corrigé APRÈS coup (ex. un Dockerfile cassé),
 FUTURS — l'ancien porte la version cuite dans son SoT. `reseed` recompose `load_bundle(type)` et superpose sur
 `dev` le sous-ensemble `reseed_owned` (le contrat de run possédé) via `git.overlay_commit` : seuls ces chemins
 sont réécrits, tout le reste (`web/src`, `docs`, contenu, tasks) est **préservé par construction**. Idempotent
-(aucun diff → aucun commit). `dev` seul avance ; `main` et les worktrees de features en vol sont intouchés —
-une feature hérite le fix à son prochain rebase/redrain sur `dev`.
+(aucun diff → aucun commit). `dev` seul avance ; `main` est intouché — une feature en vol hérite le fix à son
+prochain rebase/redrain sur `dev`, OU via `--feature <slug>` (`overlay_commit` est worktree-safe : il resync
+les chemins overlayés du worktree vivant, donc un preview-deploy de la feature sert bien le contrat corrigé).
 """
 from __future__ import annotations
 
@@ -33,7 +34,9 @@ def reseed_project(conn: sqlite3.Connection, settings: Settings, *, project: str
     Seule `branch` avance ; les autres branches (dont `main`) intouchées. `branch != dev` cible une **feature
     en vol** (`feature/<slug>`) pour lui livrer le contrat de run corrigé **sans redrain destructif** — le
     worker ne touche jamais les fichiers owned, donc l'overlay les remplace sans conflit et préserve son
-    travail. `KeyError` si le projet est absent (→ 404). `ValueError` si le type ne déclare aucun
+    travail. L'overlay étant worktree-safe, le worktree vivant de la feature est resynchronisé sur les chemins
+    owned → la feature est **immédiatement re-déployable/re-vérifiable** (pas d'attente de rebase).
+    `KeyError` si le projet est absent (→ 404). `ValueError` si le type ne déclare aucun
     `reseed_owned` (rien de re-semable) ou si un fichier owned manque au bundle. Retour = compte-rendu."""
     git = git or InternalGit()
     proj = get_project(conn, project)                          # KeyError si absent → 404

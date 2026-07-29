@@ -163,6 +163,34 @@ def test_reseed_targets_feature_branch_preserving_work(ctx):
     assert _sha(sot, "dev") == dev_before                            # `dev` (et main) INTOUCHÉ
 
 
+def test_overlay_commit_syncs_live_worktree_files_not_just_the_ref(ctx):
+    """RÉGRESSION (bug drain avagency 2026-07-29) : `overlay_commit` avançait le REF de branche par plumbing
+    mais laissait le WORKTREE vivant checké-out dessus périmé — HEAD bougeait sous ses pieds, index+arbre de
+    travail restaient l'ancien contenu. `deploy_preview` bâtit depuis les FICHIERS du worktree → il servait
+    l'ancien nginx (fuite du port interne persistante malgré le reseed), et les chemins owned apparaissaient
+    comme des « modifs worker » fantômes. La correction resynchronise les chemins overlayés du worktree."""
+    settings, conn, sot = _vitrine(ctx)
+    git = InternalGit()
+    wt = settings.projects_root / "wt-design"
+    git.add_worktree(sot, wt, branch="feature/design", base="dev")   # worktree VIVANT sorti sur la feature
+    # nginx.conf périmé (sans le fix) matérialisé dans le worktree, comme un seed d'origine cassé.
+    (wt / "nginx.conf").write_text("server { listen 8000; }\n# PÉRIMÉ : pas de absolute_redirect off\n")
+    git.commit_worktree(wt, message="worker: état initial", identity=_ID)
+
+    report = reseed.reseed_project(conn, settings, project="viti", branch="feature/design")
+
+    assert report["updated"] is True
+    bundle = load_bundle("site-vitrine")
+    # (1) le FICHIER SUR DISQUE du worktree (pas seulement l'arbre committé) porte le contrat corrigé —
+    #     c'est lui que `deploy_preview` bâtit.
+    assert (wt / "nginx.conf").read_text() == bundle["nginx.conf"]
+    assert "absolute_redirect off" in (wt / "nginx.conf").read_text()
+    # (2) le worktree est PROPRE sur les chemins owned : aucune « modif fantôme » staged qu'un commit worker
+    #     ultérieur ré-annulerait.
+    st = git.status(wt)
+    assert all(f["path"] != "nginx.conf" for f in st["files"]), st["files"]
+
+
 # -- HTTP (route thin, auth-free, mêmes garde-fous que l'op) -----------------------------------------
 
 def test_route_reseed_updates_and_reports(tmp_path: Path):

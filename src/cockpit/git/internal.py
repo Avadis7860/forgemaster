@@ -374,7 +374,9 @@ class InternalGit:
         `_seed_base`. **Idempotent** : si l'overlay ne change pas l'arbre (contenus déjà identiques), aucun
         commit n'est créé, la ref n'avance pas → retour `None` ; sinon le SHA du commit d'overlay. Identité
         INJECTÉE (non persistée). Sérialisé par le flock du SoT. Lève `GitOpError` si `files` est vide ou si
-        `branch` est absente."""
+        `branch` est absente. **Worktree-safe** : si `branch` est sortie dans un worktree vivant, les chemins
+        overlayés y sont resynchronisés vers le nouveau commit (sinon un build depuis ce worktree servirait
+        l'ancien contenu ; cf. sync ci-dessous) — le travail worker hors de ces chemins reste intact."""
         if not files:
             raise GitOpError("overlay_commit: aucun fichier à superposer")
         env = writeback_env(identity)
@@ -403,6 +405,15 @@ class InternalGit:
                 raise GitOpError(f"overlay commit-tree @ {sot}: {commit.stderr.strip()[:200]}")
             sha = commit.stdout.strip()
             _checked(sot, "update-ref", f"refs/heads/{branch}", sha, parent)   # CAS sur parent (anti-course)
+            # Si `branch` est SORTIE dans un worktree vivant (feature en vol), `update-ref` vient d'avancer
+            # son HEAD sous ses pieds, mais son index + arbre de travail restent PÉRIMÉS : un build depuis ce
+            # worktree (`deploy_preview`) servirait l'ANCIEN contenu, et les chemins overlayés y seraient des
+            # « modifs worker » fantômes (l'inverse de la préservation promise — pire, un commit worker les
+            # ré-annulerait). On resynchronise donc les SEULS chemins overlayés du worktree vers le nouveau
+            # commit ; le reste (travail worker) reste intact (aucun worktree sur `branch`, cas `dev` : skip).
+            wt = self._worktree_for_branch(sot, branch)
+            if wt is not None:
+                _checked(wt, "checkout", sha, "--", *sorted(files))
             return sha
 
     def add_worktree(self, sot: Path, worktree: Path, *, branch: str, base: str) -> None:
@@ -646,6 +657,20 @@ class InternalGit:
             line[len("branch "):].strip().removeprefix("refs/heads/")
             for line in out.splitlines() if line.startswith("branch ")
         }
+
+    def _worktree_for_branch(self, sot: Path, branch: str) -> Path | None:
+        """Chemin du worktree actif où `branch` est SORTIE (`worktree list --porcelain`), ou `None` si aucune
+        (cas `dev`/bare pur). Une branche ne peut être sortie que dans UN worktree (git l'impose) → au plus un
+        résultat. Best-effort (échec de la commande → aucune ligne → `None`, prudent)."""
+        out = _git(sot, "worktree", "list", "--porcelain").stdout
+        current: str | None = None
+        for line in out.splitlines():
+            if line.startswith("worktree "):
+                current = line[len("worktree "):].strip()
+            elif line.startswith("branch ") and \
+                    line[len("branch "):].strip().removeprefix("refs/heads/") == branch:
+                return Path(current) if current else None
+        return None
 
     def reconcile(
         self,
