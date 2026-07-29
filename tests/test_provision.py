@@ -357,6 +357,19 @@ def test_typed_seed_ships_mountable_toolchain(project_type: str, tmp_path: Path)
             f"(manifeste absent) → un worker échouerait le gate Tier-0 par construction")
 
 
+def test_site_vitrine_nginx_never_advertises_internal_authority():
+    """**Garde anti-récidive réputation** : le nginx semé sert sur le port INTERNE 8000, publié par le cockpit
+    sur un port dynamique différent. Un 301 de dossier (`/x`→`/x/`, cascade normale d'Astro SSG multi-pages)
+    avec `absolute_redirect on` (défaut) fuit `Location: http://127.0.0.1:8000/x/` → le visiteur suit vers un
+    port non publié → ERR_CONNECTION_REFUSED (cause racine du 🔴 Tier-1.5 drain avagency 2026-07-29).
+    `absolute_redirect off` force un `Location` relatif, résolu contre l'origine réelle. Ce test échoue si la
+    garde disparaît du scaffold (nginx.conf est reseed_owned → propagé aux projets existants)."""
+    conf = load_bundle("site-vitrine")["nginx.conf"]
+    assert "absolute_redirect off" in conf, (
+        "nginx.conf semé DOIT poser `absolute_redirect off` : sinon un redirect de dossier advertise le port "
+        "interne 8000 (autorité non publiée) → page injoignable chez le visiteur")
+
+
 def test_browser_game_seeds_runnable_ts_mono_skeleton():
     """DoD `cockpit-bundle-seeds-runnable-scaffold` : le seed browser-game porte un squelette TS-mono
     **runnable né-avec** — client `web/` (Vite/React), serveur `server/` (Hono), modèle Zod partagé + son
