@@ -84,5 +84,6 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     mark = "✓" if report["updated"] else "•"
     print(f"{mark} scaffold {report['project']} ({report['project_type']}) — {report['note']}")
     if report["updated"]:
-        print(f"  fichiers : {', '.join(report['files'])}  (commit {report['commit'][:12]} sur dev)")
+        print(f"  fichiers : {', '.join(report['files'])}  "
+              f"(commit {report['commit'][:12]} sur {report['branch']})")
     return 0
