@@ -92,6 +92,9 @@ def build_parser() -> argparse.ArgumentParser:
                                     help="re-matérialiser les fichiers scaffold-owned dans le SoT (dev) — "
                                          "préserve le travail worker ; idempotent")
     psr.add_argument("project")
+    psr.add_argument("--feature", metavar="<slug>",
+                     help="cibler `feature/<slug>` (feature en vol) au lieu de `dev` — livre le contrat "
+                          "de run corrigé sans redrain ; travail worker préservé")
 
     # -- roadmap ------------------------------------------------------------------------------------
     p_roadmap = sub.add_parser("roadmap", parents=[common], help="roadmap in-repo (features + tasks)")

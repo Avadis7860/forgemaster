@@ -26,13 +26,15 @@ from cockpit.provision import load_bundle, read_reseed_owned
 _RESEED_IDENTITY = ("cockpit", "cockpit@localhost")   # identité injectée, comme le seed initial (_seed_base)
 
 
-def reseed_project(conn: sqlite3.Connection, settings: Settings, *, project: str,
+def reseed_project(conn: sqlite3.Connection, settings: Settings, *, project: str, branch: str = "dev",
                    git: GitBackend | None = None) -> dict:
-    """Re-matérialise les fichiers `reseed_owned` du type de `project` dans son SoT (`dev`), préservant tout
-    chemin worker. **Idempotent** : rien à mettre à jour → aucun commit (`updated=False`). `dev` seul avance ;
-    `main`/worktrees en vol intouchés. `KeyError` si le projet est absent (→ 404). `ValueError` si le type ne
-    déclare aucun `reseed_owned` (rien de re-semable) ou si un fichier owned manque au bundle. Retour =
-    compte-rendu (contrat front)."""
+    """Re-matérialise les fichiers `reseed_owned` du type de `project` sur `branch` de son SoT (défaut `dev`),
+    préservant tout chemin worker. **Idempotent** : rien à mettre à jour → aucun commit (`updated=False`).
+    Seule `branch` avance ; les autres branches (dont `main`) intouchées. `branch != dev` cible une **feature
+    en vol** (`feature/<slug>`) pour lui livrer le contrat de run corrigé **sans redrain destructif** — le
+    worker ne touche jamais les fichiers owned, donc l'overlay les remplace sans conflit et préserve son
+    travail. `KeyError` si le projet est absent (→ 404). `ValueError` si le type ne déclare aucun
+    `reseed_owned` (rien de re-semable) ou si un fichier owned manque au bundle. Retour = compte-rendu."""
     git = git or InternalGit()
     proj = get_project(conn, project)                          # KeyError si absent → 404
     project_type = proj.get("project_type") or "generic"
@@ -47,22 +49,30 @@ def reseed_project(conn: sqlite3.Connection, settings: Settings, *, project: str
     payload = {path: bundle[path] for path in owned}
     sot = Path(proj["sot_path"])
     message = f"chore(scaffold): reseed contrat de run ({project_type}) — {len(payload)} fichier(s)"
-    sha = git.overlay_commit(sot, branch="dev", files=payload, message=message, identity=_RESEED_IDENTITY)
+    sha = git.overlay_commit(sot, branch=branch, files=payload, message=message, identity=_RESEED_IDENTITY)
+    if sha is None:
+        note = "scaffold déjà à jour — aucun changement"
+    elif branch == "dev":
+        note = (f"contrat de run re-semé sur `dev` ({len(payload)} fichier(s)) — les features en vol "
+                f"héritent le fix à leur prochain redrain/rebase")
+    else:
+        note = (f"contrat de run re-semé sur `{branch}` ({len(payload)} fichier(s)) — feature corrigée "
+                f"sans redrain, travail worker préservé")
     return {
-        "project": project, "project_type": project_type, "branch": "dev",
-        "updated": sha is not None, "commit": sha, "files": sorted(payload),
-        "note": ("scaffold déjà à jour — aucun changement" if sha is None else
-                 f"contrat de run re-semé sur `dev` ({len(payload)} fichier(s)) — les features en vol "
-                 f"héritent le fix à leur prochain redrain/rebase"),
+        "project": project, "project_type": project_type, "branch": branch,
+        "updated": sha is not None, "commit": sha, "files": sorted(payload), "note": note,
     }
 
 
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
-    """`cockpit scaffold reseed <project>` — re-sème le contrat de run possédé dans le SoT (`dev`)."""
+    """`cockpit scaffold reseed <project> [--feature <slug>]` — re-sème le contrat de run possédé dans le SoT.
+    Défaut : branche `dev`. `--feature <slug>` cible `feature/<slug>` (feature en vol, sans redrain)."""
+    feature = getattr(args, "feature", None)
+    branch = f"feature/{feature}" if feature else "dev"
     conn = store.open_db(settings)
     try:
         try:
-            report = reseed_project(conn, settings, project=args.project)
+            report = reseed_project(conn, settings, project=args.project, branch=branch)
         except KeyError:
             print(f"erreur : projet {args.project!r} introuvable")
             return 1

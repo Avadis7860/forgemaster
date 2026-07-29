@@ -136,6 +136,27 @@ def test_overlay_commit_rejects_empty_and_missing_branch(ctx):
         git.overlay_commit(sot, branch="nope", files={"a": "b"}, message="x", identity=_ID)
 
 
+def test_reseed_targets_feature_branch_preserving_work(ctx):
+    settings, conn, sot = _vitrine(ctx)
+    git = InternalGit()
+    # feature en vol : branche feature/design ancrée sur dev, avec Dockerfile PÉRIMÉ + travail worker (web/).
+    run.run(["git", "-C", str(sot), "branch", "feature/design", "dev"])
+    git.overlay_commit(sot, branch="feature/design", identity=_ID, message="worker: travail + scaffold",
+                       files={"Dockerfile": "FROM scratch\n# court/périmé\n",
+                              "web/src/pages/x.astro": "<!-- WORK -->\n"})
+    dev_before = _sha(sot, "dev")
+    worker_before = _show(sot, "feature/design:web/src/pages/x.astro")
+
+    report = reseed.reseed_project(conn, settings, project="viti", branch="feature/design")
+
+    assert report["updated"] is True and report["branch"] == "feature/design"
+    bundle = load_bundle("site-vitrine")
+    for path in _OWNED:                                              # owned re-semés au contenu du bundle
+        assert _show(sot, f"feature/design:{path}") == bundle[path]
+    assert _show(sot, "feature/design:web/src/pages/x.astro") == worker_before   # travail worker préservé
+    assert _sha(sot, "dev") == dev_before                            # `dev` (et main) INTOUCHÉ
+
+
 # -- HTTP (route thin, auth-free, mêmes garde-fous que l'op) -----------------------------------------
 
 def test_route_reseed_updates_and_reports(tmp_path: Path):
