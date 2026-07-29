@@ -40,6 +40,27 @@ def resolve_facet(root: Path, feature_facet: str | None) -> str:
     return _FALLBACK_FACET
 
 
+def resolve_facet_model(root: Path, facet: str) -> str | None:
+    """Le **modèle LLM** du worker pour cette facette, ou `None` (⇒ modèle moteur par défaut de `claude -p`).
+    Tiering par **nature de travail** : une facette mécanique (contenu, déploiement) peut tourner sur un
+    modèle plus léger — la gate reste le garde-fou qualité (défaut → gate rouge → refix). Lu de la table
+    `[bundle.facet_models]` du `.cockpit/bundle.toml` de la worktree (`facet → alias/id`), symétrique de
+    `resolve_facet`. **Fail-soft** : manifeste absent/illisible, table absente, facette non déclarée, ou
+    valeur non-str/vide ⇒ `None` (le worker garde le modèle par défaut, comportement historique). PUR."""
+    manifest = Path(root) / ".cockpit" / "bundle.toml"
+    if not manifest.is_file():
+        return None
+    try:
+        bundle = tomllib.loads(manifest.read_text(encoding="utf-8")).get("bundle", {})
+    except (tomllib.TOMLDecodeError, OSError):
+        return None
+    models = bundle.get("facet_models")
+    if not isinstance(models, dict):
+        return None
+    val = models.get(facet)
+    return val if isinstance(val, str) and val else None
+
+
 def activate_facet(wt: Path, facet: str) -> str | None:
     """Active la facette dans la worktree : copie `.claude/facets/<facet>/settings.local.json` (source
     committée) → `.claude/settings.local.json` (GITIGNORÉ, lu par `claude -p`). Idempotent (overwrite).

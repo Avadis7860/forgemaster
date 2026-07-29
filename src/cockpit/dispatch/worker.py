@@ -32,6 +32,7 @@ from cockpit.git.backend import GitBackend
 from cockpit.git.identity import resolve_identity
 from cockpit.git.internal import InternalGit
 from cockpit.projects.registry import get_project, sot_path_for
+from cockpit.provision import facet as facet_mod
 from cockpit.provision.mcp import inject_mcp_config
 from cockpit.roadmap import model, resolver
 from cockpit.roadmap.prompt import build_fix_prompt, build_worker_prompt, findings_block
@@ -211,8 +212,12 @@ def dispatch_next(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
 
     feature = feature_ref.split("/", 1)[1]
     res = worktree.reserve(conn, settings, git, project=project, feature=feature)
-    prompt = build_worker_prompt(get_project(conn, project), model.resolve_feature(conn, feature_ref),
-                                 nxt, root=res["path"])
+    feat = model.resolve_feature(conn, feature_ref)
+    prompt = build_worker_prompt(get_project(conn, project), feat, nxt, root=res["path"])
+    # Tiering de modèle par facette (nature de travail) : le mécanique tolère un modèle plus léger, la gate
+    # reste le garde-fou. `None` ⇒ modèle moteur par défaut (comportement historique préservé, fail-soft).
+    worker_model = facet_mod.resolve_facet_model(res["path"], facet_mod.resolve_facet(res["path"],
+                                                                                      feat.get("facet")))
 
     session_id = ids.new_id()
     # log_path = le fichier où le daemon STREAME le stdout stream-json du worker (suivi live), sous
@@ -241,16 +246,18 @@ def dispatch_next(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
 
     parsed = _run_worker(conn, settings, res=res, session_id=session_id, job_id=job_id, log_path=log_path,
                          prompt=prompt, project=project, runner=runner,
-                         on_success=_on_success, on_failure=_on_failure)
+                         on_success=_on_success, on_failure=_on_failure, model=worker_model)
     return {"dispatched": True, "reason": "ok" if parsed.get("ok") else (parsed.get("error") or "échec"),
             "task": nxt["slug"], "job_id": job_id, "result": parsed}
 
 
 def _run_worker(conn: sqlite3.Connection, settings: Settings, *, res: dict, session_id: str, job_id: str,
                 log_path: Path, prompt: str, project: str, runner: Runner | None,
-                on_success: Callable[[dict], None], on_failure: Callable[[dict], None]) -> dict:
+                on_success: Callable[[dict], None], on_failure: Callable[[dict], None],
+                model: str | None = None) -> dict:
     """Tronc de spawn PARTAGÉ par `dispatch_next` (task) et `dispatch_fix` (correction) : câble le MCP,
-    construit l'argv headless, sélectionne le runner (défaut = streaming vers `log_path`),
+    construit l'argv headless (`model` = tiering par facette, `None` ⇒ modèle moteur par défaut),
+    sélectionne le runner (défaut = streaming vers `log_path`),
     preflight/trust/check `claude`, spawne, parse, `record_finish`. `on_success(parsed)`/`on_failure(parsed)`
     portent les effets SPÉCIFIQUES à l'appelant (récolte + commit + transition de task, ou commit de fix) —
     appelés DANS la garde anti-orphelin (sémantique identique à l'ancien inline). Retourne `parsed`.
@@ -266,7 +273,7 @@ def _run_worker(conn: sqlite3.Connection, settings: Settings, *, res: dict, sess
     # `stream-json` : le worker émet ses événements ligne-à-ligne (NDJSON) sur stdout → streamés vers log_path
     # en direct. Le runner par défaut streame ; un runner injecté (test) reçoit le même argv sans streamer.
     argv = build_headless_argv(session_id=session_id, work=True, mcp_config=mcp_path,
-                               output_format="stream-json")
+                               output_format="stream-json", model=model)
     active_runner = runner or _make_default_runner(str(log_path), conn, job_id)
     # PATH d'outils préfixé (`tools/bin`) → le worker RÉSOUT `codemap`/`docsmap`/`frontmap`/`node`/`ruff`…
     # que sa facette déclare. Le MÊME env sert au preflight (which) ET au spawn — cohérence garantie.
@@ -330,6 +337,8 @@ def dispatch_fix(conn: sqlite3.Connection, settings: Settings, *, feature_ref: s
         return {"dispatched": False, "reason": "aucune task dans cette feature — rien à corriger"}
     res = worktree.reserve(conn, settings, git, project=project, feature=feature)
     prompt = build_fix_prompt(get_project(conn, project), feat, findings=findings, root=res["path"])
+    worker_model = facet_mod.resolve_facet_model(res["path"], facet_mod.resolve_facet(res["path"],
+                                                                                      feat.get("facet")))
     session_id = ids.new_id()
     log_path = jobs.dispatch_log_path(settings, session_id)
     job_id = jobs.record_start(conn, task_id=anchor, worktree=str(res["path"]), port=res["port"],
@@ -352,7 +361,7 @@ def dispatch_fix(conn: sqlite3.Connection, settings: Settings, *, feature_ref: s
 
     parsed = _run_worker(conn, settings, res=res, session_id=session_id, job_id=job_id, log_path=log_path,
                          prompt=prompt, project=project, runner=runner,
-                         on_success=_on_success, on_failure=lambda _p: None)
+                         on_success=_on_success, on_failure=lambda _p: None, model=worker_model)
     return {"dispatched": True, "reason": "ok" if parsed.get("ok") else (parsed.get("error") or "échec"),
             "job_id": job_id, "result": parsed}
 

@@ -188,6 +188,32 @@ def test_validate_bundle_rejects_malformed_mcp(tmp_path, monkeypatch):
         prov.validate_bundle("generic")
 
 
+def test_validate_bundle_rejects_malformed_facet_models(tmp_path, monkeypatch):
+    """`[bundle.facet_models]` optionnel mais **fail-closed** : un modèle pour une facette NON déclarée
+    (dérive silencieuse) ou une valeur non-str/vide est refusé avant toute copie."""
+    import cockpit.provision as prov
+
+    def _seed(models_block: str) -> None:
+        meta = tmp_path / "bundles" / "base" / ".cockpit"
+        meta.mkdir(parents=True, exist_ok=True)
+        (meta / "bundle.toml").write_text(
+            '[bundle]\nversion = "1"\nproject_type = "generic"\nfacets = ["doc"]\ndefault_facet = "doc"\n'
+            + models_block, encoding="utf-8")
+        doc = tmp_path / "bundles" / "base" / ".claude" / "facets" / "doc"
+        doc.mkdir(parents=True, exist_ok=True)
+        (doc / "PERSONA.md").write_text("x", encoding="utf-8")
+
+    monkeypatch.setattr(prov, "_BUNDLES_DIR", tmp_path / "bundles")
+    _seed('[bundle.facet_models]\nfrontend = "sonnet"\n')      # facette non déclarée (∉ facets)
+    with pytest.raises(prov.BundleError, match="facet_models"):
+        prov.validate_bundle("generic")
+    _seed('[bundle.facet_models]\ndoc = 3\n')                  # valeur non-str
+    with pytest.raises(prov.BundleError, match="facet_models"):
+        prov.validate_bundle("generic")
+    _seed('[bundle.facet_models]\ndoc = "haiku"\n')            # bien formé → valide
+    prov.validate_bundle("generic")
+
+
 def test_list_valid_types_excludes_broken(tmp_path, monkeypatch):
     """Fail-closed : un overlay cassé (default_facet hors facets) est DÉCOUVERT mais **écarté** de
     `list_valid_types` — on n'offre jamais un type qu'on ne saurait pas semer. Le valide reste offert."""
@@ -537,6 +563,21 @@ def test_resolve_facet_explicit_then_default_then_fallback(tmp_path: Path):
     assert facet.resolve_facet(tmp_path, "frontend") == "frontend"   # feature.facet explicite l'emporte
     assert facet.resolve_facet(tmp_path, None) == "backend"          # sinon default_facet du bundle.toml
     assert facet.resolve_facet(tmp_path / "vide", None) == "doc"     # ni l'un ni l'autre → fallback doc
+
+
+def test_resolve_facet_model_reads_table_and_is_failsoft(tmp_path: Path):
+    """`resolve_facet_model` lit `[bundle.facet_models]` (facette → modèle) ; fail-soft partout : facette
+    non déclarée, table absente, manifeste absent ⇒ `None` (le worker garde le modèle par défaut)."""
+    _write(tmp_path / ".cockpit" / "bundle.toml",
+           '[bundle]\nproject_type = "site-vitrine"\nfacets = ["frontend", "content"]\n'
+           'default_facet = "frontend"\n[bundle.facet_models]\ncontent = "sonnet"\n')
+    assert facet.resolve_facet_model(tmp_path, "content") == "sonnet"   # facette tiérée
+    assert facet.resolve_facet_model(tmp_path, "frontend") is None      # facette omise → défaut moteur
+    # table absente / manifeste absent → None (fail-soft)
+    _write(tmp_path / "sans" / ".cockpit" / "bundle.toml",
+           '[bundle]\nproject_type = "x"\nfacets = ["doc"]\ndefault_facet = "doc"\n')
+    assert facet.resolve_facet_model(tmp_path / "sans", "doc") is None
+    assert facet.resolve_facet_model(tmp_path / "vide", "content") is None
 
 
 def test_activate_facet_copies_settings_local_and_is_idempotent(tmp_path: Path):

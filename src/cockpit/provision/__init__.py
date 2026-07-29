@@ -160,6 +160,17 @@ def validate_bundle(project_type: str = "generic") -> None:
             if path not in files:                              # on ne peut posséder un fichier non semé
                 raise BundleError(
                     f"bundle {project_type!r} : reseed_owned={path!r} absent du bundle composé")
+    fmodels = manifest.get("facet_models")            # tiering de modèle par facette (optionnel, sec)
+    if fmodels is not None:
+        if not isinstance(fmodels, dict):
+            raise BundleError(f"bundle {project_type!r} : `[bundle.facet_models]` doit être une table")
+        for fac, mdl in fmodels.items():
+            if fac not in facets:                              # pas de modèle pour une facette non déclarée
+                raise BundleError(
+                    f"bundle {project_type!r} : facet_models[{fac!r}] ∉ facets déclarées {facets}")
+            if not isinstance(mdl, str) or not mdl:
+                raise BundleError(
+                    f"bundle {project_type!r} : facet_models[{fac!r}] doit être un alias/id non vide")
 
 
 def list_valid_types() -> list[dict]:

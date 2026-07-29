@@ -280,6 +280,27 @@ def test_dispatch_refused_when_feature_has_no_task(ctx):
     assert report["dispatched"] is False and "aucune task" in report["reason"]
 
 
+def test_dispatch_threads_facet_model_into_argv(ctx, monkeypatch):
+    """Tiering de modèle bout-en-bout : `dispatch_next` résout le modèle de la facette
+    (`resolve_facet_model`) et le thread jusqu'à l'argv du worker → `--model <m>`. Défaut (`None`) ⇒ pas de
+    `--model` (comportement historique préservé — les autres tests happy-path le prouvent implicitement)."""
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    monkeypatch.setattr(worker.facet_mod, "resolve_facet_model", lambda root, facet: "sonnet")
+    calls: list = []
+
+    def spy_runner(argv, *, cwd, input_text, timeout, env=None):
+        calls.append(list(argv))
+        sid = argv[argv.index("--session-id") + 1]
+        out = json.dumps({"is_error": False, "result": "fait", "session_id": sid, "num_turns": 1})
+        return run.RunResult(argv=list(argv), returncode=0, stdout=out, stderr="")
+
+    report = worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=spy_runner)
+    assert report["dispatched"] is True
+    argv = calls[0]
+    assert argv[argv.index("--model") + 1] == "sonnet"
+
+
 def test_dispatch_interactive_task_routes_to_terminal_without_spawn(ctx):
     """v12 : une next task `mode=interactive` (interview/cadrage) N'EST PAS spawnée en headless — le dispatch
     refuse AVANT tout reserve, surface `needs_terminal`, et laisse la task `todo` (jamais `in_progress` ni
@@ -644,6 +665,14 @@ def test_build_headless_argv_permission_mode_per_work():
     assert w[w.index("--permission-mode") + 1] == worker.WRITE_PERMISSION_MODE == "acceptEdits"
     r = worker.build_headless_argv(session_id="s", work=False)
     assert r[r.index("--permission-mode") + 1] == worker.READONLY_PERMISSION_MODE == "dontAsk"
+
+
+def test_build_headless_argv_model_optional():
+    """`model`, si fourni, pose `--model <m>` (tiering par facette) ; `None` (défaut) l'OMET → le worker
+    garde le modèle moteur par défaut (comportement historique préservé, fail-soft)."""
+    m = worker.build_headless_argv(session_id="s", work=True, model="sonnet")
+    assert m[m.index("--model") + 1] == "sonnet"
+    assert "--model" not in worker.build_headless_argv(session_id="s", work=True)
 
 
 def test_deny_destructive_borders_reliable_forms_not_scratch_rm():

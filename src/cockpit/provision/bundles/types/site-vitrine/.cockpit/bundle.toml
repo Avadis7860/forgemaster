@@ -24,3 +24,12 @@ reseed_owned = [
 # du `CLAUDE.md §4`. Un blueprint générique `site-vitrine` est aussi servi (query(type=blueprint, scope=…)).
 [bundle.mcp]
 corpus = true
+
+# facet_models — tiering du modèle LLM du worker par NATURE de travail (facette → alias/id passé à
+# `claude -p --model`). Facette omise ⇒ modèle moteur par défaut (opus). Le mécanique (contenu MDX, config de
+# déploiement nginx/docker) tolère un modèle plus léger : la gate (Tier-0 natif + gardes semées Phase B +
+# Tier-1.5/Tier-1) reste le garde-fou qualité. `frontend` reste au défaut (a11y/visuel de la vitrine =
+# l'axe sensible ; à basculer sonnet seulement après une mesure propre confirmant que les gardes tiennent).
+[bundle.facet_models]
+content = "sonnet"
+deploy = "sonnet"
