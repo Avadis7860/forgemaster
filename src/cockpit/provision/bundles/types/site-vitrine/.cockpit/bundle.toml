@@ -5,10 +5,18 @@ facets = ["frontend", "content", "deploy", "doc"]
 default_facet = "frontend"
 archetype = "app"           # gate de profondeur : axes UX d'un site présentational (cf. depth-axes.yaml)
 
-# reseed_owned — le contrat de RUN possédé par le cockpit (build web + service nginx), re-matérialisable dans
-# un projet EXISTANT par `cockpit scaffold reseed` (préserve le travail worker : `web/`, contenu, docs). Ces
-# fichiers-là sont l'infra scaffold, jamais édités par le worker → sûrs à réécrire depuis le bundle corrigé.
-reseed_owned = ["Dockerfile", "compose.yaml", "nginx.conf", ".dockerignore"]
+# reseed_owned — le contrat de RUN + QUALITÉ possédé par le cockpit, re-matérialisable dans un projet EXISTANT
+# par `cockpit scaffold reseed` (préserve le travail worker : `web/`, contenu, docs, gardes de test). Deux
+# familles, réunies par un même invariant : le worker ne les édite JAMAIS → sûres à réécrire depuis le bundle.
+#   • contrat de RUN — l'infra scaffold (build web + service nginx).
+#   • contrat de QUALITÉ — la DISCIPLINE des facettes (`.claude/facets/*/METHOD.md`), que le worker LIT et suit,
+#     jamais n'édite. NB : les GARDES semées (`web/src/**/*.test.ts`) ne sont volontairement PAS owned — la garde
+#     d'un worker est plus riche et propre à son produit ; l'écraser retirerait de la couverture. Le worker hérite
+#     la discipline corrigée par la METHOD (owned) et re-dérive sa garde au drain.
+reseed_owned = [
+  "Dockerfile", "compose.yaml", "nginx.conf", ".dockerignore",
+  ".claude/facets/frontend/METHOD.md", ".claude/facets/content/METHOD.md",
+]
 
 # Déclaration MCP sèche (sans secret ni endpoint). `corpus = true` = ce type bénéficie du capital-token servi.
 # Un overlay surcharge `bundle.toml` en whole-file → sans ce bloc, le `corpus = true` de la base est PERDU.

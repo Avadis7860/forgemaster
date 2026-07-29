@@ -14,6 +14,9 @@ const sections = defineCollection({
     order: z.number().default(0),
     // Résumé optionnel (SEO / aperçu de section).
     summary: z.string().optional(),
+    // Brouillon : une entrée en cours de rédaction. Filtrée en PROD par les pages (jamais publiée), visible en
+    // dev. C'est le garde-fou contre le contenu inachevé qui atterrit sur une page routée (cf. facette content).
+    draft: z.boolean().default(false),
   }),
 });
 

@@ -21,7 +21,13 @@ from cockpit.projects import registry
 from cockpit.provision import load_bundle, read_reseed_owned, reseed
 
 _ID = ("t", "t@e.invalid")
-_OWNED = {"Dockerfile", "compose.yaml", "nginx.conf", ".dockerignore"}
+# Contrat de RUN (infra scaffold) + de QUALITÉ (discipline des facettes, jamais éditée par le worker). Les
+# GARDES de test semées ne sont PAS owned (la garde worker est plus riche/produit — l'écraser perdrait de la
+# couverture).
+_OWNED = {
+    "Dockerfile", "compose.yaml", "nginx.conf", ".dockerignore",
+    ".claude/facets/frontend/METHOD.md", ".claude/facets/content/METHOD.md",
+}
 
 
 @pytest.fixture
@@ -46,7 +52,7 @@ def _vitrine(ctx) -> tuple[Settings, object, Path]:
     return settings, conn, registry.sot_path_for(settings, "viti")
 
 
-def test_read_reseed_owned_is_run_contract_for_vitrine_empty_for_generic():
+def test_read_reseed_owned_is_run_plus_quality_contract_for_vitrine_empty_for_generic():
     assert set(read_reseed_owned("site-vitrine")) == _OWNED
     assert read_reseed_owned("generic") == []
 

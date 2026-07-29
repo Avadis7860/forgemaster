@@ -3,9 +3,13 @@
 import { getCollection, render } from 'astro:content';
 import BaseLayout from '../../layouts/BaseLayout.astro';
 
-const entries = (await getCollection('sections', ({ data }) => data.locale === 'de')).sort(
-  (a, b) => a.data.order - b.data.order,
-);
+// Brouillons (`draft: true`) filtrés en PROD, visibles en dev — le contenu inachevé ne se publie jamais.
+const entries = (
+  await getCollection(
+    'sections',
+    ({ data }) => data.locale === 'de' && (import.meta.env.PROD ? !data.draft : true),
+  )
+).sort((a, b) => a.data.order - b.data.order);
 const rendered = await Promise.all(
   entries.map(async (entry) => ({ entry, Content: (await render(entry)).Content })),
 );

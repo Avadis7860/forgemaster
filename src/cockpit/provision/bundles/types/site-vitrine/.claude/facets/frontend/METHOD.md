@@ -13,7 +13,17 @@
    justifié ; préfère `client:visible`/`client:idle` à `client:load`.
 4. **Design tokens d'abord** — `frontmap where` (tokens / primitives) avant d'écrire du CSS neuf ; anime avec
    `motion` sous `prefers-reduced-motion` (`useReducedMotion`).
-5. **a11y** — un seul `<h1>` par page, landmarks (`header/nav/main/footer`), skip-link, `:focus-visible`, cibles
-   tactiles ≥44px, `alt` signifiant. Patrons : `query(type=tech, scope=wai-aria-apg)`.
-6. **Gate composite** — `astro check` → `tsc --noEmit` → `vitest run` → `astro build` vert. Corrige la cause.
-7. **Fraîcheur** — front touché → `frontmap build` (+ `codemap build` pour la logique).
+5. **a11y — invariants du socle (BaseLayout)**, verrouillés par `web/src/layouts/layout.test.ts` (semé) : ÉTENDS
+   cette garde, ne l'affaiblis jamais. Un seul `<h1>` par page ; landmarks **uniques** (`header/main/footer`),
+   navigations **nommées et distinctes** ; skip-link RÉEL (premier focusable, vise l'id que `<main>` porte,
+   `tabindex="-1"` sur `<main>`, redevient visible au focus) ; un header `sticky`/`fixed` ⇒ `scroll-margin-top`/
+   `scroll-padding-top` (sinon la cible d'ancre est masquée sous l'entête) ; **un seul** `aria-current="page"` par
+   destination (jamais sur le mot-marque ET le lien de nav « accueil » — la marque de page appartient au lien de
+   nav) ; aucun texte LISIBLE peint en dégradé (`text-gradient-*` a un contraste variable qui tombe sous le
+   plancher — un aplat au-dessus de 3:1/4.5:1 ; le dégradé reste OK en décor `bg-gradient-*` `aria-hidden`) ;
+   cibles tactiles ≥44px (`min-h-11`), `:focus-visible`, `alt` signifiant. Patrons : `query(type=tech, scope=wai-aria-apg)`.
+6. **Couverture des gardes** — une garde (a11y, anti-tiers, contraste, SEO) doit balayer **tous** les endroits
+   atteignables, `astro.config.mjs` compris — pas seulement `web/src/**`. Une garde à portée trouée est une
+   **fausse couverture** : elle rassure à tort, pire que pas de garde. Un domaine/tiers vit souvent DANS la config.
+7. **Gate composite** — `astro check` → `tsc --noEmit` → `vitest run` → `astro build` vert. Corrige la cause.
+8. **Fraîcheur** — front touché → `frontmap build` (+ `codemap build` pour la logique).

@@ -44,11 +44,12 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
     <a class="sr-only focus:not-sr-only" href="#main">{t('nav.skipToContent')}</a>
     <header>
       <nav aria-label={t('nav.menu')}>
-        <a href={`${localePrefix(lang)}/`}>{t('nav.home')}</a>
+        <a href={`${localePrefix(lang)}/`} class="inline-flex min-h-11 items-center">{t('nav.home')}</a>
         <MobileNav client:visible label={t('nav.menu')} homeLabel={t('nav.home')} homeHref={`${localePrefix(lang)}/`} />
       </nav>
     </header>
-    <main id="main">
+    <!-- tabindex="-1" : sans lui WebKit défile à l'ancre mais laisse le focus dans l'entête (cf. layout.test.ts). -->
+    <main id="main" tabindex="-1">
       <slot />
     </main>
     <footer>

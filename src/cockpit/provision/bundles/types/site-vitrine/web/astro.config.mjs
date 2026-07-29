@@ -6,9 +6,13 @@ import react from '@astrojs/react';
 import mdx from '@astrojs/mdx';
 import tailwindcss from '@tailwindcss/vite';
 
+// Domaine canonique de PRODUCTION (canonical/hreflang/sitemap). Injecté au DÉPLOIEMENT par `SITE_URL`, jamais
+// codé en dur : le placeholder `example.com` n'est que le défaut non-déployé. Ne verrouille PAS ce domaine dans
+// un test (cf. hygiene.test.ts « SEO honnête ») — sinon la couverture est fausse : test vert, sitemap qui ment.
+const site = process.env.SITE_URL ?? 'https://example.com';
+
 export default defineConfig({
-  // À renseigner par le projet : l'URL canonique de production (sert les balises canonical/hreflang + sitemap).
-  site: 'https://example.com',
+  site,
   i18n: {
     defaultLocale: 'en',
     locales: ['en', 'fr', 'de'],
