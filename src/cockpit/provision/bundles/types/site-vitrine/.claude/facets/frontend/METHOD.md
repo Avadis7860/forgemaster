@@ -27,3 +27,23 @@
    **fausse couverture** : elle rassure à tort, pire que pas de garde. Un domaine/tiers vit souvent DANS la config.
 7. **Gate composite** — `astro check` → `tsc --noEmit` → `vitest run` → `astro build` vert. Corrige la cause.
 8. **Fraîcheur** — front touché → `frontmap build` (+ `codemap build` pour la logique).
+9. **Langage woaw — checklist OPPOSABLE (P1–P7)** — une vitrine « correcte » qui ne fait pas *woaw* est un échec
+   d'objectif : la gate **woaw-critic** juge le RENDU contre ces 7 principes (richesse toujours ; fidélité à la
+   charte du projet si déclarée) et **refuse le plat**. Détail + rubrique : `docs/site-vitrine-woaw-language.md`.
+   Ingrédients semés (composant en `web/src/components/`, tokens en `global.css` — thème-les, ne réinvente pas) :
+   - **P1 · Matière, pas aplat** — ≥1 surface focale porte une matière (texture/gradient multi-stop) par vue.
+     `TexturedTitle` + `--texture-title`. *a11y : le texte LISIBLE reste un aplat contrasté ; la matière va en
+     décor `aria-hidden` (cf. §5 — jamais de texte peint en dégradé).*
+   - **P2 · Tissu, pas cartes** — pas de vue dont >60 % des blocs sont des cartes bordées iso-morphes ; ≥2
+     registres de surface (élevé/creusé). `Surface` (`raised`/`sunken`/`plain`) + `--shadow-*`. Cf. *cards are
+     lazy default → prefer fabric*.
+   - **P3 · Drame du héro** — ratio d'échelle titre/corps ≥ ~2.5× ; un point focal NON-textuel ; respiration
+     généreuse. Patron `Hero` (slots `title`/`focal`/…) + `--text-display-lg`.
+   - **P4 · Densité d'ornement** — ≥1 ornement par section porteuse, même famille réutilisée (rythme, pas bruit).
+     `Ornament` (`corner`/`separator`/`sparkle`).
+   - **P5 · Voix typographique** — ≥2 rôles typo (display vs corps) ; le wordmark est un TRAITEMENT (image/SVG/
+     police), pas un `<span>` nu ; échelle de titres à ≥3 niveaux. `--font-display` + `--text-display-*`.
+   - **P6 · Profondeur & relief** — ≥2 plans z perceptibles ; ombres/halos non nuls sur les surfaces élevées ;
+     pas de vue 100 % plate. `--shadow-raised`/`--shadow-halo`.
+   - **P7 · Mouvement retenu** — ≥1 révélation/transition signifiante, **toute** gardée par
+     `prefers-reduced-motion` (déjà imposé §4). Zéro-JS reste le défaut : relief/ornement en CSS d'abord.

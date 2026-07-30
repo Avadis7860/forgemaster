@@ -1,0 +1,70 @@
+---
+// Hero — patron de héros dramatique (woaw P3) : contraste d'échelle (slot `title` en display XL vs `lead` de
+// corps), respiration généreuse, POINT FOCAL non-textuel (slot `focal` : illustration/texture/forme), ornement
+// de signature par défaut. PATRON, pas contenu : le worker remplit les slots avec le message RÉEL du projet
+// (dépose un <TexturedTitle> dans `title`, une illustration/texture dans `focal`).
+import Ornament from './Ornament.astro';
+---
+
+<div class="hero">
+  <div class="hero-copy">
+    <p class="hero-eyebrow"><slot name="eyebrow" /></p>
+    <div class="hero-title"><slot name="title" /></div>
+    <div class="hero-lead"><slot name="lead" /></div>
+    <div class="hero-actions"><slot name="actions" /></div>
+  </div>
+  <div class="hero-focal" aria-hidden="true">
+    <slot name="focal">
+      <Ornament kind="sparkle" />
+    </slot>
+  </div>
+</div>
+
+<style>
+  .hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+    gap: clamp(2rem, 5vw, 4rem);
+    align-items: center;
+    padding-block: var(--spacing-section);
+  }
+  @media (max-width: 52rem) {
+    .hero {
+      grid-template-columns: 1fr;
+    }
+  }
+  .hero-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+  .hero-eyebrow {
+    margin: 0;
+    font-size: 0.85rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+  /* Contraste d'échelle : le titre en display XL, le lead en corps — le drame naît de l'écart (P3). */
+  .hero-title {
+    font-size: var(--text-display-lg);
+    line-height: 1.02;
+  }
+  .hero-lead {
+    max-width: 46ch;
+    font-size: 1.15rem;
+    color: var(--color-muted);
+  }
+  .hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 0.5rem;
+  }
+  .hero-focal {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 12rem;
+  }
+</style>

@@ -1,0 +1,30 @@
+---
+// Surface — enveloppe de relief (woaw P2/P6) : `raised` (décollée, ombrée), `sunken` (creusée), `plain`.
+// Donne au tissu ses REGISTRES de profondeur au lieu de la grille de cartes iso-bordées (lazy default). Le
+// worker alterne les registres pour créer le relief ; les ombres viennent des tokens (`--shadow-*`), pas d'un
+// CSS dispersé.
+interface Props {
+  variant?: 'raised' | 'sunken' | 'plain';
+  as?: 'div' | 'section' | 'article' | 'aside';
+  class?: string;
+}
+const { variant = 'plain', as: Tag = 'div', class: extra = '' }: Props = Astro.props;
+---
+
+<Tag class:list={['surface', `surface-${variant}`, extra]}><slot /></Tag>
+
+<style>
+  .surface {
+    border-radius: var(--radius-card);
+  }
+  .surface-raised {
+    background: var(--color-surface);
+    box-shadow: var(--shadow-raised);
+  }
+  .surface-sunken {
+    background: var(--color-surface-sunken);
+  }
+  .surface-plain {
+    background: transparent;
+  }
+</style>

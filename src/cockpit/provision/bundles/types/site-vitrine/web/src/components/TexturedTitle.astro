@@ -1,0 +1,47 @@
+---
+// TexturedTitle — titre d'affichage « matière » (woaw P1). Le TEXTE reste un aplat contrasté (jamais peint en
+// dégradé/texture — cf. garde a11y du socle, `layouts/layout.test.ts`) ; la matière est une couche DÉCORATIVE
+// `aria-hidden` posée DERRIÈRE, pilotée par le token `--texture-title` (vide par défaut → le scaffold reste
+// neutre ; l'instance branche sa texture). Zéro-JS, statique. Le worker remplit le slot avec son titre réel.
+interface Props {
+  as?: 'h1' | 'h2' | 'h3';
+  /** classes utilitaires supplémentaires (échelle, couleur d'instance…). */
+  class?: string;
+}
+const { as: Tag = 'h2', class: extra = '' }: Props = Astro.props;
+---
+
+<span class="tt-wrap">
+  <span class="tt-matiere" aria-hidden="true"></span>
+  <Tag class:list={['tt-text', extra]}><slot /></Tag>
+</span>
+
+<style>
+  .tt-wrap {
+    position: relative;
+    display: inline-block;
+    isolation: isolate;
+  }
+  /* Matière : décor pur, jamais du texte. Invisible tant que `--texture-title` vaut `none`/vide (défaut). */
+  .tt-matiere {
+    position: absolute;
+    inset: -0.18em -0.5em;
+    z-index: -1;
+    background-image: var(--texture-title, none);
+    background-size: cover;
+    background-position: center;
+    opacity: 0.2;
+    border-radius: var(--radius-card);
+    pointer-events: none;
+  }
+  .tt-text {
+    margin: 0;
+    font-family: var(--font-display);
+    letter-spacing: var(--tracking-display);
+    line-height: 1.05;
+    /* Couleur = aplat contrasté GARANTI (jamais un fill transparent). `inherit` prend la couleur de texte
+       LISIBLE du contexte — sûre sur tout thème (clair OU sombre) ; un `--color-ink` en dur virerait au
+       dark-on-dark invisible sur une instance sombre. L'instance force une teinte via la prop `class`. */
+    color: inherit;
+  }
+</style>
