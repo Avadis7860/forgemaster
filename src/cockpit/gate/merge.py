@@ -215,7 +215,7 @@ def evaluate_gate(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
         diff_files = git.diff_names(sot, base=BASE_BRANCH, head=branch)   # unique appel — UI + natif + N/A
         # Tier-1.5 : trigger hybride (nom + contenu) — un `.tsx` de câblage/type n'est PAS un vrai visuel.
         ui_touched = verify.has_visual_change(diff_files, git.diff_text(sot, base=BASE_BRANCH, head=branch))
-        code_touched = not toolchain.is_docs_only(diff_files)   # docs-only → Tier-1 review de code N/A
+        code_touched = toolchain.has_reviewable_code(diff_files)   # docs-only OU diff vide → Tier-1 N/A
         # Tier-0 natif : injecté (tests) sinon LU depuis le verdict toolchain SHA-bound (jamais exécuté ici —
         # evaluate_gate est appelé par le GET gate poll-é ; l'exécution est un step séparé, cf. toolchain).
         native_status = native if native is not None else toolchain.status(

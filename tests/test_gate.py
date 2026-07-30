@@ -251,6 +251,15 @@ def test_toolchain_is_docs_only():
     assert not toolchain.is_docs_only([])                                  # diff vide → jamais docs-only
 
 
+def test_toolchain_has_reviewable_code():
+    """Fix 2026-07-30 : `has_reviewable_code` sépare « pas de code → Tier-1 N/A » des DEUX cas sans code —
+    diff **vide** (ex. socle réconcilié) ET docs-only — sans quoi un diff vide déclenchait une review
+    skippée → verdict absent → blocage circulaire (feature immergeable)."""
+    assert toolchain.has_reviewable_code(["src/x.py"])                     # code → review requise
+    assert not toolchain.has_reviewable_code([])                           # diff VIDE → N/A (le fix clé)
+    assert not toolchain.has_reviewable_code(["docs/design.md"])           # docs-only → N/A
+
+
 def test_verify_build_verdict_never_blanched_on_empty():
     assert verify.build_verdict([], sha="s", ts="t")["ok"] is False       # 0 cible → pas de blanchiment
     green = verify.build_verdict([{"ok": True}], sha="s", ts="t")

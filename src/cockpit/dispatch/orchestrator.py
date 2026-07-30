@@ -114,9 +114,9 @@ def _discoverable_features(conn: sqlite3.Connection, project: str,
 
 def _dispatch_one(settings: Settings, project: str, feature: str,
                   git: GitBackend, runner: worker.Runner | None) -> dict:
-    """Dispatche la NEXT task d'UNE feature, dans une **connexion propre au thread**. Sur succès, marque la
-    task `done` (la boucle possède cette transition — cf. module docstring). Retourne un rapport
-    `{feature, task, ok, reason}` (jamais d'exception vers la boucle : le worker échoue, il ne plante pas)."""
+    """Dispatche la NEXT task d'UNE feature, dans une **connexion propre au thread**. La clôture `done` de la
+    task sur succès appartient au PRIMITIVE `dispatch_next` (`_on_success`) — la boucle ne la duplique plus.
+    Retourne `{feature, task, ok, reason}` (jamais d'exception vers la boucle : échec worker ≠ crash)."""
     conn = store.connect(settings.db_path)   # thread-local (check_same_thread) ; base déjà migrée
     try:
         feature_ref = f"{project}/{feature}"
@@ -132,12 +132,8 @@ def _dispatch_one(settings: Settings, project: str, feature: str,
                     "reason": str(exc), "needs_terminal": False, "rate_limited": False,
                     "interrupted": False}
         ok = bool(report.get("dispatched") and report.get("result", {}).get("ok"))
-        if ok:
-            # dispatch_next a laissé la task `in_progress` (+ committé le worktree) → la boucle la clôt.
-            feat = model.resolve_feature(conn, feature_ref)
-            conn.execute("UPDATE tasks SET status = 'done' WHERE feature_id = ? AND slug = ?",
-                         (feat["id"], report["task"]))
-            conn.commit()
+        # La clôture `in_progress`→`done` appartient désormais au PRIMITIVE `dispatch_next` (`_on_success`) —
+        # le primitive est complet, la boucle ne duplique plus la transition (cf. worker.dispatch_next).
         return {"feature": feature, "task": report.get("task"), "ok": ok, "needs_redrain": False,
                 "reason": report.get("reason", "?"),
                 "needs_terminal": bool(report.get("needs_terminal")),   # v12 : task interactive → interview
@@ -183,10 +179,11 @@ def finalize_feature(conn: sqlite3.Connection, settings: Settings, project: str,
     if wt.is_dir():                                       # Tier-0 : la toolchain native, dans le worktree
         results = toolchain.run_toolchain(wt, diff_files, env=tools_env(settings))
         toolchain.write_verdict(settings, project, feature, results, sha=sha, conn=conn)
-    # Un livrable docs-only (prose seule, ex. socle-design) n'a pas de code à reviewer : ne PAS gaspiller un
-    # worker de review (le gate traite Tier-1 N/A côté `evaluate_gate` — même prédicat `is_docs_only`).
-    if toolchain.is_docs_only(diff_files):
-        review_report: dict = {"reviewed": False, "reason": "docs-only — review de code N/A"}
+    # Pas de code à reviewer (docs-only OU diff VIDE — ex. socle réconcilié) : ne PAS gaspiller un worker de
+    # review (le gate traite Tier-1 N/A côté `evaluate_gate` — même prédicat `has_reviewable_code`). Un diff
+    # vide sans ce court-circuit → reviewer skip « diff vide » → verdict absent → blocage circulaire.
+    if not toolchain.has_reviewable_code(diff_files):
+        review_report: dict = {"reviewed": False, "reason": "aucun code à reviewer — Tier-1 N/A"}
     else:
         review_report = reviewer.dispatch_reviewer(conn, settings, feature_ref=feature_ref, git=git,
                                                    runner=review_runner)

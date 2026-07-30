@@ -189,8 +189,9 @@ def dispatch_next(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
     """Dispatche un worker sur la NEXT task de `feature_ref` (`"projet/feature"`). Retourne un rapport
     `{dispatched: bool, reason, task?, job_id?, result?}`. **Gate no-task-no-dispatch** : refuse (sans
     spawn) si la feature n'a aucune task ou aucune task READY. Effets : réserve worktree+port, marque la
-    task `in_progress`, spawn (runner injectable), journalise le job, révoque `in_progress`→`todo` si le run
-    échoue (re-dispatchable)."""
+    task `in_progress`, spawn (runner injectable), journalise le job, **clôt `in_progress`→`done` si le run
+    réussit** (le primitive est complet — un `cockpit dispatch` CLI seul avance sa task), révoque
+    `in_progress`→`todo` si le run échoue (re-dispatchable)."""
     git = git or InternalGit()
     project = feature_ref.split("/", 1)[0]
 
@@ -239,6 +240,13 @@ def dispatch_next(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
                            date_str=date.today().isoformat())
         git.commit_worktree(res["path"], message=f"feat({feature}): {nxt['slug']} (worker dispatch)",
                             identity=resolve_identity(project, worktree.WORKTREE_BASE, role="worker"))
+        # Clôt la task `in_progress`→`done` : la transition appartient au PRIMITIVE (un `cockpit dispatch`
+        # CLI seul complète sa task, sans dépendre de la boucle `cockpit run`). Sans ça, un dispatch CLI
+        # laissait la task `in_progress` → reviewer « travail inachevé » → seul `redrain` sortait, en JETANT
+        # le travail déjà payé (impasse constatée 2026-07-30). WHERE-gardé (idempotent si déjà clos).
+        conn.execute("UPDATE tasks SET status = 'done' WHERE id = ? AND status = 'in_progress'",
+                     (nxt["id"],))
+        conn.commit()
 
     def _on_failure(_parsed: dict) -> None:
         conn.execute("UPDATE tasks SET status = 'todo' WHERE id = ?", (nxt["id"],))   # re-dispatchable

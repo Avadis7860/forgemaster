@@ -68,7 +68,10 @@ def test_reviewer_holds_on_incomplete_work(ctx):
     settings, conn = ctx
     _seed(conn, settings)
     worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=_writing_worker("x = 1\n"))
-    # dispatch_next laisse la task `in_progress` (le done est déféré) → inachevé pour la review
+    # le primitive a clos la task `done` ET créé la branche ; on simule une task ENCORE EN VOL (worker
+    # relancé / task rouverte) → la BRANCHE existe mais le travail est inachevé → HOLD honnête pour la review.
+    conn.execute("UPDATE tasks SET status = 'in_progress' WHERE slug = 'impl'")
+    conn.commit()
     report = reviewer.dispatch_reviewer(conn, settings, feature_ref="proj/feat",
                                         runner=_reviewer_runner('{"findings":[]}'))
     assert report["reviewed"] is False and "inachevé" in report["reason"]

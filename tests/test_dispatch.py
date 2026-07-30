@@ -334,9 +334,10 @@ def test_dispatch_happy_path_records_job_and_worktree(ctx):
     job = jobs.get_job(conn, report["job_id"])
     assert job["status"] == "done" and job["num_turns"] == 2 and job["session_id"]
     assert job["port"] and Path(job["worktree_path"]).is_dir()
-    # la task passe in_progress (sérialisation) → un 2e dispatch est refusé (gate no-ready)
+    # sur succès, le primitive clôt la task `done` (fix 2026-07-30 : `cockpit dispatch` seul complète sa
+    # task, plus d'impasse `in_progress`) → un 2e dispatch est refusé (plus de task READY).
     task = conn.execute("SELECT status FROM tasks WHERE slug='schema'").fetchone()
-    assert task["status"] == "in_progress"
+    assert task["status"] == "done"
     again = worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=_ok_runner)
     assert again["dispatched"] is False and "READY" in again["reason"]
 
@@ -473,15 +474,15 @@ def test_reconcile_preserves_running_job_with_live_pid(ctx):
 
 
 def test_reconcile_leaves_finished_job_and_its_task_untouched(ctx):
-    """La réconciliation ne touche QUE les `running` (WHERE-guard) : un job `done` et la task `in_progress`
-    qu'il a légitimement sérialisée restent intacts."""
+    """La réconciliation ne touche QUE les `running` (WHERE-guard) : un job `done` et la task `done` qu'il a
+    légitimement close restent intacts."""
     from cockpit.dispatch import reconcile
     settings, conn = ctx
     _seed_project(conn, settings)
     report = worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=_ok_runner)
     assert reconcile.reconcile_orphans(conn) == []         # aucun running → no-op
     assert jobs.get_job(conn, report["job_id"])["status"] == "done"          # job abouti intact
-    assert conn.execute("SELECT status FROM tasks WHERE slug='schema'").fetchone()["status"] == "in_progress"
+    assert conn.execute("SELECT status FROM tasks WHERE slug='schema'").fetchone()["status"] == "done"
 
 
 def test_dispatch_finalizes_job_on_unexpected_exception(ctx):

@@ -130,6 +130,16 @@ def is_docs_only(files: list[str]) -> bool:
     return bool(files) and all(f.endswith(DOC_SUFFIXES) for f in files)
 
 
+def has_reviewable_code(files: list[str]) -> bool:
+    """True ssi le diff porte du CODE à faire reviewer (Tier-1). False dans les DEUX cas sans code : diff
+    **vide** (rien à reviewer — une feature au diff nul, ex. socle réconcilié dont le travail a landé
+    ailleurs) ET diff **docs-only** (prose seule). Sépare « pas de code → review N/A » de `is_docs_only` (qui
+    garde `empty→False` pour son propre fail-closed) : sans ce prédicat, un diff vide déclenchait une review
+    que le reviewer skippe (« diff vide »), verdict jamais écrit → gate exige un verdict → **blocage
+    circulaire** (feature immergeable, footgun constaté 2026-07-30). PUR."""
+    return bool(files) and not is_docs_only(files)
+
+
 def _steps_for(group: str, worktree: Path) -> list[dict] | None:
     """Steps ordonnés d'un groupe : `{name, argv, cwd}`, ou **None** si le groupe est DÉCLENCHÉ par le diff
     mais **non couvert** par une unité de gate présente (→ fail-closed dans `run_toolchain`). Node
