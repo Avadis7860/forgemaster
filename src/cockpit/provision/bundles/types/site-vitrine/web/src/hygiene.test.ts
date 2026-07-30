@@ -73,3 +73,50 @@ describe('SEO honnête — pas de domaine de prod verrouillé en dur', () => {
     expect(hardcodedDomains("new URL('https://example.com/')")).toEqual([]);
   });
 });
+
+describe('contact honnête — pas de lien de contact placeholder PUBLIÉ', () => {
+  // Une vitrine de produit gratuit existe pour CONVERTIR : le lien de contact est du capital fonctionnel. Le
+  // footgun du drain : shipper un CTA de contact resté à l'ébauche (`mailto:you@example.com`, un profil social
+  // pointant sur la RACINE nue de la plateforme) — le visiteur clique dans le vide, la machine ne tourne pas.
+  // `astro build` ne voit pas qu'un href est un placeholder. Cette garde généralise le trou des « liens externes »
+  // aux CTA de contact ; haute précision (domaines réservés RFC 2606 + racines de plateforme nues), zéro faux
+  // positif sur un vrai contact (`mailto:contact@mon-agence.fr`, un profil social avec un chemin réel).
+  //
+  // On lit le code EXPÉDIÉ débarrassé de ses commentaires : un exemple en prose (comme dans lib/href.ts) ne doit
+  // pas être compté comme un lien rendu.
+  const stripComments = (s: string): string =>
+    s.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^\s*\/\/.*$/gm, ' ').replace(/<!--[\s\S]*?-->/g, ' ');
+
+  // mailto/tel vers un domaine réservé (example.*, .test, .invalid) OU un local-part manifestement factice.
+  const PLACEHOLDER_MAILTO =
+    /(?:mailto|tel):[^"'\s>)]*(?:@(?:(?:[a-z0-9-]+\.)*example\.(?:com|org|net)|[a-z0-9-]+\.(?:test|invalid))|(?:^|:)(?:you|your|your-?email|youremail|email|changeme|votre-?email)@)/i;
+
+  // Racine NUE d'une plateforme sociale connue (aucun chemin de profil) = lien pas encore renseigné.
+  const BARE_SOCIAL =
+    /https?:\/\/(?:www\.)?(?:linkedin|twitter|x|github|instagram|facebook|youtube|tiktok)\.com\/?(?=["'\s>)]|$)/gi;
+
+  const placeholderLinks = (source: string): string[] => {
+    const clean = stripComments(source);
+    const hits: string[] = [];
+    for (const m of clean.matchAll(/(?:mailto|tel):[^"'\s>)]+/gi)) {
+      if (PLACEHOLDER_MAILTO.test(m[0])) hits.push(m[0]);
+    }
+    for (const m of clean.matchAll(BARE_SOCIAL)) hits.push(m[0]);
+    return hits;
+  };
+
+  it('aucun fichier expédié ne rend un lien de contact placeholder', () => {
+    const offenders = Object.entries(SHIPPED).flatMap(([path, source]) =>
+      placeholderLinks(source).map((hit) => `${path}: ${hit}`),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it('sait refuser — un CTA placeholder est signalé, un vrai contact ne l’est pas', () => {
+    expect(placeholderLinks('<a href="mailto:you@example.com">Écrire</a>')).toHaveLength(1);
+    expect(placeholderLinks('<a href="https://linkedin.com">LinkedIn</a>')).toHaveLength(1);
+    expect(placeholderLinks('<a href="mailto:contact@mon-agence.fr">Écrire</a>')).toEqual([]);
+    expect(placeholderLinks('<a href="https://linkedin.com/in/vrai-profil">LinkedIn</a>')).toEqual([]);
+    expect(placeholderLinks('<a href="tel:+33123456789">Appeler</a>')).toEqual([]);
+  });
+});

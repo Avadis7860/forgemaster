@@ -30,3 +30,37 @@ describe('relief woaw — le registre sunken est CREUSÉ, pas juste teinté', ()
     }
   });
 });
+
+describe('relief woaw — le fond sunken est plus SOMBRE que le fond de base', () => {
+  // Refinement prouvé sur la page-référence (home) puis gradué au socle : l'ombre insérée seule ne suffit pas si
+  // `--color-surface-sunken` est plus CLAIR (ou égal à) `--color-surface` — un creux plus clair que son champ lit
+  // à contre-sens. Le token doit être re-thématisable par l'instance, mais la RELATION (sunken plus sombre) est un
+  // invariant du langage de relief. Cette garde le verrouille au niveau du token, sans figer une valeur.
+  const hex = (token: string): string | null => css.match(new RegExp(`${token}:\\s*(#[0-9a-fA-F]{3,6})`))?.[1] ?? null;
+
+  /** Luminance relative WCAG (0 = noir, 1 = blanc) d'un hex #rgb/#rrggbb. */
+  const luminance = (h: string): number => {
+    const full = h.length === 4 ? `#${h[1]}${h[1]}${h[2]}${h[2]}${h[3]}${h[3]}` : h;
+    const channel = (v: number): number => {
+      const s = v / 255;
+      return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+    };
+    const r = parseInt(full.slice(1, 3), 16);
+    const g = parseInt(full.slice(3, 5), 16);
+    const b = parseInt(full.slice(5, 7), 16);
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+  };
+
+  it('--color-surface-sunken a une luminance strictement inférieure à --color-surface', () => {
+    const surface = hex('--color-surface');
+    const sunken = hex('--color-surface-sunken');
+    expect(surface, '--color-surface doit être un hex').not.toBeNull();
+    expect(sunken, '--color-surface-sunken doit être un hex').not.toBeNull();
+    expect(luminance(sunken!)).toBeLessThan(luminance(surface!));
+  });
+
+  it('sait mesurer — un creux plus clair que son champ serait rejeté', () => {
+    expect(luminance('#eef1f6')).toBeLessThan(luminance('#ffffff'));
+    expect(luminance('#ffffff')).not.toBeLessThan(luminance('#eef1f6'));
+  });
+});

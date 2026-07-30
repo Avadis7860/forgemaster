@@ -11,10 +11,14 @@ interface Props {
 const { as: Tag = 'h2', class: extra = '' }: Props = Astro.props;
 ---
 
-<span class="tt-wrap">
+<!-- L'enveloppe est un <div> (flow content), PAS un <span> : `Tag` est un heading (h1/h2/h3), et un heading
+     imbriqué dans un <span> (phrasing content) est du HTML INVALIDE — le parseur le remonte hors du span, ce qui
+     casse silencieusement la structure du document (garde : `components/structure.test.ts`). `inline-block`
+     préserve le rendu en ligne quand l'instance pose le titre au fil du texte. -->
+<div class="tt-wrap">
   <span class="tt-matiere" aria-hidden="true"></span>
   <Tag class:list={['tt-text', extra]}><slot /></Tag>
-</span>
+</div>
 
 <style>
   .tt-wrap {

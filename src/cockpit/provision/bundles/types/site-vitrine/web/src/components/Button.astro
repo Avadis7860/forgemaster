@@ -1,0 +1,75 @@
+---
+// Button — primitive d'action/lien (CTA vitrine). NEUTRE : le worker thème via `--color-accent*` et les slots,
+// il ne réinvente pas le comportement. Une vitrine de produit gratuit EXISTE pour convertir (obtenir un contact
+// pour des projets futurs monétisés) : le lien de contact (`mailto:`/`tel:`) est du capital fonctionnel, pas du
+// chrome — d'où cette primitive, avec le bon traitement des schémas d'action.
+//
+// Le comportement nouvel-onglet est délégué à `classifyHref` (logique pure, testée `lib/href.test.ts`) : seul un
+// lien HTTP(S) marqué `external` reçoit `target="_blank"` + `rel` + l'annonce a11y ; `mailto:`/`tel:` sont
+// TOUJOURS des actions directes (jamais `_blank`, jamais « ouvre un nouvel onglet »). C'est la garde du footgun
+// avagency, portée dans le seed.
+import { classifyHref } from '../lib/href';
+
+interface Props {
+  href: string;
+  variant?: 'primary' | 'ghost';
+  /** N'a d'effet que sur un lien HTTP(S) (cf. `classifyHref`). Sans effet sur mailto/tel. */
+  external?: boolean;
+  /** Texte a11y « ouvre un nouvel onglet », traduit par l'appelant (`t('a11y.opensNewTab')`). Rendu en
+   *  visually-hidden UNIQUEMENT quand le lien ouvre réellement un nouvel onglet — jamais un vœu. */
+  newTabHint?: string;
+  class?: string;
+}
+
+const { href, variant = 'primary', external = false, newTabHint = '', class: extra = '' }: Props = Astro.props;
+const link = classifyHref(href, { external });
+---
+
+<a
+  href={href}
+  class:list={['btn', `btn-${variant}`, extra]}
+  target={link.target}
+  rel={link.rel}
+>
+  <slot />
+  {link.isNewTab && newTabHint && <span class="sr-only"> ({newTabHint})</span>}
+</a>
+
+<style>
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    /* Cible tactile ≥44px (SC 2.5.8) garantie au niveau de la primitive. */
+    min-height: 2.75rem;
+    padding-inline: 1.25rem;
+    gap: 0.5rem;
+    border-radius: var(--radius-card);
+    font-weight: 600;
+    line-height: 1;
+    text-decoration: none;
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .btn-primary {
+    background: var(--color-accent);
+    color: var(--color-accent-ink);
+    box-shadow: var(--shadow-raised);
+  }
+  .btn-ghost {
+    background: transparent;
+    color: var(--color-accent);
+    box-shadow: inset 0 0 0 1px var(--color-accent);
+  }
+  .btn:hover {
+    transform: translateY(-1px);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .btn {
+      transition: none;
+    }
+    .btn:hover {
+      transform: none;
+    }
+  }
+</style>

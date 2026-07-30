@@ -16,6 +16,7 @@ export const ui = {
     'nav.menu': 'Menu',
     'footer.rights': 'All rights reserved.',
     'lang.switch': 'Change language',
+    'a11y.opensNewTab': 'opens in a new tab',
   },
   fr: {
     'nav.home': 'Accueil',
@@ -23,6 +24,7 @@ export const ui = {
     'nav.menu': 'Menu',
     'footer.rights': 'Tous droits réservés.',
     'lang.switch': 'Changer de langue',
+    'a11y.opensNewTab': 'ouvre un nouvel onglet',
   },
   de: {
     'nav.home': 'Startseite',
@@ -30,5 +32,6 @@ export const ui = {
     'nav.menu': 'Menü',
     'footer.rights': 'Alle Rechte vorbehalten.',
     'lang.switch': 'Sprache wechseln',
+    'a11y.opensNewTab': 'öffnet in einem neuen Tab',
   },
 } as const;
