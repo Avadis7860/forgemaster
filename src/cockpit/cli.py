@@ -234,6 +234,9 @@ def build_parser() -> argparse.ArgumentParser:
     gt = p_gate_sub.add_parser("toolchain", parents=[common],
                                help="gate Tier-0 natif (toolchain front/backend déterministe)")
     gt.add_argument("feature")
+    gwd = p_gate_sub.add_parser("woaw-dispatch", parents=[common],
+                                help="DISPATCHE le juge esthétique woaw (verdict advisory SHA-bound)")
+    gwd.add_argument("feature")
 
     # -- merge --------------------------------------------------------------------------------------
     p_merge = sub.add_parser("merge", parents=[common], help="merger une feature complète (+ cleanup)")
@@ -432,10 +435,12 @@ def _h_deploy(settings: Settings, args: argparse.Namespace) -> int:
 
 def _h_gate(settings: Settings, args: argparse.Namespace) -> int:
     from cockpit.dispatch import reviewer
+    from cockpit.dispatch import woaw as woaw_dispatch
     from cockpit.gate import review, toolchain, verify
     # `review` INGÈRE un verdict (JSON stdin) ; `review-dispatch` le PRODUIT (dispatch du review-worker).
+    # `woaw-dispatch` PRODUIT le verdict esthétique advisory (dispatch du juge woaw sur le rendu).
     mod = {"review": review, "review-dispatch": reviewer,
-           "verify": verify, "toolchain": toolchain}[args.action]
+           "verify": verify, "toolchain": toolchain, "woaw-dispatch": woaw_dispatch}[args.action]
     return mod.cli_dispatch(settings, args)
 
 

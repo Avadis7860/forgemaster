@@ -28,7 +28,7 @@ from pathlib import Path
 from cockpit.config import Settings
 from cockpit.db import alerts, merge_outcomes
 from cockpit.dispatch import worktree
-from cockpit.gate import history, review, toolchain, verify
+from cockpit.gate import history, review, toolchain, verify, woaw
 from cockpit.git.identity import resolve_identity
 from cockpit.git.internal import GitOpError, InternalGit
 from cockpit.projects.registry import get_project
@@ -58,7 +58,8 @@ def blocker_tier(blockers: list[str]) -> str | None:
 def compose_merge_decision(tier0_decision: dict, tier1_status: dict, *, human_go: bool,
                            t15_status: dict | None = None, ui_touched: bool = False,
                            t15_override: str = "", native_status: dict | None = None,
-                           t1_override: str = "", code_touched: bool = True) -> dict:
+                           t1_override: str = "", code_touched: bool = True,
+                           woaw_status: dict | None = None) -> dict:
     """Décision de merge : fusionne le filet **Tier-0** déterministe, la **toolchain native** du repo, le
     verdict **Tier-1** (review SHA-bound), le **Tier-1.5** (feature-verified, si UI touchée), et le **GO
     humain**. PUR.
@@ -159,6 +160,18 @@ def compose_merge_decision(tier0_decision: dict, tier1_status: dict, *, human_go
         reasons.append("Tier-0 natif : N/A (pas de toolchain native détectée)")
     if not ui_touched:
         reasons.append("Tier-1.5 : N/A (aucune surface UI touchée)")
+    # Axe woaw (esthétique) — ADVISORY : surfacé en consultatif, jamais dans `blockers`. Un rendu plat/faible
+    # informe le GO humain sans jamais tenir le merge (doctrine §4 « advisory d'abord » ; promotion en
+    # bloquant-overridable = choix futur quand le flake du juge est mesuré bas). N'affecte NI `gate_green` NI
+    # `allow` — il est lu APRÈS le calcul du gate.
+    wo = woaw_status or {}
+    if ui_touched and wo.get("present") and wo.get("fresh"):
+        wc = wo.get("counts") or {}
+        flat = " · seuil de plat atteint" if wo.get("flat") else ""
+        reasons.append(f"Axe woaw (consultatif) : {wc.get('red', 0)} 🔴 · {wc.get('yellow', 0)} 🟡 · "
+                       f"{wc.get('purple', 0)} 🟣 sur {wo.get('route', '/')}{flat} — ne bloque pas")
+    elif ui_touched:
+        reasons.append("Axe woaw : N/A (aucun verdict esthétique frais — consultatif, ne bloque pas)")
     if gate_green and not human_go:
         reasons.append("Gate vert — en attente du GO humain au cockpit (le LLM ne merge jamais seul)")
     elif gate_green and human_go:
@@ -208,6 +221,7 @@ def evaluate_gate(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
         head_sha = None                                       # jamais dispatchée → pas encore de branche
     tier1_status = review.status(settings, project_slug, feature_slug, current_sha=head_sha)
     t15_status = verify.status(settings, project_slug, feature_slug, current_sha=head_sha)
+    woaw_status = woaw.status(settings, project_slug, feature_slug, current_sha=head_sha)  # advisory
     ui_touched = False
     decision: dict | None = None
     native_status: dict | None = None                         # Tier-0 natif (toolchain) — surfacé au GET gate
@@ -224,11 +238,11 @@ def evaluate_gate(conn: sqlite3.Connection, settings: Settings, *, feature_ref: 
             tier0 or {"red": 0, "yellow": 0}, tier1_status, human_go=human_go,
             t15_status=t15_status if ui_touched else None, ui_touched=ui_touched,
             t15_override=t15_override, native_status=native_status, t1_override=t1_override,
-            code_touched=code_touched)
+            code_touched=code_touched, woaw_status=woaw_status if ui_touched else None)
     return {"feature": feature, "project_slug": project_slug, "feature_slug": feature_slug,
             "branch": branch, "sot": sot, "head_sha": head_sha, "ui_touched": ui_touched,
             "tier1_status": tier1_status, "t15_status": t15_status, "native_status": native_status,
-            "decision": decision}
+            "woaw_status": woaw_status, "decision": decision}
 
 
 def run_merge(conn: sqlite3.Connection, settings: Settings, *, feature_ref: str, human_go: bool,

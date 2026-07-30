@@ -30,6 +30,7 @@ from cockpit import auth, interview
 from cockpit.config import Settings
 from cockpit.db import alerts, store
 from cockpit.dispatch import abort, reviewer, worker
+from cockpit.dispatch import woaw as woaw_dispatch
 from cockpit.dispatch import worktree as worktree_mod
 from cockpit.gate import merge as merge_gate
 from cockpit.gate import toolchain, verify
@@ -196,6 +197,13 @@ def finalize_feature(conn: sqlite3.Connection, settings: Settings, project: str,
     if ui_touched and not verify.status(settings, project, feature, current_sha=sha)["fresh"]:
         with contextlib.suppress(ValueError, OSError):
             verify.autoverify_feature(conn, settings, project=project, feature=feature, sha=sha)
+    # Axe woaw AUTO (ADVISORY) : une feature UI reçoit un verdict esthétique (juge le RENDU vs P1–P7 — le
+    # juge se self-gate : readiness, N/A hors UI, idempotent). Best-effort, JAMAIS bloquant — `evaluate_gate`
+    # le lit en CONSULTATIF (n'affecte ni gate_green ni le merge). Juge/capture KO → pas de verdict, gate
+    # inchangé. `suppress(Exception)` volontaire : l'esthétique ne casse JAMAIS une finalisation (advisory).
+    if ui_touched:
+        with contextlib.suppress(Exception):
+            woaw_dispatch.dispatch_woaw(conn, settings, feature_ref=feature_ref, git=git)
     ev = merge_gate.evaluate_gate(conn, settings, feature_ref=feature_ref, human_go=False, git=git)
     decision = ev.get("decision") or {}
     green = bool(decision.get("gate_green"))
