@@ -5,7 +5,9 @@
 // CSS dispersé.
 interface Props {
   variant?: 'raised' | 'sunken' | 'plain';
-  as?: 'div' | 'section' | 'article' | 'aside';
+  // `li`/`figure` : une LISTE de surfaces veut des `li`, un bloc légendé un `figure` — l'ergonomie que la
+  // page-référence a réclamée pour composer du tissu sans casser la structure du document.
+  as?: 'div' | 'section' | 'article' | 'aside' | 'li' | 'figure';
   class?: string;
 }
 const { variant = 'plain', as: Tag = 'div', class: extra = '' }: Props = Astro.props;
@@ -15,14 +17,19 @@ const { variant = 'plain', as: Tag = 'div', class: extra = '' }: Props = Astro.p
 
 <style>
   .surface {
+    /* `relative` : un registre porte souvent un décor absolu (ornement, halo) posé DANS son cadre. */
+    position: relative;
     border-radius: var(--radius-card);
   }
   .surface-raised {
     background: var(--color-surface);
     box-shadow: var(--shadow-raised);
   }
+  /* Sunken : le registre plus foncé, PRESSÉ vers l'intérieur par l'ombre insérée. Sans le `box-shadow` il
+     lirait comme un simple aplat teinté ; c'est l'inset qui le fait lire comme creusé (le 2ᵉ plan de P6). */
   .surface-sunken {
     background: var(--color-surface-sunken);
+    box-shadow: var(--shadow-sunken);
   }
   .surface-plain {
     background: transparent;
