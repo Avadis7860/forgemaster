@@ -29,7 +29,20 @@ from cockpit.secrets.jwt import b64url_decode, mint_hs256
 from cockpit.service import set_env_keys
 
 # Endpoint du serveur mcp-catalogs (HTTP + JWT, CT 9118). Non secret → override simple par env.
-MCP_ENDPOINT = os.environ.get("COCKPIT_MCP_ENDPOINT", "http://192.168.0.153:8080/mcp")
+_DEFAULT_MCP_ENDPOINT = "http://192.168.0.153:8080/mcp"
+# Snapshot IMPORT-TIME (compat rétro : encore importé par `mcp/client.py` + des tests). NE PAS l'utiliser
+# comme défaut « live » — `wire(live_env=True)` met à jour `os.environ` mais PAS cette constante → un câblage
+# vers un endpoint ≠ défaut ne prendrait pas effet sans redémarrer. Endpoint effectif : `current_endpoint()`.
+MCP_ENDPOINT = os.environ.get("COCKPIT_MCP_ENDPOINT", _DEFAULT_MCP_ENDPOINT)
+
+
+def current_endpoint() -> str:
+    """L'endpoint MCP EFFECTIF, résolu à l'APPEL (jamais gelé) : `os.environ['COCKPIT_MCP_ENDPOINT']` — que
+    `wire(live_env=True)` met à jour LIVE — sinon le défaut cible. Sert de défaut à `render_mcp_config` (le
+    `.mcp.json` injecté au worker) et à `capital_browser`/`blueprint_resolver` : sans lui, après un câblage
+    vers un endpoint ≠ défaut, le daemon interrogeait encore l'ancien (503 « MCP non câblé ») et le worker
+    pointait l'ancien (footgun constaté 2026-07-30, démo laptop MCP servi en local)."""
+    return os.environ.get("COCKPIT_MCP_ENDPOINT", _DEFAULT_MCP_ENDPOINT)
 # Contrat prouvé accepté par le serveur (verbatim ex-CT 9113 ; cf. backlog mcp-catalogs-naming-coherence).
 MCP_SERVER_LABEL = "vault-catalogs"
 MCP_AUDIENCE = "vault-catalogs"
@@ -45,13 +58,14 @@ _RUN_WINDOW_S = 1800.0  # fenêtre d'un dispatch (cf. worker.DISPATCH_TIMEOUT) :
 _MCP_FILENAME = ".mcp.json"
 
 
-def render_mcp_config(token: str, *, endpoint: str = MCP_ENDPOINT) -> dict:
-    """Forme du `.mcp.json` que `claude -p` charge : un serveur MCP http + Bearer. PUR (aucune I/O)."""
+def render_mcp_config(token: str, *, endpoint: str | None = None) -> dict:
+    """Forme du `.mcp.json` que `claude -p` charge : un serveur MCP http + Bearer. `endpoint=None` (défaut) →
+    résolu LIVE via `current_endpoint()` (jamais gelé à l'import). PUR (hors lecture d'`os.environ`)."""
     return {
         "mcpServers": {
             MCP_SERVER_LABEL: {
                 "type": "http",
-                "url": endpoint,
+                "url": endpoint or current_endpoint(),
                 "headers": {"Authorization": f"Bearer {token}"},
             },
         }
@@ -152,7 +166,7 @@ def wire_state() -> dict:
     montrer/sauter l'étape — signal léger, orthogonal au diagnostic riche de `check_lifecycle` (doctor)."""
     return {
         "wired": bool(os.environ.get(ENV_MCP_JWT_SECRET_REF)),
-        "endpoint": os.environ.get("COCKPIT_MCP_ENDPOINT", MCP_ENDPOINT),
+        "endpoint": current_endpoint(),
     }
 
 
@@ -197,7 +211,7 @@ def wire(settings: Settings, *, secret_ref: str | None = None, secret: str | Non
             store.get(ref)                                    # voie BWS → VALIDE que la ref résout
         except SecretNotFound as exc:
             raise MCPWireError(f"référence introuvable dans le store {store.backend!r} : {ref!r}") from exc
-    ep = endpoint or MCP_ENDPOINT
+    ep = endpoint or current_endpoint()
     set_env_keys(settings.home / "cockpit.env", {ENV_MCP_JWT_SECRET_REF: ref, "COCKPIT_MCP_ENDPOINT": ep})
     if live_env:                                              # le daemon voit la ref sans recharger l'unit
         os.environ[ENV_MCP_JWT_SECRET_REF] = ref
@@ -218,7 +232,7 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     except MCPWireError as exc:
         print(str(exc))
         return 2 if "exactement l'un" in str(exc) else 1
-    endpoint = getattr(args, "endpoint", None) or MCP_ENDPOINT
+    endpoint = getattr(args, "endpoint", None) or current_endpoint()
     print(f"✅ MCP câblé → {endpoint}  (ref opaque posée dans {settings.home / 'cockpit.env'}).")
     print("   redémarre le service pour recharger l'EnvironmentFile : "
           "`systemctl restart cockpit` (ou `--user`).")

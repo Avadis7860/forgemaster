@@ -40,7 +40,9 @@ ENV_RUNNER = "COCKPIT_VERIFY_RUNNER"
 # dérivent). Un diff qui touche ces chemins/suffixes a une surface visible → la preuve e2e devient
 # OBLIGATOIRE ; sinon Tier-1.5 = N/A (non bloquant).
 UI_PATH_HINTS = ("/web/src/", "/src/pages/", "/src/components/")
-UI_SUFFIXES = (".tsx", ".jsx", ".vue", ".svelte")
+# `.astro`/`.mdx` : l'archétype `site-vitrine` (Astro SSG) rend ses pages/layouts en `.astro` et son contenu
+# en `.mdx` — sans eux, tout un type de projet mergeait SANS preuve visuelle Tier-1.5 (angle mort réel).
+UI_SUFFIXES = (".tsx", ".jsx", ".vue", ".svelte", ".astro", ".mdx")
 
 
 def has_ui(files: list[str]) -> bool:
@@ -54,7 +56,9 @@ def has_ui(files: list[str]) -> bool:
 # (couvre aussi les suppressions) ; un fichier front AILLEURS (App.tsx root, lib/) n'est visuel que si ses
 # lignes AJOUTÉES introduisent du MARKUP — un câblage/type/contrat (aucun markup) n'exige PAS de preuve.
 STYLE_SUFFIXES = (".css", ".scss", ".sass", ".less")
-RENDERED_DIR_HINTS = ("/pages/", "/components/", "/routes/", "/layouts/", "/views/")
+# `/content/` : les collections de contenu Astro (`src/content/**.mdx`) SONT le rendu visuel d'un
+# site-vitrine → un diff qui les touche exige la preuve (clause 2), au même titre que `pages/`/`layouts/`.
+RENDERED_DIR_HINTS = ("/pages/", "/components/", "/routes/", "/layouts/", "/views/", "/content/")
 # Marqueurs de markup CONSERVATEURS : présents dans du JSX/HTML rendu, absents des génériques TS
 # (`useState<Foo>()`, `Map<string, X>`) → pas de faux-positif « visuel » sur du câblage typé.
 MARKUP_MARKERS = ("</", "/>", "className=", "class=")

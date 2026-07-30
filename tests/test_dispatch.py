@@ -455,6 +455,23 @@ def test_reconcile_orphans_kills_running_and_reverts_task_and_is_idempotent(ctx)
     assert reconcile.reconcile_orphans(conn) == []         # idempotent : plus aucun running
 
 
+def test_reconcile_preserves_running_job_with_live_pid(ctx):
+    """Fix 2026-07-30 : un `cockpit dispatch` CLI VIVANT (process séparé) survit un restart du daemon → son
+    job `running` porte un `pid` vivant → `reconcile_orphans` le PRÉSERVE (pas un orphelin). Sans ça il
+    serait réapé `killed`, sa task retomberait `todo`, et son `record_finish` deviendrait un no-op silencieux
+    → coût/tours/tokens perdus. Sonde `os.getpid()` (le process de test) = vivant."""
+    import os
+
+    from cockpit.dispatch import reconcile
+    settings, conn = ctx
+    _seed_project(conn, settings)
+    job_id, _ = _running_job_on_task(conn, settings)
+    jobs.record_pid(conn, job_id, os.getpid())             # pid vivant (le process de test lui-même)
+    assert reconcile.reconcile_orphans(conn) == []         # worker vivant → préservé, rien réconcilié
+    assert jobs.get_job(conn, job_id)["status"] == "running"
+    assert conn.execute("SELECT status FROM tasks WHERE slug='schema'").fetchone()["status"] == "in_progress"
+
+
 def test_reconcile_leaves_finished_job_and_its_task_untouched(ctx):
     """La réconciliation ne touche QUE les `running` (WHERE-guard) : un job `done` et la task `in_progress`
     qu'il a légitimement sérialisée restent intacts."""

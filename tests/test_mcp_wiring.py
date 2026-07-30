@@ -108,6 +108,19 @@ def test_render_mcp_config_shape():
     assert srv["headers"]["Authorization"] == "Bearer TOK"
 
 
+def test_endpoint_resolved_live_not_frozen_at_import(monkeypatch: pytest.MonkeyPatch):
+    """Fix 2026-07-30 : l'endpoint est résolu à l'APPEL (`current_endpoint`), jamais gelé à l'import. Un
+    câblage live (`wire(live_env=True)` → `os.environ`) est donc reflété par `current_endpoint()` ET par le
+    `.mcp.json` rendu sans endpoint explicite (`render_mcp_config`, le défaut du worker) — sans quoi un wire
+    vers un endpoint ≠ défaut ne prenait pas effet sans redémarrer (503 « MCP non câblé »)."""
+    monkeypatch.setenv("COCKPIT_MCP_ENDPOINT", "http://live:9999/mcp")
+    assert mcp.current_endpoint() == "http://live:9999/mcp"
+    srv = mcp.render_mcp_config("TOK")["mcpServers"]["vault-catalogs"]
+    assert srv["url"] == "http://live:9999/mcp"              # défaut résolu LIVE, pas la constante d'import
+    monkeypatch.delenv("COCKPIT_MCP_ENDPOINT", raising=False)
+    assert mcp.current_endpoint() == "http://192.168.0.153:8080/mcp"   # retombe sur le défaut cible (CT 9118)
+
+
 # -- injection (façade sur le coffre) ---------------------------------------------------------------
 
 def test_inject_writes_config_chmod600_with_scoped_bearer(tmp_path: Path):

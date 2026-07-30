@@ -1,9 +1,13 @@
 """reconcile — réconciliation des jobs `dispatch_jobs` **orphelins** (worker mort/interrompu qui laisse un
 job `running` zombie). Deux appelants :
 
-- **au boot du daemon** (`daemon/app` lifespan) : le dispatch est **synchrone in-process** (le worker
-  `claude -p` tourne dans le threadpool de la requête) → **aucun** thread de dispatch ne survit un restart.
-  Donc tout `dispatch_jobs.status='running'` observé au démarrage est **interrompu par construction**.
+- **au boot du daemon** (`daemon/app` lifespan) : le dispatch in-process (worker `claude -p` dans le
+  threadpool de la requête) ne survit **aucun** restart → son job `running` est interrompu par construction.
+  MAIS un `cockpit dispatch` lancé en **CLI** est un process SÉPARÉ qui PEUT survivre un restart du daemon :
+  son job `running` n'est alors PAS un orphelin. `reconcile_orphans` sonde donc la **vie du `pid`** (posé par
+  `jobs.record_pid` au spawn) et **préserve** un worker encore vivant — sans quoi on le réaperait `killed`,
+  sa task retomberait `todo`, et son `record_finish` (gardé `WHERE status='running'`) deviendrait un no-op →
+  coût/tours/tokens PERDUS (footgun constaté 2026-07-30 en démo laptop).
 - **dans `worker.dispatch_next`** (garde de finalisation) : une exception inattendue qui échappe au
   `except (ToolPreflightError, RunTimeout)` sauterait `record_finish` → job `running` zombie, daemon
   pourtant vivant. La garde appelle `mark_job_orphan` puis re-propage (fail-loud, jamais avalé).
@@ -26,6 +30,7 @@ Le WHERE `status='running'` scope chaque écriture → on ne clobbère jamais un
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -106,11 +111,35 @@ def mark_job_orphan(conn: sqlite3.Connection, job_id: str) -> str | None:
     return final
 
 
+def _worker_alive(pid: int | None) -> bool:
+    """True ssi le process worker `pid` tourne ENCORE (sonde POSIX `os.kill(pid, 0)`, n'envoie aucun signal).
+    Sert à distinguer un `cockpit dispatch` CLI **vivant** (process séparé qui a survécu au restart) d'un
+    orphelin réel. `pid` absent (`0`/`None`) → non-sondable → traité comme mort (comportement d'origine
+    préservé). Caveat pid-reuse : l'OS peut réattribuer le pid d'un worker mort ; la fenêtre est étroite et un
+    job faussement préservé sera réconcilié au prochain boot une fois le pid réellement libre — bien moins
+    nuisible que réaper un worker vivant (perte de coût/tours)."""
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:          # le process existe mais hors de notre UID → vivant
+        return True
+    return True
+
+
 def reconcile_orphans(conn: sqlite3.Connection) -> list[str]:
-    """Réconcilie TOUS les jobs `running` (appelé au boot du daemon — tout `running` au démarrage est
-    interrompu, cf. module docstring). Retourne les ids des jobs effectivement réconciliés (vide = rien à
-    faire → boot propre) — qu'ils aient été finalisés depuis leur transcript ou marqués `killed`. Idempotent :
-    un 2ᵉ appel ne trouve plus de `running` et rend une liste vide."""
-    ids = [r["id"] for r in
-           conn.execute("SELECT id FROM dispatch_jobs WHERE status = 'running'").fetchall()]
-    return [job_id for job_id in ids if mark_job_orphan(conn, job_id)]
+    """Réconcilie les jobs `running` orphelins au boot du daemon, en **préservant** ceux dont le worker est
+    encore VIVANT (`_worker_alive(pid)` — un `cockpit dispatch` CLI en travers d'un restart, cf. docstring
+    module). Retourne les ids effectivement réconciliés (vide = rien à faire / tous vivants → boot propre) —
+    qu'ils aient été finalisés depuis leur transcript ou marqués `killed`. Idempotent : un 2ᵉ appel ne trouve
+    plus de `running` mort et rend une liste vide."""
+    rows = conn.execute("SELECT id, pid FROM dispatch_jobs WHERE status = 'running'").fetchall()
+    reaped: list[str] = []
+    for r in rows:
+        if _worker_alive(r["pid"]):          # worker vivant (dispatch CLI) → PAS un orphelin, on le laisse
+            continue
+        if mark_job_orphan(conn, r["id"]):
+            reaped.append(r["id"])
+    return reaped

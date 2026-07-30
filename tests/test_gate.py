@@ -230,6 +230,16 @@ def test_verify_has_visual_change_hybrid():
     # contrat/type non-front + diff non-front → jamais visuel (N/A-safe).
     schema_diff = "+++ b/src/shared/schema.ts\n+export type T = {}\n"
     assert not verify.has_visual_change(["src/shared/schema.ts"], schema_diff)
+
+
+def test_verify_recognizes_astro_and_mdx_for_site_vitrine():
+    """Angle mort corrigé (2026-07-30) : l'archétype `site-vitrine` (Astro SSG) rend ses pages/layouts en
+    `.astro` et son contenu en `.mdx` → ils DOIVENT déclencher la preuve visuelle Tier-1.5. Sans le fix,
+    un diff de pages/layouts/contenu de ce type entier mergeait « Tier-1.5 N/A » (aucune preuve exigée)."""
+    assert verify.has_visual_change(["web/src/pages/index.astro"], "")      # page .astro sous dossier rendu
+    assert verify.has_visual_change(["web/src/layouts/Base.astro"], "")     # layout .astro
+    assert verify.has_visual_change(["web/src/content/blog/post.mdx"], "")  # contenu .mdx sous content/
+    assert verify.has_ui(["web/src/pages/index.astro"]) and verify.has_ui(["x/src/content/a.mdx"])
     assert not verify.has_visual_change(["lib/core.py"], "")
 
 

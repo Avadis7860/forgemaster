@@ -27,8 +27,8 @@ from cockpit.config import Settings
 from cockpit.provision.mcp import (
     ENV_MCP_JWT_SECRET_REF,
     MCP_AUDIENCE,
-    MCP_ENDPOINT,
     MCP_ISSUER,
+    current_endpoint,
 )
 from cockpit.secrets import cred_resolver
 from cockpit.secrets.jwt import mint_hs256
@@ -97,10 +97,10 @@ def blueprint_resolver(settings: Settings, *, secret_ref: str | None = None,
                        timeout: float = _DEFAULT_TIMEOUT) -> BlueprintResolver:
     """Rend un `BlueprintResolver` (`id -> dict|None`) adossé au MCP `mcp-catalogs`, injectable au seam
     `taskmap.context.build_context`/`doctor`. `secret_ref`/`endpoint`/`resolver`/`caller` sont des **seams**
-    (défauts : env `COCKPIT_MCP_JWT_SECRET_REF`, `MCP_ENDPOINT`, `cred_resolver`, la coquille réseau réelle) —
+    (défauts : env `COCKPIT_MCP_JWT_SECRET_REF`, `current_endpoint()`, `cred_resolver`, la coquille réseau) —
     tout est injectable pour un test factice sans réseau. Dégradation honnête : voir le module."""
     resolve_secret = resolver if resolver is not None else cred_resolver(settings)
-    ep = endpoint if endpoint is not None else MCP_ENDPOINT
+    ep = endpoint if endpoint is not None else current_endpoint()
 
     def resolve(bp_id: str) -> dict | None:
         token = _mint_or_none(secret_ref=secret_ref, resolve_secret=resolve_secret, subject=_SUBJECT)
@@ -182,9 +182,9 @@ def capital_browser(settings: Settings, *, secret_ref: str | None = None,
                     caller: McpCaller = _call_tool,
                     timeout: float = _DEFAULT_TIMEOUT) -> CapitalBrowser:
     """Rend un `CapitalBrowser` adossé au MCP `mcp-catalogs`, pour l'explorer d'introspection de la Landing.
-    Mêmes **seams** que `blueprint_resolver` (défauts : env `COCKPIT_MCP_JWT_SECRET_REF`, `MCP_ENDPOINT`,
+    Mêmes **seams** que `blueprint_resolver` (défauts : env `COCKPIT_MCP_JWT_SECRET_REF`, `current_endpoint`,
     `cred_resolver`, la coquille réseau générique `_call_tool`) — tout injectable pour un test sans réseau."""
     resolve_secret = resolver if resolver is not None else cred_resolver(settings)
-    ep = endpoint if endpoint is not None else MCP_ENDPOINT
+    ep = endpoint if endpoint is not None else current_endpoint()
     return CapitalBrowser(endpoint=ep, resolve_secret=resolve_secret, secret_ref=secret_ref,
                           caller=caller, timeout=timeout)
