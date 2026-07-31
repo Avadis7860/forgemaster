@@ -12,9 +12,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
+from cockpit.cli import _h_upload, build_parser
 from cockpit.config import Settings
 from cockpit.content import ingest, upload
+from cockpit.content.upload import _UPLOAD_MAX_BYTES
+from cockpit.daemon import app as app_mod
 from cockpit.db import store
 from cockpit.dispatch import worktree
 from cockpit.git.internal import InternalGit
@@ -178,3 +182,127 @@ def test_ingest_upload_unknown_explicit_feature_raises_keyerror(env):
     with pytest.raises(KeyError):
         ingest.ingest_upload(conn, settings, project="vr", filename="logo.png",
                              data=b"x", feature="ghost")
+
+
+# -- parité route HTTP : POST /api/projects/{slug}/upload -------------------------------------------
+
+def _client(settings: Settings) -> TestClient:
+    return TestClient(app_mod.build_app(settings))
+
+
+def test_route_upload_forge_path_creates_content_feature(env):
+    """`POST …/upload` (multipart) sans worktree actif → 201, voie forge, asset lisible sous docs/design."""
+    settings, conn = env
+    registry.create_project(conn, settings, slug="vr")
+    r = _client(settings).post("/api/projects/vr/upload",
+                               files={"file": ("logo.png", b"\x89PNG brand", "image/png")})
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["mode"] == "forge" and body["feature"] == "content-logo" and body["merged"] is False
+    assert Path(body["file"]).read_bytes() == b"\x89PNG brand"
+    assert "content-logo" in {f["slug"] for f in model.list_features(conn, "vr")}
+
+
+def test_route_upload_honours_dest_form_field(env):
+    """Le champ Form `dest` route l'asset sous docs/design/<dest>/ (parité du `dest_slug` du cœur)."""
+    settings, conn = env
+    registry.create_project(conn, settings, slug="vr")
+    r = _client(settings).post("/api/projects/vr/upload",
+                               files={"file": ("stamp.svg", b"<svg/>", "image/svg+xml")},
+                               data={"dest": "schema"})
+    assert r.status_code == 201, r.text
+    assert Path(r.json()["file"]).parts[-3:] == ("design", "schema", "stamp.svg")
+
+
+def test_route_upload_live_path_writes_into_active_worktree(env):
+    """Worktree actif réservé → voie live via HTTP : écrit dedans + commit sur sa branche (Read live)."""
+    settings, conn = env
+    registry.create_project(conn, settings, slug="vr")
+    res = worktree.reserve(conn, settings, InternalGit(), project="vr", feature="socle")
+    r = _client(settings).post("/api/projects/vr/upload",
+                               files={"file": ("charte.pdf", b"%PDF brand", "application/pdf")})
+    assert r.status_code == 201, r.text
+    assert r.json()["mode"] == "live" and r.json()["feature"] == "socle"
+    assert (res["path"] / "docs" / "design" / "brand" / "charte.pdf").read_bytes() == b"%PDF brand"
+
+
+def test_route_upload_empty_file_is_noop(env):
+    """Fichier vide → 201 mode noop, aucune feature créée (symétrie du cœur)."""
+    settings, conn = env
+    registry.create_project(conn, settings, slug="vr")
+    r = _client(settings).post("/api/projects/vr/upload",
+                               files={"file": ("logo.png", b"", "image/png")})
+    assert r.status_code == 201, r.text
+    assert r.json()["mode"] == "noop" and r.json()["file"] is None
+    assert not [f for f in model.list_features(conn, "vr") if f["slug"].startswith("content-")]
+
+
+def test_route_upload_rejected_type_maps_to_415(env):
+    settings, conn = env
+    registry.create_project(conn, settings, slug="vr")
+    r = _client(settings).post("/api/projects/vr/upload",
+                               files={"file": ("evil.exe", b"MZ", "application/octet-stream")})
+    assert r.status_code == 415, r.text
+
+
+def test_route_upload_too_large_maps_to_413(env):
+    settings, conn = env
+    registry.create_project(conn, settings, slug="vr")
+    payload = b"\x00" * (_UPLOAD_MAX_BYTES + 1)
+    r = _client(settings).post("/api/projects/vr/upload",
+                               files={"file": ("big.png", payload, "image/png")})
+    assert r.status_code == 413, r.text
+
+
+def test_route_upload_secret_maps_to_400(env):
+    settings, conn = env
+    registry.create_project(conn, settings, slug="vr")
+    r = _client(settings).post("/api/projects/vr/upload",
+                               files={"file": ("credentials.md", b"token=xyz", "text/markdown")})
+    assert r.status_code == 400, r.text
+
+
+def test_route_upload_unknown_project_maps_to_404(env):
+    settings, _ = env
+    r = _client(settings).post("/api/projects/ghost/upload",
+                               files={"file": ("logo.png", b"x", "image/png")})
+    assert r.status_code == 404, r.text
+
+
+# -- parité CLI : cockpit upload <projet> <chemin> --------------------------------------------------
+
+def test_cli_upload_delegates_to_same_core(env, tmp_path: Path):
+    """`cockpit upload` lit le fichier local et délègue au **même** cœur que la route (même destination)."""
+    settings, conn = env
+    registry.create_project(conn, settings, slug="vr")
+    src = tmp_path / "logo.png"
+    src.write_bytes(b"\x89PNG cli")
+    args = build_parser().parse_args(["upload", "vr", str(src)])
+    assert _h_upload(settings, args) == 0
+    feats = [f for f in model.list_features(conn, "vr") if f["slug"] == "content-logo"]
+    assert len(feats) == 1                                    # même feature éphémère que la route
+
+
+def test_cli_upload_honours_dest_flag(env, tmp_path: Path):
+    settings, conn = env
+    registry.create_project(conn, settings, slug="vr")
+    src = tmp_path / "stamp.svg"
+    src.write_bytes(b"<svg/>")
+    args = build_parser().parse_args(["upload", "vr", str(src), "--dest", "schema"])
+    assert _h_upload(settings, args) == 0
+
+
+def test_cli_upload_unreadable_file_returns_1(env, tmp_path: Path):
+    settings, conn = env
+    registry.create_project(conn, settings, slug="vr")
+    args = build_parser().parse_args(["upload", "vr", str(tmp_path / "missing.png")])
+    assert _h_upload(settings, args) == 1                     # fichier illisible → code 1, pas d'exception
+
+
+def test_cli_upload_rejected_type_returns_1(env, tmp_path: Path):
+    settings, conn = env
+    registry.create_project(conn, settings, slug="vr")
+    src = tmp_path / "evil.exe"
+    src.write_bytes(b"MZ")
+    args = build_parser().parse_args(["upload", "vr", str(src)])
+    assert _h_upload(settings, args) == 1                     # borne type remonte → code 1

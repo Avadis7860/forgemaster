@@ -209,6 +209,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_inspire.add_argument("project")
     p_inspire.add_argument("template", help="slug d'un template de la vitrine (cf. /templates)")
 
+    # -- upload -------------------------------------------------------------------------------------
+    p_upload = sub.add_parser("upload", parents=[common],
+                              help="déposer un fichier (asset/doc) dans un projet (docs/design/<dest>/)")
+    p_upload.add_argument("project")
+    p_upload.add_argument("path", help="chemin local du fichier à déposer")
+    p_upload.add_argument("--dest", default="brand",
+                          help="sous-dossier sous docs/design/ (défaut: brand)")
+    p_upload.add_argument("--feature", default=None,
+                          help="cible un worktree actif nommé (défaut: auto — actif sinon voie forge)")
+
     # -- deploy -------------------------------------------------------------------------------------
     p_deploy = sub.add_parser("deploy", parents=[common],
                               help="cycle de vie du service d'un projet (backend compose, P2 runtime)")
@@ -428,6 +438,39 @@ def _h_inspire(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+def _h_upload(settings: Settings, args: argparse.Namespace) -> int:
+    """Route `cockpit upload <projet> <chemin> [--dest <slug>] [--feature <f>]` : dépose le fichier local dans
+    le projet sous `docs/design/<dest>/` via le **même** cœur que la route HTTP (`ingest_upload`). Import
+    fastapi-free (spine) : seul `store` + le cœur `content.ingest`. Bornes : type/taille/secret/traversal
+    remontent comme erreurs (imprimées → code 1) ; parité stricte avec `POST /api/projects/{slug}/upload`."""
+    from pathlib import Path
+
+    from cockpit.content.ingest import ingest_upload
+    from cockpit.db import store
+    src = Path(args.path)
+    try:
+        data = src.read_bytes()
+    except OSError as exc:
+        print(f"erreur : fichier illisible : {exc}")
+        return 1
+    conn = store.open_db(settings)
+    try:
+        report = ingest_upload(conn, settings, project=args.project, filename=src.name,
+                               data=data, dest_slug=args.dest, feature=args.feature)
+    except (ValueError, KeyError) as exc:
+        print(f"erreur : {exc}")
+        return 1
+    finally:
+        conn.close()
+    if report["mode"] == "noop":
+        print(f"fichier vide : rien déposé dans {args.project} (aucune feature créée).")
+        return 0
+    print(f"« {report['file']} » déposé dans {report['project']} → {report['path']} "
+          f"(feature {report['feature']}, branche {report['branch']}, mode {report['mode']}, "
+          f"commit {report['commit'] or '(rien à committer)'}).")
+    return 0
+
+
 def _h_deploy(settings: Settings, args: argparse.Namespace) -> int:
     from cockpit.runtime import engine
     return engine.cli_dispatch(settings, args)
@@ -519,6 +562,7 @@ _HANDLERS = {
     "scaffold": _h_scaffold,
     "interview": _h_interview,
     "inspire": _h_inspire,
+    "upload": _h_upload,
     "deploy": _h_deploy,
     "gate": _h_gate,
     "merge": _h_merge,

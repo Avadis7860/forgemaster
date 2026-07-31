@@ -239,7 +239,13 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   lieu de semer le toolkit — via l'API = repos **publics** ; l'adoption privée avec token passe par
   `cockpit bootstrap` ; **400** si le clone échoue) ·
   `GET /api/projects/{slug}` · `PATCH /api/projects/{slug}` `{mirror_remote?}` (édite le miroir GitHub —
-  `null`/vide le retire ; rend un projet GitHub-backed → un token de push devient requis ; **404** absent).
+  `null`/vide le retire ; rend un projet GitHub-backed → un token de push devient requis ; **404** absent) ·
+  `POST /api/projects/{slug}/upload` **multipart** `file` + `dest?`(défaut `brand`) + `feature?` (201 —
+  dépose un asset sous `docs/design/<dest>/`, lisible par le worker/l'IA d'interview ; livraison
+  **worktree-aware** : worktree actif → écrit dedans + commit sur sa branche, sinon voie **forge** (feature
+  éphémère `content-<x>`, merge GO humain) ; **aucun secret** par ce canal ; **413** taille > borne, **415**
+  type hors allow-list, **400** secret/traversal/nom, **404** projet/feature absents — 1ᵉʳ `UploadFile` du
+  repo, dép `python-multipart`).
 - **roadmap** — `GET /api/projects/{p}/roadmap` (features + tasks) · `POST /api/projects/{p}/features`
   `{slug, title?}` · `POST /api/features/{p}/{f}/tasks` `{slug, title?, depends_on?, priority?}` ·
   `GET /api/features/{p}/{f}/next` (résolveur DAG → `{next, n_tasks}`).

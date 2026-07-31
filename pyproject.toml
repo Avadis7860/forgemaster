@@ -29,6 +29,10 @@ dependencies = [
   # client MCP runtime (`mcp/client.py`) : résout un `blueprint:` en direct via `mcp-catalogs`. Même plancher
   # que le serveur (≥3.2.0 pour CVE-2026-32871). Import PARESSEUX (tiré à l'appel, socle non alourdi).
   "fastmcp>=3.3.1",
+  # parseur multipart/form-data : requis par FastAPI pour un endpoint `UploadFile`/`Form` (1ᵉʳ du repo, route
+  # `POST /api/projects/{slug}/upload` du canal content). FastAPI le charge à la définition de la route → dép
+  # RUNTIME (pas paresseuse) dès que le daemon monte le router projects. Le socle CLI/core reste stdlib-pur.
+  "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
@@ -68,7 +72,8 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.ruff.lint.flake8-bugbear]
 # `Depends`/`Query`/… en défaut d'argument est l'idiome FastAPI (résolus par requête, jamais mutés) — B008
 # ne s'y applique pas. On les déclare immuables plutôt que d'éparpiller des `# noqa`.
-extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body"]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body",
+                          "fastapi.File", "fastapi.Form"]
 
 [tool.mypy]
 python_version = "3.11"

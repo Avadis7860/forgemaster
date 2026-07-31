@@ -155,6 +155,19 @@ def build_app(settings: Settings) -> FastAPI:
     async def _bad_request(_request: Request, exc: ValueError) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
 
+    # Canal content : deux bornes d'upload portent un code plus précis que le 400 générique. Starlette
+    # résout le handler par la MRO de l'exception → ces sous-classes de `UploadRejected(ValueError)` gagnent
+    # sur `_bad_request`, tandis qu'un `UploadRejected` nu (secret/traversal/nom) reste en 400.
+    from cockpit.content.upload import UploadTooLarge, UploadTypeRejected
+
+    @app.exception_handler(UploadTooLarge)
+    async def _payload_too_large(_request: Request, exc: UploadTooLarge) -> JSONResponse:
+        return JSONResponse(status_code=413, content={"detail": str(exc)})
+
+    @app.exception_handler(UploadTypeRejected)
+    async def _unsupported_media(_request: Request, exc: UploadTypeRejected) -> JSONResponse:
+        return JSONResponse(status_code=415, content={"detail": str(exc)})
+
     _mount_spa(app)                                      # dernier : le fallback SPA ne capte que le reste
     return app
 

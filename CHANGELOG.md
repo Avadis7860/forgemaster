@@ -5,6 +5,24 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Canal content — CLI `cockpit upload` + route `POST /api/projects/{slug}/upload` (Phase 2) — **API : +1 route**
+- **Contexte** : le canal d'injection d'asset (cf. `docs/specs/project-content-upload.md`) exposé sur la spine.
+  Un opérateur dépose un fichier (charte, schéma, image, doc) dans un projet ; le worker/l'IA d'interview le lit
+  sous `docs/design/<dest>/`. Parité stricte **CLI ↔ route** : les deux délèguent au **même** cœur
+  `content.ingest.ingest_upload` (Phase 1) — livraison worktree-aware (live si worktree actif, sinon voie forge
+  `content-<x>` mergée sur **GO humain**), jamais de commit direct sur `dev`.
+- **CLI** : `cockpit upload <projet> <chemin> [--dest <slug>] [--feature <f>]` (`cli._h_upload`, import
+  fastapi-free). Lit le fichier local, délègue ; borne rejetée / fichier illisible → code 1 (pas d'exception).
+- **Route** (`daemon/routes/projects.py`) : `POST /api/projects/{slug}/upload` **multipart** (`file` +
+  `dest?`/`feature?` en Form). 1ᵉʳ `UploadFile`/multipart du repo → **dép runtime `python-multipart>=0.0.9`**
+  ajoutée (`pyproject.toml`). Mapping HTTP des exceptions typées via deux handlers globaux (`daemon/app.py`) :
+  `UploadTooLarge`→**413**, `UploadTypeRejected`→**415** (résolus par MRO au-dessus du `ValueError`→400) ;
+  `UploadRejected` nu (secret/traversal/nom)→**400** ; projet/feature absents→**404**.
+- **Contrat** : `docs/schema-contract.md` (section API `projects`) mis à jour — nouvelle route documentée. Pas
+  de bump SQLite/roadmap (aucun schéma de données touché ; ajout d'une route HTTP additive).
+- **Tests** : `tests/test_content.py` étendu — parité route (201 forge/live/noop, 413/415/400/404, champ Form
+  `dest`) + parité CLI (délégation même cœur, `--dest`, fichier illisible/type rejeté → code 1).
+
 ### Signal du gate honnête (fiabilité qualifiée + findings consultatifs surfacés) — **bump SQLite v18 → v19**
 - **Problème** (relevé au drain vitrine `avagency`) : le dashboard montrait des signaux **faussement verts**. (1)
   La **fiabilité** affichait `100%` alors qu'aucune issue n'était marquée ET qu'une feature était 🔴-bloquée — le

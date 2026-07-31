@@ -3,9 +3,10 @@ délègue à `projects.registry` (couche portée), lit `Deps` par injection expl
 Éclatement du monolithe orchestrator (#3) ; plus de `import server` (#1)."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 
+from cockpit.content.ingest import ingest_upload
 from cockpit.daemon.deps import Deps, get_deps
 from cockpit.daemon.routes.templates import known_template_slugs, template_source_dir
 from cockpit.design.apply import apply_template
@@ -87,6 +88,25 @@ def make_projects_router() -> APIRouter:
         try:
             return apply_template(conn, deps.settings, project=slug, template_slug=body.template,
                                   source_dir=template_source_dir(body.template))
+        finally:
+            conn.close()
+
+    @router.post("/{slug}/upload", status_code=201)
+    async def upload_to_project(slug: str, file: UploadFile = File(...), dest: str = Form("brand"),
+                               feature: str | None = Form(None),
+                               deps: Deps = Depends(get_deps)) -> dict:
+        """Dépose un asset (`file`) dans le projet sous `docs/design/<dest>/`, lisible par le worker/l'IA
+        d'interview. Multipart : `file` (binaire), `dest` (sous-dossier, défaut `brand`), `feature` (optionnel
+        — cible un worktree actif nommé). Livraison **worktree-aware** (même cœur que la CLI) : worktree actif
+        → écrit dedans + commit sur sa branche (Read live) ; sinon voie forge (feature éphémère `content-<x>`,
+        merge **GO humain**). **Aucun secret** par ce canal (rejeté → 400). Projet/feature absents → 404 ;
+        secret/traversal/nom → 400 ; taille > borne → **413** ; type hors allow-list → **415** (handlers
+        globaux). Ne spawn pas `claude`."""
+        data = await file.read()
+        conn = deps.open_db()
+        try:
+            return ingest_upload(conn, deps.settings, project=slug, filename=file.filename or "",
+                                 data=data, dest_slug=dest, feature=feature)
         finally:
             conn.close()
 
