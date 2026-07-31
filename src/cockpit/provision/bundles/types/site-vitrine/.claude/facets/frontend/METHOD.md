@@ -44,8 +44,11 @@
      `TexturedTitle` + `--texture-title`. *a11y : le texte LISIBLE reste un aplat contrasté ; la matière va en
      décor `aria-hidden` (cf. §5 — jamais de texte peint en dégradé).*
    - **P2 · Tissu, pas cartes** — pas de vue dont >60 % des blocs sont des cartes bordées iso-morphes ; ≥2
-     registres de surface (élevé/creusé). `Surface` (`raised`/`sunken`/`plain`) + `--shadow-*`. Cf. *cards are
-     lazy default → prefer fabric*.
+     registres de surface (élevé/creusé). `Surface` (`raised`/`sunken`/`plain`) + `--shadow-*`. Le registre
+     `sunken` se PORTE par une ombre **insérée** (`box-shadow: var(--shadow-sunken)`, un `inset`), pas par un
+     simple fond plus foncé : un `sunken` sans inset lit comme un aplat teinté, pas comme un creux (leçon calée
+     sur la page-référence ; garde `web/src/components/primitives.test.ts`). Cf. *cards are lazy default →
+     prefer fabric*.
    - **P3 · Drame du héro** — ratio d'échelle titre/corps ≥ ~2.5× ; un point focal NON-textuel ; respiration
      généreuse. Patron `Hero` (slots `title`/`focal`/…) + `--text-display-lg`.
    - **P4 · Densité d'ornement** — ≥1 ornement par section porteuse, même famille réutilisée (rythme, pas bruit).
@@ -53,7 +56,9 @@
    - **P5 · Voix typographique** — ≥2 rôles typo (display vs corps) ; le wordmark est un TRAITEMENT (image/SVG/
      police), pas un `<span>` nu ; échelle de titres à ≥3 niveaux. `--font-display` + `--text-display-*`.
    - **P6 · Profondeur & relief** — ≥2 plans z perceptibles ; ombres/halos non nuls sur les surfaces élevées ;
-     pas de vue 100 % plate. `--shadow-raised`/`--shadow-halo`.
+     pas de vue 100 % plate. Trois plans semés : `--shadow-raised` (décollé), `--shadow-sunken` (creusé, un
+     `inset`), `--shadow-halo` (aura). Un plan « creusé » qui n'est qu'un fond teinté ne compte PAS comme un
+     2ᵉ plan z — c'est l'ombre insérée qui crée la profondeur (cf. P2, garde `primitives.test.ts`).
    - **P7 · Mouvement retenu** — ≥1 révélation/transition signifiante, **toute** gardée par
      `prefers-reduced-motion` (déjà imposé §4). Zéro-JS reste le défaut : relief/ornement en CSS d'abord.
 10. **Conversion — le CTA de contact est du capital FONCTIONNEL** — une vitrine (surtout pour un produit gratuit
