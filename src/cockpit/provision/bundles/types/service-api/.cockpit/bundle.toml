@@ -18,9 +18,12 @@ corpus = true
 # docs/specs/tier0-native-toolchain-gate.md §Amendement). Un overlay surcharge bundle.toml en whole-file →
 # le bloc de la base ne serait PAS hérité : chaque type porte le sien.
 # Ce sont les MÊMES steps que la route `backend` : dédupliqués (name+cmd+cwd) → joués une seule fois.
+# `mypy` est VOLONTAIREMENT absent : sa cible dépend du LAYOUT (la route calcule `src` si le dossier existe,
+# sinon `.`) — une déclaration statique divergerait dès que le projet grandit un `src/`, cassant la dédup
+# (mypy joué deux fois) et faisant échouer `mypy .` en duplicate-module. La route reste propriétaire de mypy
+# et se déclenche sur tout `*.py` touché ; un diff sans Python n'a de toute façon aucun type à revérifier.
 [bundle.gate]
 steps = [
   { name = "ruff",   argv = ["ruff", "check", "."] },
-  { name = "mypy",   argv = ["mypy", "."] },
   { name = "pytest", argv = ["pytest", "-q"] },
 ]

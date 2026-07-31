@@ -391,6 +391,65 @@ def test_typed_seed_ships_mountable_toolchain(project_type: str, tmp_path: Path)
             f"(manifeste absent) → un worker échouerait le gate Tier-0 par construction")
 
 
+# Diff RÉALISTE par type : route connue ⊕ résidu (contrat de RUN, entrées de toolchain). Volontairement
+# distinct de `_TYPE_TOOLCHAIN_PROBES` (qui prouve la MONTABILITÉ) : ici on mesure le COÛT. `service-api`
+# porte un `src/` — le layout qui a fait diverger la déclaration statique de la route dynamique (cf. infra).
+_TYPE_REALISTIC_DIFFS = {
+    "service-api": ["src/app/routes.py", "Dockerfile", "pyproject.toml", "docs/api.md"],
+    "cli-tool": ["cli.py", "pyproject.toml", "README.md"],
+    "front-ts": ["web/src/App.tsx", "server/index.ts", "Dockerfile", "compose.yaml"],
+    "browser-game": ["web/src/scene.ts", "vite.config.ts", "Dockerfile"],
+    "site-vitrine": ["web/src/pages/index.astro", "nginx.conf", "compose.yaml"],
+}
+
+
+@pytest.mark.parametrize("project_type", sorted(_TYPE_REALISTIC_DIFFS))
+def test_typed_seed_declared_group_costs_nothing(project_type: str, tmp_path: Path):
+    """**Garde-fou anti-récidive (coût)** : sur un diff réaliste, le groupe `declared` ne doit ajouter AUCUN
+    step au-delà des routes connues — la déclaration semée duplique la route, la dédup `(name, cmd, cwd)`
+    l'absorbe. Le renversement 2026-07-31 est donc **gratuit** pour un projet correctement semé, et son rouge
+    est réservé à qui ne déclare rien.
+
+    Ce que ce test attrape (défaut mesuré au balayage de non-régression, et corrigé) : la route `backend`
+    calcule sa cible mypy **dynamiquement** (`src` si le dossier existe, sinon `.`), une déclaration est
+    **statique**. Déclarer `mypy .` faisait diverger les deux dès qu'un projet grandissait un `src/` → mypy
+    joué DEUX fois, le second en duplicate-module → **faux rouge** sur un projet normal. D'où l'absence
+    volontaire de `mypy` dans les `[bundle.gate]` Python : la route en reste propriétaire. Ré-ajouter un step
+    à cible layout-dépendante rallume ce test."""
+    from cockpit.gate import toolchain
+    wt = tmp_path / project_type
+    for rel, content in load_bundle(project_type).items():
+        p = wt / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    diff = _TYPE_REALISTIC_DIFFS[project_type]
+    for rel in diff:                                     # le diff existe sur disque (le layout compte)
+        p = wt / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.touch()
+
+    def plan(groups: list[str]) -> list[tuple[str, str, str]]:
+        out, seen = [], set()
+        for g in groups:
+            steps = toolchain._steps_for(g, wt)
+            assert steps is not None, f"{project_type} : groupe {g!r} déclenché mais non montable"
+            for s in steps:
+                key = (s["name"], " ".join(s["argv"]), str(s["cwd"]))
+                if key not in seen:
+                    seen.add(key)
+                    out.append(key)
+        return out
+
+    triggered = toolchain.applicable_triggers(diff)
+    assert "declared" in triggered, f"{project_type} : diff réaliste sans résidu (table de test à revoir)"
+    routes_only = plan([g for g in triggered if g != "declared"])
+    with_declared = plan(triggered)
+    assert with_declared == routes_only, (
+        f"{project_type} : `declared` ajoute {len(with_declared) - len(routes_only)} step(s) hors dédup "
+        f"→ {[s for s in with_declared if s not in routes_only]}. La déclaration semée doit reproduire la "
+        f"route à l'identique (name+cmd+cwd) ou ne pas la couvrir du tout.")
+
+
 def test_site_vitrine_nginx_never_advertises_internal_authority():
     """**Garde anti-récidive réputation** : le nginx semé sert sur le port INTERNE 8000, publié par le cockpit
     sur un port dynamique différent. Un 301 de dossier (`/x`→`/x/`, cascade normale d'Astro SSG multi-pages)

@@ -154,6 +154,24 @@ Un overlay de type **surcharge `bundle.toml` en whole-file**. Le piège est déj
 la base est perdu pour tout type qui surcharge le manifeste.** Chaque type qui a un résidu à couvrir porte
 donc son propre bloc, et `test_typed_seed_ships_mountable_toolchain` en est la garde.
 
+### Le coût doit être nul pour un projet semé — et une déclaration ne restate jamais une cible dynamique
+
+Un projet correctement semé ne doit **rien payer** pour le renversement : sa déclaration **duplique** sa route,
+et la dédup `(name, cmd, cwd)` de `run_toolchain` l'absorbe. `test_typed_seed_declared_group_costs_nothing`
+mesure cette égalité sur les 5 types, sur un diff réaliste (route ⊕ résidu).
+
+Ce test existe parce que le balayage de non-régression a trouvé la **seule** façon de casser cette égalité :
+une déclaration est **statique**, une route peut être **dynamique**. La route `backend` calcule sa cible mypy
+depuis le worktree (`src` si le dossier existe, sinon `.`). Déclarer `mypy .` collait au seed (plat), puis
+divergeait dès que le projet grandissait un `src/` → **mypy joué deux fois**, le second en duplicate-module →
+**faux rouge sur un projet parfaitement normal**. Un check qui s'allume sur ce qui est normal est défaillant :
+c'est le trou d'en face, moins visible mais aussi coûteux.
+
+Règle qui en découle : **une déclaration ne restate jamais une cible que la route calcule.** Là où la route est
+dynamique, elle reste propriétaire du step et la déclaration l'omet — la couverture n'est pas perdue, car la
+route se déclenche précisément quand ce step a un sens (mypy ↔ un `*.py` touché ; un diff sans Python n'a aucun
+type à revérifier). D'où l'absence volontaire de `mypy` dans les `[bundle.gate]` de `service-api`/`cli-tool`.
+
 ### Ce qui ne change PAS
 
 - **Aucun bump `SCHEMA_VERSION`** : `bundle.toml` est **hors contrat figé** (`docs/schema-contract.md` §2c) ;

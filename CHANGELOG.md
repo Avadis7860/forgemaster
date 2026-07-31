@@ -5,6 +5,54 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Tier-0 natif — contrat d'applicabilité **UNIVERSEL** (groupe `declared`) — **aucun bump de schéma**
+- **Défaut** (P0, structurel pour tout utilisateur distribué) : l'applicabilité du Tier-0 natif dérivait d'une
+  **allowlist de 3 motifs** (`web/`, `*.py`, suffixes node). Un diff qu'aucun ne touchait sortait en `[]` →
+  `native_status.applicable = false` → `compose_merge_decision` l'ignorait. **Un diff 100 % Go / Rust / Ruby /
+  shell mergeait donc sans qu'aucun étage déterministe ne se soit allumé, et sans un mot.** Le Tier-0 est le
+  **seul veto non-overridable** de la pile (Tier-1 est levable par override, Tier-1.5 dépend d'une UI, le juge
+  esthétique est advisory) : son extinction silencieuse est pire qu'un gate absent — c'est un gate qui *prétend*.
+  Invisible chez nous (stack Python + TS), fatal chez qui distribue.
+- **Renversement POSITIF** : la charge de la preuve porte désormais sur l'**absence de source**, jamais sur la
+  reconnaissance du langage. Les 3 routes connues sont inchangées ; tout **résidu** de source qu'aucune ne
+  couvre déclenche un 4ᵉ groupe **`declared`**. `N/A` est réservé aux diffs **sans source** — prose ⊕ verrous de
+  dépendances ⊕ assets binaires (`is_tier0_source`, denylist Tier-0 distincte de `DOC_SUFFIXES` qui sert au
+  Tier-1 : une *review* veut voir un `.png` bouger, une *toolchain* n'a rien à en dire). Doctrine :
+  **inférer, c'est prétendre ; déclarer, c'est répondre.**
+- **Agnosticité par délégation, zéro hardcode de stack** : le projet déclare sa toolchain dans une table
+  `[bundle.gate]` de son `.cockpit/bundle.toml` (`steps = [{ name, argv, cwd? }]`). Le lecteur
+  (`toolchain._declared_steps`, calqué sur `provision/facet.resolve_facet_model`) ne valide que la **forme** de
+  l'`argv`, jamais son contenu. **Déclaration malformée = déclaration absente** (fail-CLOSED) : manifeste
+  illisible, table absente, liste vide, `argv` non exploitable, `cwd` absolu ⇒ `None` → step rouge synthétique.
+  Une déclaration cassée ne dégrade **jamais** vers le vert, sinon un TOML mal tapé rouvrirait le trou.
+- **Pureté préservée (invariant V4)** : `applicable_triggers` reste **diff-only** — le `GET /api/gate` est
+  poll-é et n'a que le diff sous la main. L'**applicabilité** (pure) et la **montabilité** (`_steps_for`, qui
+  reçoit déjà le worktree) sont séparées ; le chemin fail-closed « déclenché mais non couvert → step rouge »
+  existait déjà : **zéro plomberie neuve**. Le message d'absence dit **quoi faire** (bloc TOML exact à écrire),
+  pas seulement ce qui manque — c'est le seul recours de l'utilisateur dont la stack n'a aucune route connue.
+- **Coût nul pour un projet semé** : les 5 types portent leur propre `[bundle.gate]` (un overlay surcharge
+  `bundle.toml` en **whole-file** — le bloc de la base n'est PAS hérité, piège déjà connu de `[bundle.mcp]`),
+  qui **duplique** leur route ; la dédup `(name, cmd, cwd)` de `run_toolchain` l'absorbe intégralement. `mypy`
+  est volontairement **absent** des déclarations Python : sa cible est layout-dépendante (la route calcule
+  `src` si le dossier existe, sinon `.`) — la déclarer statiquement faisait diverger les deux dès qu'un projet
+  grandissait un `src/` → mypy joué deux fois, le second en duplicate-module → **faux rouge sur un projet
+  normal** (défaut mesuré au balayage de non-régression, corrigé, gardé par test).
+- **Versionnage** : aucun bump. `docs/schema-contract.md:201` classe `bundle.toml` **hors contrat figé**,
+  aucune colonne SQLite ne bouge, `native_status` garde ses clés (`cmd` gagne une *valeur*, pas un champ) ; la
+  politique `:376+` fait du bump le **déclencheur de migration** — sans migration, pas de bump. Le contrat qui
+  change réellement est **la spec** (`docs/specs/tier0-native-toolchain-gate.md` §Amendement 2026-07-31, qui
+  amende les règles verrouillées 2 et 3 **par leur propre clause d'échappement** : « pas de config déclarative
+  *tant qu'un 2ᵉ projet ne diverge pas* » — l'utilisateur distribué **est** ce 2ᵉ projet).
+- **Migration des projets déjà semés** : un projet créé avant ce changement n'a pas de `[bundle.gate]` → un
+  diff de **résidu seul** y passera rouge, une fois, avec le bloc TOML à copier dans le message. C'est le
+  chemin de migration voulu (auto-réparable, une fois par projet), pas un reseed forcé.
+- **Tests** : `tests/test_gate.py` — le test du trou (`["main.go"] → ["declared"]`, langages inconnus, cas
+  mixtes), `N/A` réservé aux diffs sans source, rouge-sans-déclaration puis vert-déclaré, 6 corps malformés
+  (« malformée = absente, jamais verte »), dédup inter-groupes. `tests/test_provision.py` — les 5 types semés
+  montent leur résidu (garde du piège whole-file) et `declared` leur coûte **0 step**.
+  `tests/test_orchestrator.py` — garde de **boucle** : une feature dont le projet ne déclare rien est drainée
+  mais **jamais `merge_ready`**, blocker à l'appui.
+
 ### Canal content — CLI `cockpit upload` + route `POST /api/projects/{slug}/upload` (Phase 2) — **API : +1 route**
 - **Contexte** : le canal d'injection d'asset (cf. `docs/specs/project-content-upload.md`) exposé sur la spine.
   Un opérateur dépose un fichier (charte, schéma, image, doc) dans un projet ; le worker/l'IA d'interview le lit
