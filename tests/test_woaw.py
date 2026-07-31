@@ -17,7 +17,6 @@ from cockpit.gate import merge, verify, woaw
 from cockpit.projects import registry
 from cockpit.roadmap import model
 
-
 # -- store de verdict (PUR + I/O fichier) -----------------------------------------------------------
 
 def test_build_verdict_counts_and_flat():
@@ -47,7 +46,8 @@ def test_is_fresh_false_on_stale_sha_and_wrong_contract(tmp_path):
     woaw.write_verdict(settings, "proj", "feat", {"findings": []}, sha="sha-A")
     assert woaw.status(settings, "proj", "feat", current_sha="sha-B")["fresh"] is False   # SHA périmé
     v = woaw.read_verdict(settings, "proj", "feat")
-    assert woaw.is_fresh({**v, "contract_version": "woaw-gate-v0"}, current_sha="sha-A") is False  # vieux contrat
+    # vieux contrat → rejeté même si le SHA colle
+    assert woaw.is_fresh({**v, "contract_version": "woaw-gate-v0"}, current_sha="sha-A") is False
 
 
 # -- câblage advisory dans compose_merge_decision (le woaw ne BLOQUE JAMAIS) -------------------------
@@ -166,7 +166,8 @@ def _dispatch(conn, settings, monkeypatch, judge_json, *, shot=None):
 
 
 def test_dispatch_writes_advisory_verdict_on_happy_path(ctx, monkeypatch):
-    """Feature UI complète → capture (injectée) → juge (injecté) rend 1🔴 flat → verdict woaw écrit + frais."""
+    """Feature UI complète → capture (injectée) → juge (injecté) rend 1🔴 flat
+    → verdict woaw écrit + frais."""
     settings, conn = ctx
     _seed_ui_feature(conn, settings)
     judge = '{"route":"/","flat":true,"findings":[{"severity":"🔴","principle":"P6","claim":"plate"}]}'
@@ -220,7 +221,9 @@ def test_dispatch_idempotent_skips_fresh_verdict(ctx, monkeypatch):
 
     def _spy(argv, *, cwd, input_text, timeout, env=None):
         calls.append(argv)
-        return run.RunResult(argv=list(argv), returncode=0, stdout='{"is_error":false,"result":"{}"}', stderr="")
+        return run.RunResult(
+            argv=list(argv), returncode=0, stdout='{"is_error":false,"result":"{}"}', stderr=""
+        )
 
     again = woaw_dispatch.dispatch_woaw(conn, settings, feature_ref="proj/feat", runner=_spy,
                                         deployer=_fake_deploy, teardowner=lambda *a, **k: None,
@@ -234,13 +237,16 @@ def test_dispatch_best_effort_when_capture_fails(ctx, monkeypatch):
     settings, conn = ctx
     _seed_ui_feature(conn, settings)
 
-    def _empty_shot(payload):                                  # n'écrit PAS le PNG → capture échoue proprement
+    # n'écrit PAS le PNG → la capture échoue proprement
+    def _empty_shot(payload):
         return run.RunResult(argv=["node"], returncode=1, stdout="", stderr="boom")
     called: list = []
 
     def _judge_spy(argv, *, cwd, input_text, timeout, env=None):
         called.append(argv)
-        return run.RunResult(argv=list(argv), returncode=0, stdout='{"is_error":false,"result":"{}"}', stderr="")
+        return run.RunResult(
+            argv=list(argv), returncode=0, stdout='{"is_error":false,"result":"{}"}', stderr=""
+        )
 
     monkeypatch.setattr(verify, "_wait_http_ready", lambda *a, **k: True)
     report = woaw_dispatch.dispatch_woaw(conn, settings, feature_ref="proj/feat", runner=_judge_spy,
