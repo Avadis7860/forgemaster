@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from '@tanstack/react-router'
-import { Alert, Badge, EmptyState, LoadingState } from '@/components/ui'
+import { Alert, Badge, Button, EmptyState, LoadingState } from '@/components/ui'
 import type { Tone } from '@/lib/statusTone'
 import { useAckAlert, useAlerts } from '@/lib/queries'
 import type { Alert as AlertRow } from '@/lib/schemas'
@@ -129,10 +129,12 @@ export function NotificationCenter() {
               <LoadingState label="Chargement des alertes…" />
             ) : isError ? (
               <Alert tone="danger" title="Alertes injoignables">
-                Le daemon n’a pas répondu.{' '}
-                <button type="button" onClick={() => refetch()} className="font-medium underline">
-                  Réessayer
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span>Le daemon n’a pas répondu.</span>
+                  <Button variant="ghost" size="sm" onClick={() => refetch()}>
+                    Réessayer
+                  </Button>
+                </div>
               </Alert>
             ) : alerts.length === 0 ? (
               <EmptyState title="Aucune alerte" description="Rien ne bloque le drain." />

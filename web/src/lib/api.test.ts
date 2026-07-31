@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { gitDownloadUrl, gitRawUrl } from './api'
-import { ReliabilitySchema } from './schemas'
+import { ReliabilitySchema, UploadResultSchema } from './schemas'
 
 describe('gitRawUrl / gitDownloadUrl', () => {
   it('construit une URL relative same-origin vers l’endpoint bytes, params encodés', () => {
@@ -45,5 +45,35 @@ describe('ReliabilitySchema', () => {
       n_marked: 0, provisional: false, n_blocked_open: 0, taux: null, projects: [],
     })
     expect(r.taux).toBeNull()
+  })
+})
+
+describe('UploadResultSchema', () => {
+  it('parse un résultat de dépôt (voie forge, extras ignorés)', () => {
+    const r = UploadResultSchema.parse({
+      project: 'vr', mode: 'forge', feature: 'content-logo', branch: 'feature/content-logo',
+      path: '/wt', file: '/wt/docs/design/brand/logo.png', commit: 'abc123', merged: false, extra: 1,
+    })
+    expect(r.mode).toBe('forge')
+    expect(r.file).toContain('docs/design/brand/logo.png')
+    expect(r.merged).toBe(false)
+  })
+
+  it('parse un noop (fichier vide → champs nuls)', () => {
+    const r = UploadResultSchema.parse({
+      project: 'vr', mode: 'noop', feature: null, branch: null, path: null, file: null,
+      commit: null, merged: false,
+    })
+    expect(r.mode).toBe('noop')
+    expect(r.file).toBeNull()
+  })
+
+  it('refuse un mode hors enum', () => {
+    expect(() =>
+      UploadResultSchema.parse({
+        project: 'vr', mode: 'wat', feature: null, branch: null, path: null, file: null,
+        commit: null, merged: false,
+      }),
+    ).toThrow()
   })
 })

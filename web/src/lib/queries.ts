@@ -219,6 +219,22 @@ export function useInspireProject(project: string) {
   })
 }
 
+// « Ajouter un fichier » : dépose un asset sous docs/design/<dest>/. À la résolution, invalide roadmap (la
+// voie forge crée une feature content-<x>), projets, et docs (l'asset peut nourrir la carte docs) — l'UI
+// reflète le travail créé, jamais un état deviné. La livraison live-vs-forge est décidée côté serveur.
+export function useUploadFile(project: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (vars: { file: File; dest?: string; feature?: string }) =>
+      api.uploadFile(project, vars.file, { dest: vars.dest, feature: vars.feature }),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: qk.roadmap(project) })
+      qc.invalidateQueries({ queryKey: qk.projects })
+      qc.invalidateQueries({ queryKey: qk.docs(project) })
+    },
+  })
+}
+
 // Vue Git read-only d'un projet (branches · ahead/behind · log). GET idempotent, pas de poll.
 export function useGit(project: string) {
   return useQuery({

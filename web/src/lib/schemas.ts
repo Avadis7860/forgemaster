@@ -226,6 +226,21 @@ export const InspireResultSchema = z.object({
 })
 export type InspireResult = z.infer<typeof InspireResultSchema>
 
+// Résultat de POST /api/projects/{p}/upload : l'asset déposé + le mode de livraison. `mode` : `noop` (fichier
+// vide, rien écrit) / `live` (worktree actif → écrit dedans, Read live — cas interview) / `forge` (feature
+// éphémère content-<x>, merge GO humain). `file` = chemin absolu écrit (null si noop). Extras ignorés par Zod.
+export const UploadResultSchema = z.object({
+  project: z.string(),
+  mode: z.enum(['noop', 'live', 'forge']),
+  feature: z.string().nullable(),
+  branch: z.string().nullable(),
+  path: z.string().nullable(),
+  file: z.string().nullable(),
+  commit: z.string().nullable(),
+  merged: z.boolean(),
+})
+export type UploadResult = z.infer<typeof UploadResultSchema>
+
 // -- V3 dispatch : job (run worker) + rapport de dispatch + événements de transcript (streamés en WS) --
 
 // Une ligne de `dispatch_jobs` enrichie du `task_slug` (join list_jobs). Champs consommés déclarés ;

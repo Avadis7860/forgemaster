@@ -55,6 +55,7 @@ import {
   RoadmapSchema,
   RoadmapCheckSchema,
   InspireResultSchema,
+  UploadResultSchema,
   ReconcileSocleResultSchema,
   RefixResultSchema,
   TemplatesListSchema,
@@ -83,6 +84,27 @@ async function request<T>(path: string, schema: z.ZodType<T>, init?: RequestInit
       ...init,
       headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
     })
+  } catch (cause) {
+    throw new ApiError(0, `daemon injoignable (${String(cause)})`)
+  }
+  const body = res.status === 204 ? null : await res.json().catch(() => null)
+  if (!res.ok) {
+    const detail =
+      body && typeof body === 'object' && 'detail' in body
+        ? String((body as { detail: unknown }).detail)
+        : res.statusText || `HTTP ${res.status}`
+    throw new ApiError(res.status, detail)
+  }
+  return schema.parse(body)
+}
+
+// POST multipart/form-data (upload de fichier). Comme `request` pour le parse/erreurs, MAIS **sans** header
+// content-type : le navigateur pose lui-même `multipart/form-data; boundary=…` à partir du FormData (le forcer
+// casserait le boundary). Mêmes mappings d'erreur domaine (413/415/400/404 → ApiError avec detail).
+async function requestForm<T>(path: string, schema: z.ZodType<T>, form: FormData): Promise<T> {
+  let res: Response
+  try {
+    res = await fetch(path, { method: 'POST', body: form })
   } catch (cause) {
     throw new ApiError(0, `daemon injoignable (${String(cause)})`)
   }
@@ -141,6 +163,17 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ template }),
     }),
+
+  // Dépose un asset dans un projet (multipart) sous `docs/design/<dest>/` — lisible par le worker/l'IA
+  // d'interview. Livraison worktree-aware côté serveur (live si worktree actif, sinon voie forge). `dest`
+  // (défaut `brand`) et `feature` (cible un worktree nommé) optionnels. Bornes → ApiError (413/415/400).
+  uploadFile: (project: string, file: File, opts?: { dest?: string; feature?: string }) => {
+    const form = new FormData()
+    form.append('file', file)
+    if (opts?.dest) form.append('dest', opts.dest)
+    if (opts?.feature) form.append('feature', opts.feature)
+    return requestForm(`/api/projects/${encodeURIComponent(project)}/upload`, UploadResultSchema, form)
+  },
 
   // Intérieur d'un bundle (explorer P5) : arbre curé (chemins + groupe) puis corps d'UN fichier. GET
   // idempotents (lecture du bundle composé vendoré — goto-safe). Fail-closed : type non offert / fichier

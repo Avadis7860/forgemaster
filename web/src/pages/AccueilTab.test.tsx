@@ -29,6 +29,8 @@ vi.mock('@/lib/queries', () => ({
   // (tasks vides) → LaunchCycle rend `null` et n'interfère pas avec les assertions de l'Accueil.
   useRoadmapCheck: () => ({ data: { ok: false } }),
   useReconcileSocle: () => ({ isPending: false, isError: false, error: null, data: undefined, mutate: vi.fn() }),
+  // AssetUploadCard (rendu par l'Accueil) : au repos → pas de résultat/erreur, n'interfère pas.
+  useUploadFile: () => ({ mutate: vi.fn(), isPending: false, isError: false, error: null, data: undefined }),
 }))
 vi.mock('@tanstack/react-router', () => ({
   useParams: () => ({ project: 'code-map' }),

@@ -1,6 +1,7 @@
 import { Suspense, lazy, useState } from 'react'
 import { Link, useParams } from '@tanstack/react-router'
 import { Alert, Badge, Button, Card, Eyebrow, LoadingState } from '@/components/ui'
+import { AssetUploadCard } from '@/components/content/AssetUploadCard'
 import { CostStrip } from '@/components/cost/CostStrip'
 import { ReliabilityStrip } from '@/components/reliability/ReliabilityStrip'
 import { LaunchCycle } from '@/components/dispatch/LaunchCycle'
@@ -73,6 +74,11 @@ export function AccueilTab() {
           </>
         )}
       </Card>
+
+      {/* Ajouter un fichier : dépose un asset (charte, schéma, image, doc) sous docs/design/<dest>/ — lisible
+          par le worker/l'IA d'interview. Un seul point d'entrée couvre les deux moments (la livraison live vs
+          forge est décidée côté serveur selon la présence d'un worktree actif). */}
+      <AssetUploadCard project={project} />
 
       {/* Cycle de lancement : frise d'état + action nommée par son résultat (« Valider l'interview & clôturer
           le socle »). Ne se rend que pour un projet à socle interactif — invisible pour un projet mûr. */}
