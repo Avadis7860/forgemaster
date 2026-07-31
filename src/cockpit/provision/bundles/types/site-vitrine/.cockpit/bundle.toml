@@ -33,3 +33,14 @@ corpus = true
 [bundle.facet_models]
 content = "sonnet"
 deploy = "sonnet"
+
+# gate DÉCLARÉE — couvre le RÉSIDU hors routes connues du Tier-0 : le contrat de RUN possédé
+# (Dockerfile/compose.yaml/nginx.conf/.dockerignore, cf. reseed_owned ci-dessus). Sans ce bloc, un diff de
+# facette `deploy` — qui ne touche QUE ces fichiers — sortirait en ROUGE « toolchain non déclarée »
+# (fail-closed voulu, cf. docs/specs/tier0-native-toolchain-gate.md §Amendement). Un overlay surcharge
+# bundle.toml en whole-file → le bloc de la base ne serait PAS hérité : chaque type porte le sien.
+# Même step que la route `front` (unité per-dir `web/`, pas de package.json racine) : dédupliqué.
+[bundle.gate]
+steps = [
+  { name = "npm-run-gate", argv = ["npm", "run", "gate"], cwd = "web" },
+]

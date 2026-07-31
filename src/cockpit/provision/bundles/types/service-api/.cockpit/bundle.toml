@@ -11,3 +11,16 @@ archetype = "service"       # gate de profondeur : axes d'un service HTTP (cf. d
 # hypothesis) : nommés dans la prose du `CLAUDE.md §4`.
 [bundle.mcp]
 corpus = true
+
+# gate DÉCLARÉE — couvre le RÉSIDU que les routes connues du Tier-0 ne prennent pas : contrat de RUN
+# (Dockerfile/compose.yaml/.dockerignore) et entrées de toolchain (pyproject.toml). Sans ce bloc, un diff qui
+# ne touche QUE ces fichiers sortirait en ROUGE « toolchain non déclarée » (fail-closed voulu, cf.
+# docs/specs/tier0-native-toolchain-gate.md §Amendement). Un overlay surcharge bundle.toml en whole-file →
+# le bloc de la base ne serait PAS hérité : chaque type porte le sien.
+# Ce sont les MÊMES steps que la route `backend` : dédupliqués (name+cmd+cwd) → joués une seule fois.
+[bundle.gate]
+steps = [
+  { name = "ruff",   argv = ["ruff", "check", "."] },
+  { name = "mypy",   argv = ["mypy", "."] },
+  { name = "pytest", argv = ["pytest", "-q"] },
+]

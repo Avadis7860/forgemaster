@@ -11,3 +11,14 @@ archetype = "game"          # gate de profondeur : axes du genre jeu (cf. depth-
 # non consommé qui dupliquerait §4 dériverait en silence).
 [bundle.mcp]
 corpus = true
+
+# gate DÉCLARÉE — couvre le RÉSIDU hors routes connues du Tier-0 : contrat de RUN (Dockerfile/compose.yaml/
+# .dockerignore) et entrées de toolchain (package.json/tsconfig.json/vite.config/.codemap.toml). Sans ce bloc,
+# un diff qui ne touche QUE ces fichiers sortirait en ROUGE « toolchain non déclarée » (fail-closed voulu, cf.
+# docs/specs/tier0-native-toolchain-gate.md §Amendement). Un overlay surcharge bundle.toml en whole-file →
+# le bloc de la base ne serait PAS hérité : chaque type porte le sien.
+# Même step que la route `front`/`backend-node` (package.json RACINE, univers TS unifié) : dédupliqué.
+[bundle.gate]
+steps = [
+  { name = "npm-run-gate", argv = ["npm", "run", "gate"] },
+]

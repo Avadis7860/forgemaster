@@ -702,6 +702,117 @@ def test_run_toolchain_fails_closed_on_triggered_but_uncovered(tmp_path):
     assert toolchain.run_toolchain(root, ["README.md"], timeout_s=5) == []
 
 
+# -- contrat d'applicabilité UNIVERSEL (renversement 2026-07-31) -------------------------------------
+
+def test_toolchain_applicable_triggers_universal_contract():
+    """**LE TEST DU TROU.** Avant le renversement, un diff dont aucun fichier ne matchait `web/` / node /
+    `*.py` sortait en `[]` → Tier-0 **N/A** → le seul veto NON-overridable de la pile s'éteignait **sans un
+    mot**, et la feature mergeait sur le seul Tier-1 (LLM, overridable). Invisible sur notre stack, structurel
+    pour tout utilisateur distribué. Cadrage POSITIF : toute source qu'aucune route connue ne couvre déclenche
+    `declared`. Sans ce test, la régression revient en silence."""
+    assert toolchain.applicable_triggers(["main.go"]) == ["declared"]
+    assert toolchain.applicable_triggers(["src/lib.rs", "Cargo.toml"]) == ["declared"]
+    assert toolchain.applicable_triggers(["deploy/provision-ct.sh"]) == ["declared"]
+    assert toolchain.applicable_triggers(["Dockerfile", "nginx.conf"]) == ["declared"]
+    # entrée de toolchain nue : on pouvait changer ses pins de deps et sa config de lint SANS aucun gate
+    assert toolchain.applicable_triggers(["pyproject.toml"]) == ["declared"]
+    # cas MIXTE : la route connue ET le résidu doivent être couverts (ordre stable)
+    assert toolchain.applicable_triggers(["x.py", "main.go"]) == ["backend", "declared"]
+    assert toolchain.applicable_triggers(["web/App.tsx", "Dockerfile"]) == ["front", "declared"]
+
+
+def test_toolchain_na_reserved_to_sourceless_diffs():
+    """`N/A` (donc `[]`) est réservé aux diffs **sans source** — prose ⊕ verrous de dépendances ⊕ assets
+    binaires ⊕ diff vide — et plus jamais au cas « je ne reconnais pas ce langage ». Non-régression dure :
+    un diff de prose doit rester mergeable."""
+    assert toolchain.applicable_triggers([]) == []
+    assert toolchain.applicable_triggers(["README.md", "docs/x.rst", "notes.txt"]) == []
+    assert toolchain.applicable_triggers(["package-lock.json", "poetry.lock", "go.sum"]) == []
+    assert toolchain.applicable_triggers(["assets/hero.png", "static/f.woff2", "docs/plan.pdf"]) == []
+
+
+def test_run_toolchain_declared_group_red_without_declaration_then_green(tmp_path, monkeypatch):
+    """Le résidu déclenché **sans** `[bundle.gate]` → step ROUGE dont le message dit **quoi faire** (il NOMME
+    le bloc TOML) ; **avec** une déclaration montable → les steps du projet tournent, verbatim. C'est le cœur
+    du renversement : le gate n'infère pas la stack (zéro hardcode `go`/`cargo`), il exige d'être renseigné.
+    """
+    from cockpit.core.run import RunResult
+    root = tmp_path / "wt"
+    root.mkdir()
+    red = toolchain.run_toolchain(root, ["main.go"], timeout_s=5)
+    assert len(red) == 1 and red[0]["ok"] is False and red[0]["group"] == "declared"
+    assert "[bundle.gate]" in red[0]["error"]              # ACTIONNABLE, pas seulement constatant
+    assert toolchain.build_verdict(red, sha="s", ts="t")["ok"] is False     # jamais de vert par vacuité
+    (root / ".cockpit").mkdir()
+    (root / ".cockpit" / "bundle.toml").write_text(
+        '[bundle.gate]\nsteps = [\n'
+        '  { name = "vet",  argv = ["go", "vet", "./..."] },\n'
+        '  { name = "test", argv = ["go", "test", "./..."], cwd = "sub" },\n]\n', encoding="utf-8")
+    calls: list = []
+
+    def fake_run(argv, *, cwd, env=None, timeout=None, check=False):
+        calls.append((list(argv), str(cwd)))
+        return RunResult(argv=list(argv), returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(toolchain, "run", fake_run)
+    green = toolchain.run_toolchain(root, ["main.go"], timeout_s=5)
+    assert [s["ok"] for s in green] == [True, True] and [s["name"] for s in green] == ["vet", "test"]
+    assert calls == [(["go", "vet", "./..."], str(root)),          # cwd omis → racine du worktree
+                     (["go", "test", "./..."], str(root / "sub"))]  # cwd relatif à la racine
+    assert "declared" in toolchain.detect_groups(root)             # descriptif cohérent avec le RUN
+
+
+@pytest.mark.parametrize("body", [
+    'steps = []',                                                  # liste vide
+    'steps = "make gate"',                                         # pas une liste
+    'steps = [{ name = "x" }]',                                    # step sans argv
+    'steps = [{ name = "x", argv = [] }]',                         # argv vide
+    'steps = [{ name = "x", argv = ["go", 3] }]',                  # argv non-str
+    'steps = [{ argv = ["go", "vet"], cwd = "/etc" }]',            # cwd absolu (hors worktree)
+])
+def test_declared_steps_malformed_is_absent_never_green(tmp_path, body: str):
+    """**Déclaration malformée = déclaration absente** (fail-CLOSED, règle 3 de la spec). Un `bundle.toml`
+    mal tapé ne dégrade JAMAIS vers le vert — sinon il rouvrirait exactement le trou qu'on referme."""
+    root = tmp_path / "wt"
+    (root / ".cockpit").mkdir(parents=True)
+    (root / ".cockpit" / "bundle.toml").write_text(f"[bundle.gate]\n{body}\n", encoding="utf-8")
+    assert toolchain._declared_steps(root) is None
+    res = toolchain.run_toolchain(root, ["main.go"], timeout_s=5)
+    assert len(res) == 1 and res[0]["ok"] is False and res[0]["group"] == "declared"
+
+
+def test_run_toolchain_dedupes_identical_steps_across_groups(tmp_path, monkeypatch):
+    """Un projet dont le `[bundle.gate]` déclare sa commande de gate conventionnelle ne la paie pas DEUX fois
+    quand le diff déclenche aussi sa route connue : deux steps identiques (name+cmd+cwd) sont joués une seule
+    fois. C'est le cas de nos 5 bundles typés (leur déclaration duplique leur route)."""
+    from cockpit.core.run import RunResult
+    root = tmp_path / "wt"
+    (root / ".cockpit").mkdir(parents=True)
+    (root / "package.json").write_text('{"scripts": {"gate": "x"}}', encoding="utf-8")
+    (root / "node_modules").mkdir()
+    (root / ".cockpit" / "bundle.toml").write_text(
+        '[bundle.gate]\nsteps = [{ name = "npm-run-gate", argv = ["npm", "run", "gate"] }]\n',
+        encoding="utf-8")
+    calls: list = []
+
+    def fake_run(argv, *, cwd, env=None, timeout=None, check=False):
+        calls.append((list(argv), str(cwd)))
+        return RunResult(argv=list(argv), returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(toolchain, "run", fake_run)
+    # diff mixte : `web/` (route front) + Dockerfile (résidu → declared) — même commande, un seul run
+    res = toolchain.run_toolchain(root, ["web/App.tsx", "Dockerfile"], timeout_s=5)
+    assert len(calls) == 1 and len(res) == 1 and res[0]["group"] == "front"
+
+
+def test_toolchain_status_applicable_on_unknown_language(ctx):
+    """Bout en bout côté `native_status` : un diff Go **sans** verdict frais rend `applicable=True, ok=False`
+    (bloque, non-overridable) — là où il rendait `{"applicable": False}` (N/A silencieux) avant 2026-07-31."""
+    settings, _ = ctx
+    st = toolchain.status(settings, "p", "f", current_sha="s1", diff_files=["main.go"])
+    assert st["applicable"] is True and st["ok"] is False and st["cmd"] == "declared"
+
+
 def test_run_toolchain_runs_node_backend_gate_when_present(tmp_path, monkeypatch):
     """`server/package.json` avec un script `gate` → `run_toolchain` lance `npm run gate` DANS server/ (couvre
     le backend node TS, ex. void-runner). Le subprocess est monkeypatché (pas de vrai npm en test)."""

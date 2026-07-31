@@ -262,6 +262,15 @@ def test_web_dispatch_drains_and_produces_review(client, monkeypatch, fake_tools
 
     conn = store.open_db(settings)                          # seed projet/feature/task (todo) en direct
     registry.create_project(conn, settings, slug="proj")
+    # Un projet `generic` n'a ni pyproject ni package.json : depuis le renversement 2026-07-31, la source
+    # produite hors routes connues (`src/note.sh`) exige une toolchain DÉCLARÉE — sinon Tier-0 rouge (testé
+    # pour lui-même dans test_gate.py). Ce test porte sur le chemin reviewer, il déclare donc comme un vrai
+    # projet le ferait.
+    InternalGit().overlay_commit(
+        registry.sot_path_for(settings, "proj"), branch="dev",
+        files={".cockpit/bundle.toml": '[bundle]\nversion = "1"\nproject_type = "generic"\n\n'
+                                       '[bundle.gate]\nsteps = [{ name = "declared", argv = ["true"] }]\n'},
+        message="chore: déclare la toolchain du projet", identity=("test", "test@local"))
     conn.execute("DELETE FROM tasks")                       # board CONTRÔLÉ : retire le socle d'amorçage
     conn.execute("DELETE FROM features")                    # (sinon le gate socle tiendrait `feat`)
     model.add_feature(conn, project_slug="proj", slug="feat")

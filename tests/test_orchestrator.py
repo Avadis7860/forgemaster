@@ -65,13 +65,31 @@ class _Runner:
                 self._per[feature] -= 1
 
 
-def _new_project(conn, settings, slug: str) -> None:
+def _declare_gate(settings, slug: str) -> None:
+    """Déclare une toolchain triviale (`[bundle.gate]`) dans le `.cockpit/bundle.toml` du SoT et la COMMITTE
+    sur `dev` (les worktrees partagent l'arbre committé). Depuis le renversement 2026-07-31, un projet
+    `generic` — qui ne porte ni `pyproject.toml` ni `package.json` — sort ROUGE dès qu'un worker produit de
+    la source hors routes connues (`.sh`, `.css`…) tant qu'il n'a **rien déclaré** : c'est le contrat, et il
+    est testé pour lui-même dans `test_gate.py` + `test_run_undeclared_toolchain_blocks_merge_ready`
+    ci-dessous. Les tests de DRAINAGE, eux, déclarent comme le ferait un vrai projet, pour rester des tests
+    du chemin reviewer/merge-ready et pas du Tier-0."""
+    InternalGit().overlay_commit(
+        registry.sot_path_for(settings, slug), branch="dev",
+        files={".cockpit/bundle.toml": '[bundle]\nversion = "1"\nproject_type = "generic"\n\n'
+                                       '[bundle.gate]\nsteps = [{ name = "declared", argv = ["true"] }]\n'},
+        message="chore: déclare la toolchain du projet", identity=("test", "test@local"))
+
+
+def _new_project(conn, settings, slug: str, *, declare_gate: bool = True) -> None:
     """Crée un projet PUIS vide sa roadmap de lancement semée : ces tests pilotent un board CONTRÔLÉ
-    (DAG explicite), le socle d'amorçage universel serait du bruit pour la mécanique de drainage."""
+    (DAG explicite), le socle d'amorçage universel serait du bruit pour la mécanique de drainage.
+    `declare_gate=False` laisse le projet SANS toolchain déclarée (cf. `_declare_gate`)."""
     registry.create_project(conn, settings, slug=slug)
     conn.execute("DELETE FROM tasks")
     conn.execute("DELETE FROM features")
     conn.commit()
+    if declare_gate:
+        _declare_gate(settings, slug)
 
 
 def _seed(conn, settings, project: str, feature: str, tasks: list[tuple[str, list[str]]]) -> None:
@@ -644,6 +662,26 @@ def test_run_feature_drains_single_task_and_reviews(ctx, monkeypatch):
     from cockpit.gate import review
     v = review.read_verdict(settings, "proj", "feat")
     assert v is not None and v["counts"]["red"] == 0     # verdict Tier-1 SHA-bound écrit, propre
+
+
+def test_run_undeclared_toolchain_blocks_merge_ready(ctx, monkeypatch):
+    """**Le trou, vu depuis la BOUCLE** (défaut 2026-07-31). Un worker produit de la source qu'aucune route
+    connue ne couvre (`src/note.sh`) dans un projet qui n'a **rien déclaré** : avant le renversement, Tier-0
+    sortait `N/A` → la feature devenait merge-ready sur le seul Tier-1 (LLM, **overridable**), sans qu'aucun
+    étage déterministe n'ait tourné. Désormais elle est **tenue**, avec un blocker qui dit quoi faire.
+    Symétrique exact de `_declare_gate` : déclarer lève le blocage (tous les tests voisins le prouvent)."""
+    settings, conn = ctx
+    fake_home = settings.home / "fakehome"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("HOME", str(fake_home))
+    _new_project(conn, settings, "proj", declare_gate=False)          # aucune toolchain déclarée
+    _seed(conn, settings, "proj", "feat", [("impl", [])])
+    summary = orchestrator.run_feature(conn, settings, project="proj", feature="feat",
+                                       runner=_writing_worker(), review_runner=_review_worker())
+    assert _statuses(conn, "feat") == {"impl": "done"}                # le travail a bien été drainé…
+    assert summary["merge_ready"] == []                               # … mais la feature est TENUE
+    blockers = summary["finalizations"][0]["blockers"]
+    assert any("toolchain" in b.lower() for b in blockers), blockers   # et le gate DIT pourquoi
 
 
 def test_run_feature_advances_multitask_dag_then_reviews(ctx, monkeypatch):

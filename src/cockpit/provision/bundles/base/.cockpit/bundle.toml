@@ -20,3 +20,15 @@ archetype = "doc"
 # le lever réellement lu par le worker) — jamais dupliqués en champ TOML non consommé.
 [bundle.mcp]
 corpus = true
+
+# [bundle.gate] — toolchain DÉCLARÉE du projet, pour tout ce qu'aucune route connue du Tier-0 ne couvre (ni
+# `web/`, ni node hors `web/`, ni `*.py`) : contrat de RUN (Dockerfile/compose/nginx), scripts shell, ou tout
+# langage hors Python/TS. Le gate ne cherche pas à RECONNAÎTRE une stack, il exige d'être RENSEIGNÉ — sans ce
+# bloc, un diff qui ne touche QUE ce résidu sort en ROUGE honnête (« toolchain non déclarée »), jamais en N/A
+# silencieux (cf. docs/specs/tier0-native-toolchain-gate.md §Amendement 2026-07-31).
+# `generic` ne présume aucune stack : le bloc est laissé VIDE, à renseigner par le projet (ou par l'interview
+# de première session). Un overlay de type SURCHARGE ce fichier en whole-file → chaque type porte le sien.
+# [bundle.gate]
+# steps = [                                   # ordonnés, arrêt au 1ᵉʳ rouge
+#   { name = "gate", argv = ["make", "gate"] },   # `cwd` optionnel, relatif à la racine du worktree
+# ]

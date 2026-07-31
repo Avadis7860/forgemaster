@@ -348,17 +348,21 @@ def test_declared_facets_have_backing_dirs(project_type):
             assert bundle[key].strip(), f"{project_type} : {key} vide"
 
 
-# Fichiers de code REPRÉSENTATIFS de la stack de chaque type (ce qu'un worker toucherait) → chaque groupe
-# toolchain qu'ils déclenchent DOIT monter dans le seed. service-api/cli-tool = Python ; front-ts/browser-game
-# = TypeScript unifié (node hors web/ → backend-node ; web/ → front).
+# Fichiers REPRÉSENTATIFS de ce qu'un worker toucherait dans chaque type → chaque groupe toolchain qu'ils
+# déclenchent DOIT monter dans le seed. service-api/cli-tool = Python ; front-ts/browser-game = TypeScript
+# unifié (node hors web/ → backend-node ; web/ → front). Depuis le renversement 2026-07-31, chaque type porte
+# aussi son RÉSIDU — contrat de RUN et entrées de toolchain, qu'aucune route connue ne couvre → groupe
+# `declared`, qui exige un `[bundle.gate]` DANS l'overlay du type (surcharge whole-file : le bloc de la base
+# n'est PAS hérité).
 _TYPE_TOOLCHAIN_PROBES = {
-    "service-api": ["probe.py"],
-    "cli-tool": ["probe.py"],
-    "front-ts": ["server.mjs", "web/Probe.tsx"],
-    "browser-game": ["src/probe.ts", "web/Probe.tsx"],
+    "service-api": ["probe.py", "Dockerfile", "pyproject.toml"],
+    "cli-tool": ["probe.py", "pyproject.toml"],
+    "front-ts": ["server.mjs", "web/Probe.tsx", "Dockerfile"],
+    "browser-game": ["src/probe.ts", "web/Probe.tsx", "compose.yaml"],
     # site-vitrine : app Astro sous web/ (`.astro` n'est pas un node-suffix → le groupe `front` se déclenche
-    # UNIQUEMENT par le chemin web/ ; la gate composite est montée par web/package.json `gate`).
-    "site-vitrine": ["web/src/pages/index.astro"],
+    # UNIQUEMENT par le chemin web/ ; la gate composite est montée par web/package.json `gate`). Le contrat
+    # de RUN possédé (nginx.conf/Dockerfile) est le résidu typique d'une feature de facette `deploy`.
+    "site-vitrine": ["web/src/pages/index.astro", "nginx.conf"],
 }
 
 
@@ -368,7 +372,11 @@ def test_typed_seed_ships_mountable_toolchain(project_type: str, tmp_path: Path)
     que sa stack implique, le groupe toolchain déclenché doit **MONTER** (manifeste `pyproject.toml` /
     `package.json`+`gate` présent dans le seed) — sinon tout worker touchant ce code tombe sur « toolchain non
     montable » : échec par CONSTRUCTION (le trou trouvé au dogfood 2026-07-16, cher, alors qu'il était lisible
-    statiquement). Ce test le rend visible à chaque `pytest`, jamais plus à un E2E live."""
+    statiquement). Ce test le rend visible à chaque `pytest`, jamais plus à un E2E live.
+
+    Depuis le renversement 2026-07-31, il **garde aussi le piège whole-file** : un overlay de type surcharge
+    `bundle.toml` en entier, donc un type qui a un résidu (contrat de RUN, entrées de toolchain) sans porter
+    son PROPRE `[bundle.gate]` échoue ici — et pas au premier drain de l'utilisateur."""
     from cockpit.gate import toolchain
     wt = tmp_path / project_type
     for rel, content in load_bundle(project_type).items():
