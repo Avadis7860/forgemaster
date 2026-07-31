@@ -91,6 +91,23 @@ def test_status_first_run_on_empty_instance_then_flips(ctx):
     assert st["first_run"] is False and st["project_count"] == 1                 # un projet → plus « neuve »
 
 
+def test_status_carries_build_block_via_injection(ctx):
+    settings, conn = ctx
+    fs = EncryptedFileStore(settings.secrets_dir)
+    fake = {"version": "0.1.0", "sha": "abc", "committed_at": None,
+            "comparable": True, "stale": True, "behind_by": 2, "missing_types": ["site-vitrine"]}
+    st = onboarding.status(conn, fs, build_state=fake)
+    assert st["build"] == fake                                     # le signal traverse tel quel (injection)
+
+
+def test_status_build_incomparable_without_local_mirror(ctx):
+    settings, conn = ctx
+    fs = EncryptedFileStore(settings.secrets_dir)
+    st = onboarding.status(conn, fs, settings=settings)            # projects_root/cockpit/sot.git absent
+    assert st["build"]["comparable"] is False                     # honnête, aucun faux-vert, aucune levée
+    assert "version" in st["build"]                               # provenance seule exposée tout de même
+
+
 def test_link_file_store_keeps_value_in_store_and_only_ref_in_db(ctx):
     settings, conn = ctx
     fs = EncryptedFileStore(settings.secrets_dir)

@@ -40,6 +40,11 @@ _WARN_NO_RUNNER = (
     "[cockpit] build/vendor/verify-runner absent → wheel SANS runner Tier-1.5 (`cockpit gate verify` "
     "fail-close côté cible). Passe par `deploy/build-wheel.sh` (il stage deploy/runners)."
 )
+_WARN_NO_BUILD = (
+    "[cockpit] src/cockpit/_build.json absent → wheel SANS provenance de build (le signal de fraîcheur "
+    "serait aveugle : `stale`/`behind_by` non calculables). Passe par `deploy/build-wheel.sh` (il tamponne "
+    "le SHA de HEAD avant packaging)."
+)
 
 
 def plan_force_includes(root: Path) -> tuple[dict[str, str], list[str]]:
@@ -77,6 +82,13 @@ def plan_force_includes(root: Path) -> tuple[dict[str, str], list[str]]:
         force["build/vendor/verify-runner"] = "cockpit/_verify_runner"
     else:
         warnings.append(_WARN_NO_RUNNER)
+    # tampon de provenance de build (`deploy/build-wheel.sh` écrit le SHA de HEAD) → `cockpit/_build.json` :
+    # gitignoré (artefact par-build) → EXCLU du walk de package → force-include obligatoire (comme ci-dessus).
+    # Sans lui, le signal de fraîcheur serait aveugle : le faux-vert qu'on corrige.
+    if (root / "src" / "cockpit" / "_build.json").is_file():
+        force["src/cockpit/_build.json"] = "cockpit/_build.json"
+    else:
+        warnings.append(_WARN_NO_BUILD)
     return force, warnings
 
 

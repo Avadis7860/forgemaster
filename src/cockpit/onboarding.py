@@ -19,7 +19,7 @@ import argparse
 import sqlite3
 from pathlib import Path
 
-from cockpit import auth
+from cockpit import __version__, auth, build_provenance
 from cockpit.config import Settings
 from cockpit.db import store as db_store
 from cockpit.projects import registry
@@ -28,7 +28,8 @@ from cockpit.secrets import SecretNotFound, SecretStore, SecretUnsupported, buil
 
 
 def status(conn: sqlite3.Connection, secret_store: SecretStore,
-           *, claude_auth_state: dict | None = None, mcp_state: dict | None = None) -> dict:
+           *, settings: Settings | None = None, claude_auth_state: dict | None = None,
+           mcp_state: dict | None = None, build_state: dict | None = None) -> dict:
     """État d'onboarding de l'instance, SANS révéler aucun secret :
     - `secret_store` : backend actif + racine de confiance joignable (`health()`), pour le 1er démarrage ;
     - `claude_auth` : la machine est-elle authentifiée pour spawner des workers `claude` ? (`{authenticated,
@@ -44,7 +45,11 @@ def status(conn: sqlite3.Connection, secret_store: SecretStore,
     - `complete` : racine du store prête ET toutes les exigences satisfaites (pas de faux-vert) ;
     - `first_run` : aucun projet encore créé — l'instance est **neuve**, le wizard doit guider (« crée ton
       1er projet ») plutôt que d'annoncer « complet ». Distingue *rien-à-faire-car-réglé* (complete sans
-      first_run) de *rien-encore-réglé* (first_run)."""
+      first_run) de *rien-encore-réglé* (first_run) ;
+    - `build` : provenance + fraîcheur du wheel installé (`{version, sha, committed_at, comparable, stale,
+      behind_by, missing_types}`, cf. `build_provenance`). Signal honnête anti cap-silencieux : un cockpit en
+      retard sur son SoT local se DÉCLARE, jamais faux-vert. `build_state` injectable (tests) ; défaut =
+      détection live via `settings` (miroir absent ⇒ `comparable=False`) ; sans `settings`, tampon seul."""
     ready, detail = secret_store.health()
     claude = claude_auth_state if claude_auth_state is not None else auth.claude_auth_status()
     requirements = []
@@ -61,10 +66,19 @@ def status(conn: sqlite3.Connection, secret_store: SecretStore,
         })
     complete = ready and all(r["satisfied"] for r in requirements)
     mcp_st = mcp_state if mcp_state is not None else mcp.wire_state()
+    if build_state is not None:
+        build = build_state
+    elif settings is not None:
+        build = build_provenance.provenance(settings)
+    else:
+        stamp = build_provenance.read_stamp()
+        build = {"version": __version__, "sha": stamp["sha"], "committed_at": stamp["committed_at"],
+                 **build_provenance.staleness(stamp["sha"], None)}
     return {
         "secret_store": {"backend": secret_store.backend, "ready": ready, "detail": detail},
         "claude_auth": claude,
         "mcp": mcp_st,
+        "build": build,
         "requirements": requirements,
         "complete": complete,
         "project_count": len(projects),

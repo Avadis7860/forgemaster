@@ -161,6 +161,7 @@ def _stage_all(root: Path) -> None:
     _touch(root / "build" / "vendor" / "codemap" / "__main__.py")
     _touch(root / "build" / "vendor" / "taskmap" / "__init__.py")
     _touch(root / "build" / "vendor" / "verify-runner" / "render_check.js")
+    _touch(root / "src" / "cockpit" / "_build.json")
 
 
 def test_plan_force_includes_embeds_all_when_staged(tmp_path: Path):
@@ -171,6 +172,7 @@ def test_plan_force_includes_embeds_all_when_staged(tmp_path: Path):
         "build/vendor/codemap": "codemap",
         "build/vendor/taskmap": "taskmap",
         "build/vendor/verify-runner": "cockpit/_verify_runner",
+        "src/cockpit/_build.json": "cockpit/_build.json",
     }
     assert warnings == []
 
@@ -200,7 +202,17 @@ def test_plan_force_includes_warns_when_taskmap_absent(tmp_path: Path):
     assert any("taskmap" in w for w in warnings)
 
 
+def test_plan_force_includes_warns_when_build_stamp_absent(tmp_path: Path):
+    _touch(tmp_path / "web" / "dist" / "index.html")            # tout sauf le tampon de provenance
+    _touch(tmp_path / "build" / "vendor" / "codemap" / "__main__.py")
+    _touch(tmp_path / "build" / "vendor" / "taskmap" / "__init__.py")
+    _touch(tmp_path / "build" / "vendor" / "verify-runner" / "render_check.js")
+    force, warnings = hatch_build.plan_force_includes(tmp_path)
+    assert "src/cockpit/_build.json" not in force               # provenance NON embarquée
+    assert any("_build.json" in w or "provenance" in w for w in warnings)
+
+
 def test_plan_force_includes_warns_when_all_absent(tmp_path: Path):
     force, warnings = hatch_build.plan_force_includes(tmp_path)
     assert force == {}
-    assert len(warnings) == 4                                   # SPA + code-map + taskmap + runner
+    assert len(warnings) == 5                                   # SPA+codemap+taskmap+runner+provenance

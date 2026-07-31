@@ -20,6 +20,9 @@ web/dist/
 dist/
 .vite/
 *.log
+# tampon de provenance de build (écrit par deploy/build-wheel.sh, embarqué au wheel via force_include) —
+# artefact PAR-BUILD, jamais committé. Ancré (`/`) : ne matche que le fichier de tête, pas ailleurs.
+/src/cockpit/_build.json
 
 # ============================================================
 # État local / données runtime (NE PAS versionner)

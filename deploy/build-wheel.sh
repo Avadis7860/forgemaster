@@ -44,6 +44,14 @@ cp -a "$tm_src/src/taskmap" build/vendor/taskmap
 rm -rf build/vendor/verify-runner
 cp -a "$root/deploy/runners" build/vendor/verify-runner
 
+echo "→ [2b/4] tampon de provenance de build → src/cockpit/_build.json (SHA de HEAD, jamais mtime)"
+# Le signal de fraîcheur (`cockpit/build_provenance.py`) lit ce tampon : de quel commit ce wheel est né,
+# pour se comparer au HEAD du miroir SoT local. Gitignoré (artefact par-build, jamais committé) → embarqué
+# par force_include (hatch_build.py). Fail-loud si git ne résout pas HEAD (provenance = SHA, pas mtime).
+build_sha="$(git -C "$root" rev-parse HEAD)" || { echo "✗ git rev-parse HEAD échoue — provenance impossible" >&2; exit 1; }
+build_committed_at="$(git -C "$root" show -s --format=%cI HEAD)" || { echo "✗ git show HEAD échoue" >&2; exit 1; }
+printf '{"sha": "%s", "committed_at": "%s"}\n' "$build_sha" "$build_committed_at" > "$root/src/cockpit/_build.json"
+
 echo "→ [3/4] build du wheel (le hook hatch embarque web/dist → cockpit/_web_dist, codemap → codemap, taskmap → taskmap)"
 rm -f dist/cockpit-*-py3-none-any.whl
 python3 -m pip wheel --no-deps . -w dist/
@@ -62,6 +70,9 @@ assert "taskmap/__init__.py" in names and "taskmap/core/__init__.py" in names, \
     f"taskmap absent du wheel {whl} — build/vendor/taskmap non embarqué (daemon mort : No module named taskmap)"
 assert "cockpit/_verify_runner/render_check.js" in names, \
     f"runner verify absent du wheel {whl} — build/vendor/verify-runner non embarqué (gate verify mort côté cible)"
+assert "cockpit/_build.json" in names, \
+    f"provenance de build absente du wheel {whl} — src/cockpit/_build.json non embarqué (le signal de " \
+    f"fraîcheur serait aveugle : c'est le faux-vert qu'on corrige)"
 PY
 
 echo "✓ wheel prêt : $whl  (UI + code-map + taskmap embarqués)"

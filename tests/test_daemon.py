@@ -973,6 +973,19 @@ def test_onboarding_status_and_credential_link_over_http(client):
     assert c.get("/api/projects/mirr").json()["credential_ref"] is None
 
 
+def test_api_version_reports_build_provenance(client):
+    c, _ = client
+    r = c.get("/api/version")
+    assert r.status_code == 200
+    v = r.json()
+    assert "version" in v and "sha" in v and "comparable" in v                 # signal de fraîcheur présent
+    assert v["comparable"] is False                            # pas de miroir cockpit local en test → honnête
+
+    # le bloc `build` doit AUSSI apparaître (additif) dans /api/onboarding, sans casser le reste
+    st = c.get("/api/onboarding").json()
+    assert st["build"]["comparable"] is False and st["complete"] in (True, False)
+
+
 # -- terminal PTY local ----------------------------------------------------------------------------
 
 def test_resolve_workdir_is_bounded_and_control_parsed(tmp_path):

@@ -324,10 +324,19 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
 - **onboarding** — `GET /api/onboarding` (état de config-requise : `secret_store` `{backend, ready, detail}`
   via `health()`, `requirements` `[{project, mirror_remote, needs_credential, linked, satisfied}]`,
   `complete`, `project_count`, `first_run` (aucun projet → instance neuve, le wizard guide au lieu d'annoncer
-  « complet ») — aucun secret révélé) · `POST /api/projects/{p}/credential` `{token?|ref?, label?}` (lie un
+  « complet »), **`build`** `{version, sha, committed_at, comparable, stale, behind_by, missing_types}`
+  (provenance + fraîcheur du wheel installé, cf. `version` ci-dessous) — aucun secret révélé) ·
+  `POST /api/projects/{p}/credential` `{token?|ref?, label?}` (lie un
   credential : `token` = voie fichier stockée → réf opaque, `ref` = voie BWS bring-your-own UUID validée ;
   réponse = projet avec `credential_ref`, **jamais le token** ; **400** mauvais usage/backend, **404** projet
   absent) · `DELETE /api/projects/{p}/credential` (délie : `credential_ref` → NULL).
+- **version** — `GET /api/version` (provenance de build + **fraîcheur honnête** du wheel installé :
+  `{version, sha, committed_at, comparable, stale, behind_by, missing_types}`). Le SHA vient du tampon
+  `cockpit/_build.json` embarqué au build (`deploy/build-wheel.sh`, jamais mtime) ; `stale`/`behind_by`/
+  `missing_types` se calculent **par SHA** contre le HEAD du miroir SoT **local** de cockpit — **transport
+  local**, zéro réseau. Sans tampon (éditable) ou sans miroir (install publique) → `comparable=false`
+  (honnête, jamais faux-vert). Idempotent, sans secret, distinct de `/health` (I/O-free liveness).
+  *Additif (route neuve + champ `build` optionnel) → CHANGELOG, pas de bump `SCHEMA_VERSION` (cf. politique).*
 - **bootstrap** — `GET /api/bootstrap` (aperçu **idempotent** de l'amorçage des outils du framework :
   `{available, tools:[{slug, source_url, kind, adopted}], adopted, total}` ; manifeste absent →
   `available:false` ; **400** manifeste invalide ; aucun secret, goto-only safe) · `POST /api/bootstrap`

@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from cockpit import onboarding
+from cockpit import build_provenance, onboarding
 from cockpit.daemon.deps import Deps, get_deps
 
 
@@ -34,9 +34,17 @@ def make_onboarding_router() -> APIRouter:
         `complete`. Idempotent, aucun secret révélé — atteignable par le runner *goto-only*."""
         conn = deps.open_db()
         try:
-            return onboarding.status(conn, deps.secret_store())
+            return onboarding.status(conn, deps.secret_store(), settings=deps.settings)
         finally:
             conn.close()
+
+    @router.get("/api/version")
+    def version(deps: Deps = Depends(get_deps)) -> dict:
+        """Provenance de build + fraîcheur du wheel installé (`{version, sha, committed_at, comparable,
+        stale, behind_by, missing_types}`). Signal honnête, jamais faux-vert : un cockpit en retard sur son
+        miroir SoT local se déclare (`stale`, `missing_types`) ; sans provenance/miroir, `comparable=False`.
+        Idempotent, sans secret, I/O-free côté liveness (distinct de `/health`)."""
+        return build_provenance.provenance(deps.settings)
 
     @router.post("/api/projects/{project}/credential")
     def link_credential(project: str, body: CredentialLink, deps: Deps = Depends(get_deps)) -> dict:
