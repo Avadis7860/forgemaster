@@ -3,15 +3,15 @@
 `cockpit.core` regroupe les briques PURES et sans état sur lesquelles s'appuient les couches hautes (dispatch, gate, git, projects). Invariant clé : **zéro shell implicite, zéro chemin d'hôte codé en dur, zéro littéral d'id** — tout ce qui touche l'I/O locale, le système de fichiers ou l'identité passe par ici pour rester injectable en test et borné en prod. Le seam de transport (`run`) remplace le `ssh dev@<ip>` du legacy par une exécution locale `subprocess`.
 
 ## run() — exécution locale bornée, remplace le `ssh dev@ip` legacy
-`src/cockpit/core/run.py:46` · appelé par dispatch/reviewer, gate/toolchain, gate/verify, webbuild, mcp/client, daemon/app
+`src/cockpit/core/run.py:52` · appelé par dispatch/reviewer, gate/toolchain, gate/verify, webbuild, mcp/client, daemon/app
 Entrées : `argv` en **liste** (défaut, zéro shell → pas d'injection) ou `str` si `shell=True` ; kwargs `cwd`/`env`/`timeout`/`check`/`input_text`/`shell`. Garde-fous croisés en tête : `shell=True` exige une str, sinon liste (TypeError). `env`, si fourni, **remplace** l'environnement (l'appelant compose depuis `os.environ` pour hériter — usage injection ciblée `GIT_*` du writeback). Comportement : `subprocess.run` capture stdout/stderr en texte, `check=False` interne. Sorties : un `RunResult` frozen. Invariants : `check=True` lève `RunError` sur rc≠0 ; `TimeoutExpired` → `RunTimeout`.
 
 ## run_streaming() — même contrat, stdout flushé au fil de l'eau
-`src/cockpit/core/run.py:92` · appelé par dispatch/worker
+`src/cockpit/core/run.py:98` · appelé par dispatch/worker
 Comme `run` mais argv en LISTE uniquement (pas de `shell`), et écrit le stdout **ligne par ligne** dans `out_path` (open+write+flush par ligne) au lieu de ne le capturer qu'à la fin → rend le transcript d'un worker `claude -p --output-format stream-json` suivable en direct (le pont `dispatch/stream` tail ce fichier). Le stdout complet reste accumulé et rendu dans le `RunResult` final. Invariants : `timeout` honoré **même sans aucune sortie** (thread lecteur + `proc.wait(timeout)`, kill → `RunTimeout`) ; stdout ET stderr drainés en threads séparés → pas de deadlock de pipe. Sortie : `RunResult`.
 
 ## RunResult / RunError / RunTimeout — le résultat structuré et ses levées
-`src/cockpit/core/run.py:32` (RunResult), `:20` (RunError), `:28` (RunTimeout)
+`src/cockpit/core/run.py:39` (RunResult), `:20` (RunError), `:28` (RunTimeout)
 `RunResult` (dataclass frozen) porte `argv`/`returncode`/`stdout`/`stderr` + propriété `ok` (rc==0). `RunError(RuntimeError)` : levée par `run(check=True)` sur rc≠0, encapsule le `RunResult` (attribut `.result`) et formate un message `rc=… pour <argv>: <stderr tronqué 200c>`. `RunTimeout(RuntimeError)` : levée par les deux fonctions quand le `timeout` est dépassé (process tué dans `run_streaming`).
 
 ## safe_path() — bornage anti-traversal d'un chemin sous une racine

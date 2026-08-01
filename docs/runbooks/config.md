@@ -3,7 +3,7 @@
 `config` est le SOCLE : un résolveur générique de racines, sans aucune notion métier (vault, proxmox, CT, ssh — correctif du legacy `server.py` qui codait ces chemins en dur). Sa règle unique : **injection explicite, jamais de god-module**. `Settings` est gelé, dérivé une fois au démarrage, puis passé de couche en couche. `bootstrap` s'appuie dessus pour amorcer l'édition maintainer de façon **idempotente** (adoption d'outils déclarés, ré-exécution sûre).
 
 ## Settings — racines résolues du cockpit (dataclass frozen)
-`src/cockpit/config.py:30` (classe) · résolveur `Settings.resolve` en `:55` · consommé par toutes les couches (bootstrap, registry, db, secrets) qui le reçoivent en argument
+`src/cockpit/config.py:32` (classe) · résolveur `Settings.resolve` en `:55` · consommé par toutes les couches (bootstrap, registry, db, secrets) qui le reçoivent en argument
 Deux racines indépendantes : `home` (état — base SQLite `db_path`, `logs_dir`, coffre `secrets_dir`) et `projects_root` (repos gérés). Plus deux sélecteurs : `secret_store` (`"file"` | `"bws"`) et `compose_cmd` (préfixe moteur compose, normalisé en tuple). Résolution **par racine** avec priorité `argument explicite > variable d'env > défaut` (`_pick`, `:75`) ; `~` développé et chemin rendu absolu (`_norm`, `:84`). Invariant : `@dataclass(frozen=True)` — immuable, jamais un module-global mutable ; c'est l'anti god-module câblé dans le type même.
 
 ## run_bootstrap() — adoption idempotente des outils du manifeste

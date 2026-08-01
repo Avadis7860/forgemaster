@@ -19,19 +19,19 @@ REMPLACE les `depends_on` d'une feature déjà créée (là où `add_feature` re
 Symétrique de `set_feature_deps` pour les tasks : `UPDATE tasks … WHERE feature_id=? AND slug=?` (scopé par feature_id), validé via `resolver.classify` sur l'index re-lu. Vérifie l'existence de la task (`KeyError` sinon) après `resolve_feature` (`KeyError` si feature absente). `ERROR`/`CYCLE` → `ValueError` + `rollback`.
 
 ## model.add_task() — insère une task (priorité + DoD)
-`src/cockpit/roadmap/model.py:96` · appelé par `resolver.cli_dispatch` (`task add`), `seed.seed_launch_roadmap`
+`src/cockpit/roadmap/model.py:123` · appelé par `resolver.cli_dispatch` (`task add`), `seed.seed_launch_roadmap`
 Task `todo` sous une feature résolue. `priority` bornée à `P0..P3` (sinon `ValueError`). `depends_on` = slugs de tasks **de la même feature** (JSON). `acceptance` = TEXT libre injecté comme DoD dans le prompt worker au dispatch. `IntegrityError` → `ValueError` (doublon). NB : la validation « acceptance non vide » vit côté CLI (`resolver.cli_dispatch`), pas ici — `model` reste souple.
 
 ## model.list_features() — features d'un projet
-`src/cockpit/roadmap/model.py:119` · appelé par `check_roadmap`, `resolver.classify_features`, `cli_dispatch` (`show`)
+`src/cockpit/roadmap/model.py:178` · appelé par `check_roadmap`, `resolver.classify_features`, `cli_dispatch` (`show`)
 SELECT `WHERE project_id ORDER BY slug`, `depends_on` re-décodé par row (v10). Ne joint pas les tasks (l'appelant les attache via `list_tasks`).
 
 ## model.list_tasks() — tasks d'une feature
-`src/cockpit/roadmap/model.py:129` · appelé par `check_roadmap`, `resolver.index_for_feature`, `cli_dispatch` (`show`)
+`src/cockpit/roadmap/model.py:188` · appelé par `check_roadmap`, `resolver.index_for_feature`, `cli_dispatch` (`show`)
 SELECT `WHERE feature_id ORDER BY slug`, `depends_on` re-décodé par row. C'est la source des index passés au resolver.
 
 ## model.to_yaml() — sérialise la roadmap au contrat figé
-`src/cockpit/roadmap/model.py:159` · appelé par `cli_dispatch` (`roadmap show`)
+`src/cockpit/roadmap/model.py:220` · appelé par `cli_dispatch` (`roadmap show`)
 PUR. Émet `{version, project, features:[…]}` via `_feature_doc` (helper ligne 139) : `facet`/`blueprint`/`depends_on`/`acceptance` sortis **seulement si présents** (contrat rétro-compatible, une roadmap v1 reste byte-identique). `sort_keys=False, allow_unicode=True`.
 
 ## resolver.classify() — état + blockers en vocab cockpit
@@ -55,11 +55,11 @@ Même autorité taskmap, une couche au-dessus des tasks. Une feature est READY q
 Résout la feature (`model.resolve_feature`) puis mappe `model.list_tasks` en `{slug: row}` — la forme d'index consommée par `classify`/`resolve_next`.
 
 ## prompt.build_worker_prompt() — synthétise le prompt du worker `claude -p`
-`src/cockpit/roadmap/prompt.py:80` · appelé par la machinerie de dispatch (au lancement d'un worker sur la NEXT task)
+`src/cockpit/roadmap/prompt.py:247` · appelé par la machinerie de dispatch (au lancement d'un worker sur la NEXT task)
 Déterministe (zéro LLM, seul un `read_text` des docs du worktree). Compose : header (task/feature/facette/branche) + `_facet_block(…, "PERSONA.md")` + `_mandate()` (mandat worker autonome : implémente la task, `docsmap where`, NE touche PAS au cycle git, termine par `## Décisions prises`) + `_facet_block(…, "METHOD.md")` + `_acceptance_block(task)` (DoD verbatim) + `_context_block(root)` (aperçus bornés `≤1200c` de `docs/design.md`|`roadmap.yaml`|`architecture.md`). Blocs vides filtrés. Facette résolue via `facet_mod.resolve_facet`. Le prompt part sur le **stdin** de `claude -p` (parade E2BIG). Écarte délibérément les injections mémoire du vault (blueprints/stacks/catalogs) — inadaptées à une forge générique.
 
 ## check.check_roadmap() — gate de complétude (drainable ssi liste vide)
-`src/cockpit/roadmap/check.py:32` · appelé par `cli_dispatch` (`roadmap check`, exit 1 dès une issue)
+`src/cockpit/roadmap/check.py:41` · appelé par `cli_dispatch` (`roadmap check`, exit 1 dès une issue)
 Read-only, déterministe, unique autorité de complétude (partagée CLI + API). Réutilise `resolver.classify` (dangling → `DANGLING_DEP`, cycle → `CYCLE`) et le vocab `model._project_facets` — zéro réécriture du DAG. Émet des `Issue` (dataclass frozen, ligne 22) : `EMPTY` (0 feature / feature sans task), `MISSING_FACET`/`BAD_FACET` (facette absente / hors bundle), `MISSING_ACCEPTANCE` (task sans DoD). Puis le DAG inter-feature via `resolver.classify_features` : `DANGLING_FEATURE_DEP`/`FEATURE_CYCLE` + `DEAD_FEATURE_DEP` (dépend d'une feature `cancelled`, jamais débloquable). Une feature BLOCKED_DEPS **normale** (prérequis pas encore mergé) n'est PAS une issue.
 
 ## seed.seed_launch_roadmap() — sème la roadmap de lancement d'un bundle

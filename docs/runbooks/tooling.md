@@ -8,7 +8,7 @@ même convention forge : seams **purs** testables sans subprocess + exécution i
 en argv.
 
 ## tools.preflight_tools() / install_tools() — gate de présence + provisionnement hôte-niveau
-`src/cockpit/tools.py:133` (`preflight_tools`) · `src/cockpit/tools.py:174` (`install_tools`) · appelés par le
+`src/cockpit/tools.py:150` (`preflight_tools`) · `src/cockpit/tools.py:174` (`install_tools`) · appelés par le
 gate de dispatch (preflight avant spawn) et `cockpit tools install` (cli_dispatch).
 `preflight_tools` vérifie que tout binaire déclaré par la facette active (`<worktree>/.claude/settings.local.json`)
 résout sur le PATH worker (`tools_env`) et lève `ToolPreflightError` (`:37`) AVANT le spawn — ne gate QUE
@@ -17,7 +17,7 @@ d'outils, installe les 4 cartes + qualité py + Node via nodeenv (`install_plan`
 dans `tools/bin` ; une étape rouge abandonne (jamais un demi-provisioning).
 
 ## tools.missing_bins() — quels binaires ne résolvent pas
-`src/cockpit/tools.py:127` · appelé par `preflight_tools`, `doctor.scan`.
+`src/cockpit/tools.py:144` · appelé par `preflight_tools`, `doctor.scan`.
 Seam **pur** : sous-ensemble trié de `bins` que `shutil.which` ne trouve pas via `env["PATH"]`. C'est la vérité
 unique partagée entre le gate de dispatch et la sonde `doctor` — aucune duplication de logique de présence.
 
@@ -48,7 +48,7 @@ gabarit (jamais écrasé s'il existe) et retourne `(unit_path, env_path, systemc
 hint, on n'exécute PAS systemctl (pas de footgun privilège).
 
 ## doctor.scan() — sonde de présence par type/facette
-`src/cockpit/doctor.py:22` · appelé par `cockpit doctor` (cli_dispatch).
+`src/cockpit/doctor.py:23` · appelé par `cockpit doctor` (cli_dispatch).
 Pour chaque `settings.local.json` de facette des bundles vendorés, calcule `required_bins & HOST_TOOLS` et
 `missing_bins` sous `tools_env`. Retourne `[{type, facet, required, missing}]`. **Même vérité** que
 `preflight_tools`, mais en lecture globale — une sonde d'install shell (`cockpit doctor; echo $?`, rc 0/1).
@@ -64,7 +64,7 @@ env-api-key / env-oauth / None). Auth **par machine**, pas par projet. `trust_wo
 ça `claude -p` headless IGNORE les `allowedTools` d'un workspace non-trusted (worker inerte).
 
 ## onboarding.status() / link_credential() / unlink_credential() — liaison des credentials par projet
-`src/cockpit/onboarding.py:29` (`status`) · `:69` (`link_credential`) · `:98` (`unlink_credential`) · appelés par
+`src/cockpit/onboarding.py:30` (`status`) · `:69` (`link_credential`) · `:98` (`unlink_credential`) · appelés par
 `cockpit onboard <action>` (cli_dispatch).
 `status` compose store de secrets + registre projets : ce qui manque (racine store joignable ? projets à miroir
 sans token ?) + `claude_auth` (axe orthogonal, gate « peut dispatcher ») + `complete`/`first_run` — sans révéler

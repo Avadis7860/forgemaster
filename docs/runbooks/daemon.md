@@ -24,7 +24,7 @@ est la dépendance FastAPI qui rend le conteneur posé sur `app.state` (`request
 global. Ne tire que `starlette` (transitif de fastapi, pour typer la `Request`), jamais les couches serveur.
 
 ## serve() / _mount_spa() — lancement uvicorn + service du build SPA
-`src/cockpit/daemon/app.py:197` (`serve`) · `:123` (`_mount_spa`) · `:25` (`web_dist_dir`)
+`src/cockpit/daemon/app.py:249` (`serve`) · `:123` (`_mount_spa`) · `:25` (`web_dist_dir`)
 `serve()` démarre uvicorn sur `build_app(settings)` (import uvicorn paresseux). `_mount_spa()` sert le build
 en statique **seulement s'il existe** : assets hashés en cache `immutable`, `index.html` en `no-cache`
 (anti-stale post-déploiement), et un catch-all `GET /{path:path}` qui fallback sur `index.html` (deep-link

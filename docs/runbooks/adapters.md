@@ -27,11 +27,11 @@ Retourne `home/codemap/<projet>/<sha>/<schema>`. Invalidation double : un nouvea
 `ensure_index` puis `codemap flow --list --root`. Renvoie `{operations:[{operation,entry,kind}], engine}` (routes API + verbes CLI). Build ou sortie illisible → `CodemapError`.
 
 ## mcp.client.blueprint_resolver() — résolveur blueprint injecté dans taskmap
-`src/cockpit/mcp/client.py:55` · injecté au seam `taskmap.context.build_context`/`doctor` (`BlueprintResolver = id -> dict|None`) ; le board (P3) s'en sert pour `resolved:true` sur un `features.blueprint`.
+`src/cockpit/mcp/client.py:93` · injecté au seam `taskmap.context.build_context`/`doctor` (`BlueprintResolver = id -> dict|None`) ; le board (P3) s'en sert pour `resolved:true` sur un `features.blueprint`.
 Ferme sur `settings` et rend `resolve(bp_id)`. **Invariant de dégradation honnête** : secret non câblé (`COCKPIT_MCP_JWT_SECRET_REF` absent) → `None` ; secret `< 32` octets → `None` ; toute exception (mint/réseau/MCP pendu) capturée → `None` ; réponse non-dict ou vide → `None`. **Jamais inventé, jamais propagé** — exactement le contrat qu'attend `taskmap.context._blueprint_verdict` (`None`/`{}` = liaison morte signalée). `secret_ref`/`endpoint`/`resolver`/`caller`/`timeout` sont des seams (défaut réseau réel = `_read_blueprint`, timeout 5 s).
 
 ## mcp.client._read_blueprint() — coquille réseau réelle (fastmcp)
-`src/cockpit/mcp/client.py:38` · seam `caller` par défaut de `blueprint_resolver`.
+`src/cockpit/mcp/client.py:86` · seam `caller` par défaut de `blueprint_resolver`.
 `read(type=blueprint, ref=<id>)` via `fastmcp.Client` (Streamable HTTP + Bearer). Import fastmcp **paresseux** (le socle cockpit ne le tire pas au chargement). Le daemon appelle depuis un thread sync (routes `def`) → `asyncio.run` est sûr (aucun event-loop courant). Retourne `.data` ou `None`.
 
 ## mcp.client.CapitalBrowser — parcours read-only du capital-token (routes `/api/capital/*`)
@@ -42,11 +42,11 @@ Ferme sur `settings` et rend `resolve(bp_id)`. **Invariant de dégradation honn�
 Ouvre un PTY local pilotant `argv` dans `cwd`, relaie octets PTY↔WS via deux tasks (`pty_to_ws`/`ws_to_pty`) jusqu'à la fin de l'une, puis nettoie (`remove_reader`, close master, `_terminate` le groupe de process, `websocket.close()`). Agnostique au transport (legacy = argv ssh ; ici argv `bash -l` local — même corps). Frames BINAIRES = frappes → écrites telles quelles ; frames TEXTE = contrôle JSON (`parse_control` → resize). La gate de session + l'audit open/close sont à la charge de l'appelant, **avant** ce pont.
 
 ## terminal.pty.parse_control() — décode un message de contrôle resize
-`src/cockpit/terminal/pty.py:56` · appelé par `pty_bridge` (branche frame TEXTE).
+`src/cockpit/terminal/pty.py:66` · appelé par `pty_bridge` (branche frame TEXTE).
 PUR. JSON → `(rows, cols)` si `{"type":"resize", cols, rows}` valide, sinon `None`. Bornes défensives : `cols` clampé `[1,500]`, `rows` `[1,300]` ; texte non-JSON ou champ manquant → `None`.
 
 ## terminal.pty.resolve_workdir() — workdir borné anti-traversal
-`src/cockpit/terminal/pty.py:48` · appelé par le router terminal pour poser le `cwd` du PTY.
+`src/cockpit/terminal/pty.py:58` · appelé par le router terminal pour poser le `cwd` du PTY.
 Résout `<projects_root>/<project>[/<subpath>]` via `fs.safe_path` (#4) : `subpath` relatif résolu sous la racine, tout `..` qui sort → `ValueError`. Défaut = racine du projet (contient `sot.git` + `worktrees/`).
 
 ## Zones non détaillées
