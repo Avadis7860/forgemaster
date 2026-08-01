@@ -1,10 +1,11 @@
-"""pty — pont PTY ↔ WebSocket : ouvre un pseudo-terminal **LOCAL** dans le workdir d'un projet et relaie
-octets + redimensionnements vers/depuis un client web (xterm.js).
+"""pty — service PTY ↔ WebSocket : sert un pseudo-terminal **LOCAL** dans le workdir d'un projet et relaie
+octets + redimensionnements vers/depuis un client web (xterm.js). Les sessions sont **détachables** — le
+shell survit à la déconnexion du WS ; leur cycle de vie vit dans `terminal.registry`.
 
 Port de `services/aggregator/terminal.py` (`pty_bridge`, `parse_control` — transport-agnostiques). Refactors :
 - **#2** : le legacy pilotait `ssh -tt dev@<CT>` (argv ssh) ; ici le PTY pilote un **login shell local**
-  (`bash -l`) dans `cwd=workdir` — plus de clé ssh ni d'IP. `pty_bridge` reste agnostique (prend un argv +
-  `cwd`), la couture ssh→local se réduit à `local_shell_argv`.
+  (`bash -l`) dans `cwd=workdir` — plus de clé ssh ni d'IP. `serve_project_terminal` reste agnostique
+  (prend un argv + `cwd`), la couture ssh→local se réduit à `local_shell_argv`.
 - **#4** : le workdir est borné par `core.fs.safe_path(root=<dir du projet>)` (plus de `/home/dev` en dur).
 
 Convention WebSocket (inchangée) : frames BINAIRES = frappes → écrites telles quelles dans le PTY ; frames
@@ -29,8 +30,9 @@ from cockpit.terminal.registry import PtySession, PtySessionRegistry
 
 
 def local_shell_argv(shell: str = "/bin/bash") -> list[str]:
-    """argv d'un **login shell local** (`bash -l`). PUR. Le cwd est posé par `pty_bridge` (Popen `cwd=`),
-    pas par un `cd` embarqué — plus de couture ssh. `-l` charge le profil (PATH/nvm) comme un vrai term."""
+    """argv d'un **login shell local** (`bash -l`). PUR. Le cwd est posé par `PtySession.spawn` (Popen
+    `cwd=`), pas par un `cd` embarqué — plus de couture ssh. `-l` charge le profil (PATH/nvm) comme un
+    vrai term."""
     return [shell, "-l"]
 
 
