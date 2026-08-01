@@ -8,10 +8,10 @@ même convention forge : seams **purs** testables sans subprocess + exécution i
 en argv.
 
 ## tools.preflight_tools() / install_tools() — gate de présence + provisionnement hôte-niveau
-`src/cockpit/tools.py:150` (`preflight_tools`) · `src/cockpit/tools.py:174` (`install_tools`) · appelés par le
+`src/cockpit/tools.py:150` (`preflight_tools`) · `src/cockpit/tools.py:191` (`install_tools`) · appelés par le
 gate de dispatch (preflight avant spawn) et `cockpit tools install` (cli_dispatch).
 `preflight_tools` vérifie que tout binaire déclaré par la facette active (`<worktree>/.claude/settings.local.json`)
-résout sur le PATH worker (`tools_env`) et lève `ToolPreflightError` (`:37`) AVANT le spawn — ne gate QUE
+résout sur le PATH worker (`tools_env`) et lève `ToolPreflightError` (`:42`) AVANT le spawn — ne gate QUE
 `declared & HOST_TOOLS` (outils hôte-provisionnés). `install_tools` est idempotent/fail-loud : crée le venv
 d'outils, installe les 4 cartes + qualité py + Node via nodeenv (`install_plan`), symlinke chaque exécutable
 dans `tools/bin` ; une étape rouge abandonne (jamais un demi-provisioning).
@@ -64,7 +64,7 @@ env-api-key / env-oauth / None). Auth **par machine**, pas par projet. `trust_wo
 ça `claude -p` headless IGNORE les `allowedTools` d'un workspace non-trusted (worker inerte).
 
 ## onboarding.status() / link_credential() / unlink_credential() — liaison des credentials par projet
-`src/cockpit/onboarding.py:30` (`status`) · `:69` (`link_credential`) · `:98` (`unlink_credential`) · appelés par
+`src/cockpit/onboarding.py:30` (`status`) · `:89` (`link_credential`) · `:118` (`unlink_credential`) · appelés par
 `cockpit onboard <action>` (cli_dispatch).
 `status` compose store de secrets + registre projets : ce qui manque (racine store joignable ? projets à miroir
 sans token ?) + `claude_auth` (axe orthogonal, gate « peut dispatcher ») + `complete`/`first_run` — sans révéler

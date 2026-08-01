@@ -45,6 +45,6 @@ Upsert **partiel** : seuls les champs non-`None` (`status`, `port`, `url`, `last
 ## Zones non détaillées
 - `_now()` (`registry.py:32`, `deployments.py:21`) — horodatage ISO-8601 UTC ; dans `create_project`, calculé une fois et partagé par la row DB et le tampon de provenance (accord).
 - `_render_provenance()` (`registry.py:36`) — rend le TOML `.cockpit/provenance.toml` (`bundle@version` + `created_at`) semé dans le SoT à l'instanciation (socle SoT-and-derive) ; chemin SEED uniquement.
-- `_slug_exists()` (`registry.py:55`) — pré-check d'unicité avant un clone d'adoption (évite un clone gâché avant le heurt d'unicité).
-- `_seed_launch_roadmap()` (`registry.py:126`) — sème la roadmap de lancement du bundle (chemin SEED), **fail-soft** (warning, jamais bloquant) ; import paresseux de `roadmap.seed` pour casser le cycle `registry ↔ roadmap.model`.
-- `cli_dispatch()` (`registry.py:184`) — route `cockpit project <create|list|get>`, ouvre/ferme la connexion, mappe `ValueError`/`KeyError` en code de sortie 1.
+- `_slug_exists()` (`registry.py:61`) — pré-check d'unicité avant un clone d'adoption (évite un clone gâché avant le heurt d'unicité).
+- `_seed_launch_roadmap()` (`registry.py:146`) — sème la roadmap de lancement du bundle (chemin SEED), **fail-soft** (warning, jamais bloquant) ; import paresseux de `roadmap.seed` pour casser le cycle `registry ↔ roadmap.model`.
+- `cli_dispatch()` (`registry.py:223`) — route `cockpit project <create|list|get>`, ouvre/ferme la connexion, mappe `ValueError`/`KeyError` en code de sortie 1.

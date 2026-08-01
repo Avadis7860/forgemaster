@@ -9,8 +9,8 @@ module-global mutable (correctif #1, anti god-module `import server`). Les erreu
 
 ## build_app() — construit l'app FastAPI, injecte les deps, monte routers + SPA
 `src/cockpit/daemon/app.py:40` · appelé par serve() / les tests
-DI explicite : `Deps(settings)` posé sur `app.state.deps` (l.87), puis les 13 `make_*_router()` inclus en
-boucle (l.102-109). Ajoute CORS pour le dev Vite (:5173, localhost-only, pas de credentials), la sonde
+DI explicite : `Deps(settings)` posé sur `app.state.deps` (l.113), puis les 19 `make_*_router()` inclus en
+boucle (l.138-148). Ajoute CORS pour le dev Vite (:5173, localhost-only, pas de credentials), la sonde
 `GET /health` (liveness, pas de gate), et les deux `exception_handler` globaux (`KeyError`→404,
 `ValueError`→400). `_mount_spa` monté **en dernier** (l.119) pour que le catch-all ne capte que le reste. Le
 `lifespan` réconcilie au boot les jobs de dispatch orphelins (`running` zombie → killed, task→todo).
@@ -24,7 +24,7 @@ est la dépendance FastAPI qui rend le conteneur posé sur `app.state` (`request
 global. Ne tire que `starlette` (transitif de fastapi, pour typer la `Request`), jamais les couches serveur.
 
 ## serve() / _mount_spa() — lancement uvicorn + service du build SPA
-`src/cockpit/daemon/app.py:249` (`serve`) · `:123` (`_mount_spa`) · `:25` (`web_dist_dir`)
+`src/cockpit/daemon/app.py:249` (`serve`) · `:175` (`_mount_spa`) · `:25` (`web_dist_dir`)
 `serve()` démarre uvicorn sur `build_app(settings)` (import uvicorn paresseux). `_mount_spa()` sert le build
 en statique **seulement s'il existe** : assets hashés en cache `immutable`, `index.html` en `no-cache`
 (anti-stale post-déploiement), et un catch-all `GET /{path:path}` qui fallback sur `index.html` (deep-link
@@ -56,5 +56,5 @@ explicite (fail-closed, ex. 422 gate / 403 auth). Spawns longs (`claude -p`) pas
 
 ## Zones non détaillées
 - Les corps individuels des 13 routers (forme identique — factory + endpoints + délégation spine) : voir chaque `routes/<x>.py`.
-- `_mount_missing_ui_placeholder` (`app.py:176`) : dist absente → warning + page d'aide fail-loud à `/`, l'API reste valable.
+- `_mount_missing_ui_placeholder` (`app.py:228`) : dist absente → warning + page d'aide fail-loud à `/`, l'API reste valable.
 - Les Pydantic request models (`ProjectCreate`/`ProjectPatch`, `ReviewBody`/`MergeBody`, …) : DTO locaux, validés → 400/422.

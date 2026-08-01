@@ -4,14 +4,14 @@
 
 ## Settings — racines résolues du cockpit (dataclass frozen)
 `src/cockpit/config.py:32` (classe) · résolveur `Settings.resolve` en `:55` · consommé par toutes les couches (bootstrap, registry, db, secrets) qui le reçoivent en argument
-Deux racines indépendantes : `home` (état — base SQLite `db_path`, `logs_dir`, coffre `secrets_dir`) et `projects_root` (repos gérés). Plus deux sélecteurs : `secret_store` (`"file"` | `"bws"`) et `compose_cmd` (préfixe moteur compose, normalisé en tuple). Résolution **par racine** avec priorité `argument explicite > variable d'env > défaut` (`_pick`, `:75`) ; `~` développé et chemin rendu absolu (`_norm`, `:84`). Invariant : `@dataclass(frozen=True)` — immuable, jamais un module-global mutable ; c'est l'anti god-module câblé dans le type même.
+Deux racines indépendantes : `home` (état — base SQLite `db_path`, `logs_dir`, coffre `secrets_dir`) et `projects_root` (repos gérés). Plus deux sélecteurs : `secret_store` (`"file"` | `"bws"`) et `compose_cmd` (préfixe moteur compose, normalisé en tuple). Résolution **par racine** avec priorité `argument explicite > variable d'env > défaut` (`_pick`, `:87`) ; `~` développé et chemin rendu absolu (`_norm`, `:96`). Invariant : `@dataclass(frozen=True)` — immuable, jamais un module-global mutable ; c'est l'anti god-module câblé dans le type même.
 
 ## run_bootstrap() — adoption idempotente des outils du manifeste
-`src/cockpit/bootstrap.py:81` · appelé par `cli_dispatch` (`:168`), après `load_manifest` + `_resolve_shared_ref`
+`src/cockpit/bootstrap.py:81` · appelé par `cli_dispatch` (`:144`), après `load_manifest` + `_resolve_shared_ref`
 Boucle sur chaque entrée du manifeste et adopte l'outil via `registry.create_project(source_url=…, mirror_remote=source_url)` (miroir gratuit réactivable en écriture). **Idempotent** : un slug déjà présent → `skipped`, jamais de doublon (`:94`). Résolution du credential **par entrée** : `credential_ref` de l'entrée (un token par repo, D6), sinon le `shared_ref` du wizard/`--token-file`, sinon anonyme (repo public, D7). Une erreur opérationnelle (clone injoignable, course) → `failed` **isolé**, la boucle continue (`:105`). Retourne `{created, skipped, failed:[{slug, error}]}`.
 
 ## load_manifest() — lecture + validation fail-loud du manifeste
-`src/cockpit/bootstrap.py:51` · appelé par `preview` (`:114`) et `cli_dispatch` (`:157`)
+`src/cockpit/bootstrap.py:51` · appelé par `preview` (`:110`) et `cli_dispatch` (`:144`)
 Charge `<COCKPIT_HOME>/bootstrap.yaml` et le **VALIDE** strictement. **Absent → `None`** (no-op propre, l'install reste générique). **Présent mais invalide → `ValueError`** (abort loud, jamais un demi-amorçage) : YAML illisible, clé `tools` absente/non-liste, entrée non-mapping, `slug`/`source_url` manquant, `credential_ref` non-string. Retourne une liste normalisée `{slug, source_url, kind, credential_ref}` (`kind` défaut `"tool"`). C'est le point où la distinction structurel (fail-loud) vs opérationnel (best-effort dans `run_bootstrap`) se tranche.
 
 ## preview() — aperçu idempotent (GET) sans effet

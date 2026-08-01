@@ -21,7 +21,7 @@ sorte que `--help` marche et que le parser se construit même quand les couches 
 `src/cockpit/cli.py:328` · point d'entrée console_scripts
 Séquence : `build_parser().parse_args(argv)` → `_autoload_env(args)` (parité CLI ↔ service) →
 `settings = _settings(args)` → lookup `handler = _HANDLERS[args.command]` → `return handler(settings, args)`.
-Le cœur du dispatch est la **table `_HANDLERS`** (`cli.py:353`), un dict `command → _h_*` : chaque `_h_*`
+Le cœur du dispatch est la **table `_HANDLERS`** (`cli.py:548`), un dict `command → _h_*` : chaque `_h_*`
 reçoit `(settings, args)`, importe SA couche en **import paresseux** (jamais au niveau module) et délègue à
 son `cli_dispatch(settings, args)` en retournant le code de sortie. Ce pattern « handler mince =
 délégateur » est ce qui garde `build_parser` léger : aucune couche n'est tirée tant que la sous-commande
@@ -31,7 +31,7 @@ une fonction dédiée plutôt qu'un `cli_dispatch` (`_h_serve` → `app.serve`, 
 `_h_install_service` → `service.install_service`). Sortie : le code de retour du handler.
 
 ## _settings() / _autoload_env() — résolution de config avant dispatch
-`src/cockpit/cli.py:309` (`_settings`) · `src/cockpit/cli.py:214` (`_autoload_env`) · appelés par main()
+`src/cockpit/cli.py:309` (`_settings`) · `src/cockpit/cli.py:314` (`_autoload_env`) · appelés par main()
 `_settings(args)` retourne `Settings.resolve(home=…, projects_root=…)` en lisant les flags `--home` /
 `--projects-root` (via `getattr`, tolérant à leur absence). `_autoload_env(args)` charge
 `$COCKPIT_HOME/cockpit.env` dans `os.environ` **avant** de résoudre les Settings, pour garantir la **parité
@@ -41,7 +41,7 @@ même priorité que `_settings` (flag `--home` > `$COCKPIT_HOME` > `DEFAULT_HOME
 **ne surcharge jamais** une clé déjà présente dans l'environnement réel.
 
 ## Zones non détaillées
-- **Les 18 handlers `_h_*`** (`cli.py:239`–`350`) : délégateurs **minces** vers le `cli_dispatch` (ou la
+- **Les 27 handlers `_h_*`** (`cli.py:339`–`543`) : délégateurs **minces** vers le `cli_dispatch` (ou la
   fonction dédiée) de chaque sous-système, tous sur le contrat `(settings, args) -> int` avec import
   paresseux de la couche. Ne pas les lire un par un — leur logique vit dans la couche cible. Liste et
   cible : `_h_project`→`projects.registry` · `_h_tool`→`toolsync` · `_h_tools`→`tools` ·
@@ -51,6 +51,6 @@ même priorité que `_settings` (flag `--home` > `$COCKPIT_HOME` > `DEFAULT_HOME
   `_h_merge`→`gate.merge` · `_h_onboard`→`onboarding` · `_h_bootstrap`→`bootstrap` · `_h_serve`→`daemon.app`
   (`serve`) · `_h_setup`→`webbuild` · `_h_install_service`→`service` · `_h_doctor`→`doctor` ·
   `_h_mcp`→`provision.mcp`.
-- **La table `_HANDLERS`** (`cli.py:353`) : le mapping `command → _h_*`, décrit dans la section `main()`.
+- **La table `_HANDLERS`** (`cli.py:548`) : le mapping `command → _h_*`, décrit dans la section `main()`.
 - **Le détail des sous-parsers/arguments** de chaque sous-commande (flags, `choices`, `nargs`) : lire
-  directement `build_parser` (`cli.py:35`–205) — c'est de la déclaration argposée, pas de la logique.
+  directement `build_parser` (`cli.py:21`–306) — c'est de la déclaration argposée, pas de la logique.
