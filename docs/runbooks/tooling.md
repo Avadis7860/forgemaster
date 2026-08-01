@@ -30,13 +30,34 @@ ici. Fetch+ff via `InternalGit.sync_tracking` sur `TRACKED_BRANCHES=("dev","main
 jamais bloquant → `index_refreshed=False` honnête).
 
 ## webbuild.build_front() / ensure_codemap() — build SPA + garantie code-map
-`src/cockpit/webbuild.py:35` (`build_front`) · `src/cockpit/webbuild.py:71` (`ensure_codemap`) · appelés par
+`src/cockpit/webbuild.py:35` (`build_front`) · `src/cockpit/webbuild.py:113` (`ensure_codemap`) · appelés par
 `cockpit setup` (chemin from-clone) et le hook de packaging (`hatch_build.py`).
 `build_front` build la SPA Vite dans `web_dir` (→ `web_dir/dist`), `npm ci` si lockfile sinon `npm install`, et
 lève `FrontBuildError` (`:19`, message actionnable) si Node/npm absent ou npm échoue. `ensure_codemap` garantit
-`python -m codemap` dans le venv courant (requis par l'onglet Flow) : no-op en install wheel, install depuis un
-sibling `../code-map` en from-clone — **jamais fatal** (Flow est une surface, pas le cœur CLI). Module stdlib-pur,
-s'importe sans le serveur.
+`python -m codemap` dans le venv courant (requis par l'onglet Flow) : no-op en install wheel, install **éditable**
+depuis un sibling `../code-map` en from-clone — **jamais fatal** (Flow est une surface, pas le cœur CLI). Module
+stdlib-pur, s'importe sans le serveur.
+
+## webbuild.served_from() / ensure_map() — une carte installée n'est pas une carte à jour
+`src/cockpit/webbuild.py:71` (`served_from`) · `:87` (`_install_from_sibling`) · `:154` (`ensure_map`) ·
+`:174` (`ensure_maps`, les 4 cartes).
+
+**L'ordre est load-bearing** : on cherche le sibling **avant** de se satisfaire d'un module importable. L'inverse
+(le court-circuit historique `find_spec(...) is not None`) figeait la carte à sa première install. Défaut mesuré
+le 2026-08-01 : le venv de ce repo servait un `codemap` **sans le verbe `check`**, livré chez code-map le jour
+même — et les deux annonçaient **la même version** (`0.1.0`, schéma `1.6.0`), donc rien ne les distinguait. Une
+session qui obéissait à `CLAUDE.md` et tapait `codemap check` recevait `invalid choice`.
+
+`served_from` est le discriminant : l'origine du module importé tombe-t-elle **dans les sources du sibling** ?
+Une copie de `site-packages` répond non même si le module s'importe parfaitement. L'install est donc **éditable**
+(`pip install -e`) : la carte suit le `git pull` de son repo, sans entretien ni fenêtre de dérive. Écarté — une
+copie ré-installée avec `--upgrade` : elle re-fige au commit du jour, on paie le même défaut plus tard.
+Idempotent **sans relancer pip** (`pip install -e` reconstruit un wheel à chaque appel, `cockpit setup` le
+paierait × 4 pour rien). Le chemin **wheel** (code-map vendoré, aucun sibling) est inchangé.
+
+Frontière : ceci couvre le venv d'un **checkout de dev**. Sur une instance provisionnée, les cartes viennent de
+`tools.install_plan()` (`pip install --upgrade git+…@main` dans `tools/venv`), figées à l'install — le preflight
+n'y vérifie qu'une **présence**, jamais une version.
 
 ## service.install_service() / render_unit() — unité systemd du daemon
 `src/cockpit/service.py:117` (`install_service`) · `src/cockpit/service.py:68` (`render_unit`) · appelés par

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,6 +17,23 @@ from cockpit import webbuild
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT))
 import hatch_build  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_real_pip(monkeypatch):
+    """GARDE-FOU DE MODULE : aucun test d'ici ne lance un vrai `pip`/`npm`.
+
+    L'invariant est écrit en tête de fichier depuis toujours — rien ne le tenait. Le 2026-08-01, un test qui
+    neutralisait `find_spec` (« la carte est déjà là, donc pas d'install ») a cessé d'être protégé quand
+    `ensure_map` a commencé à chercher le sibling AVANT de se satisfaire d'un module importable : il a lancé
+    4 `pip install -e` **réels** dans le venv du développeur, et mis 8 s à passer au vert.
+
+    Un test qui mute l'environnement de celui qui le lance est un test qui ment sur ce qu'il prouve. Ici, on
+    échoue FORT et on nomme l'argv — un test qui a besoin d'un `subprocess.run` le patche explicitement (le
+    `monkeypatch` du test l'emporte, il est appliqué après cette fixture)."""
+    def _interdit(cmd, *a, **k):
+        raise AssertionError(f"subprocess réel interdit en test — patche-le explicitement : {cmd}")
+    monkeypatch.setattr(webbuild.subprocess, "run", _interdit)
 
 
 def test_find_web_dir_locates_source_checkout():
@@ -67,11 +85,61 @@ def test_find_codemap_src_none_when_no_sibling(tmp_path: Path):
 
 
 def test_ensure_codemap_noop_when_already_importable(monkeypatch):
+    """Chemin WHEEL : code-map est empaqueté, aucun sibling n'existe → on se contente de l'importable."""
     monkeypatch.setattr(webbuild.importlib.util, "find_spec", lambda _n: object())
+    monkeypatch.setattr(webbuild, "find_codemap_src", lambda: None)
     called: list = []
     monkeypatch.setattr(webbuild.subprocess, "run", lambda *a, **k: called.append(a))
     msg = webbuild.ensure_codemap()
     assert "déjà disponible" in msg and called == []                 # aucun pip lancé
+
+
+def test_ensure_codemap_noop_si_deja_editable_depuis_le_sibling(monkeypatch, tmp_path: Path):
+    """Idempotence SANS relancer pip : `pip install -e` reconstruit un wheel à chaque appel, et
+    `cockpit setup` le paierait × 4 pour rien."""
+    src = tmp_path / "code-map"
+    monkeypatch.setattr(webbuild, "find_codemap_src", lambda: src)
+    monkeypatch.setattr(webbuild, "served_from", lambda _m, _s: True)
+    called: list = []
+    monkeypatch.setattr(webbuild.subprocess, "run", lambda *a, **k: called.append(a))
+    msg = webbuild.ensure_codemap()
+    assert "déjà éditable" in msg and called == []
+
+
+def test_une_COPIE_figee_est_remplacee_par_un_editable(monkeypatch, tmp_path: Path):
+    """LE test de non-régression du 2026-08-01. Le module s'importait parfaitement — depuis une copie de
+    `site-packages` — et le câblage court-circuitait donc sur sa seule présence. Résultat : le venv de ce
+    repo a servi pendant une journée un `codemap` SANS le verbe `check` que sa constitution prescrit, avec
+    exactement le même numéro de version que la source. Un module importable ne prouve pas qu'il est à
+    jour."""
+    src = tmp_path / "code-map"
+    copie = tmp_path / "venv" / "site-packages" / "codemap" / "__init__.py"
+    copie.parent.mkdir(parents=True)
+    copie.write_text("")
+    monkeypatch.setattr(webbuild, "find_codemap_src", lambda: src)
+    monkeypatch.setattr(webbuild.importlib.util, "find_spec",
+                        lambda _n: SimpleNamespace(origin=str(copie)))
+    seen: list = []
+    monkeypatch.setattr(webbuild.subprocess, "run", lambda cmd, **k: seen.append(cmd))
+    msg = webbuild.ensure_codemap()
+    assert "éditable" in msg
+    assert seen == [[sys.executable, "-m", "pip", "install", "-e", str(src)]]
+
+
+def test_served_from_distingue_la_copie_de_l_editable(tmp_path: Path, monkeypatch):
+    """Le discriminant du correctif, isolé : l'origine du module vient-elle des sources du sibling ?"""
+    src = tmp_path / "front-map"
+    (src / "src" / "frontmap").mkdir(parents=True)
+    editable = src / "src" / "frontmap" / "__init__.py"
+    editable.write_text("")
+    monkeypatch.setattr(webbuild.importlib.util, "find_spec",
+                        lambda _n: SimpleNamespace(origin=str(editable)))
+    assert webbuild.served_from("frontmap", src) is True
+    monkeypatch.setattr(webbuild.importlib.util, "find_spec",
+                        lambda _n: SimpleNamespace(origin=str(tmp_path / "sp" / "frontmap" / "__init__.py")))
+    assert webbuild.served_from("frontmap", src) is False
+    monkeypatch.setattr(webbuild.importlib.util, "find_spec", lambda _n: None)
+    assert webbuild.served_from("frontmap", src) is False        # absent ≠ servi depuis les sources
 
 
 def test_ensure_codemap_warns_when_no_sibling(monkeypatch):
@@ -90,8 +158,8 @@ def test_ensure_codemap_installs_from_sibling(monkeypatch, tmp_path: Path):
     seen: list = []
     monkeypatch.setattr(webbuild.subprocess, "run", lambda cmd, **k: seen.append(cmd))
     msg = webbuild.ensure_codemap()
-    assert "installé depuis" in msg
-    assert seen == [[sys.executable, "-m", "pip", "install", str(src)]]
+    assert "installé (éditable) depuis" in msg
+    assert seen == [[sys.executable, "-m", "pip", "install", "-e", str(src)]]
 
 
 # -- cartes siblings (docs-map/front-map/task-map : from-clone → CLI dispo dans le venv de dev) ----------
@@ -114,7 +182,9 @@ def test_find_map_src_locates_sibling(tmp_path: Path):
 
 
 def test_ensure_map_noop_when_already_importable(monkeypatch):
+    """Chemin WHEEL : la carte vient du provisioning, aucun sibling → on se contente de l'importable."""
     monkeypatch.setattr(webbuild.importlib.util, "find_spec", lambda _n: object())
+    monkeypatch.setattr(webbuild, "find_map_src", lambda *a, **k: None)
     called: list = []
     monkeypatch.setattr(webbuild.subprocess, "run", lambda *a, **k: called.append(a))
     assert "déjà disponible" in webbuild.ensure_map("front-map", "frontmap") and called == []
@@ -134,14 +204,20 @@ def test_ensure_map_installs_from_sibling(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(webbuild, "find_map_src", lambda *a, **k: tmp_path / "front-map")
     seen: list = []
     monkeypatch.setattr(webbuild.subprocess, "run", lambda cmd, **k: seen.append(cmd))
-    assert "installé depuis" in webbuild.ensure_map("front-map", "frontmap")
-    assert str(tmp_path / "front-map") in seen[0]                            # pip a visé le sibling
+    assert "installé (éditable) depuis" in webbuild.ensure_map("front-map", "frontmap")
+    assert seen[0][-2:] == ["-e", str(tmp_path / "front-map")]               # pip a visé le sibling, éditable
 
 
 def test_ensure_maps_covers_the_four_framework_maps(monkeypatch):
     """`ensure_maps` câble les 4 cartes : code-map (Flow) + docs-map/front-map/task-map. Le trou historique
-    (seul code-map câblé → frontmap absent en dev) est fermé."""
-    monkeypatch.setattr(webbuild.importlib.util, "find_spec", lambda _n: object())   # présentes → no-op
+    (seul code-map câblé → frontmap absent en dev) est fermé.
+
+    `served_from` est neutralisé, pas `find_spec` : depuis que le court-circuit passe APRÈS la recherche du
+    sibling, « le module s'importe » ne suffit plus à éviter pip — et ce test tournait dans un vrai checkout,
+    avec de vrais siblings. Il a effectivement lancé 4 `pip install -e` dans le venv du développeur avant
+    d'être corrigé ; d'où aussi le garde-fou `_no_real_pip` en tête de module."""
+    monkeypatch.setattr(webbuild, "served_from", lambda _m, _s: True)                # déjà à jour → no-op
+    monkeypatch.setattr(webbuild.importlib.util, "find_spec", lambda _n: object())   # présentes
     report = webbuild.ensure_maps()
     assert len(report) == 4
     joined = " ".join(report)

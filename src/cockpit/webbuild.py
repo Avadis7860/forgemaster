@@ -68,24 +68,69 @@ def find_codemap_src(start: Path | None = None) -> Path | None:
     return None
 
 
+def served_from(module: str, src: Path) -> bool:
+    """Le `module` importable vient-il DÉJÀ des sources de `src` (install éditable) ?
+
+    Le discriminant entre « à jour par construction » et « copie figée ». Une copie installée dans
+    `site-packages` répond `False` même si le module s'importe parfaitement — c'est tout l'objet du
+    correctif (cf. `_install_from_sibling`)."""
+    spec = importlib.util.find_spec(module)
+    origin = getattr(spec, "origin", None)
+    if origin is None:
+        return False
+    try:
+        return Path(origin).resolve().is_relative_to(Path(src).resolve())
+    except OSError:                                    # chemin invalide/inaccessible → on ne suppose rien
+        return False
+
+
+def _install_from_sibling(module: str, src: Path) -> str | None:
+    """Installe `src` en **ÉDITABLE** dans le venv courant. `None` = succès (ou déjà éditable), sinon le
+    message d'échec.
+
+    DÉFAUT CORRIGÉ (mesuré le 2026-08-01) : ce câblage court-circuitait sur `find_spec(...) is not None`
+    et installait une **copie**. Une carte installée n'était donc **jamais** remise à jour — le venv de ce
+    repo servait un `codemap` sans le verbe `check`, livré chez code-map le jour même, et **les deux
+    annonçaient la même version** (`0.1.0`, schéma `1.6.0`) : rien ne permettait de les distinguer. Une
+    session qui obéissait à `CLAUDE.md` et tapait `codemap check` recevait `invalid choice`.
+
+    L'éditable est la réponse durable : la carte suit le `git pull` de son sibling, sans entretien ni
+    fenêtre de dérive. Écarté — une copie ré-installée avec `--upgrade` : elle re-fige au commit du jour,
+    on paie le même défaut plus tard.
+
+    Idempotent SANS relancer pip : si le module vient déjà de `src`, il n'y a rien à faire (`pip install -e`
+    reconstruit un wheel éditable à chaque appel, et `cockpit setup` le paierait × 4 pour rien).
+    """
+    if served_from(module, src):
+        return None
+    try:
+        subprocess.run([sys.executable, "-m", "pip", "install", "-e", str(src)], check=True)
+    except subprocess.CalledProcessError as exc:
+        return f"code {exc.returncode}"
+    return None
+
+
 def ensure_codemap() -> str:
     """Garantit que `python -m codemap` marche dans le venv courant — requis par l'onglet **Flow**
     (`src/cockpit/codemap/index.py` invoque `sys.executable -m codemap`). En install **wheel**, code-map est
-    déjà empaqueté (rien à faire). En **from-clone**, code-map n'est PAS dans les sources cockpit : on
-    l'installe depuis un checkout sibling `../code-map` s'il existe. **Jamais fatal** — Flow est une surface,
-    pas le cœur CLI ; on rend un message d'état actionnable."""
-    if importlib.util.find_spec("codemap") is not None:
-        return "code-map déjà disponible (`python -m codemap`)."
+    déjà empaqueté et aucun sibling n'existe (rien à faire). En **from-clone**, code-map n'est PAS dans les
+    sources cockpit : on l'installe **en éditable** depuis le checkout sibling `../code-map`. **Jamais
+    fatal** — Flow est une surface, pas le cœur CLI ; on rend un message d'état actionnable.
+
+    L'ordre est load-bearing : on cherche le sibling **avant** de se satisfaire d'un module importable.
+    L'inverse figeait la carte à sa première install (cf. `_install_from_sibling`)."""
     src = find_codemap_src()
     if src is None:
+        if importlib.util.find_spec("codemap") is not None:
+            return "code-map déjà disponible (`python -m codemap`)."
         return ("code-map introuvable → l'onglet Flow restera indisponible. Clone-le en sibling du cockpit "
                 "(`git clone …/code-map` à côté) puis relance `cockpit setup`, ou installe le wheel packagé "
                 "(code-map y est inclus).")
-    try:
-        subprocess.run([sys.executable, "-m", "pip", "install", str(src)], check=True)
-    except subprocess.CalledProcessError as exc:
-        return f"install code-map échouée ({' '.join(exc.cmd)} → code {exc.returncode}) — Flow indisponible."
-    return f"code-map installé depuis {src} (`python -m codemap`)."
+    if served_from("codemap", src):
+        return f"code-map déjà éditable depuis {src} (suit son repo)."
+    if err := _install_from_sibling("codemap", src):
+        return f"install code-map échouée ({err}) — Flow indisponible."
+    return f"code-map installé (éditable) depuis {src} (`python -m codemap`)."
 
 
 # Les 3 AUTRES cartes du framework (code-map a son propre chemin Flow ci-dessus). Cartes par-projet déclarées
@@ -107,20 +152,23 @@ def find_map_src(repo: str, module: str, start: Path | None = None) -> Path | No
 
 
 def ensure_map(repo: str, module: str) -> str:
-    """Garantit la carte `<module>` dans le venv courant (CLI `<module>` + `python -m <module>`). Déjà
-    importable → no-op ; sinon installe le sibling `../<repo>` s'il existe. **Jamais fatal** — une carte
-    absente dégrade l'anti-archéologie, pas le démarrage ; message actionnable."""
-    if importlib.util.find_spec(module) is not None:
-        return f"{module} déjà disponible."
+    """Garantit la carte `<module>` dans le venv courant (CLI `<module>` + `python -m <module>`), **en
+    éditable** depuis le sibling `../<repo>` quand il existe — sinon on se contente de ce qui est importable.
+    **Jamais fatal** — une carte absente dégrade l'anti-archéologie, pas le démarrage ; message actionnable.
+
+    Même ordre que `ensure_codemap`, et pour la même raison : un module importable ne prouve pas qu'il est
+    à jour. Une carte servie depuis `site-packages` est une photo, pas un miroir."""
     src = find_map_src(repo, module)
     if src is None:
+        if importlib.util.find_spec(module) is not None:
+            return f"{module} déjà disponible."
         return (f"{module} introuvable → clone {repo} en sibling du cockpit puis relance `cockpit setup`, "
                 f"ou installe le wheel packagé.")
-    try:
-        subprocess.run([sys.executable, "-m", "pip", "install", str(src)], check=True)
-    except subprocess.CalledProcessError as exc:
-        return f"install {module} échouée ({' '.join(map(str, exc.cmd))} → code {exc.returncode})."
-    return f"{module} installé depuis {src}."
+    if served_from(module, src):
+        return f"{module} déjà éditable depuis {src} (suit son repo)."
+    if err := _install_from_sibling(module, src):
+        return f"install {module} échouée ({err})."
+    return f"{module} installé (éditable) depuis {src}."
 
 
 def ensure_maps() -> list[str]:
