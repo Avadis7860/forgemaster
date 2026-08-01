@@ -8,5 +8,7 @@ docs = "docs"
 # Motif des fichiers sous `docs` (récursif). Markdown seulement (carte de headings).
 glob = "**/*.md"
 
-# Markdown SUPPLÉMENTAIRE hors `docs` à inclure. Ici le journal de portage cité dans l'Index.
-extra = ["PORTING.md"]
+# Markdown SUPPLÉMENTAIRE hors `docs` à inclure : le journal de portage cité dans l'Index, et le README
+# racine — la porte d'entrée du repo, hors index jusqu'ici, donc invisible à `docsmap where` et jamais
+# relue (elle a dérivé 229 commits durant).
+extra = ["PORTING.md", "README.md"]

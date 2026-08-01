@@ -6,9 +6,9 @@ Sous-commandes = la surface de la spine (phases du produit) :
   project (create|list|get) · tool (sync) · tools (install) · roadmap (add-feature|show) · task (add|next) ·
   dispatch · run · gate (review|verify|toolchain) · merge · onboard · serve · setup · install-service
 
-Chaque handler reçoit `(settings, args)` et retourne un code de sortie. Tant que les couches sont des
-stubs, l'appel lève `NotImplementedError("port: … — #N")` — c'est voulu (le câblage est prouvé, la
-logique est le chunk suivant)."""
+Chaque handler reçoit `(settings, args)` et retourne un code de sortie. Les couches sont portées : aucun
+handler de ce module ne lève plus d'exception de non-implémentation. La seule surface encore différée est
+le backend GitHub (`git/github.py`, P6) — `GitBackend` + `InternalGit` restent l'invariant internal-first."""
 from __future__ import annotations
 
 import argparse

@@ -4,7 +4,9 @@
 [sources]
 docs = "docs"           # racine de la prose markdown à indexer
 glob = "**/*.md"         # motif des fichiers indexés
-# extra = ["README.md"]  # fichiers hors `docs/` à inclure (décommente au besoin)
+# Le README racine est la PORTE D'ENTRÉE du projet : le laisser hors de l'index le rendait invisible à
+# `docsmap where`, donc jamais relu — c'est ainsi que celui de ce repo a dérivé 229 commits durant.
+extra = ["README.md"]   # fichiers hors `docs/` à inclure
 
 [conventions]
 format = "auto"          # parseur de headings (auto = ATX markdown `#`)

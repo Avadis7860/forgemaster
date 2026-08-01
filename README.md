@@ -4,10 +4,16 @@
 
 **Statut : privé · pré-opérationnel (V1 en construction).**
 
-Fait partie d'un framework en 3 repos :
+Fait partie d'un framework en 8 repos :
 - **`cockpit`** — l'orchestrateur (ce repo).
 - **`code-map`** — index de code déterministe (Python + TSX), injecté dans chaque projet géré.
-- **`mcp-catalogs`** — serveur MCP servant la doc (catalogs) et les décisions aux workers.
+- **`front-map`** — index du design-system d'un `web/` (tokens, primitives, routes, usages).
+- **`docs-map`** — carte de la prose `docs/` (headings interrogeables par intention).
+- **`task-map`** — les liaisons STAMP d'une task (axe, épic, blueprint) et leur cohérence.
+- **`mcp-catalogs`** — serveur MCP servant la doc tierce (`tech`) et le capital distillé
+  (`blueprint`, `templates`) aux workers.
+- **`mcp-catalogs-data`** — la donnée servie par ce serveur (seul foyer d'authoring du corpus).
+- **`Vault-V1`** — la mémoire long-terme (décisions locales, missions, outillage de garde).
 
 ## Modèle cœur
 
