@@ -66,14 +66,26 @@ env-api-key / env-oauth / None). Auth **par machine**, pas par projet. `trust_wo
 ## onboarding.status() / link_credential() / unlink_credential() — liaison des credentials par projet
 `src/cockpit/onboarding.py:30` (`status`) · `:89` (`link_credential`) · `:118` (`unlink_credential`) · appelés par
 `cockpit onboard <action>` (cli_dispatch).
-`status` compose store de secrets + registre projets : ce qui manque (racine store joignable ? projets à miroir
-sans token ?) + `claude_auth` (axe orthogonal, gate « peut dispatcher ») + `complete`/`first_run` — sans révéler
-aucun secret. `link_credential` lie **exactement l'un** de `token` (voie fichier → `store.put` → ref opaque) ou
+`status` compose **cinq axes**, sans jamais révéler un secret : le **store** (backend actif + racine de confiance
+joignable) ; les **requirements** par projet (un projet à miroir a besoin d'un token pour pousser → satisfait ssi
+il porte un `credential_ref`) ; `claude_auth` (axe **orthogonal** à `complete` — le gate « peut dispatcher » :
+l'install ne travaille qu'après un `claude login` explicite, jamais en héritant en silence l'auth d'un autre) ;
+`mcp` (le corpus privé est-il câblé ? `{wired, endpoint}` via `provision.mcp.wire_state`, **optionnel** — une
+install publique sans corpus reste valide et n'entre donc pas dans `complete`) ; et `build` (provenance +
+fraîcheur du wheel installé — `{version, sha, committed_at, comparable, stale, behind_by, missing_types}`, cf.
+`build_provenance` : un cockpit en retard sur son SoT local se **déclare**, jamais faux-vert). Plus deux
+verdicts : `complete` (store prêt ET toutes les exigences satisfaites) et `first_run` (aucun projet créé — le
+wizard doit guider, pas annoncer « complet »), qui distinguent *rien-à-faire-car-réglé* de *rien-encore-réglé*.
+Les axes `claude_auth`/`mcp`/`build` sont **injectables** pour les tests ; à défaut ils sont détectés live.
+`link_credential` lie **exactement l'un** de `token` (voie fichier → `store.put` → ref opaque) ou
 `ref` (voie BWS bring-your-own UUID, validé par `store.get`) ; la DB ne reçoit que la **référence**, jamais la
 valeur. `unlink_credential` remet `credential_ref` à NULL (le secret reste dans le store).
 
 ## Zones non détaillées
 - Les `cli_dispatch` de chaque module (routage CLI + impression `✅/🔴`, codes de sortie fail-loud).
+- `onboarding.wire_mcp` : le câblage MCP vu du wizard (délègue à `provision.mcp.wire`, `live_env=True` → le daemon voit la ref sans restart).
+- `tools.cli_env` : l'env d'outillage rendu à un appelant externe (même résolution que `tools_env`, exposée).
+- `webbuild` : `find_map_src`, `ensure_map`, `ensure_maps` — la mise à disposition des index de maps pour le build du front (dérivés, régénérés si absents).
 - `tools` : helpers de chemin purs `tools_root`/`tools_venv`/`nodeenv_prefix`/`tools_bin`/`tools_env`,
   `required_bins`, `_symlink_sources`, `install_plan`, `_run_step`, `_default_runner`, constantes
   `MAP_REPOS`/`PY_QUALITY`/`HOST_TOOLS`/`_VENV_BINS`/`_NODE_BINS`.

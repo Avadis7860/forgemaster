@@ -1,7 +1,7 @@
 # daemon — runbook (daemon HTTP = vue sur la spine : app FastAPI, injection de deps, routers minces (SPA + API))
 
 Le daemon est une **vue FastAPI** sur la spine : il n'héberge aucune logique métier, il l'expose en HTTP.
-`build_app()` construit le conteneur `Deps` **une fois** et le pose sur `app.state`, puis monte 13 routers de
+`build_app()` construit le conteneur `Deps` **une fois** et le pose sur `app.state`, puis monte 19 routers de
 domaine + la SPA. Chaque router lit ses deps par injection explicite (`Depends(get_deps)`) — jamais de
 module-global mutable (correctif #1, anti god-module `import server`). Les erreurs domaine (`KeyError`→404,
 `ValueError`→400) sont mappées globalement pour garder les routers fins. Import `fastapi`/`uvicorn`
@@ -32,7 +32,7 @@ client-side) mais refuse `api/`/`ws/` (→ 404 JSON, jamais index à la place d'
 résout la dist : override `COCKPIT_WEB_DIST` → dist empaquetée dans le wheel (`cockpit/_web_dist`, turnkey) →
 layout source (`<repo>/web/dist`). Dist absente → `_mount_missing_ui_placeholder` (fail-loud, cf. Zones).
 
-## Le pattern `make_*_router()` — 13 routers minces
+## Le pattern `make_*_router()` — 19 routers minces
 `src/cockpit/daemon/routes/*.py` · montés par build_app()
 Forme commune (invariant **daemon = vue**) : une factory `make_<x>_router() -> APIRouter` qui déclare ses
 endpoints, lit `Deps` par `Depends(get_deps)`, ouvre/ferme une connexion DB par requête, et **délègue à la
@@ -55,6 +55,6 @@ explicite (fail-closed, ex. 422 gate / 403 auth). Spawns longs (`claude -p`) pas
 - `make_types_router` (`routes/types.py:15`) — registre des bundles : types de projet offerts à la création.
 
 ## Zones non détaillées
-- Les corps individuels des 13 routers (forme identique — factory + endpoints + délégation spine) : voir chaque `routes/<x>.py`.
+- Les corps individuels des 19 routers (forme identique — factory + endpoints + délégation spine) : voir chaque `routes/<x>.py`.
 - `_mount_missing_ui_placeholder` (`app.py:228`) : dist absente → warning + page d'aide fail-loud à `/`, l'API reste valable.
-- Les Pydantic request models (`ProjectCreate`/`ProjectPatch`, `ReviewBody`/`MergeBody`, …) : DTO locaux, validés → 400/422.
+- Les Pydantic request models — `ProjectCreate`/`ProjectPatch`, `ReviewBody`/`MergeBody`, `BootstrapRequest`, `CredentialLink`, `McpWire`, `InspireRequest`, `FeatureCreate`, `TaskCreate`, … : DTO locaux d'un router, validés par FastAPI → 400/422. Ce sont des **formes**, pas des mécanismes : nommés ici pour que leur silence soit déclaré, pas subi.

@@ -9,9 +9,15 @@ Deux responsabilités : (1) déclarer la surface (`build_parser`), (2) parser + 
 ## build_parser() — assemble l'arbre argparse complet (pur, import léger)
 `src/cockpit/cli.py:21` · appelé par main()
 Entrées : aucune. Comportement : construit le parser racine `cockpit` (+ `--version`), un parent `common`
-(`--home`, `--projects-root`) hérité par chaque sous-parser, puis déclare toutes les sous-commandes de la
-spine (`project`, `tool`, `tools`, `bundle`, `roadmap`, `task`, `dispatch`, `run`, `deploy`, `gate`, `merge`,
-`onboard`, `bootstrap`, `serve`, `setup`, `install-service`, `doctor`, `mcp`) et leurs actions. Sortie :
+(`--home`, `--projects-root`) hérité par chaque sous-parser, puis déclare les **27** sous-commandes de la spine
+et leurs actions. Les groupes à sous-actions : `project` (create/list/get), `tool` (sync), `tools` (install),
+`bundle` (list/validate/show/version/derive), `scaffold` (reseed), `roadmap` (add-feature/set-deps/show/check),
+`task` (add/set-deps/next), `reliability` (show/mark), `gate` (review/review-dispatch/verify/toolchain/
+woaw-dispatch), `onboard` (status/link/unlink), `mcp` (wire). Les verbes plats : `dispatch`, `cost`, `run`,
+`abort`, `refix`, `redrain`, `interview`, `inspire`, `upload`, `deploy`, `merge`, `bootstrap`, `serve`,
+`setup`, `install-service`, `doctor`. **Cet inventaire est daté, pas un contrat** — la vérité vit dans le code,
+`grep 'add_parser' src/cockpit/cli.py` la rend en une commande ; ce runbook dit la FORME (un parent commun, des
+groupes, `set_defaults(func=…)`), pas la liste. Sortie :
 l'`ArgumentParser`. Invariant : **pur et sans dépendance lourde** — le seul import est
 `provision.list_valid_types` (stdlib-only, fail-closed : un overlay cassé n'est pas offert à `--type`), de
 sorte que `--help` marche et que le parser se construit même quand les couches sont des stubs. Appelants :

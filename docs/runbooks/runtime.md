@@ -55,6 +55,8 @@ Construit l'argv `<cmd> -p <name> <sous-commande>` exécuté dans `workdir` via 
 `<projects_root>/<slug>/deploy/<branch>/` : l'arbre de la réf y est extrait (`git archive`), `compose.yaml` attendu à la racine (semé par P3). Voisin du SoT bare `<slug>/sot.git`, jamais mélangé. Pur.
 
 ## Zones non détaillées
+- `deploy_preview` / `teardown_preview` (`engine.py`) — le couple de la **preview** d'une branche (déploiement éphémère + démontage), distinct du déploiement nommé : même moteur, cycle de vie court.
+- `compose_engine` / `compose_provider_available` (`backend.py`) — quel moteur compose est en place et est-il joignable ; c'est ce qui permet à un diagnostic de dire « podman absent » plutôt que de laisser échouer un `up`.
 - `_deploy_purpose` (39) — clé de réservation de port `deploy:<branch>`, distincte de `worktree:<feature>`.
 - `_resolve` (42) — résout le projet + valide la branche (fail-loud avant tout effet) ; `KeyError` → 404.
 - `_compose_env` (49) — overlay `{COMPOSE_PROJECT_NAME, COCKPIT_PORT}` pour down/restart/logs (placeholder `0` si port manquant — seule la présence compte au re-parse).

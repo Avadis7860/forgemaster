@@ -8,7 +8,7 @@ Retourne le mapping `chemin-relatif-POSIX → contenu` composé par `base | over
 
 ## validate_bundle() — porte fail-closed avant toute copie
 `src/cockpit/provision/__init__.py:122` · appelé par `projects.registry.create_project`, `list_valid_types`, `manage._list/_validate/_show`.
-Valide un bundle **avant** de le semer et lève `BundleError` sur : type hors registre ; manifeste absent/illisible ; `version` manquante ; `project_type` du manifeste ≠ nom du dossier ; `facets` vide ; `default_facet` ∉ `facets` ; facette déclarée sans dossier `.claude/facets/<f>/` de support. Aucune valeur de retour — soit ça passe, soit ça lève.
+Valide un bundle **avant** de le semer et lève `BundleError` sur : type hors registre ; manifeste absent/illisible ; `version` manquante ; `project_type` du manifeste ≠ nom du dossier ; `facets` vide ; `default_facet` ∉ `facets` ; facette déclarée sans dossier `.claude/facets/<f>/` de support. Plus trois blocs **optionnels** dont la présence impose la forme (absents ⇒ valides) : `[bundle.mcp]` doit être une table et son `corpus` un booléen — déclaration **sèche** du besoin de corpus, jamais un secret ni un endpoint (les silos pertinents vivent dans la prose du `CLAUDE.md §4`, seul SoT réellement lu par le worker) ; `reseed_owned` doit être une liste de chemins **présents dans le bundle composé** (on ne peut pas posséder un fichier qu'on ne sème pas) ; `[bundle.facet_models]` doit être une table dont chaque clé est une facette **déclarée** et chaque valeur un alias de modèle non vide. Aucune valeur de retour — soit ça passe, soit ça lève. Cette énumération EST le contrat : ce qui n'y figure pas n'est pas refusé.
 
 ## discover_types() — le registre, dérivé du filesystem
 `src/cockpit/provision/__init__.py:39` · appelé par `load_bundle`, `list_valid_types`, `manage._list/_validate/_version`.
@@ -16,7 +16,7 @@ Le registre des types = `("generic", *sous-dossiers triés de bundles/types/)`. 
 
 ## list_valid_types() — la source unique des types offerts
 `src/cockpit/provision/__init__.py:176` · appelé par le dropdown de création (UI) et le durcissement des `choices` CLI.
-Filtre `discover_types()` par `validate_bundle` (fail-closed) : un overlay cassé est **silencieusement écarté** (on n'offre jamais un type qu'on ne saurait pas semer). Chaque entrée : `{type, version, project_type, facets, default_facet}`, ordre de `discover_types` (generic en tête).
+Filtre `discover_types()` par `validate_bundle` (fail-closed) : un overlay cassé est **silencieusement écarté** (on n'offre jamais un type qu'on ne saurait pas semer). Chaque entrée : `{type, version, project_type, facets, default_facet, mcp}` — `mcp` étant la déclaration sèche du manifeste (`{}` si absente), ce qui permet à l'UI de savoir si le type demande un corpus sans lire un secret. Ordre de `discover_types` (generic en tête).
 
 ## read_bundle_manifest() — la table [bundle] du manifeste composé
 `src/cockpit/provision/__init__.py:105` · appelé par `list_valid_types`, `manage._list/_show/_version`.
@@ -46,13 +46,13 @@ Copie la source committée `.claude/facets/<facet>/settings.local.json` → `.cl
 `src/cockpit/provision/facet.py:21` · appelé par `activate_facet` (et tout lecteur de persona/méthode).
 Pur : `<root>/.claude/facets/<facet>/`. La persona + méthode sont lues depuis ce dossier committé (injectées dans le prompt, zéro fichier posé).
 
-## wire() — n.b. : pas un symbole ; c'est l'action CLI `cockpit mcp wire`
-`src/cockpit/provision/mcp.py:178` (`cli_dispatch`) · appelé par le routeur CLI `cockpit mcp wire`.
-**Il n'existe aucune fonction `wire()` dans le module committé** : le « wire » est l'action CLI routée par `cli_dispatch`. Elle câble l'instance mcp-catalogs sur l'install en posant dans `cockpit.env` une **référence opaque** au secret HMAC partagé (jamais le secret en clair) + l'endpoint, de sorte que le prochain dispatch injecte un `.mcp.json` valide. Deux voies exclusives : `--secret-file <f>` (on possède la valeur → `store.put` → ref) ou `--secret-ref <uuid>` (BYO, validée via `store.get`). Sans câblage, l'injection reste un no-op honnête. Demande un `systemctl restart cockpit` pour recharger l'EnvironmentFile.
+## wire() — câble l'instance mcp-catalogs sur cette install (cœur partagé CLI + wizard)
+`src/cockpit/provision/mcp.py:178` · appelé par `cli_dispatch` (`cockpit mcp wire`) **et** par la route onboarding du wizard.
+Pose dans `cockpit.env` une **référence opaque** au secret HMAC partagé (jamais le secret en clair) + l'endpoint, de sorte que le prochain dispatch injecte un `.mcp.json` valide (`inject_mcp_config`). Rend la ref posée. **Exactement une** voie parmi trois : `secret` (la valeur brute, que le wizard POSTe → `store.put` → ref), `secret_file` (même voie depuis un fichier — la CLI), ou `secret_ref` (bring-your-own UUID, **validée** via `store.get`). `live_env=True` reflète en plus la ref dans l'`os.environ` du process courant : le daemon la voit **sans restart** — c'est ce que fait le wizard ; la voie CLI, elle, demande un `systemctl restart cockpit` pour recharger l'EnvironmentFile. Lève `MCPWireError` sur mauvais usage (zéro ou plusieurs voies), backend incompatible, secret `<32c` ou ref introuvable. Sans câblage, l'injection reste un no-op honnête.
 
 ## render_mcp_config() — la forme du .mcp.json (pure)
 `src/cockpit/provision/mcp.py:61` · appelé par `inject_mcp_config`.
-Pur (aucune I/O) : un `mcpServers` avec le label `vault-catalogs` (verbatim du contrat serveur CT 9118), `type: http`, l'`url` (endpoint) et un header `Authorization: Bearer <token>`.
+Pur (hors lecture d'`os.environ`) : un `mcpServers` avec le label `vault-catalogs` (verbatim du contrat serveur CT 9118), `type: http`, l'`url` et un header `Authorization: Bearer <token>`. L'endpoint par défaut (`endpoint=None`) est résolu **LIVE** par `current_endpoint()`, jamais gelé à l'import — un re-wire prend effet au prochain rendu sans recharger le module.
 
 ## inject_mcp_config() — mint du token scopé + écriture chmod 600
 `src/cockpit/provision/mcp.py:75` · appelé au dispatch d'un worker (injection POST-création).
@@ -70,10 +70,17 @@ Décode le payload base64url et rend l'`exp` (epoch) **sans authentifier** — l
 `src/cockpit/provision/mcp.py:129` · appelé par `cockpit doctor`.
 Retourne `{configured, healthy, reason, exp, stale}`, zéro réseau. Non câblé (pas de `COCKPIT_MCP_JWT_SECRET_REF`) → `configured=False, healthy=True` (install sans corpus privé, dégradation prévue) ; ref posée mais secret illisible/`<32c` → `configured=True, healthy=False` (câblage cassé → re-wire) ; sinon mint un token témoin (`cockpit:doctor`) et scanne les `.mcp.json` des worktrees — un token expiré ou expirant dans la fenêtre d'un run (`_RUN_WINDOW_S=1800s`) = `stale` (faux-négatif void-runner : worktree non re-dispatché). `healthy` ⇔ mint OK et aucun stale.
 
-## MCPWireError — n.b. : n'existe pas dans le module committé
-Aucune classe `MCPWireError` n'est définie dans `src/cockpit/provision/mcp.py`. Le module ne lève aucune erreur custom : le câblage CLI (`cli_dispatch`) intercepte `SecretUnsupported` / `SecretNotFound` / `OSError` (importées de `cockpit.secrets`) et rend un code de sortie + message ; l'injection dégrade en no-op. Documenté ici pour lever l'ambiguïté du nom.
+## MCPWireError — l'erreur de câblage du wire
+`src/cockpit/provision/mcp.py:173` (`ValueError`) · levée par `wire`, interceptée par `cli_dispatch` et la route onboarding.
+Signale un câblage refusé **avant tout effet** : zéro ou plusieurs voies de secret fournies, backend sans secret direct (bring-your-own attendu), secret `<32c` (HS256 exige au moins 32 caractères), ref introuvable dans le store. Sous-classe de `ValueError` — un appelant qui n'en sait rien la traite comme telle. À ne pas confondre avec l'**injection** (`inject_mcp_config`), qui ne lève pas : elle dégrade en no-op honnête quand le câblage est absent.
+
+## wire_state() — l'état de câblage, sans révéler le secret
+`src/cockpit/provision/mcp.py:163` · lu par `onboarding.status` (axe `mcp` du wizard).
+Rend `{wired, endpoint}` : la **présence** de la ref et l'endpoint résolu, jamais la valeur. C'est ce qui permet au wizard de dire « corpus privé câblé / pas câblé » sans jamais lire un secret.
 
 ## Zones non détaillées
 - **Helpers privés de `__init__.py`** : `_walk_files` (parcours récursif trié, exclut `_SKIP_DIRS` + `*.pyc` — sources only, pas de binaire dans le SoT), `_read_tree` (arbre → mapping `chemin POSIX → texte`, fail-soft dossier absent → `{}`), `_parse_manifest` (table `[bundle]` d'un bundle composé, lève `BundleError` si absent/illisible). Plomberie déterministe sans surface publique.
+- **`__init__.py`** — `read_reseed_owned` (les chemins que le scaffold POSSÈDE, relus au reseed) et `check_launch_roadmap_drift` (la graine de roadmap a-t-elle divergé de ce que le bundle sème aujourd'hui).
+- **`facet.py`** — `resolve_facet_model` (le modèle de la facette, lu par `worker.dispatch_next` : le mécanique tolère un modèle plus léger, le gate reste le garde-fou).
 - **`manage.py`** (`cockpit bundle …`) : façade MINCE de présentation sur l'API `provision`, ne ré-implémente aucune logique. `_list` (une ligne/type, valides ✓ + cassés ✗, retour 0), `_validate` (diagnostic actionnable, **retour 1** dès un bundle invalide → gate/CI), `_show` (détail d'un bundle), `_version` (version nue scriptable), `cli_dispatch` (route `args.action` via `_ACTIONS`, `settings` inutilisé — registre = filesystem vendoré).
 - **Nommage divergent** : le label serveur / `aud` (`vault-catalogs`) et l'`iss` (`vault-mcp`) reproduisent verbatim le contrat validé par le serveur mcp-catalogs (ex-CT 9113) ; le renommage `vault-catalogs → mcp-catalogs` est coordonné serveur-d'abord (backlog `mcp-catalogs-naming-coherence`), pas une demi-migration côté client.

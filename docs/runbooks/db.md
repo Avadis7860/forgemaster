@@ -28,9 +28,12 @@ haut-niveau reçoit cette connexion en argument — jamais un module-global (cor
 ## create_schema() — crée tables + index, migre les colonnes, scelle la version
 `src/cockpit/db/schema.py:348` · appelé par `migrate()`
 Exécute tout le `DDL` (7 tables, `IF NOT EXISTS`) puis les `INDEXES`, appelle `ensure_columns()` pour le chemin
-ALTER, joue `_migrate_v8_drop_project_type_check()`, et scelle avec `PRAGMA user_version = SCHEMA_VERSION` + commit.
-Correct pour une base neuve (tout par DDL) comme pour une base d'une version antérieure. `SCHEMA_VERSION = 10`
-(`schema.py:42`) ; l'historique v1→v10 vit dans la docstring de module (le CHANGELOG du contrat).
+ALTER, joue les **migrations de table** dans l'ordre — `_migrate_v8_drop_project_type_check`,
+`_migrate_v15_dispatch_status_rate_limited`, `_migrate_v16_dispatch_status_interrupted`,
+`_migrate_v19_alerts_kind_review_findings` — et scelle avec `PRAGMA user_version = SCHEMA_VERSION` + commit.
+Correct pour une base neuve (tout par DDL) comme pour une base d'une version antérieure. `SCHEMA_VERSION`
+(`schema.py:104`) ; l'historique de version vit dans la docstring de module (le CHANGELOG du contrat) — c'est
+lui qu'on lit, pas ce runbook, pour savoir où en est le contrat.
 
 ## ensure_columns() — chemin ALTER additif idempotent
 `src/cockpit/db/schema.py:366` · appelé par `create_schema()`
