@@ -40,16 +40,16 @@ spine** (core/dispatch/gate/git/roadmap) — aucune logique métier dans le rout
 Pydantic `BaseModel` ; erreurs remontées en `KeyError`/`ValueError` (mappées globalement) ou `HTTPException`
 explicite (fail-closed, ex. 422 gate / 403 auth). Spawns longs (`claude -p`) passés en `run_in_threadpool`.
 
-- `make_projects_router` (`routes/projects.py:30`) — registre des projets : CRUD (create/list/get/patch), délègue à `projects.registry`.
+- `make_projects_router` (`routes/projects.py:38`) — registre des projets : CRUD (create/list/get/patch), délègue à `projects.registry`.
 - `make_roadmap_router` (`routes/roadmap.py:32`) — roadmap : features + tasks + NEXT.
-- `make_dispatch_router` (`routes/dispatch.py:20`) — dispatch : spawn worker + suivi de job (GET jobs, `WS /ws/dispatch/{job}`).
-- `make_gate_router` (`routes/gate.py:42`) — gate : verdict Tier-1 review, statut composé (preview GO=false), merge sous GO humain.
-- `make_git_router` (`routes/git.py:21`) — git : visibilité read-only sur le SoT bare (branches…).
+- `make_dispatch_router` (`routes/dispatch.py:21`) — dispatch : spawn worker + suivi de job (GET jobs, `WS /ws/dispatch/{job}`).
+- `make_gate_router` (`routes/gate.py:43`) — gate : verdict Tier-1 review, statut composé (preview GO=false), merge sous GO humain.
+- `make_git_router` (`routes/git.py:39`) — git : visibilité read-only sur le SoT bare (branches…).
 - `make_codemap_router` (`routes/codemap.py:21`) — flow : flot d'exécution inter-fonctions d'une opération.
 - `make_docs_router` (`routes/docs.py:23`) — docs : carte d'un projet/outil lue depuis son repo (SoT bare).
-- `make_onboarding_router` (`routes/onboarding.py:22`) — onboarding self-hosted : état de config-requise au 1er lancement.
+- `make_onboarding_router` (`routes/onboarding.py:28`) — onboarding self-hosted : état de config-requise au 1er lancement.
 - `make_bootstrap_router` (`routes/bootstrap.py:20`) — amorçage des outils du framework (GET aperçu idempotent).
-- `make_terminal_router` (`routes/terminal.py:11`) — terminal web : WebSocket → PTY local (workdir borné).
+- `make_terminal_router` (`routes/terminal.py:56`) — terminal web : WebSocket → PTY local (workdir borné).
 - `make_tool_router` (`routes/tool.py:19`) — outils adoptés (`kind=tool`) : mutation gatée.
 - `make_deployments_router` (`routes/deployments.py:22`) — deployments : visibilité read-only des déploiements.
 - `make_types_router` (`routes/types.py:15`) — registre des bundles : types de projet offerts à la création.
