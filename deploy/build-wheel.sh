@@ -57,7 +57,7 @@ rm -f dist/cockpit-*-py3-none-any.whl
 python3 -m pip wheel --no-deps . -w dist/
 whl="$(ls -t dist/cockpit-*-py3-none-any.whl | head -1)"
 
-echo "→ [4/4] garde-fou : UI + code-map + taskmap DOIVENT être embarqués (sinon écran blanc / Flow mort / daemon mort)"
+echo "→ [4/4] garde-fou : UI + code-map + taskmap + leur attribution DOIVENT être embarqués (sinon écran blanc / Flow mort / daemon mort / artefact composite sans NOTICE)"
 python3 - "$whl" <<'PY'
 import sys, zipfile
 whl = sys.argv[1]
@@ -73,7 +73,17 @@ assert "cockpit/_verify_runner/render_check.js" in names, \
 assert "cockpit/_build.json" in names, \
     f"provenance de build absente du wheel {whl} — src/cockpit/_build.json non embarqué (le signal de " \
     f"fraîcheur serait aveugle : c'est le faux-vert qu'on corrige)"
+# Le wheel est un artefact COMPOSITE : AGPL-3.0 dans son ensemble, avec `codemap/` et `taskmap/` sous
+# Apache-2.0. §4(a) exige de livrer une copie de la licence Apache au destinataire, §4(d) d'y propager le
+# NOTICE. Sans ces deux fichiers, le wheel embarque du code sans son attribution — la symétrie du garde-fou
+# ci-dessus : on échoue déjà si le CODE manque, on échoue désormais si son ATTRIBUTION manque.
+lic = [n for n in names if "/licenses/" in n]
+assert any(n.endswith("/licenses/NOTICE") for n in lic), \
+    f"NOTICE absent du wheel {whl} — attribution Apache-2.0 §4(d) manquante pour codemap/ et taskmap/ " \
+    f"(vérifie `license-files` du pyproject ET hatchling>=1.27 : en dessous il dégrade EN SILENCE)"
+assert any(n.endswith("/licenses/LICENSES/Apache-2.0.txt") for n in lic), \
+    f"texte Apache-2.0 absent du wheel {whl} — §4(a) exige d'en livrer une copie au destinataire"
 PY
 
-echo "✓ wheel prêt : $whl  (UI + code-map + taskmap embarqués)"
+echo "✓ wheel prêt : $whl  (UI + code-map + taskmap + leur attribution embarqués)"
 echo "  → copie-le sur l'hôte cible avec deploy/{provision-ct.sh,bootstrap.yaml}, puis lance provision-ct.sh."

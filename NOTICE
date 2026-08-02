@@ -1,0 +1,17 @@
+cockpit
+Copyright 2026 AvAgency (https://avagency.pro)
+
+This product is licensed under the GNU Affero General Public License,
+version 3 or later. See LICENSE.
+
+This product bundles the following components, which are licensed under
+the Apache License, Version 2.0. A copy of that license is provided in
+LICENSES/Apache-2.0.txt.
+
+  codemap/ -- from https://github.com/Avadis7860/code-map
+      code-map
+      Copyright 2026 AvAgency (https://avagency.pro)
+
+  taskmap/ -- from https://github.com/Avadis7860/task-map
+      task-map
+      Copyright 2026 AvAgency (https://avagency.pro)

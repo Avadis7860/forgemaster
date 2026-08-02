@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]  # PEP 639 : <1.27 dégrade en silence (metadata 2.3, NOTICE non embarqué)
 build-backend = "hatchling.build"
 
 [project]
@@ -8,7 +8,8 @@ version = "0.1.0"
 description = "Forge/orchestrateur local : projet → roadmap (features + tasks DAG) → dispatch worker claude en worktree → gate → merge. Spine CLI + daemon FastAPI, édition lightweight WSL (zéro Proxmox/GPU/CT)."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { file = "LICENSE" }
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE", "NOTICE", "LICENSES/*.txt"]
 authors = [{ name = "AvAgency", email = "contact@avagency.pro" }]
 keywords = ["orchestrator", "forge", "worktree", "dispatch", "fastapi", "cli"]
 # Comme mcp-catalogs (et contrairement à code-map stdlib-pur), le cockpit EST un service : il porte de

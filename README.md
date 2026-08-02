@@ -65,4 +65,13 @@ le MVP opérationnel ; le web (P5) est une surface par-dessus. Voir [`PORTING.md
 
 ## Licence
 
-Propriétaire — voir [`LICENSE`](./LICENSE). Tous droits réservés.
+**AGPL-3.0-or-later** — voir [`LICENSE`](./LICENSE).
+
+C'est un **service réseau** : quiconque expose une version **modifiée** à des utilisateurs à travers un
+réseau doit leur en offrir le code source correspondant (§13).
+
+Le wheel **embarque** `codemap/` et `taskmap/`, sous **Apache-2.0** : leur attribution est portée par
+[`NOTICE`](./NOTICE) et le texte de leur licence par [`LICENSES/Apache-2.0.txt`](./LICENSES/Apache-2.0.txt).
+
+Une **licence commerciale** est disponible pour les usages que l'AGPL n'accorde pas — notamment la
+redistribution sous forme fermée : contact@avagency.pro.
