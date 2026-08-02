@@ -5,6 +5,23 @@ facets = ["frontend", "backend", "doc"]
 default_facet = "frontend"
 archetype = "app"           # gate de profondeur : axes UX d'une app front (cf. depth-axes.yaml)
 
+# reseed_owned — le contrat de RUN + QUALITÉ possédé par le cockpit, re-matérialisable dans un projet EXISTANT
+# par `cockpit scaffold reseed`. Invariant unique : le worker ne les édite JAMAIS → sûrs à réécrire depuis le
+# bundle. Un overlay surcharge `bundle.toml` en whole-file → chaque type porte SA liste.
+#   • contrat de RUN — `compose.yaml` (contrat de port injecté, aucun nom de projet en dur) + `.dockerignore`.
+#   • contrat de QUALITÉ — la DISCIPLINE des facettes de CET overlay (`METHOD.md`), que le worker LIT et suit.
+# **Le `Dockerfile` est volontairement EXCLU** : ici il n'est pas un contrat stable mais un STUB soudé à son
+# entrypoint (`COPY . .` + `CMD ["node", "server.mjs"]`, son propre en-tête dit « remplace `server.mjs` par
+# ton vrai front (build Vite → serveur statique) »). Un vrai front impose d'y ajouter l'étape de build : le
+# posséder écraserait le déploiement réel du worker au prochain reseed — exactement ce que l'invariant
+# interdit. Ce qui reste stable, c'est le contrat de port, et il vit dans `compose.yaml`.
+# Aussi PAS owned : `package.json`/`tsconfig.json` (toolchain que le worker fait grandir), `server.mjs` et
+# `src/*` (son code), `PERSONA.md`/`settings.local.json`, les facettes de la BASE (décision base-wide).
+reseed_owned = [
+  "compose.yaml", ".dockerignore",
+  ".claude/facets/backend/METHOD.md", ".claude/facets/frontend/METHOD.md",
+]
+
 # Déclaration MCP sèche (sans secret ni endpoint). `corpus = true` = ce type bénéficie du capital-token servi.
 # Un overlay surcharge `bundle.toml` en whole-file → sans ce bloc, le `corpus = true` de la base est PERDU.
 # Silos tech pertinents (react·vite·typescript·tailwind·zod·vitest·react-query·react-router·react-hook-form·

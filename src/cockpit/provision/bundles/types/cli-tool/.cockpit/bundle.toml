@@ -5,6 +5,17 @@ facets = ["tool", "doc"]
 default_facet = "tool"
 archetype = "tool"          # gate de profondeur : axes d'un outil CLI (cf. depth-axes.yaml)
 
+# reseed_owned — le contrat de QUALITÉ possédé par le cockpit, re-matérialisable dans un projet EXISTANT par
+# `cockpit scaffold reseed`. Invariant unique : le worker ne l'édite JAMAIS → sûr à réécrire depuis le bundle.
+# Un overlay surcharge `bundle.toml` en whole-file → chaque type porte SA liste.
+# **Aucun contrat de RUN ici, et c'est exact** : un outil CLI ne se sert pas (ni Dockerfile ni compose.yaml
+# dans cet overlay). La liste est courte parce que la surface possédée l'est — pas par omission.
+# Volontairement PAS owned : `pyproject.toml` (le worker y ajoute ses dépendances et ses entry-points),
+# `PERSONA.md`/`settings.local.json`, et les facettes de la BASE (`doc`… — décision base-wide, pas par-type).
+reseed_owned = [
+  ".claude/facets/tool/METHOD.md",
+]
+
 # Déclaration MCP sèche (sans secret ni endpoint). `corpus = true` = ce type bénéficie du capital-token servi.
 # Un overlay surcharge `bundle.toml` en whole-file → sans ce bloc, le `corpus = true` de la base est PERDU.
 # Les silos tech pertinents (typer·rich·httpx·pytest·mypy·ruff) vivent dans la prose du `CLAUDE.md §4`.

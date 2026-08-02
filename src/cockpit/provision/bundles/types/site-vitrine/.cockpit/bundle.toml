@@ -13,9 +13,14 @@ archetype = "app"           # gate de profondeur : axes UX d'un site présentati
 #     jamais n'édite. NB : les GARDES semées (`web/src/**/*.test.ts`) ne sont volontairement PAS owned — la garde
 #     d'un worker est plus riche et propre à son produit ; l'écraser retirerait de la couverture. Le worker hérite
 #     la discipline corrigée par la METHOD (owned) et re-dérive sa garde au drain.
+# Portée de la famille QUALITÉ, rendue uniforme sur les 5 types : les `METHOD.md` de CET overlay, **toutes**
+# (`deploy` était le résidu — même nature que les autres, exclue par le seul périmètre de la mission qui a
+# introduit le bloc). Les facettes de la BASE (`doc`…) restent hors liste : les posséder depuis 5 manifestes
+# serait la duplication qui dérive — c'est une décision base-wide, pas par-type.
 reseed_owned = [
   "Dockerfile", "compose.yaml", "nginx.conf", ".dockerignore",
   ".claude/facets/frontend/METHOD.md", ".claude/facets/content/METHOD.md",
+  ".claude/facets/deploy/METHOD.md",
 ]
 
 # Déclaration MCP sèche (sans secret ni endpoint). `corpus = true` = ce type bénéficie du capital-token servi.

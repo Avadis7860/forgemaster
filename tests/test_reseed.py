@@ -27,6 +27,31 @@ _ID = ("t", "t@e.invalid")
 _OWNED = {
     "Dockerfile", "compose.yaml", "nginx.conf", ".dockerignore",
     ".claude/facets/frontend/METHOD.md", ".claude/facets/content/METHOD.md",
+    ".claude/facets/deploy/METHOD.md",
+}
+# La liste possédée de CHAQUE type, en dur : ce tableau EST le contrat de préservation. Une liste par type
+# parce qu'un overlay surcharge `bundle.toml` en whole-file — un bloc mis dans la base ne serait pas hérité.
+# Deux exclusions structurantes s'y lisent en creux :
+#   • `front-ts` / `service-api` n'ont PAS leur `Dockerfile` owned — c'est un STUB soudé à son entrypoint
+#     (`CMD node server.mjs` / `CMD python app.py`), que le worker DOIT réécrire pour un vrai déploiement ;
+#     le posséder écraserait son travail. Ce qui est stable, c'est le contrat de port → `compose.yaml`.
+#   • `cli-tool` n'a aucun contrat de RUN : un outil CLI ne se sert pas (ni Dockerfile ni compose dans son
+#     overlay). Sa liste est courte parce que sa surface possédée l'est, pas par omission.
+_OWNED_BY_TYPE: dict[str, set[str]] = {
+    "browser-game": {
+        "Dockerfile", "compose.yaml", ".dockerignore",
+        ".claude/facets/backend/METHOD.md", ".claude/facets/frontend/METHOD.md",
+        ".claude/facets/game-design/METHOD.md",
+    },
+    "cli-tool": {".claude/facets/tool/METHOD.md"},
+    "front-ts": {
+        "compose.yaml", ".dockerignore",
+        ".claude/facets/backend/METHOD.md", ".claude/facets/frontend/METHOD.md",
+    },
+    "service-api": {
+        "compose.yaml", ".dockerignore", ".claude/facets/backend/METHOD.md",
+    },
+    "site-vitrine": _OWNED,
 }
 
 
@@ -55,6 +80,56 @@ def _vitrine(ctx) -> tuple[Settings, object, Path]:
 def test_read_reseed_owned_is_run_plus_quality_contract_for_vitrine_empty_for_generic():
     assert set(read_reseed_owned("site-vitrine")) == _OWNED
     assert read_reseed_owned("generic") == []
+
+
+@pytest.mark.parametrize("project_type", sorted(_OWNED_BY_TYPE))
+def test_every_typed_bundle_declares_its_owned_contract(project_type: str):
+    """AUCUN type semable n'est muet : sans `reseed_owned`, un fix de scaffold ne rejoint JAMAIS les projets
+    existants de ce type — la préservation ne couvrirait presque rien. Le contenu exact vaut contrat."""
+    assert set(read_reseed_owned(project_type)) == _OWNED_BY_TYPE[project_type]
+
+
+@pytest.mark.parametrize("project_type", sorted(_OWNED_BY_TYPE))
+def test_owned_paths_exist_in_composed_bundle(project_type: str):
+    """On ne peut posséder un fichier qu'on ne sème pas : chaque chemin owned est présent dans le bundle
+    composé `base ⊕ overlay`. (Doublon volontaire de `validate_bundle` : ici l'erreur nomme le type ET le
+    chemin, ce qui est ce qu'on lit quand un renommage d'overlay casse une liste.)"""
+    bundle = load_bundle(project_type)
+    for path in sorted(_OWNED_BY_TYPE[project_type]):
+        assert path in bundle, f"{project_type}: reseed_owned={path!r} absent du bundle composé"
+
+
+@pytest.mark.parametrize("project_type", sorted(_OWNED_BY_TYPE))
+def test_seeded_test_guards_are_never_owned(project_type: str):
+    """Exclusion explicite : une garde semée (`*.test.ts`) n'est JAMAIS owned. La garde d'un worker est plus
+    riche et propre à son produit — l'écraser au reseed retirerait de la couverture."""
+    assert not [p for p in _OWNED_BY_TYPE[project_type] if p.endswith(".test.ts")]
+
+
+@pytest.mark.parametrize("project_type", sorted(_OWNED_BY_TYPE))
+def test_reseed_updates_owned_preserves_worker_and_is_idempotent_for_every_type(ctx, project_type: str):
+    """La preuve FONCTIONNELLE, par type : sur un projet réel, (a) les owned sont re-matérialisés au contenu
+    du bundle, (b) un fichier worker modifié à côté est INTACT, (c) un second appel ne commite rien."""
+    settings, conn = ctx
+    slug = project_type.replace("-", "")
+    registry.create_project(conn, settings, slug=slug, project_type=project_type)
+    sot = registry.sot_path_for(settings, slug)
+    owned = sorted(_OWNED_BY_TYPE[project_type])
+    stale, worker_path = owned[0], "docs/architecture.md"          # non-owned dans TOUS les types
+    InternalGit().overlay_commit(
+        sot, branch="dev", identity=_ID, message="setup: scaffold périmé + travail worker",
+        files={stale: "# ANCIEN scaffold périmé\n", worker_path: "# ÉDITION WORKER — à préserver\n"})
+    worker_before = _show(sot, f"dev:{worker_path}")
+
+    report = reseed.reseed_project(conn, settings, project=slug)
+
+    assert report["updated"] is True and report["commit"] is not None
+    assert set(report["files"]) == set(owned)
+    bundle = load_bundle(project_type)
+    for path in owned:
+        assert _show(sot, f"dev:{path}") == bundle[path]
+    assert _show(sot, f"dev:{worker_path}") == worker_before
+    assert reseed.reseed_project(conn, settings, project=slug)["updated"] is False   # idempotent
 
 
 def test_reseed_updates_owned_and_preserves_worker(ctx):
