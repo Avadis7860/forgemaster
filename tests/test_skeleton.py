@@ -107,7 +107,7 @@ def test_cli_parser_wires_all_subcommands():
     assert set(sub.choices) == {
         "project", "tool", "tools", "bundle", "roadmap", "task", "dispatch", "cost", "reliability", "run",
         "abort", "refix", "redrain", "scaffold", "interview", "inspire", "upload", "deploy", "gate", "merge",
-        "onboard", "bootstrap", "serve", "setup", "install-service", "doctor", "mcp",
+        "onboard", "bootstrap", "serve", "setup", "install-service", "snapshot", "doctor", "mcp",
     }
 
 

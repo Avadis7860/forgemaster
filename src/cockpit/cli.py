@@ -290,6 +290,15 @@ def build_parser() -> argparse.ArgumentParser:
     pi.add_argument("--host", default="127.0.0.1", help="bind du daemon (0.0.0.0 pour le réseau local)")
     pi.add_argument("--port", type=int, default=8700)
 
+    # -- snapshot -----------------------------------------------------------------------------------
+    p_snap = sub.add_parser("snapshot", parents=[common],
+                            help="instantané restaurable de l'état (à prendre AVANT une MAJ)")
+    p_snap_sub = p_snap.add_subparsers(dest="action", required=True, metavar="<action>")
+    p_snap_sub.add_parser("create", parents=[common],
+                          help="prendre un instantané (base + réglages + coffre chiffré)")
+    p_snap_sub.add_parser("list", parents=[common],
+                          help="lister les instantanés — les incomplets sont signalés, pas masqués")
+
     # -- doctor -------------------------------------------------------------------------------------
     sub.add_parser("doctor", parents=[common],
                    help="sonder la présence de l'outillage déclaré par les facettes (rc 0 sain / 1 manquant)")
@@ -535,6 +544,11 @@ def _h_install_service(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+def _h_snapshot(settings: Settings, args: argparse.Namespace) -> int:
+    from cockpit import snapshot
+    return snapshot.cli_dispatch(settings, args)
+
+
 def _h_doctor(settings: Settings, args: argparse.Namespace) -> int:
     from cockpit import doctor
     return doctor.cli_dispatch(settings, args)
@@ -571,6 +585,7 @@ _HANDLERS = {
     "serve": _h_serve,
     "setup": _h_setup,
     "install-service": _h_install_service,
+    "snapshot": _h_snapshot,
     "doctor": _h_doctor,
     "mcp": _h_mcp,
 }
