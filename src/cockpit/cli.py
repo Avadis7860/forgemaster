@@ -298,6 +298,12 @@ def build_parser() -> argparse.ArgumentParser:
                           help="prendre un instantané (base + réglages + coffre chiffré)")
     p_snap_sub.add_parser("list", parents=[common],
                           help="lister les instantanés — les incomplets sont signalés, pas masqués")
+    p_snap_res = p_snap_sub.add_parser(
+        "restore", parents=[common],
+        help="remettre un instantané (lance son `restore.py` — l'état remplacé est mis de côté)")
+    p_snap_res.add_argument("snapshot", help="nom de l'instantané (ou chemin d'un dossier)")
+    p_snap_res.add_argument("--dry-run", action="store_true",
+                            help="dire ce qui serait remis, ne rien écrire")
 
     # -- doctor -------------------------------------------------------------------------------------
     sub.add_parser("doctor", parents=[common],

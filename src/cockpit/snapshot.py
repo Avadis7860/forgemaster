@@ -29,6 +29,8 @@ import json
 import os
 import shutil
 import sqlite3
+import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -37,6 +39,7 @@ from cockpit.config import Settings
 SCHEMA = 1                 # un `restore.py` qui lit un schéma inconnu REFUSE honnêtement au lieu de deviner
 KEEP = 3                   # assez pour « la MAJ a échoué, j'ai restauré, j'ai retenté, ça a re-échoué »
 MANIFEST = "manifest.json"
+RESTORE = "restore.py"     # l'unique implémentation de la restauration (stdlib pure) — cf. `restore.py`
 
 # Le périmètre, déclaré : (chemin relatif à `home`, comment on le prend, mode du fichier posé).
 ENTRIES: tuple[tuple[str, str, int], ...] = (
@@ -48,8 +51,9 @@ ENTRIES: tuple[tuple[str, str, int], ...] = (
 # Hors périmètre, délibérément. `master.key` : la restauration est locale, la clé y est déjà — l'embarquer ne
 # produirait qu'un artefact qui, copié ailleurs, déchiffre tout. `logs/` : historique append-only, pas de
 # l'état à remettre, et le copier avant CHAQUE MAJ la rendrait assez lente pour qu'on la saute. `snapshots/` :
-# sinon l'instantané N+1 embarque les N précédents (croissance quadratique).
-EXCLUDED_IN_HOME: tuple[str, ...] = ("secrets/master.key", "logs/", "snapshots/")
+# sinon l'instantané N+1 embarque les N précédents (croissance quadratique). `restore.py` : ce n'est pas de
+# l'état, c'est de l'outillage re-posé à chaque prise — le restaurer reviendrait à revenir à un outil ancien.
+EXCLUDED_IN_HOME: tuple[str, ...] = ("secrets/master.key", "logs/", "snapshots/", RESTORE)
 
 
 def snapshots_dir(settings: Settings) -> Path:
@@ -80,6 +84,7 @@ def create(settings: Settings, *, keep: int = KEEP) -> Path:
         entries.append({"name": name, "restore_to": name, "sha256": _sha256(out),
                         "mode": f"{mode:04o}", "via": via})
 
+    _pose_restore_script(dest, settings.home)
     _write_json(dest / MANIFEST, {
         "schema": SCHEMA,
         "created_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -110,6 +115,17 @@ def _copy_atomic(src: Path, dst: Path) -> None:
     tmp = dst.with_name(dst.name + ".tmp")
     shutil.copyfile(src, tmp)
     os.replace(tmp, dst)
+
+
+def _pose_restore_script(dest: Path, home: Path) -> None:
+    """Dépose `restore.py` aux deux endroits qui comptent : **dans** l'instantané (un vieil instantané reste
+    restaurable par le script écrit en même temps que son manifeste) et à `<home>/restore.py`, chemin
+    **stable** — celui qu'on peut écrire dans un message d'erreur. Re-posé à chaque prise : sa présence ne
+    dépend d'aucune étape d'installation, et un `restore.py` effacé revient tout seul."""
+    src = Path(__file__).with_name(RESTORE)
+    for target in (dest / RESTORE, home / RESTORE):
+        _copy_atomic(src, target)
+        target.chmod(0o755)
 
 
 def _build_identity() -> dict[str, str | None]:
@@ -205,6 +221,8 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
         for line in _describe(dest / MANIFEST):
             print(f"  {line}")
         return 0
+    if args.action == "restore":
+        return _launch_restore(settings, args)
     snaps = list_snapshots(settings)
     if not snaps:
         print(f"aucun instantané sous {snapshots_dir(settings)}")
@@ -216,6 +234,25 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
         print(f"{snap['name']}  {snap['created_at']}  cockpit {snap['cockpit']['version']} "
               f"({snap['cockpit']['build_sha'] or 'build inconnu'})  [{', '.join(snap['entries'])}]")
     return 0
+
+
+def _launch_restore(settings: Settings, args: argparse.Namespace) -> int:
+    """LANCE `restore.py`, ne le réimplémente pas. On préfère la copie **figée dans l'instantané** : elle a
+    été écrite avec son manifeste, donc elle le comprend — et le chemin de secours (lancer le script à la
+    main) devient exactement celui qu'on exerce ici, au lieu d'un jumeau jamais joué."""
+    ref = args.snapshot
+    target = Path(ref).expanduser() if ("/" in ref or ref.startswith("~")) else snapshots_dir(settings) / ref
+    if not target.is_dir():
+        print(f"✗ instantané introuvable : {target}", file=sys.stderr)
+        return 1
+    script = target / RESTORE
+    if not script.is_file():
+        script = Path(__file__).with_name(RESTORE)   # instantané pris avant que le script y voyage
+        print(f"⚠ {target.name} ne porte pas son {RESTORE} — on lance celui du cockpit installé")
+    cmd = [sys.executable, str(script), "--snapshot", str(target), "--home", str(settings.home)]
+    if args.dry_run:
+        cmd.append("--dry-run")
+    return subprocess.run(cmd, check=False).returncode  # noqa: S603 (argv construit ici, pas de shell)
 
 
 def _describe(manifest: Path) -> list[str]:
