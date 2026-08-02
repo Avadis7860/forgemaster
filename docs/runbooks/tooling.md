@@ -60,7 +60,7 @@ Frontière : ceci couvre le venv d'un **checkout de dev**. Sur une instance prov
 n'y vérifie qu'une **présence**, jamais une version.
 
 ## service.install_service() / render_unit() — unité systemd du daemon
-`src/cockpit/service.py:117` (`install_service`) · `src/cockpit/service.py:68` (`render_unit`) · appelés par
+`src/cockpit/service.py:154` (`install_service`) · `src/cockpit/service.py:98` (`render_unit`) · appelés par
 `cockpit service install` (cli_dispatch).
 `render_unit` est **pur** : rend l'unité systemd pour `cockpit serve`, deux portées `user` (défaut, sans root) /
 `system` (root, épingle `User=`/`Group=`). `Environment=HOME` est **obligatoire** (sans lui git ne lit pas le
