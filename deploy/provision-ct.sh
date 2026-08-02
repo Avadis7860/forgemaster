@@ -60,6 +60,14 @@ if [ "$scope" = "system" ]; then sysctl="sudo systemctl"; svc_flag="--system"; e
 # ~/.profile/~/.bashrc → d'où le guard PATH sur ~/.local/bin. download-PUIS-exec (jamais `curl | bash` :
 # l'installeur hérite du pipe comme stdin et échoue EN SILENCE en non-interactif) + retry x2 + vérif dure.
 # Idempotent (skip si déjà présent). Méthode reprise du bake template LXC durci du vault.
+#
+# CLAUDE_INSTALL_ALLOW_SUDO : depuis 2026 l'installeur ABORTE sous root/sudo (« do not run this installer
+# with sudo ») et documente cette variable comme l'échappatoire pour installer DÉLIBÉRÉMENT pour root. En
+# portée `--system`, c'est exactement notre cas : le service tourne en root, et root possède le PTY du
+# terminal web — un `claude` dans le HOME d'un autre utilisateur y serait introuvable. On la pose donc
+# toujours (no-op en portée `--user`, où l'installeur ne la lit même pas).
+# Découvert le 2026-08-02 sur une install VRAIMENT fraîche : le template golden d'alors avait Claude BAKÉ
+# depuis juillet et ne rejouait jamais l'installeur, donc la rupture amont restait invisible côté produit.
 install_claude() {
   command -v curl >/dev/null 2>&1 || { echo "✗ curl requis pour --with-claude (installe-le puis relance)" >&2; return 1; }
   local rc attempt ok=""
@@ -71,7 +79,8 @@ install_claude() {
     echo "   déjà présent : $(claude --version 2>/dev/null || echo claude)"; return 0
   fi
   for attempt in 1 2; do
-    if curl -fsSL https://claude.ai/install.sh -o /tmp/claude-install.sh && bash /tmp/claude-install.sh; then ok=1; break; fi
+    if curl -fsSL https://claude.ai/install.sh -o /tmp/claude-install.sh \
+       && CLAUDE_INSTALL_ALLOW_SUDO=1 bash /tmp/claude-install.sh; then ok=1; break; fi
     echo "   (retry $attempt) install Claude échouée — nouvelle tentative…"; sleep 3
   done
   rm -f /tmp/claude-install.sh
