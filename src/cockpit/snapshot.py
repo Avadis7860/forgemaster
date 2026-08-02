@@ -53,7 +53,12 @@ ENTRIES: tuple[tuple[str, str, int], ...] = (
 # l'état à remettre, et le copier avant CHAQUE MAJ la rendrait assez lente pour qu'on la saute. `snapshots/` :
 # sinon l'instantané N+1 embarque les N précédents (croissance quadratique). `restore.py` : ce n'est pas de
 # l'état, c'est de l'outillage re-posé à chaque prise — le restaurer reviendrait à revenir à un outil ancien.
-EXCLUDED_IN_HOME: tuple[str, ...] = ("secrets/master.key", "logs/", "snapshots/", RESTORE)
+# `venvs/`, `current`, `updates/` : du CODE et son journal, pas de l'état utilisateur — un instantané couvre
+# la donnée, jamais le binaire. C'est précisément pour ça que le retour arrière d'une MAJ demande DEUX gestes
+# (rebasculer le lien ET restaurer l'instantané) : les dire ici rend la frontière lisible dans l'artefact
+# lui-même, au lieu de la laisser dans une doc que personne n'aura sous la main ce jour-là.
+EXCLUDED_IN_HOME: tuple[str, ...] = (
+    "secrets/master.key", "logs/", "snapshots/", RESTORE, "venvs/", "current", "updates/")
 
 
 def snapshots_dir(settings: Settings) -> Path:

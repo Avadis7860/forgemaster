@@ -305,6 +305,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_snap_res.add_argument("--dry-run", action="store_true",
                             help="dire ce qui serait remis, ne rien écrire")
 
+    # -- update -------------------------------------------------------------------------------------
+    p_up = sub.add_parser("update", parents=[common],
+                          help="poser un wheel LOCAL en bleu/vert — retour arrière auto s'il ne sert pas")
+    p_up_sub = p_up.add_subparsers(dest="action", required=True, metavar="<action>")
+    p_up_ap = p_up_sub.add_parser(
+        "apply", parents=[common],
+        help="installer un wheel à côté, le prouver, basculer — et revenir seul si le vivant ne répond plus")
+    p_up_ap.add_argument("--wheel", required=True, help="le wheel à poser (fichier local ; aucun réseau)")
+    p_up_ap.add_argument("--dry-run", action="store_true", help="dire ce qui serait fait, ne rien lancer")
+    p_up_ap.add_argument("--detach", action="store_true",
+                         help="ne pas suivre le journal (la MAJ tourne quand même en arrière-plan)")
+    p_up_ap.add_argument("--system", action="store_true", help="unité systemd système (exige root)")
+    p_up_ap.add_argument("--unit", help="chemin de l'unité systemd (défaut : celle de la portée)")
+    p_up_ap.add_argument("--service", default="cockpit", help="nom de l'unité à arrêter/relancer")
+    p_up_ap.add_argument("--systemctl", default="systemctl", help="binaire systemctl (injectable)")
+
     # -- doctor -------------------------------------------------------------------------------------
     sub.add_parser("doctor", parents=[common],
                    help="sonder la présence de l'outillage déclaré par les facettes (rc 0 sain / 1 manquant)")
@@ -546,6 +562,13 @@ def _h_install_service(settings: Settings, args: argparse.Namespace) -> int:
     unit, env, hint = service.install_service(settings, host=args.host, port=args.port, scope=scope)
     print(f"unité systemd écrite → {unit}")
     print(f"EnvironmentFile     → {env} (réglages : store, bind ; aucun secret)")
+    link = service.stable_link(settings)
+    if link.is_symlink():
+        print(f"lien stable         → {link} → {link.resolve()} "
+              f"(l'unité le lance ; c'est lui que `cockpit update apply` bascule)")
+    else:
+        print(f"lien stable         → non posé ({link}) : ce cockpit ne tourne pas dans un venv qui porte "
+              f"la commande `cockpit`. `cockpit update apply` refusera — c'est voulu.")
     print(f"active-la           : {hint}")
     return 0
 
@@ -553,6 +576,11 @@ def _h_install_service(settings: Settings, args: argparse.Namespace) -> int:
 def _h_snapshot(settings: Settings, args: argparse.Namespace) -> int:
     from cockpit import snapshot
     return snapshot.cli_dispatch(settings, args)
+
+
+def _h_update(settings: Settings, args: argparse.Namespace) -> int:
+    from cockpit import update
+    return update.cli_dispatch(settings, args)
 
 
 def _h_doctor(settings: Settings, args: argparse.Namespace) -> int:
@@ -592,6 +620,7 @@ _HANDLERS = {
     "setup": _h_setup,
     "install-service": _h_install_service,
     "snapshot": _h_snapshot,
+    "update": _h_update,
     "doctor": _h_doctor,
     "mcp": _h_mcp,
 }

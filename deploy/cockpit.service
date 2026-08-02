@@ -2,8 +2,14 @@
 #
 # Le plus simple : `cockpit install-service` (service utilisateur, sans root) ou
 # `cockpit install-service --system --host 0.0.0.0` (service système). Ce fichier est un GABARIT manuel :
-# remplace @VENV@ / @HOME@ / @COCKPIT_HOME@ / @USER@ et copie-le au bon endroit
+# remplace @HOME@ / @COCKPIT_HOME@ / @USER@ et copie-le au bon endroit
 # (~/.config/systemd/user/ en user, /etc/systemd/system/ en système).
+#
+# ExecStart passe par @COCKPIT_HOME@/current — un LIEN symbolique vers le venv actif, posé par
+# `install-service`. Ce n'est pas de la cosmétique : `cockpit update apply` pose la nouvelle version dans un
+# venv voisin et bascule ce lien, donc revenir en arrière coûte le même geste dans l'autre sens. Une unité
+# qui lance un venv EN DUR n'est pas cassée — elle est *non migrée*, et `update apply` la refuse
+# explicitement (relance `cockpit install-service` puis `systemctl daemon-reload`).
 #
 # Environment=HOME est OBLIGATOIRE : sans lui, git ne lit pas le helper de credentials → fetch/push non
 # authentifiés en silence. L'EnvironmentFile porte COCKPIT_HOME / le backend de coffre (aucun secret).
@@ -21,7 +27,7 @@ Type=simple
 Environment=HOME=@HOME@
 Environment=COCKPIT_HOME=@COCKPIT_HOME@
 EnvironmentFile=-@COCKPIT_HOME@/cockpit.env
-ExecStart=@VENV@/bin/cockpit serve --host 127.0.0.1 --port 8700
+ExecStart=@COCKPIT_HOME@/current/bin/cockpit serve --host 127.0.0.1 --port 8700
 Restart=on-failure
 RestartSec=3
 

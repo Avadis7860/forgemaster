@@ -65,7 +65,38 @@ def _cockpit_bin() -> str:
     return str(cand) if cand.exists() else "cockpit"
 
 
-def render_unit(settings: Settings, *, host: str, port: int, scope: str = "user") -> str:
+LINK_NAME = "current"
+
+
+def stable_link(settings: Settings) -> Path:
+    """`<home>/current` — le lien symbolique vers le venv ACTIF, et le seul chemin que l'unité systemd
+    connaisse. Un lien plutôt qu'un venv en dur parce que c'est ce qui rend une MAJ **réversible** : poser
+    une nouvelle version, c'est remplacer un lien ; revenir en arrière, c'est le remplacer dans l'autre
+    sens. Sans lui, `cockpit update apply` n'a aucun moyen de défaire ce qu'il a fait — il refuse donc."""
+    return settings.home / LINK_NAME
+
+
+def pose_stable_link(settings: Settings) -> Path | None:
+    """Pose/rafraîchit `<home>/current` vers le venv qui exécute ce code, de façon ATOMIQUE (`symlink` sur
+    un temporaire + `os.replace`) : jamais d'instant où l'unité pointerait le vide. Rend `None` quand on ne
+    tourne pas dans un venv qui porte la commande `cockpit` (checkout `python -m cockpit`, install système)
+    — cas où l'unité retombe sur le binaire résolu par le PATH, et où `update apply` refusera honnêtement
+    plutôt que de basculer un lien qui n'existe pas."""
+    venv = Path(sys.prefix)
+    if not (venv / "bin" / "cockpit").exists():
+        return None
+    link = stable_link(settings)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    tmp = link.with_name(link.name + ".tmp")
+    if tmp.is_symlink() or tmp.exists():
+        tmp.unlink()
+    os.symlink(venv, tmp)
+    os.replace(tmp, link)
+    return link
+
+
+def render_unit(settings: Settings, *, host: str, port: int, scope: str = "user",
+                exec_bin: str | None = None) -> str:
     """Rend le contenu d'une unité systemd pour `cockpit serve`. `Environment=HOME` est **obligatoire** :
     sans lui, git ne lit pas le helper de credentials → fetch/push non authentifiés **en silence** (cf.
     systemd-git-service-needs-home). L'`EnvironmentFile=-…` (optionnel, préfixe `-`) porte COCKPIT_HOME,
@@ -88,7 +119,7 @@ def render_unit(settings: Settings, *, host: str, port: int, scope: str = "user"
         f"Environment=HOME={Path.home()}\n"
         f"Environment=COCKPIT_HOME={home}\n"
         f"EnvironmentFile=-{env_file}\n"
-        f"ExecStart={_cockpit_bin()} serve --host {host} --port {port}\n"
+        f"ExecStart={exec_bin or _cockpit_bin()} serve --host {host} --port {port}\n"
         "Restart=on-failure\n"
         "RestartSec=3\n"
         "\n"
@@ -114,17 +145,30 @@ def _unit_dir(scope: str) -> Path:
     return (Path.home() / ".config/systemd/user") if scope == "user" else Path("/etc/systemd/system")
 
 
+def unit_path(scope: str = "user") -> Path:
+    """Où vit l'unité de CE cockpit, par portée — la même vérité pour `install_service` (qui l'écrit) et
+    pour `update.preflight` (qui la lit)."""
+    return _unit_dir(scope) / "cockpit.service"
+
+
 def install_service(
     settings: Settings, *, host: str, port: int, scope: str = "user",
 ) -> tuple[Path, Path, str]:
     """Écrit l'unité systemd + un `cockpit.env` gabarit (jamais écrasé s'il existe). Retourne
-    `(unit_path, env_path, systemctl_hint)` — l'appelant imprime le hint, on n'exécute pas systemctl."""
-    unit_dir = _unit_dir(scope)
-    unit_dir.mkdir(parents=True, exist_ok=True)
-    unit_path = unit_dir / "cockpit.service"
-    unit_path.write_text(render_unit(settings, host=host, port=port, scope=scope), encoding="utf-8")
+    `(unit_path, env_path, systemctl_hint)` — l'appelant imprime le hint, on n'exécute pas systemctl.
 
+    Pose au passage le **lien stable** `<home>/current` et fait pointer l'unité DESSUS : c'est ce qui rend
+    une MAJ réversible (cf. `pose_stable_link`). Relancer cette commande est donc aussi la **migration**
+    d'une installation antérieure — un `install-service` + `systemctl daemon-reload`, rien d'autre."""
     settings.home.mkdir(parents=True, exist_ok=True)
+    link = pose_stable_link(settings)
+    exec_bin = str(link / "bin" / "cockpit") if link else None
+
+    unit_file = unit_path(scope)
+    unit_file.parent.mkdir(parents=True, exist_ok=True)
+    unit_file.write_text(render_unit(settings, host=host, port=port, scope=scope, exec_bin=exec_bin),
+                         encoding="utf-8")
+
     env_path = settings.home / "cockpit.env"
     if not env_path.exists():                            # ne jamais écraser une conf existante
         env_path.write_text(_env_template(settings, host=host, port=port), encoding="utf-8")
@@ -133,4 +177,4 @@ def install_service(
     sudo = "" if scope == "user" else "sudo "
     hint = (f"{sudo}systemctl {flag}daemon-reload && "
             f"{sudo}systemctl {flag}enable --now cockpit")
-    return unit_path, env_path, hint
+    return unit_file, env_path, hint
