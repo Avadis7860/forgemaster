@@ -200,16 +200,28 @@ def test_wire_mcp_value_stores_ref_persists_and_reflects_live_env(ctx, mcp_env):
 
 def test_wire_mcp_requires_exactly_one_voie_and_validates_bws_ref(ctx, mcp_env):
     settings, _ = ctx
-    bws = _FakeBws({"uuid-ok": "shared-hmac-secret"})
-    mcp_env.setattr(mcp, "build_store", lambda _s: bws)                        # force le backend BWS
+    ep = "http://mcp.example/mcp"                                               # endpoint explicite : chaque
+    bws = _FakeBws({"uuid-ok": "shared-hmac-secret"})                           # refus ci-dessous doit tomber
+    mcp_env.setattr(mcp, "build_store", lambda _s: bws)                         # pour SA raison, pas faute de
+    with pytest.raises(ValueError):                                            # cible (cf. test dédié)
+        onboarding.wire_mcp(settings, endpoint=ep)                             # ni secret ni ref
     with pytest.raises(ValueError):
-        onboarding.wire_mcp(settings)                                          # ni secret ni ref
+        onboarding.wire_mcp(settings, secret="s" * 40, ref="uuid-ok", endpoint=ep)  # les deux → mauvais usage
     with pytest.raises(ValueError):
-        onboarding.wire_mcp(settings, secret="s" * 40, ref="uuid-ok")         # les deux → mauvais usage
+        onboarding.wire_mcp(settings, secret="s" * 40, endpoint=ep)            # BWS : pas de put d'une valeur
     with pytest.raises(ValueError):
-        onboarding.wire_mcp(settings, secret="s" * 40)                        # BWS : pas de put d'une valeur
-    with pytest.raises(ValueError):
-        onboarding.wire_mcp(settings, ref="uuid-absent")                      # réf inconnue → validée avant
-    res = onboarding.wire_mcp(settings, ref="uuid-ok")                        # réf valide → posée telle
+        onboarding.wire_mcp(settings, ref="uuid-absent", endpoint=ep)          # réf inconnue → validée avant
+    res = onboarding.wire_mcp(settings, ref="uuid-ok", endpoint=ep)            # réf valide → posée telle
     assert res["credential_ref"] == "uuid-ok"
+    assert res["endpoint"] == ep
     assert os.environ[mcp.ENV_MCP_JWT_SECRET_REF] == "uuid-ok"
+
+
+def test_wire_mcp_without_endpoint_is_a_400(ctx, mcp_env):
+    """Depuis le 2026-08-03 le produit n'a plus de cible MCP en dur : le wizard qui câble sans endpoint reçoit
+    un 400 explicite (message humain réutilisé tel quel), pas un câblage silencieux vers notre CT."""
+    settings, _ = ctx
+    mcp_env.delenv("COCKPIT_MCP_ENDPOINT", raising=False)
+    with pytest.raises(ValueError, match="aucun endpoint MCP"):
+        onboarding.wire_mcp(settings, secret="x" * 40)
+    assert not (settings.home / "cockpit.env").exists()                         # aucun effet de bord

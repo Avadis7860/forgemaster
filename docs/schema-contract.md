@@ -355,7 +355,8 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   l'UI affiche un EmptyState, pas une erreur. Read-only, bare-safe (réutilise `read_blob`), idempotent. **404**
   projet absent ; **422** SoT illisible). SoT-and-derive : éditer la carte dans le repo met à jour l'affichage.
 - **capital** — parcours **read-only** du capital-token servi par le MCP `mcp-catalogs` (`GET /api/capital/status`
-  `{wired, endpoint}` — porte **sans réseau** ; `GET /api/capital/types` · `GET /api/capital/{type}/collections` ·
+  `{wired, endpoint}` — porte **sans réseau**, `endpoint` **nullable** (`null` = aucune instance configurée : il
+  n'y a pas de cible par défaut) ; `GET /api/capital/types` · `GET /api/capital/{type}/collections` ·
   `GET /api/capital/{type}/sections?scope=` · `GET /api/capital/read?type=&ref=`). Corps **servis tels quels** (le
   serveur MCP est SoT de la forme). Dégradation honnête **à 3 états** : (a) MCP non câblé / (b) injoignable →
   **503** générique (« … non câblé ou injoignable ») ; (c) le MCP **répond mais échoue** sur la ressource (ref

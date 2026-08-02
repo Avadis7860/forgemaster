@@ -24,7 +24,9 @@ export function McpCorpus({ mcp }: { mcp: McpState }) {
           <Badge tone="ok" dot>
             corpus câblé
           </Badge>
-          <span className="break-all text-fg">{mcp.endpoint}</span>
+          <span className="break-all text-fg">
+            {mcp.endpoint ?? 'aucun endpoint — câblage incomplet (`cockpit mcp wire --endpoint <url>`)'}
+          </span>
         </div>
         <p className="text-xs text-faint">
           Chaque dispatch worker injecte un <code>.mcp.json</code> valide. Change de secret depuis la CLI
@@ -33,7 +35,11 @@ export function McpCorpus({ mcp }: { mcp: McpState }) {
       </div>
     )
 
-  const canSubmit = mode === 'secret' ? secret.trim().length >= 32 : ref.trim().length > 0
+  // Aucune cible configurée côté daemon → l'endpoint devient OBLIGATOIRE ici : le serveur refuse (400) un
+  // câblage sans cible depuis qu'il n'a plus de défaut en dur. On le dit avant le POST, pas après.
+  const endpointRequired = mcp.endpoint === null
+  const hasVoie = mode === 'secret' ? secret.trim().length >= 32 : ref.trim().length > 0
+  const canSubmit = hasVoie && (!endpointRequired || endpoint.trim().length > 0)
 
   function onSubmit(e: FormEvent) {
     e.preventDefault()
@@ -83,9 +89,19 @@ export function McpCorpus({ mcp }: { mcp: McpState }) {
       <Input
         value={endpoint}
         onChange={(e) => setEndpoint(e.target.value)}
-        placeholder={`endpoint (défaut ${mcp.endpoint})`}
+        placeholder={
+          endpointRequired
+            ? 'endpoint de ton instance (requis) — https://mcp.exemple.org/mcp'
+            : `endpoint (actuel ${mcp.endpoint})`
+        }
         aria-label="endpoint MCP"
       />
+      {endpointRequired && (
+        <p className="text-xs text-faint">
+          Aucune instance <code>mcp-catalogs</code> n'est configurée sur ce cockpit — il n'y en a pas par
+          défaut. Indique l'URL de la tienne.
+        </p>
+      )}
       {wire.isError && (
         <Alert tone="danger">
           {wire.error instanceof ApiError ? wire.error.detail : 'Échec du câblage.'}

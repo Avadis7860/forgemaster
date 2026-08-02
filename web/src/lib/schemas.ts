@@ -124,7 +124,9 @@ export type BundleFile = z.infer<typeof BundleFileSchema>
 // réponses sont HÉTÉROGÈNES par type/layout (tech silo : {path,title,h2s,lead} ; blueprint plat :
 // {id,title,tags,status,file}) → schémas TOLÉRANTS (`passthrough`) : on déclare ce qu'on affiche, le reste
 // passe sans casser. `wired:false` (porte /status) → l'explorer rend « non câblé » sans tenter de parcours.
-export const CapitalStatusSchema = z.object({ wired: z.boolean(), endpoint: z.string() })
+// `endpoint` est NULLABLE : depuis le 2026-08-03 le daemon n'a plus de cible MCP par défaut — `null` = aucune
+// instance configurée, un état normal pour une install sans corpus privé (jamais une URL devinée).
+export const CapitalStatusSchema = z.object({ wired: z.boolean(), endpoint: z.string().nullable() })
 export type CapitalStatus = z.infer<typeof CapitalStatusSchema>
 
 export const CapitalTypeSchema = z
@@ -930,10 +932,11 @@ export const ClaudeAuthSchema = z.object({
 export type ClaudeAuth = z.infer<typeof ClaudeAuthSchema>
 
 // État de câblage du corpus MCP privé (`wired` = ref de secret présente, jamais le secret ; `endpoint`
-// effectif ou cible par défaut). Optionnel : une install publique sans corpus privé reste valide.
+// effectif, **`null` si aucun n'est configuré** — il n'y a pas de cible par défaut). Optionnel : une install
+// publique sans corpus privé reste valide.
 export const McpStateSchema = z.object({
   wired: z.boolean(),
-  endpoint: z.string(),
+  endpoint: z.string().nullable(),
 })
 export type McpState = z.infer<typeof McpStateSchema>
 
@@ -958,11 +961,13 @@ export interface McpWireInput {
   endpoint?: string
 }
 
-// Réponse du câblage : la RÉFÉRENCE opaque posée + l'endpoint effectif — jamais le secret.
+// Réponse du câblage : la RÉFÉRENCE opaque posée + l'endpoint effectif — jamais le secret. (`endpoint` est
+// nullable par cohérence de contrat ; après un câblage RÉUSSI il est toujours renseigné — sans cible, le
+// serveur refuse en 400 plutôt que de câbler à moitié.)
 export const McpWireResultSchema = z.object({
   wired: z.boolean(),
   credential_ref: z.string(),
-  endpoint: z.string(),
+  endpoint: z.string().nullable(),
 })
 export type McpWireResult = z.infer<typeof McpWireResultSchema>
 

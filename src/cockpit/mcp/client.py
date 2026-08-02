@@ -103,6 +103,8 @@ def blueprint_resolver(settings: Settings, *, secret_ref: str | None = None,
     ep = endpoint if endpoint is not None else current_endpoint()
 
     def resolve(bp_id: str) -> dict | None:
+        if not ep:                          # aucun endpoint configuré (pas de cible par défaut) → pas de MCP
+            return None
         token = _mint_or_none(secret_ref=secret_ref, resolve_secret=resolve_secret, subject=_SUBJECT)
         if token is None:
             return None
@@ -136,7 +138,7 @@ class CapitalBrowser:
     `CapitalServerError` (détail réel), pour ne pas la repeindre en « injoignable ». Instancié via
     `capital_browser` (seams injectés)."""
 
-    def __init__(self, *, endpoint: str, resolve_secret: Callable[[str], str], secret_ref: str | None,
+    def __init__(self, *, endpoint: str | None, resolve_secret: Callable[[str], str], secret_ref: str | None,
                  caller: McpCaller, timeout: float) -> None:
         self._endpoint = endpoint
         self._resolve_secret = resolve_secret
@@ -145,6 +147,8 @@ class CapitalBrowser:
         self._timeout = timeout
 
     def _invoke(self, tool: str, arguments: dict) -> dict | list | None:
+        if not self._endpoint:
+            return None                          # (a) aucun endpoint → None honnête (pas de cible par défaut)
         token = _mint_or_none(secret_ref=self._secret_ref, resolve_secret=self._resolve_secret,
                               subject=_SUBJECT_CAPITAL)
         if token is None:

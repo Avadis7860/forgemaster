@@ -133,7 +133,7 @@ def wire_mcp(settings: Settings, *, secret: str | None = None, ref: str | None =
         posed = mcp.wire(settings, secret=secret, secret_ref=ref, endpoint=endpoint, live_env=True)
     except mcp.MCPWireError as exc:                        # → 400 : message humain réutilisé tel quel
         raise ValueError(str(exc)) from exc
-    return {"wired": True, "credential_ref": posed, "endpoint": endpoint or mcp.MCP_ENDPOINT}
+    return {"wired": True, "credential_ref": posed, "endpoint": endpoint or mcp.current_endpoint()}
 
 
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
@@ -158,7 +158,9 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
                 print(f"  {icon} {r['project']} — {need}")
             mcp_st = st["mcp"]                                   # optionnel : jamais bloquant (ℹ️, pas 🔴)
             if mcp_st.get("wired"):
-                print(f"  ✅ corpus capital (MCP) — câblé ({mcp_st.get('endpoint', '')})")
+                # endpoint absent alors que la ref est posée = câblage à moitié fait (plus de cible en dur)
+                print(f"  ✅ corpus capital (MCP) — câblé "
+                      f"({mcp_st.get('endpoint') or 'AUCUN ENDPOINT — `cockpit mcp wire --endpoint <url>`'})")
             else:
                 print("  ℹ️ corpus capital (MCP) — à connecter (wizard /setup ou `cockpit mcp wire`) ; "
                       "sans lui tu travailles sans ton capital-token")

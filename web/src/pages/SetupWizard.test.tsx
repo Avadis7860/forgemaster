@@ -128,6 +128,21 @@ describe('SetupWizard', () => {
     expect(h.wireMutate).toHaveBeenCalled()
   })
 
+  it('corpus MCP sans endpoint configuré : le câblage exige une cible, le secret seul ne suffit plus', () => {
+    // Fix 2026-08-03 : le daemon n'a plus d'instance mcp-catalogs par défaut (`endpoint: null`). Le serveur
+    // refuserait en 400 un câblage sans cible → l'UI le dit AVANT le POST plutôt que de laisser partir.
+    h.data = { secret_store: STORE, requirements: [], complete: true, project_count: 0, first_run: true, claude_auth: AUTHED, mcp: { wired: false, endpoint: null } }
+    render(<SetupWizard />)
+    expect(screen.getByText(/Aucune instance/)).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('secret HMAC du corpus MCP'), { target: { value: 'x'.repeat(40) } })
+    const submit = screen.getByRole('button', { name: 'Câbler le corpus MCP' })
+    expect(submit).toBeDisabled()                                  // secret valide mais aucune cible
+    fireEvent.change(screen.getByLabelText('endpoint MCP'), { target: { value: 'http://mcp.example/mcp' } })
+    expect(submit).not.toBeDisabled()
+    submit.click()
+    expect(h.wireMutate).toHaveBeenCalled()
+  })
+
   it('corpus MCP déjà câblé : affiche l’état câblé, sans formulaire', () => {
     h.data = { secret_store: STORE, requirements: [], complete: true, project_count: 0, first_run: true, claude_auth: AUTHED, mcp: MCP_WIRED }
     render(<SetupWizard />)

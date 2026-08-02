@@ -19,6 +19,16 @@ from cockpit.mcp import CapitalServerError, blueprint_resolver, capital_browser
 
 _SECRET = "x" * 40                      # ≥32 → le mint HS256 réel passe
 _FAKE_REF = "ref-opaque"
+_ENDPOINT = "http://mcp.example/mcp"    # hôte FICTIF : depuis le 2026-08-03 il n'y a plus de cible par défaut
+
+
+@pytest.fixture(autouse=True)
+def _wired_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ce module teste la dégradation du client sur les axes **secret / transport / erreur-outil** — chacun
+    suppose une cible MCP câblée. Autouse ici (et seulement ici) pour que ces axes restent testés pour ce
+    qu'ils sont et non parce qu'il n'y a pas d'endpoint. L'axe endpoint a son propre test explicite, avec
+    l'env retiré : `test_no_endpoint_returns_none_without_calling`."""
+    monkeypatch.setenv("COCKPIT_MCP_ENDPOINT", _ENDPOINT)
 
 
 @pytest.fixture
@@ -43,6 +53,24 @@ def test_no_secret_ref_returns_none_without_calling_mcp(settings, monkeypatch):
     resolve = blueprint_resolver(settings, caller=caller, resolver=_ok_secret)
     assert resolve("some-gate") is None      # ref absent → MCP non câblé
     assert called == []                      # caller JAMAIS atteint (pas de secret → pas d'appel)
+
+
+def test_no_endpoint_returns_none_without_calling(settings, monkeypatch):
+    """Fix 2026-08-03 : aucune cible configurée (plus de défaut en dur vers notre CT) → les deux clients
+    rendent `None` **sans le moindre appel réseau**, comme pour un secret absent. Une install publique sans
+    corpus privé est un état normal, pas une erreur."""
+    monkeypatch.delenv("COCKPIT_MCP_ENDPOINT", raising=False)
+    called: list = []
+
+    def caller(*a, **k):
+        called.append(1)
+        return {"id": "g"}
+
+    assert blueprint_resolver(settings, secret_ref=_FAKE_REF, resolver=_ok_secret,
+                              caller=caller)("some-gate") is None
+    assert capital_browser(settings, secret_ref=_FAKE_REF, resolver=_ok_secret,
+                           caller=caller).list_types() is None
+    assert called == []                      # aucun appel : pas de cible → pas de réseau
 
 
 def test_short_secret_returns_none_without_mint(settings):

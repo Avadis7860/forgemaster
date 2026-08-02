@@ -76,7 +76,8 @@ def test_interview_wires_mcp_in_worktree_before_launch(ctx, monkeypatch):
     comme le worker headless. Miroir de l'injection du dispatch."""
     settings, conn = ctx
     _socle_project(conn, settings)
-    monkeypatch.setenv("COCKPIT_MCP_JWT_SECRET_REF", "ref")           # MCP câblé
+    monkeypatch.setenv("COCKPIT_MCP_JWT_SECRET_REF", "ref")           # MCP câblé = une ref DE SECRET…
+    monkeypatch.setenv("COCKPIT_MCP_ENDPOINT", "http://mcp.example/mcp")   # …ET une cible (plus de défaut)
     monkeypatch.setattr("cockpit.provision.mcp.cred_resolver", lambda s: (lambda r: "k" * 40))
     seen: dict = {}
 

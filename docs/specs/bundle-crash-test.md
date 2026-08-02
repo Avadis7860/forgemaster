@@ -27,8 +27,8 @@ Invariants verrouillés :
 
 ## Nommage (verbatim assumé)
 
-Le serveur, l'`aud` et l'`iss` du JWT reproduisent **verbatim le contrat validé par le serveur mcp-catalogs**
-(CT 9118, `192.168.0.153:8080`), hérité de l'ex-CT 9113. Ce n'est **pas** un bug : c'est ce qui authentifie
+Le serveur, l'`aud` et l'`iss` du JWT reproduisent **verbatim le contrat validé par le serveur mcp-catalogs**,
+hérité de son hébergement précédent. Ce n'est **pas** un bug : c'est ce qui authentifie
 aujourd'hui. Le retrait du verbatim (`vault-catalogs → mcp-catalogs`) est un renommage **coordonné**
 (serveur-d'abord), suivi hors de cet épic — backlog vault `mcp-catalogs-naming-coherence`. Surtout pas une
 demi-migration côté client.

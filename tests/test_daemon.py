@@ -1199,7 +1199,8 @@ def test_terminal_ws_injects_mcp_config_at_project_cwd_when_wired(client, monkey
     c, settings = client
     c.post("/api/projects", json={"slug": "real"})
     c.app.state.terminals = term_reg.PtySessionRegistry()
-    monkeypatch.setenv("COCKPIT_MCP_JWT_SECRET_REF", "ref")           # MCP câblé
+    monkeypatch.setenv("COCKPIT_MCP_JWT_SECRET_REF", "ref")           # MCP câblé = une ref DE SECRET…
+    monkeypatch.setenv("COCKPIT_MCP_ENDPOINT", "http://mcp.example/mcp")   # …ET une cible (plus de défaut)
     monkeypatch.setattr("cockpit.provision.mcp.cred_resolver", lambda s: (lambda r: "k" * 40))
 
     async def _fake_serve(websocket, registry, **kwargs):

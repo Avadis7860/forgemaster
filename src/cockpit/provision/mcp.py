@@ -28,21 +28,21 @@ from cockpit.secrets import SecretNotFound, SecretUnsupported, build_store, cred
 from cockpit.secrets.jwt import b64url_decode, mint_hs256
 from cockpit.service import set_env_keys
 
-# Endpoint du serveur mcp-catalogs (HTTP + JWT, CT 9118). Non secret → override simple par env.
-_DEFAULT_MCP_ENDPOINT = "http://192.168.0.153:8080/mcp"
-# Snapshot IMPORT-TIME (compat rétro : encore importé par `mcp/client.py` + des tests). NE PAS l'utiliser
-# comme défaut « live » — `wire(live_env=True)` met à jour `os.environ` mais PAS cette constante → un câblage
-# vers un endpoint ≠ défaut ne prendrait pas effet sans redémarrer. Endpoint effectif : `current_endpoint()`.
-MCP_ENDPOINT = os.environ.get("COCKPIT_MCP_ENDPOINT", _DEFAULT_MCP_ENDPOINT)
+ENV_MCP_ENDPOINT = "COCKPIT_MCP_ENDPOINT"
 
 
-def current_endpoint() -> str:
+def current_endpoint() -> str | None:
     """L'endpoint MCP EFFECTIF, résolu à l'APPEL (jamais gelé) : `os.environ['COCKPIT_MCP_ENDPOINT']` — que
-    `wire(live_env=True)` met à jour LIVE — sinon le défaut cible. Sert de défaut à `render_mcp_config` (le
-    `.mcp.json` injecté au worker) et à `capital_browser`/`blueprint_resolver` : sans lui, après un câblage
-    vers un endpoint ≠ défaut, le daemon interrogeait encore l'ancien (503 « MCP non câblé ») et le worker
-    pointait l'ancien (footgun constaté 2026-07-30, démo laptop MCP servi en local)."""
-    return os.environ.get("COCKPIT_MCP_ENDPOINT", _DEFAULT_MCP_ENDPOINT)
+    `wire(live_env=True)` met à jour LIVE. Résolu à l'appel et non gelé à l'import parce que, sans ça, après
+    un câblage vers un autre endpoint le daemon interrogeait encore l'ancien (503 « MCP non câblé ») et le
+    worker pointait l'ancien (footgun constaté 2026-07-30, démo laptop MCP servi en local).
+
+    **`None` = aucun endpoint configuré, et c'est un état NORMAL** — une install sans corpus privé n'a pas
+    d'instance mcp-catalogs à interroger. Ce module portait jusqu'au 2026-08-03 un défaut en dur vers NOTRE
+    CT (`192.168.0.153`) : un défaut de produit qui ne survivait que parce que personne d'autre que nous ne
+    l'exécutait. Un cockpit n'a **pas** d'instance MCP par défaut ; l'absence se dit (`None`), elle ne se
+    devine pas. Les appelants dégradent honnêtement : pas d'endpoint ⇒ pas de MCP."""
+    return os.environ.get(ENV_MCP_ENDPOINT) or None
 # Contrat prouvé accepté par le serveur (verbatim ex-CT 9113 ; cf. backlog mcp-catalogs-naming-coherence).
 MCP_SERVER_LABEL = "vault-catalogs"
 MCP_AUDIENCE = "vault-catalogs"
@@ -60,12 +60,21 @@ _MCP_FILENAME = ".mcp.json"
 
 def render_mcp_config(token: str, *, endpoint: str | None = None) -> dict:
     """Forme du `.mcp.json` que `claude -p` charge : un serveur MCP http + Bearer. `endpoint=None` (défaut) →
-    résolu LIVE via `current_endpoint()` (jamais gelé à l'import). PUR (hors lecture d'`os.environ`)."""
+    résolu LIVE via `current_endpoint()` (jamais gelé à l'import). PUR (hors lecture d'`os.environ`).
+
+    Lève `ValueError` si aucun endpoint n'est résolu : il n'y a pas de cible par défaut, et écrire un
+    `.mcp.json` sans URL servirait au worker une config muette. Les appelants qui doivent dégrader (plutôt
+    que crasher) testent `current_endpoint()` AVANT — cf. `inject_mcp_config`, no-op honnête."""
+    ep = endpoint or current_endpoint()
+    if not ep:
+        raise ValueError(
+            f"aucun endpoint MCP configuré ({ENV_MCP_ENDPOINT}) — il n'y a pas de cible par défaut ; "
+            "câble une instance (`cockpit mcp wire --endpoint <url>`) ou passe `endpoint=`.")
     return {
         "mcpServers": {
             MCP_SERVER_LABEL: {
                 "type": "http",
-                "url": endpoint or current_endpoint(),
+                "url": ep,
                 "headers": {"Authorization": f"Bearer {token}"},
             },
         }
@@ -79,8 +88,12 @@ def inject_mcp_config(worktree: Path, settings: Settings, *, slug: str,
 
     Résout le secret HMAC partagé via le coffre (`resolver`, défaut = `cred_resolver(settings)` — **total** :
     `''` si absent/illisible). Mint un JWT scopé `sub=cockpit:<slug>` (aud/iss du contrat serveur). **No-op
-    honnête** (retourne `None`, aucun fichier) si le ref n'est pas configuré ou si le secret est absent/trop
-    court — le dispatch ne doit jamais crasher sur le câblage MCP. Retourne le chemin écrit sinon."""
+    honnête** (retourne `None`, aucun fichier) si **aucun endpoint n'est configuré**, si le ref n'est pas
+    configuré, ou si le secret est absent/trop court — le dispatch ne doit jamais crasher sur le câblage MCP.
+    Retourne le chemin écrit sinon."""
+    endpoint = current_endpoint()
+    if not endpoint:                                       # aucune instance MCP câblée → pas de MCP, dit
+        return None                                        # par l'absence de fichier (le worker tourne sans)
     ref = secret_ref if secret_ref is not None else os.environ.get(ENV_MCP_JWT_SECRET_REF, "")
     if not ref:
         return None
@@ -91,7 +104,8 @@ def inject_mcp_config(worktree: Path, settings: Settings, *, slug: str,
     token = mint_hs256(f"cockpit:{slug}", secret, audience=MCP_AUDIENCE, issuer=MCP_ISSUER,
                        ttl_seconds=_TTL_SECONDS)
     path = worktree / _MCP_FILENAME
-    path.write_text(json.dumps(render_mcp_config(token), indent=2) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(render_mcp_config(token, endpoint=endpoint), indent=2) + "\n",
+                    encoding="utf-8")
     path.chmod(0o600)                                      # porte le Bearer — lecture propriétaire seule
     return path
 
@@ -135,6 +149,9 @@ def check_lifecycle(settings: Settings, *, now: int, window_s: float = _RUN_WIND
     - **non câblé** (pas de `COCKPIT_MCP_JWT_SECRET_REF`) → `configured=False, healthy=True` (install public
       sans corpus privé — dégradation prévue, pas une erreur) ;
     - **ref posée mais secret illisible/court** → `configured=True, healthy=False` (câblage cassé → wire) ;
+    - **ref posée mais aucun endpoint** → `configured=True, healthy=False` : câblage à moitié fait. Sans
+      défaut en dur (depuis le 2026-08-03), `inject_mcp_config` no-ope **silencieusement** dans cet état —
+      le doctor est l'endroit qui doit le dire, sinon le worker part sans MCP sans qu'un mot soit prononcé ;
     - **sinon** : mint un token témoin (ce qu'un dispatch minterait → prouve config + TTL) et scanne
       les `.mcp.json` des worktrees ; un token **expiré ou expirant dans la fenêtre d'un run** = `stale` (le
       faux-négatif void-runner : worktree non re-dispatché). `healthy` ⇔ mint OK et aucun stale."""
@@ -142,6 +159,10 @@ def check_lifecycle(settings: Settings, *, now: int, window_s: float = _RUN_WIND
     if not ref:
         return {"configured": False, "healthy": True, "exp": None, "stale": [],
                 "reason": "MCP non câblé (install sans corpus privé)"}
+    if not current_endpoint():
+        return {"configured": True, "healthy": False, "exp": None, "stale": [],
+                "reason": f"aucun endpoint MCP ({ENV_MCP_ENDPOINT}) — ref de secret posée mais pas de "
+                          "cible : le dispatch n'injectera aucun `.mcp.json` (`cockpit mcp wire --endpoint`)"}
     resolve = resolver or cred_resolver(settings)
     secret = resolve(ref)
     if len(secret) < 32:
@@ -162,8 +183,9 @@ def check_lifecycle(settings: Settings, *, now: int, window_s: float = _RUN_WIND
 
 def wire_state() -> dict:
     """État de câblage MCP tel que VU par le daemon courant (env vivant, sans restart) : `wired` ssi une ref
-    de secret est présente, `endpoint` effectif (défaut cible si non câblé). Alimente le wizard pour
-    montrer/sauter l'étape — signal léger, orthogonal au diagnostic riche de `check_lifecycle` (doctor)."""
+    de secret est présente, `endpoint` effectif — **`None` si aucun n'est configuré** (il n'y a pas de cible
+    par défaut). Alimente le wizard pour montrer/sauter l'étape — signal léger, orthogonal au diagnostic
+    riche de `check_lifecycle` (doctor)."""
     return {
         "wired": bool(os.environ.get(ENV_MCP_JWT_SECRET_REF)),
         "endpoint": current_endpoint(),
@@ -186,10 +208,19 @@ def wire(settings: Settings, *, secret_ref: str | None = None, secret: str | Non
     → ref opaque), `secret_file` (même voie, depuis un fichier — la CLI), ou `secret_ref` (bring-your-own
     UUID, VALIDÉE via `store.get`). `live_env=True` reflète aussi la ref dans `os.environ` du process courant
     → le daemon la voit **sans restart** (wizard). Lève `MCPWireError` sur mauvais usage / backend
-    incompatible / secret trop court / ref introuvable."""
+    incompatible / secret trop court / ref introuvable / **endpoint absent**.
+
+    L'endpoint est **obligatoire** (`endpoint=` ou déjà dans l'env) depuis le 2026-08-03 : il n'y a plus de
+    cible en dur, et câbler un secret sans dire vers QUOI produirait un câblage à moitié fait, silencieux au
+    dispatch. Validé AVANT tout effet de bord (rien n'est écrit dans le coffre si l'appel est incomplet)."""
     if sum(x is not None for x in (secret, secret_file, secret_ref)) != 1:
         raise MCPWireError(
             "fournir exactement l'un de : secret (valeur) | secret_file (fichier) | secret_ref (BWS/UUID).")
+    ep = endpoint or current_endpoint()
+    if not ep:
+        raise MCPWireError(
+            f"aucun endpoint MCP — passe `--endpoint <url>` (ou pose {ENV_MCP_ENDPOINT} dans l'env) : "
+            "un cockpit n'a pas d'instance mcp-catalogs par défaut.")
     store = build_store(settings)
     if secret_file is not None:
         try:
@@ -211,11 +242,10 @@ def wire(settings: Settings, *, secret_ref: str | None = None, secret: str | Non
             store.get(ref)                                    # voie BWS → VALIDE que la ref résout
         except SecretNotFound as exc:
             raise MCPWireError(f"référence introuvable dans le store {store.backend!r} : {ref!r}") from exc
-    ep = endpoint or current_endpoint()
-    set_env_keys(settings.home / "cockpit.env", {ENV_MCP_JWT_SECRET_REF: ref, "COCKPIT_MCP_ENDPOINT": ep})
+    set_env_keys(settings.home / "cockpit.env", {ENV_MCP_JWT_SECRET_REF: ref, ENV_MCP_ENDPOINT: ep})
     if live_env:                                              # le daemon voit la ref sans recharger l'unit
         os.environ[ENV_MCP_JWT_SECRET_REF] = ref
-        os.environ["COCKPIT_MCP_ENDPOINT"] = ep
+        os.environ[ENV_MCP_ENDPOINT] = ep
     return ref
 
 

@@ -22,6 +22,17 @@ from cockpit.secrets import build_store
 from cockpit.secrets.jwt import mint_hs256, verify_hs256
 
 _SECRET = "k" * 40  # ≥32c : exigence HS256
+_ENDPOINT = "http://mcp.example:8080/mcp"   # hôte FICTIF : il n'y a plus d'endpoint par défaut à hériter
+
+
+@pytest.fixture
+def wired_endpoint(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Simule une install dont le MCP est **câblé** — l'endpoint vient de l'env, jamais d'un défaut en dur.
+    Volontairement NON autouse : un test qui a besoin d'une cible MCP doit le DIRE, exactement comme un
+    utilisateur doit la câbler. Un fixture autouse redonnerait aux tests le défaut qu'on vient de retirer du
+    produit, et masquerait la régression qu'il est censé attraper."""
+    monkeypatch.setenv(mcp.ENV_MCP_ENDPOINT, _ENDPOINT)
+    return _ENDPOINT
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -65,7 +76,8 @@ def test_token_exp_reads_exp_and_none_on_malformed():
 def test_worktree_token_extracts_bearer(tmp_path: Path):
     wt = tmp_path / "wt"
     wt.mkdir()
-    (wt / ".mcp.json").write_text(json.dumps(mcp.render_mcp_config("TOK123")), encoding="utf-8")
+    (wt / ".mcp.json").write_text(json.dumps(mcp.render_mcp_config("TOK123", endpoint=_ENDPOINT)),
+                                  encoding="utf-8")
     assert mcp.worktree_token(wt) == "TOK123"
     assert mcp.worktree_token(tmp_path / "vide") is None       # .mcp.json absent → None
 
@@ -80,20 +92,30 @@ def test_check_lifecycle_bad_secret_is_unhealthy(tmp_path: Path):
     assert st["configured"] and not st["healthy"] and "secret" in st["reason"]
 
 
-def test_check_lifecycle_healthy_when_no_stale_worktree(tmp_path: Path):
+def test_check_lifecycle_healthy_when_no_stale_worktree(tmp_path: Path, wired_endpoint: str):
     st = mcp.check_lifecycle(_settings(tmp_path), now=int(time.time()),
                              secret_ref="ref", resolver=lambda _r: _SECRET)
     assert st["configured"] and st["healthy"] and st["exp"] > int(time.time()) and st["stale"] == []
 
 
-def test_check_lifecycle_flags_expired_worktree_token(tmp_path: Path):
+def test_check_lifecycle_without_endpoint_is_unhealthy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Câblage à moitié fait : la ref de secret est posée, mais aucune cible. Sans défaut en dur,
+    `inject_mcp_config` no-ope **silencieusement** dans cet état — le doctor doit le dire, sinon le worker
+    part sans MCP sans un mot (le trou qu'ouvrirait le retrait du défaut si personne ne le surveillait)."""
+    monkeypatch.delenv(mcp.ENV_MCP_ENDPOINT, raising=False)
+    st = mcp.check_lifecycle(_settings(tmp_path), now=1000, secret_ref="ref", resolver=lambda _r: _SECRET)
+    assert st["configured"] and not st["healthy"] and "endpoint" in st["reason"]
+
+
+def test_check_lifecycle_flags_expired_worktree_token(tmp_path: Path, wired_endpoint: str):
     """Le faux-négatif void-runner : un worktree porte un `.mcp.json` dont le token expire avant la fin d'un
     run → `stale`, `healthy=False` (doctor rougirait)."""
     settings = _settings(tmp_path)
     tok = mint_hs256("cockpit:proj", _SECRET, audience="vault-catalogs", ttl_seconds=3600)
     wt = settings.projects_root / "proj" / "worktrees" / "feat"
     wt.mkdir(parents=True)
-    (wt / ".mcp.json").write_text(json.dumps(mcp.render_mcp_config(tok)), encoding="utf-8")
+    (wt / ".mcp.json").write_text(json.dumps(mcp.render_mcp_config(tok, endpoint=wired_endpoint)),
+                                  encoding="utf-8")
     future = 2_000_000_000                            # « maintenant » très futur → le token a expiré
     st = mcp.check_lifecycle(settings, now=future, secret_ref="ref", resolver=lambda _r: _SECRET)
     assert not st["healthy"] and len(st["stale"]) == 1 and str(wt) == st["stale"][0]["worktree"]
@@ -113,17 +135,33 @@ def test_endpoint_resolved_live_not_frozen_at_import(monkeypatch: pytest.MonkeyP
     câblage live (`wire(live_env=True)` → `os.environ`) est donc reflété par `current_endpoint()` ET par le
     `.mcp.json` rendu sans endpoint explicite (`render_mcp_config`, le défaut du worker) — sans quoi un wire
     vers un endpoint ≠ défaut ne prenait pas effet sans redémarrer (503 « MCP non câblé »)."""
-    monkeypatch.setenv("COCKPIT_MCP_ENDPOINT", "http://live:9999/mcp")
+    monkeypatch.setenv(mcp.ENV_MCP_ENDPOINT, "http://live:9999/mcp")
     assert mcp.current_endpoint() == "http://live:9999/mcp"
     srv = mcp.render_mcp_config("TOK")["mcpServers"]["vault-catalogs"]
     assert srv["url"] == "http://live:9999/mcp"              # défaut résolu LIVE, pas la constante d'import
-    monkeypatch.delenv("COCKPIT_MCP_ENDPOINT", raising=False)
-    assert mcp.current_endpoint() == "http://192.168.0.153:8080/mcp"   # retombe sur le défaut cible (CT 9118)
+
+
+def test_no_endpoint_configured_is_none_not_our_ct(monkeypatch: pytest.MonkeyPatch):
+    """Fix 2026-08-03 (prérequis de publication) : sans `COCKPIT_MCP_ENDPOINT`, l'endpoint est **`None`**.
+    Le module portait un défaut en dur vers NOTRE CT — un défaut de produit qui ne survivait que parce que
+    personne d'autre que nous ne l'exécutait. `render_mcp_config` refuse alors d'écrire une config muette."""
+    monkeypatch.delenv(mcp.ENV_MCP_ENDPOINT, raising=False)
+    assert mcp.current_endpoint() is None
+    assert mcp.wire_state()["endpoint"] is None
+    with pytest.raises(ValueError, match="aucun endpoint MCP"):
+        mcp.render_mcp_config("TOK")
+
+
+def test_empty_endpoint_is_treated_as_unconfigured(monkeypatch: pytest.MonkeyPatch):
+    """`COCKPIT_MCP_ENDPOINT=` (posé mais vide — un `cockpit.env` à moitié rempli) vaut NON configuré, pas
+    une URL vide qu'on servirait au worker."""
+    monkeypatch.setenv(mcp.ENV_MCP_ENDPOINT, "")
+    assert mcp.current_endpoint() is None
 
 
 # -- injection (façade sur le coffre) ---------------------------------------------------------------
 
-def test_inject_writes_config_chmod600_with_scoped_bearer(tmp_path: Path):
+def test_inject_writes_config_chmod600_with_scoped_bearer(tmp_path: Path, wired_endpoint: str):
     wt = tmp_path / "wt"
     wt.mkdir()
     p = mcp.inject_mcp_config(wt, _settings(tmp_path), slug="void-runner",
@@ -135,7 +173,7 @@ def test_inject_writes_config_chmod600_with_scoped_bearer(tmp_path: Path):
     assert claims is not None and claims["sub"] == "cockpit:void-runner"   # scopé au projet
 
 
-def test_inject_is_honest_noop_without_ref_or_secret(tmp_path: Path):
+def test_inject_is_honest_noop_without_ref_or_secret(tmp_path: Path, wired_endpoint: str):
     settings = _settings(tmp_path)
     wt = tmp_path / "wt"
     wt.mkdir()
@@ -147,9 +185,20 @@ def test_inject_is_honest_noop_without_ref_or_secret(tmp_path: Path):
     assert not (wt / ".mcp.json").exists()
 
 
+def test_inject_is_honest_noop_without_endpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Secret parfaitement câblé mais **aucune cible** → no-op honnête (`None`, aucun fichier), jamais un
+    `.mcp.json` sans URL ni un crash de dispatch. La forme produit de « pas d'endpoint = pas de MCP »."""
+    monkeypatch.delenv(mcp.ENV_MCP_ENDPOINT, raising=False)
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    assert mcp.inject_mcp_config(wt, _settings(tmp_path), slug="x",
+                                 resolver=lambda r: _SECRET, secret_ref="ref") is None
+    assert not (wt / ".mcp.json").exists()
+
+
 # -- invariant de sécurité : le Bearer ne peut JAMAIS être committé ---------------------------------
 
-def test_injected_mcp_json_is_gitignored_never_committed(tmp_path: Path):
+def test_injected_mcp_json_is_gitignored_never_committed(tmp_path: Path, wired_endpoint: str):
     """Le `.mcp.json` injecté dans un worktree réel est ignoré par git → le `git add -A` de la forge ne le
     stage pas (le JWT ne fuit jamais dans l'historique). C'est la garantie dure de P6."""
     settings = _settings(tmp_path)
@@ -184,7 +233,7 @@ def test_build_headless_argv_wires_mcp_config(tmp_path: Path):
 
 
 def test_dispatch_injects_mcp_and_worker_sees_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-                                                 fake_tools):
+                                                 fake_tools, wired_endpoint: str):
     """Bout du chemin réel : secret dans le coffre fichier + ref via env → `dispatch_next` injecte le
     `.mcp.json` dans le worktree et passe `--mcp-config` au runner ; le worker le voit dans son cwd."""
     settings = _settings(tmp_path)
@@ -244,11 +293,11 @@ def test_mcp_wire_file_path_persists_ref_never_plaintext(tmp_path: Path):
     secret_file = tmp_path / "secret.txt"
     secret_file.write_text(_SECRET, encoding="utf-8")
     rc = mcp.cli_dispatch(settings, argparse.Namespace(
-        action="wire", secret_file=str(secret_file), secret_ref=None, endpoint="http://192.168.0.153:8080/mcp"))
+        action="wire", secret_file=str(secret_file), secret_ref=None, endpoint=_ENDPOINT))
     assert rc == 0
     env_text = (settings.home / "cockpit.env").read_text(encoding="utf-8")
     assert _SECRET not in env_text                                  # le secret n'est JAMAIS en clair
-    assert "COCKPIT_MCP_ENDPOINT=http://192.168.0.153:8080/mcp" in env_text
+    assert f"COCKPIT_MCP_ENDPOINT={_ENDPOINT}" in env_text
     # la ref posée résout vers le secret dans le coffre
     ref = next(line.split("=", 1)[1] for line in env_text.splitlines()
                if line.startswith("COCKPIT_MCP_JWT_SECRET_REF="))
@@ -269,7 +318,23 @@ def test_mcp_wire_ref_path_missing_ref_fails_and_writes_nothing(tmp_path: Path):
     import argparse
     settings = _settings(tmp_path)
     settings.home.mkdir(parents=True, exist_ok=True)
-    rc = mcp.cli_dispatch(settings, argparse.Namespace(
-        action="wire", secret_file=None, secret_ref="00000000-inexistant", endpoint=None))
+    rc = mcp.cli_dispatch(settings, argparse.Namespace(          # endpoint FOURNI : le fail testé ici est
+        action="wire", secret_file=None, secret_ref="00000000-inexistant", endpoint=_ENDPOINT))
     assert rc == 1                                                  # ref introuvable → fail-loud
     assert not (settings.home / "cockpit.env").exists()             # rien posé
+
+
+def test_mcp_wire_without_endpoint_refuses_and_writes_nothing(tmp_path: Path,
+                                                              monkeypatch: pytest.MonkeyPatch):
+    """Câbler un secret sans dire vers QUOI produirait un câblage à moitié fait, silencieux au dispatch →
+    refus **avant tout effet de bord** (rien dans le coffre, rien dans `cockpit.env`)."""
+    import argparse
+    monkeypatch.delenv(mcp.ENV_MCP_ENDPOINT, raising=False)
+    settings = _settings(tmp_path)
+    settings.home.mkdir(parents=True, exist_ok=True)
+    secret_file = tmp_path / "secret.txt"
+    secret_file.write_text(_SECRET, encoding="utf-8")
+    rc = mcp.cli_dispatch(settings, argparse.Namespace(
+        action="wire", secret_file=str(secret_file), secret_ref=None, endpoint=None))
+    assert rc == 1
+    assert not (settings.home / "cockpit.env").exists()             # aucun effet de bord

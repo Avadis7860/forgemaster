@@ -5,6 +5,24 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Endpoint MCP — **plus aucun défaut en dur** (`endpoint` devient nullable) — **API, aucun bump de schéma**
+- **Défaut de produit** (prérequis de publication) : `provision/mcp.py` portait `_DEFAULT_MCP_ENDPOINT =
+  "http://192.168.0.153:8080/mcp"` — **notre** CT. Toute install sans câblage explicite tapait donc chez nous
+  au premier dispatch. Invisible tant que nous étions les seuls à l'exécuter ; indéfendable dès qu'un tiers
+  installe. Le défaut est **supprimé**, pas déplacé dans une config : un cockpit n'a pas d'instance
+  `mcp-catalogs` par défaut, et l'absence se **dit** au lieu de se deviner.
+- `current_endpoint()` rend désormais `str | None` (`COCKPIT_MCP_ENDPOINT` vide ⇒ non configuré). Chaîne de
+  dégradation, honnête de bout en bout : `inject_mcp_config` → **no-op** (aucun `.mcp.json`, jamais de crash de
+  dispatch) · `blueprint_resolver` / `CapitalBrowser` → `None` **sans appel réseau** · `render_mcp_config` →
+  `ValueError` (on n'écrit pas une config sans URL) · `wire()` → `MCPWireError` **avant tout effet de bord**
+  (rien dans le coffre, rien dans `cockpit.env`) : câbler un secret sans dire vers quoi est un demi-câblage.
+- `check_lifecycle` (doctor) gagne l'état **« ref posée, aucune cible »** → `healthy=False`. Sans lui, le
+  retrait du défaut aurait créé un trou silencieux : dispatch sans MCP, et pas un mot.
+- **API** — `endpoint` devient **nullable** sur `GET /api/capital/status`, le champ `mcp` de
+  `GET /api/onboarding`, et la réponse de `POST /api/onboarding/mcp`. Côté UI, quand aucune cible n'est
+  configurée, l'endpoint devient **obligatoire** dans le formulaire de câblage (le serveur refuserait en 400)
+  et le placeholder ne propose plus une adresse à nous.
+
 ### Tier-0 natif — contrat d'applicabilité **UNIVERSEL** (groupe `declared`) — **aucun bump de schéma**
 - **Défaut** (P0, structurel pour tout utilisateur distribué) : l'applicabilité du Tier-0 natif dérivait d'une
   **allowlist de 3 motifs** (`web/`, `*.py`, suffixes node). Un diff qu'aucun ne touchait sortait en `[]` →
