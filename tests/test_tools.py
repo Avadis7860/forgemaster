@@ -1,10 +1,11 @@
 """Tests de `cockpit.tools` — provisionnement hôte-niveau de l'outillage déclaré par les bundles.
 
 Seams PURS (chemins/PATH/plan) testés sans subprocess ; `install_tools` avec un runner INJECTÉ qui
-matérialise les binaires attendus, pour prouver symlinks, idempotence, fail-loud et auth transitoire —
+matérialise les binaires attendus, pour prouver symlinks, idempotence, fail-loud et clone anonyme —
 jamais un vrai pip/nodeenv (lents, réseau : prouvés à la vérif install fraîche)."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -147,20 +148,31 @@ def test_install_tools_missing_binary_after_green_install_is_loud(settings):
     assert report["ok"] is False and "absent après install" in report["error"]
 
 
-def test_install_tools_injects_credential_env_for_private_maps(settings):
-    """Un token fourni → les étapes pip tournent sous un env porteur du `insteadOf` (token JAMAIS en argv)."""
-    envs: dict = {}
-    tools.install_tools(settings, token="ghp_secret",
-                        runner=_materializing_runner(settings, captured_envs=envs))
-    pip_env = envs["pip-tools"]
-    # credential_env pose un url.<embed x-access-token:token>.insteadOf via GIT_CONFIG_KEY_n
-    keys = {k: v for k, v in pip_env.items() if k.startswith("GIT_CONFIG_KEY_")}
-    assert any("x-access-token:ghp_secret@github.com" in v for v in keys.values())
-    assert pip_env.get("GIT_TERMINAL_PROMPT") == "0"
+def test_install_tools_adds_nothing_but_the_prompt_guard(settings):
+    """Les 3 cartes sont PUBLIQUES : l'install n'AJOUTE aucun credential — elle ajoute `GIT_TERMINAL_PROMPT`
+    et rien d'autre.
 
-
-def test_install_tools_no_token_runs_ambient(settings):
-    """Sans token (repos publics à terme) → aucun insteadOf injecté ; l'install tourne en env ambiant."""
+    Garde de non-régression du chemin d'install. L'assertion porte sur le **delta** avec l'ambiant, pas sur
+    l'absence de tout token dans l'env : ce que git lit du `.gitconfig` de l'utilisateur reste à lui. Ce qui
+    est interdit, c'est que le cockpit compose un `insteadOf` — tant que c'était possible, chaque E2E
+    tournait sous une configuration qu'aucun utilisateur n'aura jamais."""
     envs: dict = {}
     tools.install_tools(settings, runner=_materializing_runner(settings, captured_envs=envs))
-    assert not any(k.startswith("GIT_CONFIG_KEY_") for k in envs["pip-tools"])
+    for name, env in envs.items():
+        added = {k: v for k, v in env.items() if os.environ.get(k) != v}
+        assert set(added) <= {"GIT_TERMINAL_PROMPT"}, f"l'étape {name} ajoute à l'env : {sorted(added)}"
+
+
+def test_install_tools_disables_git_prompt(settings):
+    """`GIT_TERMINAL_PROMPT=0` sur les étapes pip : un repo injoignable échoue NET au lieu de pendre sur un
+    prompt de credentials jusqu'au timeout de 900 s (le mode d'échec le plus opaque de cette install)."""
+    envs: dict = {}
+    tools.install_tools(settings, runner=_materializing_runner(settings, captured_envs=envs))
+    assert envs["pip-tools"].get("GIT_TERMINAL_PROMPT") == "0"
+
+
+def test_install_tools_takes_no_credential_argument(settings):
+    """La signature ne porte plus `token`/`token_ref` : le chemin d'auth est RETIRÉ, pas rendu optionnel."""
+    import inspect
+    params = inspect.signature(tools.install_tools).parameters
+    assert "token" not in params and "token_ref" not in params

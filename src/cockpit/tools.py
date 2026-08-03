@@ -18,8 +18,11 @@ vérif install fraîche, jamais au gate déterministe.
 
 Pas dans le venv du cockpit (ne pas polluer ses deps ni son PATH systemd) : un venv **séparé** sous
 COCKPIT_HOME. Node via **nodeenv** (rootless, pip-natif) → autonome, marche en portée `--user` sans sudo.
-Auth des cartes privées par **credential_env** transitoire (jamais de token en argv ni dans l'URL loggée) ;
-repos publics à terme → clone anonyme, aucun changement (forward-compatible).
+Les 3 cartes sont **publiques** (2026-08-03) : le clone est **ANONYME**, et aucun credential n'entre ici —
+ni `token`, ni `token_ref`, ni `credential_env`. Le chemin d'auth a été retiré plutôt que laissé dormant :
+tant qu'il existait, chaque E2E tournait sous une configuration qu'aucun utilisateur n'aura jamais, donc
+prouvait une fiction. `GIT_TERMINAL_PROMPT=0` **reste** — sans lui, un repo devenu injoignable (renommé,
+re-privatisé) ferait *pendre* pip sur un prompt de credentials jusqu'au timeout, au lieu d'échouer net.
 """
 from __future__ import annotations
 
@@ -33,8 +36,6 @@ from pathlib import Path
 
 from cockpit.config import Settings
 from cockpit.core.run import RunResult, run
-from cockpit.git.internal import credential_env
-from cockpit.secrets import cred_resolver
 
 Runner = Callable[..., RunResult]
 
@@ -44,7 +45,7 @@ class ToolPreflightError(RuntimeError):
     Levé AVANT le spawn (fail-loud, actionnable) : le worker ne découvre plus l'absence à l'usage."""
 
 # Les 3 cartes de contenu par-projet, packagées (console_scripts codemap/docsmap/frontmap). Installées depuis
-# leur repo GitHub à une réf suivie — token de lecture partagé si privé (aujourd'hui), anonyme quand publiées.
+# leur repo GitHub PUBLIC à une réf suivie, en clone ANONYME — aucun credential sur ce chemin.
 # (task-map exclu : moteur central importé en-process, pas une carte host — cf. docstring du module.)
 MAP_REPOS: dict[str, str] = {
     "code-map": "https://github.com/Avadis7860/code-map.git",
@@ -188,13 +189,24 @@ def _default_runner(argv: list[str], *, env: Mapping[str, str] | None, timeout: 
     return run(argv, env=env, timeout=timeout, check=False)
 
 
-def install_tools(settings: Settings, *, token: str | None = None, token_ref: str | None = None,
-                  runner: Runner | None = None) -> dict:
+def anonymous_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
+    """L'env des clones git de pip : l'ambiant, **sans aucun credential**, et `GIT_TERMINAL_PROMPT=0`.
+
+    Les 3 cartes sont publiques → le clone est anonyme. Ce seam existe pour que ça reste vrai : il ne
+    compose aucun `url.…insteadOf`, donc aucun token ne peut se glisser dans l'env d'un enfant git (le test
+    l'asserte). Le `GIT_TERMINAL_PROMPT=0` n'est pas décoratif — un repo renommé ou re-privatisé fait
+    *pendre* git sur un prompt jusqu'au timeout de 900 s, au lieu de rendre une erreur lisible."""
+    env = dict(base if base is not None else os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
+
+
+def install_tools(settings: Settings, *, runner: Runner | None = None) -> dict:
     """Provisionne l'outillage hôte-niveau (IDEMPOTENT, FAIL-LOUD). Crée le venv d'outils, installe les 3
-    cartes + qualité py + Node (nodeenv), puis symlinke chaque exécutable dans `tools/bin`. Auth des cartes
-    privées : `token` (lu d'un `--token-file`) ou `token_ref` (résolu par le store) → `credential_env`
-    transitoire (jamais en argv/URL). Une étape rouge (rc≠0) **abandonne** (jamais un demi-provisioning) et
-    retourne `{ok:False, steps, error}`. Retour `{ok, steps:[{name, ok, exit_code, error?}], symlinks:[nom]}`.
+    cartes + qualité py + Node (nodeenv), puis symlinke chaque exécutable dans `tools/bin`. Les cartes sont
+    publiques : clone **anonyme**, aucun credential n'entre par ici. Une étape rouge (rc≠0) **abandonne**
+    (jamais un demi-provisioning) et retourne `{ok:False, steps, error}`. Retour
+    `{ok, steps:[{name, ok, exit_code, error?}], symlinks:[nom]}`.
     """
     runner = runner or _default_runner
     root = tools_root(settings)
@@ -209,9 +221,8 @@ def install_tools(settings: Settings, *, token: str | None = None, token_ref: st
         report["error"] = "création du venv d'outils échouée"
         return report
 
-    # 2. auth transitoire (token → credential_env) pour les clones git de pip. Total : token vide → ambiant.
-    tok = token if token is not None else (cred_resolver(settings)(token_ref) if token_ref else "")
-    env = credential_env(tok, base=os.environ) if tok else dict(os.environ)
+    # 2. env des clones git de pip : anonyme, aucun credential (les 3 cartes sont publiques).
+    env = anonymous_env()
 
     # 3. installs (fail-loud : abandon au 1er rouge).
     for step in install_plan(settings):
@@ -254,18 +265,11 @@ def _run_step(runner: Runner, step: dict, *, env: Mapping[str, str], steps: list
 
 
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
-    """Route `cockpit tools install` : provisionne l'outillage hôte-niveau. `--token-file <f>` lit un token
-    de lecture partagé (voie fichier — jamais en argv) pour les cartes privées. Imprime chaque étape ; code
-    de sortie 1 si une étape a échoué (fail-loud)."""
-    token: str | None = None
-    tf = getattr(args, "token_file", None)
-    if tf:
-        try:
-            token = Path(tf).expanduser().read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            print(f"erreur : token-file illisible — {exc}")
-            return 1
-    report = install_tools(settings, token=token)
+    """Route `cockpit tools install` : provisionne l'outillage hôte-niveau. Aucun credential — les 3 cartes
+    sont publiques, le clone est anonyme (le `--token-file` d'avant a été RETIRÉ, pas rendu optionnel : un
+    drapeau accepté-et-ignoré ferait croire qu'il sert encore). Imprime chaque étape ; code de sortie 1 si
+    une étape a échoué (fail-loud)."""
+    report = install_tools(settings)
     for s in report["steps"]:  # type: ignore[attr-defined]
         mark = "🟢" if s.get("ok") else "🔴"
         extra = f" (exit {s.get('exit_code')}: {s['error']})" if s.get("error") else ""

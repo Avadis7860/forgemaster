@@ -61,10 +61,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_tools = sub.add_parser("tools", parents=[common],
                              help="outillage hôte-niveau que les bundles déclarent (install)")
     p_tools_sub = p_tools.add_subparsers(dest="action", required=True, metavar="<action>")
-    ti = p_tools_sub.add_parser("install", parents=[common],
-                                help="installer maps + Node + qualité py sous COCKPIT_HOME/tools")
-    ti.add_argument("--token-file",
-                    help="fichier d'un token de lecture partagé (cartes privées — jamais en argv)")
+    # Pas de `--token-file` ici : les 3 cartes sont publiques, le clone est anonyme. Le drapeau a été
+    # RETIRÉ plutôt qu'accepté-et-ignoré — un appelant qui le passe encore doit l'apprendre bruyamment.
+    p_tools_sub.add_parser("install", parents=[common],
+                           help="installer maps + Node + qualité py sous COCKPIT_HOME/tools (anonyme)")
 
     # -- bundle -------------------------------------------------------------------------------------
     p_bundle = sub.add_parser("bundle", parents=[common],

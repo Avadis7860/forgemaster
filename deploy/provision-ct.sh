@@ -13,6 +13,10 @@
 # (ré-exécution sûre — venv réutilisé, bootstrap skip les outils déjà là, install-service n'écrase pas
 # cockpit.env) ; FAIL-LOUD (`set -euo pipefail`) ; AUCUN secret en argv (le token passe par --token-file).
 #
+# `--token-file` ne sert PLUS aux 3 cartes (publiques depuis 2026-08-03 → clone anonyme à l'étape [4/8]) :
+# il ne sert qu'à l'AMORÇAGE [7/8], et seulement pour les dépôts du manifeste encore privés. Manifeste
+# entièrement public → provisionnement complet sans aucun credential.
+#
 # Usage :
 #   deploy/provision-ct.sh --wheel <chemin.whl> [--manifest deploy/bootstrap.yaml] [--token-file <token>]
 #     [--venv ~/.venvs/cockpit] [--home ~/.cockpit] [--projects-root ~/projects]
@@ -209,10 +213,11 @@ if [ "$with_claude" = "yes" ]; then install_claude; fi
 # Outillage hôte-niveau : ce que les bundles DÉCLARENT (codemap/docsmap/frontmap + Node + ruff/pytest/mypy),
 # installé dans un venv d'outils dédié sous COCKPIT_HOME et exposé sur tools/bin — le dispatch worker ET le
 # gate natif préfixent ce bin au PATH. Sans ça, un worker sur n'importe quel type CONSTATE ses outils absents
-# (le wheel n'expose que `cockpit`). Idempotent, fail-loud. Token partagé (--token-file) pour les cartes
-# privées ; repos publics → clone anonyme. Node via nodeenv (rootless), sans sudo.
-echo "→ [4/8] outillage hôte-niveau (maps + Node + qualité py → $home/tools/bin)"
-if [ -n "$token_file" ]; then "$cockpit" tools install --token-file "$token_file"; else "$cockpit" tools install; fi
+# (le wheel n'expose que `cockpit`). Idempotent, fail-loud. Les 3 cartes sont PUBLIQUES → clone ANONYME :
+# cette étape ne reçoit AUCUN credential, même si un --token-file a été passé pour l'amorçage [7/8].
+# Node via nodeenv (rootless), sans sudo.
+echo "→ [4/8] outillage hôte-niveau (maps + Node + qualité py → $home/tools/bin) — sans credential"
+"$cockpit" tools install
 echo "   runtime conteneur (podman) pour \`cockpit deploy\` (P2)"
 install_podman
 echo "   moteur compose (podman-compose standalone — podman 4.3.1 de Debian 12 n'a pas \`podman compose\`)"
