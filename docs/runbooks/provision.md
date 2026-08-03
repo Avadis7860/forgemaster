@@ -47,7 +47,7 @@ Copie la source committée `.claude/facets/<facet>/settings.local.json` → `.cl
 Pur : `<root>/.claude/facets/<facet>/`. La persona + méthode sont lues depuis ce dossier committé (injectées dans le prompt, zéro fichier posé).
 
 ## wire() — câble l'instance mcp-catalogs sur cette install (cœur partagé CLI + wizard)
-`src/cockpit/provision/mcp.py:178` · appelé par `cli_dispatch` (`cockpit mcp wire`) **et** par la route onboarding du wizard.
+`src/cockpit/provision/mcp.py:200` · appelé par `cli_dispatch` (`cockpit mcp wire`) **et** par la route onboarding du wizard.
 Pose dans `cockpit.env` une **référence opaque** au secret HMAC partagé (jamais le secret en clair) + l'endpoint, de sorte que le prochain dispatch injecte un `.mcp.json` valide (`inject_mcp_config`). Rend la ref posée. **Exactement une** voie parmi trois : `secret` (la valeur brute, que le wizard POSTe → `store.put` → ref), `secret_file` (même voie depuis un fichier — la CLI), ou `secret_ref` (bring-your-own UUID, **validée** via `store.get`). `live_env=True` reflète en plus la ref dans l'`os.environ` du process courant : le daemon la voit **sans restart** — c'est ce que fait le wizard ; la voie CLI, elle, demande un `systemctl restart cockpit` pour recharger l'EnvironmentFile. Lève `MCPWireError` sur mauvais usage (zéro ou plusieurs voies), backend incompatible, secret `<32c` ou ref introuvable. Sans câblage, l'injection reste un no-op honnête.
 
 ## render_mcp_config() — la forme du .mcp.json (pure)
@@ -55,27 +55,27 @@ Pose dans `cockpit.env` une **référence opaque** au secret HMAC partagé (jama
 Pur (hors lecture d'`os.environ`) : un `mcpServers` avec le label `vault-catalogs` (verbatim du contrat serveur CT 9118), `type: http`, l'`url` et un header `Authorization: Bearer <token>`. L'endpoint par défaut (`endpoint=None`) est résolu **LIVE** par `current_endpoint()`, jamais gelé à l'import — un re-wire prend effet au prochain rendu sans recharger le module.
 
 ## inject_mcp_config() — mint du token scopé + écriture chmod 600
-`src/cockpit/provision/mcp.py:75` · appelé au dispatch d'un worker (injection POST-création).
+`src/cockpit/provision/mcp.py:84` · appelé au dispatch d'un worker (injection POST-création).
 **Cœur de l'invariant token-scopé** : résout le secret HMAC via le coffre (`cred_resolver`, total), mint un JWT `mint_hs256(f"cockpit:{slug}", …, aud=vault-catalogs, iss=vault-mcp, ttl=86400s)` — donc `sub=cockpit:<slug>` **scopé au projet** — puis écrit `<worktree>/.mcp.json` (`chmod 600`, porte le Bearer → lecture propriétaire seule). **No-op honnête** (`None`, aucun fichier) si le ref n'est pas configuré ou si le secret est absent/`<32c`. Re-minté à chaque dispatch (just-in-time, jamais expiré au lancement).
 
 ## worktree_token() — lit le Bearer réellement servi (pur)
-`src/cockpit/provision/mcp.py:115` · appelé par `check_lifecycle`.
+`src/cockpit/provision/mcp.py:129` · appelé par `check_lifecycle`.
 Lit et rend le Bearer du `.mcp.json` d'un worktree (le token effectivement servi au worker), ou `None` si fichier absent / illisible / forme inattendue. Pur — **ne mint pas** (le mint est dans `inject_mcp_config`).
 
 ## token_exp() — l'exp d'un JWT sans le vérifier (pur)
-`src/cockpit/provision/mcp.py:101` · appelé par `check_lifecycle`.
+`src/cockpit/provision/mcp.py:115` · appelé par `check_lifecycle`.
 Décode le payload base64url et rend l'`exp` (epoch) **sans authentifier** — le doctor signale, il ne vérifie pas. `None` si token malformé ou sans `exp`. Pur.
 
 ## check_lifecycle() — diagnostic déterministe pour cockpit doctor
-`src/cockpit/provision/mcp.py:129` · appelé par `cockpit doctor`.
+`src/cockpit/provision/mcp.py:143` · appelé par `cockpit doctor`.
 Retourne `{configured, healthy, reason, exp, stale}`, zéro réseau. Non câblé (pas de `COCKPIT_MCP_JWT_SECRET_REF`) → `configured=False, healthy=True` (install sans corpus privé, dégradation prévue) ; ref posée mais secret illisible/`<32c` → `configured=True, healthy=False` (câblage cassé → re-wire) ; sinon mint un token témoin (`cockpit:doctor`) et scanne les `.mcp.json` des worktrees — un token expiré ou expirant dans la fenêtre d'un run (`_RUN_WINDOW_S=1800s`) = `stale` (faux-négatif void-runner : worktree non re-dispatché). `healthy` ⇔ mint OK et aucun stale.
 
 ## MCPWireError — l'erreur de câblage du wire
-`src/cockpit/provision/mcp.py:173` (`ValueError`) · levée par `wire`, interceptée par `cli_dispatch` et la route onboarding.
+`src/cockpit/provision/mcp.py:195` (`ValueError`) · levée par `wire`, interceptée par `cli_dispatch` et la route onboarding.
 Signale un câblage refusé **avant tout effet** : zéro ou plusieurs voies de secret fournies, backend sans secret direct (bring-your-own attendu), secret `<32c` (HS256 exige au moins 32 caractères), ref introuvable dans le store. Sous-classe de `ValueError` — un appelant qui n'en sait rien la traite comme telle. À ne pas confondre avec l'**injection** (`inject_mcp_config`), qui ne lève pas : elle dégrade en no-op honnête quand le câblage est absent.
 
 ## wire_state() — l'état de câblage, sans révéler le secret
-`src/cockpit/provision/mcp.py:163` · lu par `onboarding.status` (axe `mcp` du wizard).
+`src/cockpit/provision/mcp.py:184` · lu par `onboarding.status` (axe `mcp` du wizard).
 Rend `{wired, endpoint}` : la **présence** de la ref et l'endpoint résolu, jamais la valeur. C'est ce qui permet au wizard de dire « corpus privé câblé / pas câblé » sans jamais lire un secret.
 
 ## Zones non détaillées

@@ -8,16 +8,18 @@ même convention forge : seams **purs** testables sans subprocess + exécution i
 en argv.
 
 ## tools.preflight_tools() / install_tools() — gate de présence + provisionnement hôte-niveau
-`src/cockpit/tools.py:150` (`preflight_tools`) · `src/cockpit/tools.py:191` (`install_tools`) · appelés par le
+`src/cockpit/tools.py:151` (`preflight_tools`) · `src/cockpit/tools.py:204` (`install_tools`) · appelés par le
 gate de dispatch (preflight avant spawn) et `cockpit tools install` (cli_dispatch).
 `preflight_tools` vérifie que tout binaire déclaré par la facette active (`<worktree>/.claude/settings.local.json`)
-résout sur le PATH worker (`tools_env`) et lève `ToolPreflightError` (`:42`) AVANT le spawn — ne gate QUE
+résout sur le PATH worker (`tools_env`) et lève `ToolPreflightError` (`:43`) AVANT le spawn — ne gate QUE
 `declared & HOST_TOOLS` (outils hôte-provisionnés). `install_tools` est idempotent/fail-loud : crée le venv
-d'outils, installe les 4 cartes + qualité py + Node via nodeenv (`install_plan`), symlinke chaque exécutable
-dans `tools/bin` ; une étape rouge abandonne (jamais un demi-provisioning).
+d'outils, installe les **3** cartes (`task-map` est vendoré au wheel, pas une carte hôte) + qualité py + Node
+via nodeenv (`install_plan`), symlinke chaque exécutable dans `tools/bin` ; une étape rouge abandonne (jamais
+un demi-provisioning). **Aucun credential** : les 3 dépôts sont publics, le clone est anonyme — `anonymous_env`
+n'ajoute que `GIT_TERMINAL_PROMPT=0`, sans quoi un dépôt injoignable ferait *pendre* pip 900 s sur un prompt.
 
 ## tools.missing_bins() — quels binaires ne résolvent pas
-`src/cockpit/tools.py:144` · appelé par `preflight_tools`, `doctor.scan`.
+`src/cockpit/tools.py:145` · appelé par `preflight_tools`, `doctor.scan`.
 Seam **pur** : sous-ensemble trié de `bins` que `shutil.which` ne trouve pas via `env["PATH"]`. C'est la vérité
 unique partagée entre le gate de dispatch et la sonde `doctor` — aucune duplication de logique de présence.
 
