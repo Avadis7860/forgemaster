@@ -41,7 +41,7 @@ from cockpit.tools import Runner, anonymous_env, dist_provenance, run_step, venv
 # jamais seule — l'inverse exact de `tools.MAP_REF = "main"` (réf mobile, dont la mobilité est précisément
 # ce qui a rendu `cockpit tools check` nécessaire). Bump = une entrée CHANGELOG + une édition.
 SERVER_REPO = "https://github.com/Avadis7860/forgemaster-catalogs.git"
-SERVER_REF = "0d481d3c2795a35549515b67acb3abd6b314e31b"
+SERVER_REF = "e216b12fa1a92f1a44a6415b50abe5382dbad6ac"  # + l'offre de source AGPL §13 sur GET /version
 SERVER_DIST = "forgemaster-catalogs"          # nom de DISTRIBUTION (pip), pas de module
 SERVER_UNIT = "forgemaster-catalogs"          # nom d'unité systemd — celui du dépôt amont, pas un alias
 

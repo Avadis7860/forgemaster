@@ -5,6 +5,15 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Le serveur co-installé porte désormais son offre de source AGPL §13
+- **`mcp.local.SERVER_REF` bumpé** `0d481d3` → `e216b12` : `GET /version` du serveur MCP porte un bloc
+  `source` désignant le code de la version **réellement servie** (dépôt, révision, lien profond, licence).
+- **Ce n'est pas un bump de confort.** C'est le co-install qui met l'utilisateur en position d'exposer un
+  service AGPL sur un réseau — donc c'est lui que le §13 vise. Laisser la ref en arrière ferait tourner,
+  chez chaque instance co-installée, un serveur incapable d'honorer l'obligation qu'on vient de lui créer.
+- Ref épinglée, donc **une entrée de CHANGELOG et une édition** : c'est la règle §3 de la décision
+  d'édition, pas une exception.
+
 ### All-in-one : une instance peut faire tourner SON serveur MCP, et dit laquelle des deux topologies elle est
 - **Schéma API** — `GET /api/version` gagne la clé **`mcp`** `{topology, sha, endpoint, reason}` (aussi visible
   sous `build` dans `GET /api/onboarding`). Pas de bump `SCHEMA_VERSION` : champ additif d'API HTTP, aucune
