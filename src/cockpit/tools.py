@@ -266,10 +266,18 @@ def maps_provenance(settings: Settings) -> list[dict]:
 
 # -- sonde de fraîcheur : comparaison à l'amont (réseau EXPLICITE, jamais au dispatch) ----------------
 #
-# La comparaison n'est PAS faite dans `preflight_tools` : ce chemin s'exécute avant CHAQUE spawn de worker,
-# et y mettre 3 appels réseau rendrait le dispatch dépendant de GitHub — hors réseau il faudrait soit
-# bloquer un dispatch sain, soit se taire (le faux-vert qu'on répare). Même partage que la fraîcheur du
-# wheel (`build_provenance`) : le produit dit localement ce qu'il sert, la référence amont est explicite.
+# La comparaison n'est PAS faite dans `preflight_tools`, et la raison N'EST PAS « l'instance peut être hors
+# réseau » : les 3 appelants du preflight (`dispatch/{worker,reviewer,woaw}.py`) spawnent tous `claude`, qui
+# exige l'API Anthropic. Un dispatch hors ligne n'existe pas ici.
+#
+# La vraie raison est : QUE FERAIT LE DISPATCH DE LA RÉPONSE ? `MAP_REF` est une réf MOBILE et la dérive
+# commence en quelques heures (mesuré : 4 h sur la VM 9311). Un preflight qui REFUSE bloquerait donc presque
+# tous les spawns passé la demi-journée — un check qui s'allume sur ce qui est normal PAR CONSTRUCTION. Un
+# preflight qui AVERTIT donne au worker un fait sur lequel il ne peut rien : il ne peut pas réinstaller son
+# outillage en vol (et muter les outils sous un worker qui tourne est précisément ce qu'on a écarté).
+# Accessoirement, GitHub est un SECOND fournisseur, indépendant d'Anthropic : une panne GitHub deviendrait un
+# motif neuf de ne pas pouvoir dispatcher. La comparaison va donc là où quelqu'un peut AGIR dessus — une
+# commande d'opérateur — et le produit se contente de dire localement ce qu'il sert.
 _LS_REMOTE_TIMEOUT_S = 30       # une réf, pas un clone : borné court (le dispatch, lui, ne l'appelle pas).
 
 

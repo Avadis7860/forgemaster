@@ -42,10 +42,13 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
   fraîcheur **non vérifiée** : « je n'ai pas pu vérifier » n'est ni « à jour » ni « périmé ». Ne dit jamais
   « en retard de N commits » (`ls-remote` ne rend que des réfs ; un compte inventé retirerait le doute qui
   doit déclencher la vérification).
-- **Délibérément PAS dans `preflight_tools`** : ce chemin s'exécute avant chaque spawn ; 3 appels réseau y
-  rendraient le dispatch dépendant de GitHub — hors réseau il faudrait bloquer un dispatch sain ou se taire.
-  Même partage que la fraîcheur du wheel : le produit dit localement ce qu'il sert, la comparaison est
-  explicite. La remise à niveau reste `cockpit tools install` (idempotent) — une re-sync automatique
+- **Délibérément PAS dans `preflight_tools`**, et **pas** pour un motif hors-ligne (les 3 appelants du
+  preflight spawnent `claude`, donc exigent l'API Anthropic — un dispatch hors ligne n'existe pas ici) :
+  la question est **que ferait le dispatch de la réponse ?** `MAP_REF` est mobile et la dérive commence en
+  quelques heures. **Refuser** bloquerait presque tous les spawns passé la demi-journée — un check qui
+  s'allume sur ce qui est normal par construction. **Avertir** donnerait au worker un fait sur lequel il ne
+  peut rien (il ne réinstalle pas son outillage en vol). La comparaison va donc là où quelqu'un peut agir
+  dessus. La remise à niveau reste `cockpit tools install` (idempotent) — une re-sync automatique
   remplacerait un binaire sous un worker en vol.
 
 ### Endpoint MCP — **plus aucun défaut en dur** (`endpoint` devient nullable) — **API, aucun bump de schéma**

@@ -8,7 +8,7 @@ même convention forge : seams **purs** testables sans subprocess + exécution i
 en argv.
 
 ## tools.preflight_tools() / install_tools() — gate de présence + provisionnement hôte-niveau
-`src/cockpit/tools.py:151` (`preflight_tools`) · `src/cockpit/tools.py:381` (`install_tools`) · appelés par le
+`src/cockpit/tools.py:151` (`preflight_tools`) · `src/cockpit/tools.py:389` (`install_tools`) · appelés par le
 gate de dispatch (preflight avant spawn) et `cockpit tools install` (cli_dispatch).
 `preflight_tools` vérifie que tout binaire déclaré par la facette active (`<worktree>/.claude/settings.local.json`)
 résout sur le PATH worker (`tools_env`) et lève `ToolPreflightError` (`:43`) AVANT le spawn — ne gate QUE
@@ -86,19 +86,27 @@ Mesure du 2026-08-03 (VM 9311) : instance provisionnée à 00:34, les 3 cartes d
 04:19. Le figeage n'attend pas des semaines — il commence à la première heure.
 
 ## tools.check_tools() — les cartes servies ont-elles dérivé de leur amont
-`src/cockpit/tools.py:444` (`check_tools`) · `src/cockpit/tools.py:294` (`compare`, PUR) ·
+`src/cockpit/tools.py:452` (`check_tools`) · `src/cockpit/tools.py:294` (`compare`, PUR) ·
 `src/cockpit/tools.py:276` (`check_plan`, PUR) · `src/cockpit/tools.py:318` (`overall_state`, PUR) ·
-`src/cockpit/tools.py:496` (`_cli_check`) · appelé par `cockpit tools check`.
+`src/cockpit/tools.py:504` (`_cli_check`) · appelé par `cockpit tools check`.
 
 Un `git ls-remote <url> <MAP_REF>` par carte (aucun objet transféré), sous `anonymous_env` — la sonde tape les
 mêmes dépôts publics que l'install et n'a donc **pas le droit** d'y ajouter un credential (un test l'asserte).
 Une carte qu'on ne sert pas n'est **pas** interrogée : sa raison est déjà locale, et l'interroger ferait attendre
 le réseau pour une réponse connue.
 
-**Pourquoi pas dans `preflight_tools`** : ce chemin s'exécute avant **chaque** spawn de worker. Y mettre 3
-appels réseau rendrait le dispatch dépendant de GitHub — hors réseau il faudrait soit bloquer un dispatch sain
-(un check qui s'allume sur ce qui est normal), soit se taire (le faux-vert qu'on répare). Même partage que la
-fraîcheur du wheel : le produit dit **localement** ce qu'il sert, la comparaison à l'amont est **explicite**.
+**Pourquoi pas dans `preflight_tools`** — et **pas** parce que « l'instance peut être hors réseau » : les 3
+appelants du preflight (`dispatch/{worker,reviewer,woaw}.py`) spawnent tous `claude`, qui exige l'API
+Anthropic. Un dispatch hors ligne n'existe pas ici.
+
+La vraie raison est : **que ferait le dispatch de la réponse ?** `MAP_REF` est une réf **mobile** et la dérive
+commence en quelques heures (mesuré : 4 h). Un preflight qui **refuse** bloquerait presque tous les spawns
+passé la demi-journée — un check qui s'allume sur ce qui est normal **par construction**. Un preflight qui
+**avertit** donne au worker un fait sur lequel il ne peut rien : il ne peut pas réinstaller son outillage en
+vol, et muter les outils sous un worker qui tourne est précisément ce qu'on a écarté. Accessoirement, GitHub
+est un **second** fournisseur, indépendant d'Anthropic : une panne GitHub deviendrait un motif neuf de ne pas
+pouvoir dispatcher. La comparaison va donc là où quelqu'un peut **agir** dessus — une commande d'opérateur —
+et le produit se contente de dire **localement** ce qu'il sert.
 
 Trois issues **distinctes**, et c'est le cœur du contrat — exit **0** à jour · **1** au moins une diffère ·
 **2** rien ne diffère mais au moins une n'a pas pu être comparée. « Je n'ai pas pu vérifier » n'est ni « à
