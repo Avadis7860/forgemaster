@@ -331,13 +331,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="sonder la présence de l'outillage déclaré par les facettes (rc 0 sain / 1 manquant)")
 
     # -- mcp ----------------------------------------------------------------------------------------
-    p_mcp = sub.add_parser("mcp", parents=[common], help="câbler un MCP de corpus (mcp-catalogs)")
+    p_mcp = sub.add_parser("mcp", parents=[common], help="câbler un MCP de corpus (forgemaster-catalogs)")
     p_mcp_sub = p_mcp.add_subparsers(dest="action", required=True, metavar="<action>")
     pmw = p_mcp_sub.add_parser("wire", parents=[common],
                                help="poser la ref du secret + l'endpoint MCP dans cockpit.env")
     pmw.add_argument("--secret-file", help="fichier du secret HMAC partagé (jamais en argv)")
     pmw.add_argument("--secret-ref", help="UUID d'un secret déjà dans le coffre (voie BWS)")
-    pmw.add_argument("--endpoint", help="endpoint MCP (défaut : l'instance mcp-catalogs)")
+    pmw.add_argument("--endpoint", help="endpoint MCP (défaut : l'instance forgemaster-catalogs)")
 
     return parser
 

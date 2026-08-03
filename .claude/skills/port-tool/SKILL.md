@@ -11,7 +11,7 @@ related_catalogs: []
 ## Quand l'utiliser
 
 À chaque étape de la réimplémentation *couche par couche* : un stub `raise NotImplementedError("port:
-<source> — #N")` doit devenir du code réel. (Skill frère des repos `code-map` / `mcp-catalogs` — même
+<source> — #N")` doit devenir du code réel. (Skill frère des repos `code-map` / `forgemaster-catalogs` — même
 discipline, sources différentes : ici le legacy `services/aggregator/` du vault.)
 
 ## Procédure

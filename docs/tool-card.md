@@ -14,7 +14,7 @@ Lâcher un agent sur un repo sans cadre → dérive, conflits, merges non vérif
 travail : **pas de task ⇒ pas de dispatch** (le worker part d'un objectif défini) ; chaque worker travaille
 dans un **worktree isolé** (aucune collision entre features parallèles) ; un **gate** (tests + review) bloque
 **avant** le merge. L'agent travaille dans une boucle **définie et vérifiable**, pas en roue libre. Les autres
-outils l'**ancrent** (code-map le code, front-map l'UI, docs-map la prose, mcp-catalogs la doc tierce) ; le
+outils l'**ancrent** (code-map le code, front-map l'UI, docs-map la prose, forgemaster-catalogs la doc tierce) ; le
 cockpit l'**orchestre**.
 
 ## En bref

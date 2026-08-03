@@ -33,9 +33,9 @@ async def _accept_project_pty(websocket: WebSocket, project: str) -> str | None:
 
     Injection MCP (miroir du dispatch headless `worker._run_worker`) : un `.mcp.json` frais (JWT minté
     just-in-time, chmod 600, gitignoré) est écrit au cwd du PTY → un `claude` lancé dans le terminal
-    DÉCOUVRE le MCP `mcp-catalogs` (`/mcp` le liste, solve-mode disponible pour un travail jamais fait).
-    No-op honnête si le MCP n'est pas câblé (install sans corpus privé). Le cwd n'est pas un working-tree
-    (racine projet = `sot.git` bare + `worktrees/`) → le Bearer n'est jamais committé."""
+    DÉCOUVRE le MCP `forgemaster-catalogs` (`/mcp` le liste, solve-mode disponible pour un travail jamais
+    fait). No-op honnête si le MCP n'est pas câblé (install sans corpus privé). Le cwd n'est pas un
+    working-tree (racine projet = `sot.git` bare + `worktrees/`) → le Bearer n'est jamais committé."""
     deps = websocket.app.state.deps
     subprotocol = await authorize_ws(websocket)                 # garde CSWSH (Origin + token) avant accept
     if subprotocol is None:                                     # Origin hors politique / token absent → fermé

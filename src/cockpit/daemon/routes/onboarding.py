@@ -59,10 +59,10 @@ def make_onboarding_router() -> APIRouter:
 
     @router.post("/api/onboarding/mcp")
     def wire_mcp(body: McpWire, deps: Deps = Depends(get_deps)) -> dict:
-        """Câble l'instance mcp-catalogs (wizard, instance-level, hors projet) : pose la ref opaque du secret
-        HMAC + l'endpoint → le prochain dispatch injecte un `.mcp.json` valide **sans restart**. `secret`
-        (valeur brute) OU `ref` (BWS/UUID). Mauvais usage/backend → 400. Ne renvoie JAMAIS le secret,
-        seulement la `credential_ref` opaque posée."""
+        """Câble l'instance forgemaster-catalogs (wizard, instance-level, hors projet) : pose la ref opaque
+        du secret HMAC + l'endpoint → le prochain dispatch injecte un `.mcp.json` valide **sans restart**.
+        `secret` (valeur brute) OU `ref` (BWS/UUID). Mauvais usage/backend → 400. Ne renvoie JAMAIS le
+        secret, seulement la `credential_ref` opaque posée."""
         return onboarding.wire_mcp(deps.settings, secret=body.secret, ref=body.ref, endpoint=body.endpoint)
 
     @router.delete("/api/projects/{project}/credential")

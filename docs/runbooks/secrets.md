@@ -28,7 +28,7 @@ Transport = SDK officiel `bitwarden-sdk` (client in-process, auth réutilisée),
 
 ## mint_hs256() — forge un JWT HS256 (stdlib pure)
 `src/cockpit/secrets/jwt.py:29` · appelé par `provision.mcp` (Bearer du `.mcp.json` injecté au dispatch).
-Assemble `header{alg:HS256,typ:JWT}` + `payload{sub/iss/aud/iat/exp}` (défauts `issuer="vault-mcp"`, `ttl_seconds=3600`), signe en HMAC-SHA256 via `hmac`/`hashlib` (stdlib, pas de `pyjwt`). Rejette un `secret` < 32 caractères par `ValueError` (`_MIN_SECRET_LEN`). Le contrat de claims (`aud`, `iss`) est celui validé par le serveur mcp-catalogs.
+Assemble `header{alg:HS256,typ:JWT}` + `payload{sub/iss/aud/iat/exp}` (défauts `issuer="vault-mcp"`, `ttl_seconds=3600`), signe en HMAC-SHA256 via `hmac`/`hashlib` (stdlib, pas de `pyjwt`). Rejette un `secret` < 32 caractères par `ValueError` (`_MIN_SECRET_LEN`). Le contrat de claims (`aud`, `iss`) est celui validé par le serveur forgemaster-catalogs.
 
 ## verify_hs256() — vérifie un JWT HS256
 `src/cockpit/secrets/jwt.py:44` · pendant de `mint_hs256` (port fidèle de `jwt_stdlib` du vault).

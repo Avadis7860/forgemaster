@@ -5,6 +5,21 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Le serveur MCP frère s'appelle désormais `forgemaster-catalogs`
+- **Ce qui bouge ici** : le dépôt adopté par le rail (`deploy/bootstrap.yaml` — `slug` + `source_url`,
+  verrouillé par `test_bootstrap`), et le nom du serveur partout où il est **visible par l'utilisateur**
+  (`McpCorpus`, wizard `/setup`, réglages `/settings`) ou cité en doc. Rendu vérifié à l'écran : le bloc
+  « Corpus capital (MCP) » ne casse pas — le nom, 7 caractères plus long, tient sa ligne.
+- **Ce qui NE bouge PAS** : `aud=vault-catalogs` / `iss=vault-mcp` du JWT. Le cockpit **reproduit** le
+  contrat validé par le serveur ; le renommer ici seul serait la demi-migration que `provision/mcp.py`
+  refuse explicitement. Le retrait du verbatim historique reste coordonné serveur-d'abord (backlog vault
+  `mcp-catalogs-naming-coherence` — un **id**, qui garde son nom).
+- **Ni `mcp-catalogs-data`** : le dépôt de DONNÉES ne change pas de nom (`launch_templates/*.yaml`,
+  graines de bundles). Il est un **préfixe** du nom renommé — une substitution naïve l'aurait emporté.
+- **Effet de bord assumé** : le `slug` adopté changeant, une instance qui avait déjà adopté
+  `mcp-catalogs` en verra un **nouveau** (l'ancien clone reste, inutilisé). Aucune instance distribuée
+  n'existe à ce jour ; pas de migration écrite pour un parc vide.
+
 ### `cockpit tools install` ne remettait RIEN à niveau et rendait « 🟢 » — le piège pip-git-SHA
 - **Trouvé par la sonde livrée juste avant** : après un `tools install` répondant vert sur ses 4 étapes,
   `cockpit tools check` est resté **rouge** et `codemap --help` n'avait pas récupéré son verbe. La garde a
@@ -13,7 +28,7 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
   bon commit** (`d04c2776d8c8`), prépare les métadonnées… puis **saute l'install** parce que la version
   installée est identique. Les 3 cartes sont figées à `0.1.0` : la version ne discrimine **jamais**. pip
   faisait le travail réseau, apprenait la bonne réponse, et la jetait — `direct_url.json` restait sur le
-  commit périmé. C'est le même piège que le cutover de `mcp-catalogs`, sur un autre chemin.
+  commit périmé. C'est le même piège que le cutover de `forgemaster-catalogs`, sur un autre chemin.
 - **Fix** : `install_plan` pose désormais les cartes en **deux passes** — `--upgrade` (qui résout les
   **dépendances**, correcte sur une install fraîche) puis `--force-reinstall --no-deps` (qui force le **code**
   des cartes à la réf demandée sans retoucher aux deps). L'ordre est load-bearing : `--no-deps` seul
@@ -31,7 +46,7 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
   04:19. Le figeage ne demande pas des semaines, il commence à la première heure.
 - **Aucun tampon n'a été écrit** : pip pose déjà `direct_url.json` (PEP 610) avec le `commit_id` **résolu** à
   l'install. `tools.maps_provenance()` le **lit** — stdlib, **zéro réseau**, ne lève jamais, `sha=null`
-  toujours accompagné d'un `reason`. Même mécanisme que la provenance de `mcp-catalogs` : un mécanisme, deux
+  toujours accompagné d'un `reason`. Même mécanisme que la provenance de `forgemaster-catalogs` : un mécanisme, deux
   consommateurs. (Le cockpit tamponne son `_build.json` parce qu'il *construit un wheel* ; ce n'est pas le
   cas des cartes.)
 - `GET /api/version` gagne `maps: [{name, sha, requested_ref, source, reason}]` — **champ additif**, et
@@ -56,7 +71,7 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
   "http://192.168.0.153:8080/mcp"` — **notre** CT. Toute install sans câblage explicite tapait donc chez nous
   au premier dispatch. Invisible tant que nous étions les seuls à l'exécuter ; indéfendable dès qu'un tiers
   installe. Le défaut est **supprimé**, pas déplacé dans une config : un cockpit n'a pas d'instance
-  `mcp-catalogs` par défaut, et l'absence se **dit** au lieu de se deviner.
+  `forgemaster-catalogs` par défaut, et l'absence se **dit** au lieu de se deviner.
 - `current_endpoint()` rend désormais `str | None` (`COCKPIT_MCP_ENDPOINT` vide ⇒ non configuré). Chaîne de
   dégradation, honnête de bout en bout : `inject_mcp_config` → **no-op** (aucun `.mcp.json`, jamais de crash de
   dispatch) · `blueprint_resolver` / `CapitalBrowser` → `None` **sans appel réseau** · `render_mcp_config` →
@@ -600,7 +615,7 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
   → dépôt du manifeste → **`cockpit bootstrap`** → activation systemd, **en une commande**. Idempotent
   (ré-exécution sûre), fail-loud, imprime chaque étape, aucun secret en argv (token via `--token-file`).
 - **`deploy/bootstrap.yaml`** : l'**édition maintainer** livrée — les 5 outils du framework (`cockpit`,
-  `code-map`, `front-map`, `docs-map`, `mcp-catalogs`) en `kind=tool`. Donnée versionnée, aucun secret ;
+  `code-map`, `front-map`, `docs-map`, `forgemaster-catalogs`) en `kind=tool`. Donnée versionnée, aucun secret ;
   gate-protégée par un test qui la fait relire par le vrai `load_manifest`.
 - **`docs/install.md`** : section « Édition maintainer — recette CT reproductible » (build → provision →
   publier plus tard sans changement de code, D7).

@@ -17,7 +17,7 @@ dans un projet) démarre câblée, orientée, et gated — sans configuration ma
 
 ## Origine (bibliothèque de bundles)
 
-Bundle **`cockpit`** dérivé de l'archétype `tool-builder` (repos frères : `code-map`, `mcp-catalogs`),
+Bundle **`cockpit`** dérivé de l'archétype `tool-builder` (repos frères : `code-map`, `forgemaster-catalogs`),
 persona `tool-builder`. Le cockpit n'est pas un port mécanique : c'est une **réimplémentation propre** de
 l'orchestrateur legacy — on importe les décisions distillées comme **specs** (`docs/specs/`), le registre
 `docs/weak-points.md` liste les dettes refusées et le refactor décidé. La **source canonique** du bundle

@@ -141,7 +141,7 @@ export function SetupWizard() {
 }
 
 /** Étape « Outils du framework » — l'exigence batteries-included : adopter la boîte à outils (code-map,
- *  docs-map, front-map, mcp-catalogs, cockpit) déclarée dans le manifeste maintainer, d'un clic, avec leur
+ *  docs-map, front-map, forgemaster-catalogs, cockpit) déclarée dans le manifeste maintainer, d'un clic, avec leur
  *  VRAI contenu git. **Choix shallow (D4)** : nos outils (le manifeste) ou aucun (ignorer l'étape) ; pour
  *  ses propres outils, on édite `bootstrap.yaml` / on crée des projets `tool`. Pas de manifeste = install
  *  générique : on n'affiche qu'une note (le wizard reste intact). L'aperçu est un GET idempotent. */

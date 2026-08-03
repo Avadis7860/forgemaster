@@ -16,7 +16,7 @@ au 1er démarrage (dont un token par repo) — **sans jamais** de secret en clai
 entre repos.
 
 Modèle produit assumé : **cœur léger + extensions**. Tout ce qui est natif cockpit et auto-intégré à
-chaque projet (code-map, docs-map, front-map, mcp-catalogs) est un **outil** (`kind=tool`) ; le cockpit
+chaque projet (code-map, docs-map, front-map, forgemaster-catalogs) est un **outil** (`kind=tool`) ; le cockpit
 lui-même reste le **cœur**.
 
 ## Livré — V1 (productisation)

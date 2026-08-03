@@ -200,7 +200,8 @@ def test_shipped_deploy_manifest_is_valid_five_tools(ctx):
     entries = bootstrap.load_manifest(settings)
     assert entries is not None
     slugs = {e["slug"] for e in entries}
-    assert slugs == {"cockpit", "code-map", "front-map", "docs-map", "mcp-catalogs"}   # les 5 frères (D1)
+    # les 5 frères (D1)
+    assert slugs == {"cockpit", "code-map", "front-map", "docs-map", "forgemaster-catalogs"}
     for e in entries:
         assert e["kind"] == "tool"                                   # → rail « Outils »
         assert e["source_url"].startswith("https://github.com/") and e["source_url"].endswith(".git")

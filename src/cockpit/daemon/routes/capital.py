@@ -1,8 +1,8 @@
-"""routes/capital — router de domaine « capital-token servi » : parcourir en LECTURE le corpus typé servi par
-le MCP `mcp-catalogs` (navigation `types → collections → sections → corps`), depuis l'accueil top-level du
-cockpit. Pendant que `routes/bundles` introspecte ce que le cockpit **sème** (bundles vendorés), ce router
-introspecte le **capital-token** qu'il **loue/possède** (`tech`/`blueprint`/`templates`) — l'autre moitié de
-« juger l'efficacité avant distribution ».
+"""routes/capital — router de domaine « capital-token servi » : parcourir en LECTURE le corpus typé servi
+par le MCP `forgemaster-catalogs` (navigation `types → collections → sections → corps`), depuis l'accueil
+top-level du cockpit. Pendant que `routes/bundles` introspecte ce que le cockpit **sème** (bundles
+vendorés), ce router introspecte le **capital-token** qu'il **loue/possède**
+(`tech`/`blueprint`/`templates`) — l'autre moitié de « juger l'efficacité avant distribution ».
 
 Read-only, idempotent (GET) : le corps servi vient du MCP en direct via `mcp.capital_browser` (mint JWT +
 `fastmcp`, dégradation honnête totale). Goto-safe : le runner goto-only de la boucle visuelle atteint ces GET.

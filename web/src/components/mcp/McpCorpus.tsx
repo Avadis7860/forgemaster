@@ -4,7 +4,7 @@ import { ApiError } from '@/lib/api'
 import { useWireMcp } from '@/lib/queries'
 import type { McpState, McpWireInput } from '@/lib/schemas'
 
-/** Câblage du corpus privé `mcp-catalogs` (instance-level) — partagé entre le **wizard** (`/setup`, étape
+/** Câblage du corpus privé `forgemaster-catalogs` (instance-level) — partagé entre le **wizard** (`/setup`, étape
  *  « Corpus MCP ») et **Réglages** (carte « Corpus capital »). **Optionnel** : une install publique sans
  *  corpus peut sauter. Déjà câblé → encart d'état (re-câblage via la CLI, hors surface). Deux voies
  *  exclusives (comme la liaison credential) : coller le secret HMAC (≥32c, POSSÉDÉ → ref opaque) ou une
@@ -58,7 +58,7 @@ export function McpCorpus({ mcp }: { mcp: McpState }) {
   return (
     <form onSubmit={onSubmit} className="space-y-2">
       <p className="text-sm text-muted">
-        Câble ton corpus privé <strong>mcp-catalogs</strong> pour que chaque worker interroge la doc à jour et
+        Câble ton corpus privé <strong>forgemaster-catalogs</strong> pour que chaque worker interroge la doc à jour et
         les patrons gagnants au dispatch. Une install publique sans corpus peut ignorer cette étape.
       </p>
       <Segmented
@@ -98,7 +98,7 @@ export function McpCorpus({ mcp }: { mcp: McpState }) {
       />
       {endpointRequired && (
         <p className="text-xs text-faint">
-          Aucune instance <code>mcp-catalogs</code> n'est configurée sur ce cockpit — il n'y en a pas par
+          Aucune instance <code>forgemaster-catalogs</code> n'est configurée sur ce cockpit — il n'y en a pas par
           défaut. Indique l'URL de la tienne.
         </p>
       )}

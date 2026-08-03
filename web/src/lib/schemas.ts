@@ -120,7 +120,7 @@ export const BundleFileSchema = z.object({
 export type BundleFile = z.infer<typeof BundleFileSchema>
 
 // Capital-token servi par le MCP (explorer d'introspection, GET /api/capital/…). Le daemon est un proxy
-// authentifié FIN : il passe le corps MCP tel quel (le serveur mcp-catalogs est la SoT de la forme). Les
+// authentifié FIN : il passe le corps MCP tel quel (le serveur forgemaster-catalogs est la SoT de la forme). Les
 // réponses sont HÉTÉROGÈNES par type/layout (tech silo : {path,title,h2s,lead} ; blueprint plat :
 // {id,title,tags,status,file}) → schémas TOLÉRANTS (`passthrough`) : on déclare ce qu'on affiche, le reste
 // passe sans casser. `wired:false` (porte /status) → l'explorer rend « non câblé » sans tenter de parcours.

@@ -12,7 +12,7 @@ license = "AGPL-3.0-or-later"
 license-files = ["LICENSE", "NOTICE", "LICENSES/*.txt"]
 authors = [{ name = "AvAgency", email = "contact@avagency.pro" }]
 keywords = ["orchestrator", "forge", "worktree", "dispatch", "fastapi", "cli"]
-# Comme mcp-catalogs (et contrairement à code-map stdlib-pur), le cockpit EST un service : il porte de
+# Comme forgemaster-catalogs (et contrairement à code-map stdlib-pur), le cockpit EST un service : il porte de
 # vraies dépendances runtime. fastapi+uvicorn (daemon + web/PTY), PyYAML (roadmap.yaml in-repo). Le socle
 # (config/core/db) reste stdlib-pur ; ces imports sont PARESSEUX (le package s'importe sans le serveur).
 dependencies = [
@@ -27,7 +27,7 @@ dependencies = [
   # ../task-map (SoT épinglé au SHA 85bd32e) → wheel AUTO-CONTENU, plus de dép git privée à cloner au
   # pip-install sur un hôte frais. Volontairement PAS dans project.dependencies (embarqué au build) ; en
   # dev : `pip install -e ../task-map`.
-  # client MCP runtime (`mcp/client.py`) : résout un `blueprint:` en direct via `mcp-catalogs`. Même plancher
+  # client MCP runtime (`mcp/client.py`) : résout un `blueprint:` en direct via `forgemaster-catalogs`. Même plancher
   # que le serveur (≥3.2.0 pour CVE-2026-32871). Import PARESSEUX (tiré à l'appel, socle non alourdi).
   "fastmcp>=3.3.1",
   # parseur multipart/form-data : requis par FastAPI pour un endpoint `UploadFile`/`Form` (1ᵉʳ du repo, route

@@ -161,13 +161,13 @@ aucun secret ne transite par la recette. Sans le flag, l'install reste inchangé
 ### Le manifeste `deploy/bootstrap.yaml`
 
 De la **donnée versionnée**, jamais un secret : `slug` + `source_url` + `kind: tool` par outil. Les 5 dépôts
-du framework (`cockpit`, `code-map`, `front-map`, `docs-map`, `mcp-catalogs`) y sont déclarés. Un `credential_ref`
+du framework (`cockpit`, `code-map`, `front-map`, `docs-map`, `forgemaster-catalogs`) y sont déclarés. Un `credential_ref`
 optionnel par entrée épingle un token dédié ; sinon le token partagé de `--token-file` (un PAT fine-grained
 `Contents:Read`) sert de repli ; sinon le clone est **anonyme**. Le token vit dans le coffre — **jamais** dans
 ce fichier ni un repo.
 
 **État au 2026-08-03** : `code-map`, `docs-map`, `front-map` sont **publics** → adoptés sans credential.
-`cockpit` et `mcp-catalogs` restent **privés** → ce manifeste-ci est l'**édition maintainer**, et son amorçage
+`cockpit` et `forgemaster-catalogs` restent **privés** → ce manifeste-ci est l'**édition maintainer**, et son amorçage
 complet demande encore un `--token-file`.
 
 ### Un amorçage incomplet n'annule pas l'install
@@ -194,7 +194,7 @@ refuse un dispatch dont un binaire déclaré manque — **avant** le spawn, avec
 install`) — plutôt que laisser le worker mourir à mi-course. La sonde jumelle **hors-ligne** est `cockpit
 doctor` (rc 0/1), rejouée à l'étape `[4/8]` et disponible à tout moment.
 
-**Câbler le corpus MCP (capital possédé).** Le câblage du serveur `mcp-catalogs` n'est **pas** posé par
+**Câbler le corpus MCP (capital possédé).** Le câblage du serveur `forgemaster-catalogs` n'est **pas** posé par
 `provision-ct.sh` : il se fait au **wizard `/setup`** (1ᵉʳ démarrage) ou à la main via **`cockpit mcp wire`**
 (`--secret-file <f>` si on possède la valeur, ou `--secret-ref <uuid>` en BYO). Il pose dans `cockpit.env` une
 **référence opaque** au secret + l'endpoint (jamais le secret en clair) ; le prochain dispatch injecte alors un

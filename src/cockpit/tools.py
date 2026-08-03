@@ -169,7 +169,7 @@ def preflight_tools(worktree: Path, settings: Settings, *, env: Mapping[str, str
 #
 # Il n'y a AUCUN tampon à écrire pour le savoir — pip pose déjà `direct_url.json` (PEP 610) dans le
 # `dist-info` à l'install, avec le `commit_id` RÉSOLU. On LIT ce qui existe. Même mécanisme que la
-# provenance de `mcp-catalogs` (un mécanisme, deux consommateurs) et même contrat de dégradation que
+# provenance de `forgemaster-catalogs` (un mécanisme, deux consommateurs) et même contrat de dégradation que
 # `build_provenance.read_stamp` : un `sha=None` s'accompagne TOUJOURS d'un `reason`, jamais d'un silence.
 _SHA_LENGTHS = (40, 64)             # sha1 (défaut de git) et sha256 (transition amont)
 
@@ -354,7 +354,8 @@ def install_plan(settings: Settings) -> list[dict[str, object]]:
 
     La 1ʳᵉ passe reste `--upgrade` : c'est elle qui résout les **dépendances** (correcte sur une install
     fraîche). La 2ᵈᵉ force le **code des cartes** à la réf demandée sans retoucher aux deps
-    (`--force-reinstall --no-deps`) — même parade que le cutover de `mcp-catalogs`. Retirer la 2ᵈᵉ passe
+    (`--force-reinstall --no-deps`) — même parade que le cutover de `forgemaster-catalogs`. Retirer la 2ᵈᵉ
+    passe
     rétablit le no-op silencieux ; un test la verrouille."""
     pip = str(tools_venv(settings) / "bin" / "pip")
     map_specs = [f"git+{url}@{MAP_REF}" for url in MAP_REPOS.values()]

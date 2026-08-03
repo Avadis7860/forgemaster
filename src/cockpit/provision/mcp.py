@@ -1,6 +1,6 @@
 """provision.mcp — câblage du MCP de corpus dans un worktree de worker (injection POST-création).
 
-Un worker dispatché sur un projet typé (browser-game…) doit pouvoir interroger le MCP `mcp-catalogs`
+Un worker dispatché sur un projet typé (browser-game…) doit pouvoir interroger le MCP `forgemaster-catalogs`
 (`query(type=tech, scope=<silo>)`) — c'est la moitié « il connaît ses outils » du crash-test. Ce module
 rend et écrit le `.mcp.json` que `claude -p` charge (via `--mcp-config`), avec un **JWT minté à la demande**,
 **jamais baké** dans le bundle/wheel/SoT (décision d'épic : câblage hors-git, injecté au dispatch).
@@ -11,9 +11,9 @@ bien que le `git add -A` du commit de la forge ne peut jamais l'embarquer. Le se
 worker tourne sans MCP, aucun crash — dégradation prévue pour un install public sans le corpus privé).
 
 Nommage : le label serveur et l'`aud`/`iss` du JWT reproduisent **verbatim le contrat validé par le serveur
-mcp-catalogs** (CT 9118) — hérité de l'ex-CT 9113. Le renommage `vault-catalogs → mcp-catalogs` est un
-retrait de verbatim historique **coordonné** (serveur-d'abord), suivi hors d'ici (backlog vault
-`mcp-catalogs-naming-coherence`) — surtout pas une demi-migration côté client seul.
+forgemaster-catalogs** (CT 9118) — hérité de l'ex-CT 9113. Le renommage `vault-catalogs →
+forgemaster-catalogs` est un retrait de verbatim historique **coordonné** (serveur-d'abord), suivi hors
+d'ici (backlog vault `mcp-catalogs-naming-coherence`) — surtout pas une demi-migration côté client seul.
 """
 from __future__ import annotations
 
@@ -38,10 +38,10 @@ def current_endpoint() -> str | None:
     worker pointait l'ancien (footgun constaté 2026-07-30, démo laptop MCP servi en local).
 
     **`None` = aucun endpoint configuré, et c'est un état NORMAL** — une install sans corpus privé n'a pas
-    d'instance mcp-catalogs à interroger. Ce module portait jusqu'au 2026-08-03 un défaut en dur vers NOTRE
-    CT (`192.168.0.153`) : un défaut de produit qui ne survivait que parce que personne d'autre que nous ne
-    l'exécutait. Un cockpit n'a **pas** d'instance MCP par défaut ; l'absence se dit (`None`), elle ne se
-    devine pas. Les appelants dégradent honnêtement : pas d'endpoint ⇒ pas de MCP."""
+    d'instance forgemaster-catalogs à interroger. Ce module portait jusqu'au 2026-08-03 un défaut en dur
+    vers NOTRE CT (`192.168.0.153`) : un défaut de produit qui ne survivait que parce que personne d'autre
+    que nous ne l'exécutait. Un cockpit n'a **pas** d'instance MCP par défaut ; l'absence se dit (`None`),
+    elle ne se devine pas. Les appelants dégradent honnêtement : pas d'endpoint ⇒ pas de MCP."""
     return os.environ.get(ENV_MCP_ENDPOINT) or None
 # Contrat prouvé accepté par le serveur (verbatim ex-CT 9113 ; cf. backlog mcp-catalogs-naming-coherence).
 MCP_SERVER_LABEL = "vault-catalogs"
@@ -199,10 +199,10 @@ class MCPWireError(ValueError):
 
 def wire(settings: Settings, *, secret_ref: str | None = None, secret: str | None = None,
          secret_file: str | None = None, endpoint: str | None = None, live_env: bool = False) -> str:
-    """Câble NOTRE instance mcp-catalogs sur cette install : valide/pose le secret HMAC partagé et écrit une
-    **référence opaque** (JAMAIS le secret en clair) + l'endpoint dans `cockpit.env`, de sorte que le prochain
-    dispatch injecte un `.mcp.json` valide (`inject_mcp_config`). Retourne la ref posée. Cœur partagé par la
-    CLI (`cockpit mcp wire`) et la route onboarding (wizard).
+    """Câble NOTRE instance forgemaster-catalogs sur cette install : valide/pose le secret HMAC partagé et
+    écrit une **référence opaque** (JAMAIS le secret en clair) + l'endpoint dans `cockpit.env`, de sorte que
+    le prochain dispatch injecte un `.mcp.json` valide (`inject_mcp_config`). Retourne la ref posée. Cœur
+    partagé par la CLI (`cockpit mcp wire`) et la route onboarding (wizard).
 
     **Exactement une** voie parmi : `secret` (valeur brute POSSÉDÉE — le wizard POST le secret → `store.put`
     → ref opaque), `secret_file` (même voie, depuis un fichier — la CLI), ou `secret_ref` (bring-your-own
@@ -220,7 +220,7 @@ def wire(settings: Settings, *, secret_ref: str | None = None, secret: str | Non
     if not ep:
         raise MCPWireError(
             f"aucun endpoint MCP — passe `--endpoint <url>` (ou pose {ENV_MCP_ENDPOINT} dans l'env) : "
-            "un cockpit n'a pas d'instance mcp-catalogs par défaut.")
+            "un cockpit n'a pas d'instance forgemaster-catalogs par défaut.")
     store = build_store(settings)
     if secret_file is not None:
         try:

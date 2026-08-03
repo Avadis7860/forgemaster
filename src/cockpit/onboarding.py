@@ -123,11 +123,12 @@ def unlink_credential(conn: sqlite3.Connection, project: str) -> dict:
 
 def wire_mcp(settings: Settings, *, secret: str | None = None, ref: str | None = None,
              endpoint: str | None = None) -> dict:
-    """Câble l'instance mcp-catalogs depuis le wizard (instance-level, hors projet) : pose la référence
-    opaque du secret HMAC + l'endpoint dans `cockpit.env` ET dans l'`os.environ` du daemon (`live_env`) → le
-    prochain dispatch injecte un `.mcp.json` valide **sans redémarrer** le service. Fournir exactement l'un de
-    `secret` (valeur brute POSSÉDÉE → stockée en ref opaque) ou `ref` (BWS/UUID validé). Ne renvoie JAMAIS le
-    secret, seulement la référence opaque posée. Lève `ValueError` (→ 400) sur mauvais usage / backend
+    """Câble l'instance forgemaster-catalogs depuis le wizard (instance-level, hors projet) : pose la
+    référence opaque du secret HMAC + l'endpoint dans `cockpit.env` ET dans l'`os.environ` du daemon
+    (`live_env`) → le prochain dispatch injecte un `.mcp.json` valide **sans redémarrer** le service.
+    Fournir exactement l'un de `secret` (valeur brute POSSÉDÉE → stockée en ref opaque) ou `ref` (BWS/UUID
+    validé). Ne renvoie JAMAIS le secret, seulement la référence opaque posée. Lève `ValueError` (→ 400) sur
+    mauvais usage / backend
     incompatible / secret trop court / ref introuvable."""
     try:
         posed = mcp.wire(settings, secret=secret, secret_ref=ref, endpoint=endpoint, live_env=True)

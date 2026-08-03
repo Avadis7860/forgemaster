@@ -73,7 +73,7 @@ désormais par `maps_provenance` / `check_tools` (section suivante).
 
 **Il n'y a aucun tampon à écrire.** `pip install git+<url>@<ref>` pose déjà `direct_url.json` (PEP 610) dans le
 `dist-info`, avec le `commit_id` **résolu** — écrit par la machine, à l'install. On le **lit**. C'est le même
-mécanisme que la provenance de `mcp-catalogs` : un mécanisme, deux consommateurs. (Le cockpit, lui, doit
+mécanisme que la provenance de `forgemaster-catalogs` : un mécanisme, deux consommateurs. (Le cockpit, lui, doit
 tamponner son `_build.json` parce qu'il **construit un wheel** — cf. `build_provenance` ; ce n'est pas le cas ici.)
 
 Lecture **locale, zéro réseau, qui ne lève jamais** — d'où son usage sûr depuis une sonde HTTP. Contrat de

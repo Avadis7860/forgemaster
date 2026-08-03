@@ -247,7 +247,7 @@ fi
 
 # Une adoption ratée est une DONNÉE manquante, pas une infrastructure cassée : elle ne doit pas empêcher le
 # service d'exister. Mesuré le 2026-08-03 sur une VM vierge — deux dépôts du manifeste encore privés
-# (`cockpit`, `mcp-catalogs`) faisaient rc 1 ici, et `set -e` tuait l'install AVANT [8/8] : cockpit jamais
+# (`cockpit`, `forgemaster-catalogs`) faisaient rc 1 ici, et `set -e` tuait l'install AVANT [8/8] : cockpit jamais
 # activé, à cause de deux clones. Même conclusion pour un utilisateur dont une URL de manifeste a bougé.
 # On NE MASQUE RIEN : `cockpit bootstrap` a déjà imprimé un 🔴 par outil, on ajoute une bannière et la
 # commande de reprise, et on la RÉPÈTE en fin de script pour qu'elle ne soit pas enterrée sous [8/8].

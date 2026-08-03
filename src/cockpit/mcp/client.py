@@ -1,5 +1,5 @@
-"""mcp.client — client MCP **runtime** du cockpit : parle au serveur `mcp-catalogs` **depuis le daemon**,
-à la requête, via `fastmcp.Client`. Deux usages, un seul socle :
+"""mcp.client — client MCP **runtime** du cockpit : parle au serveur `forgemaster-catalogs` **depuis le
+daemon**, à la requête, via `fastmcp.Client`. Deux usages, un seul socle :
 
 - `blueprint_resolver` — résout un `blueprint:` (ref → corps) pour le seam `taskmap.context` (board P3) ;
 - `capital_browser` — **parcourt** en lecture le capital-token servi (navigation `list_types →
@@ -95,10 +95,11 @@ def blueprint_resolver(settings: Settings, *, secret_ref: str | None = None,
                        resolver: Callable[[str], str] | None = None,
                        caller: Callable[..., dict | None] = _read_blueprint,
                        timeout: float = _DEFAULT_TIMEOUT) -> BlueprintResolver:
-    """Rend un `BlueprintResolver` (`id -> dict|None`) adossé au MCP `mcp-catalogs`, injectable au seam
-    `taskmap.context.build_context`/`doctor`. `secret_ref`/`endpoint`/`resolver`/`caller` sont des **seams**
-    (défauts : env `COCKPIT_MCP_JWT_SECRET_REF`, `current_endpoint()`, `cred_resolver`, la coquille réseau) —
-    tout est injectable pour un test factice sans réseau. Dégradation honnête : voir le module."""
+    """Rend un `BlueprintResolver` (`id -> dict|None`) adossé au MCP `forgemaster-catalogs`, injectable au
+    seam `taskmap.context.build_context`/`doctor`. `secret_ref`/`endpoint`/`resolver`/`caller` sont des
+    **seams** (défauts : env `COCKPIT_MCP_JWT_SECRET_REF`, `current_endpoint()`, `cred_resolver`, la
+    coquille réseau) — tout est injectable pour un test factice sans réseau. Dégradation honnête : voir le
+    module."""
     resolve_secret = resolver if resolver is not None else cred_resolver(settings)
     ep = endpoint if endpoint is not None else current_endpoint()
 
@@ -131,7 +132,7 @@ def _is_server_tool_error(exc: BaseException) -> bool:
 
 
 class CapitalBrowser:
-    """Client de **parcours read-only** du capital-token servi par `mcp-catalogs` (navigation
+    """Client de **parcours read-only** du capital-token servi par `forgemaster-catalogs` (navigation
     `list_types → list_collections → list_sections → read`). Chaque méthode mint un JWT frais et appelle
     l'outil MCP éponyme ; **dégradation honnête** — MCP non câblé (a) / injoignable (b) / réponse vide →
     `None`. **Exception** : une erreur d'**outil serveur** (c — le MCP répond mais échoue) est propagée en
@@ -185,9 +186,10 @@ def capital_browser(settings: Settings, *, secret_ref: str | None = None,
                     resolver: Callable[[str], str] | None = None,
                     caller: McpCaller = _call_tool,
                     timeout: float = _DEFAULT_TIMEOUT) -> CapitalBrowser:
-    """Rend un `CapitalBrowser` adossé au MCP `mcp-catalogs`, pour l'explorer d'introspection de la Landing.
-    Mêmes **seams** que `blueprint_resolver` (défauts : env `COCKPIT_MCP_JWT_SECRET_REF`, `current_endpoint`,
-    `cred_resolver`, la coquille réseau générique `_call_tool`) — tout injectable pour un test sans réseau."""
+    """Rend un `CapitalBrowser` adossé au MCP `forgemaster-catalogs`, pour l'explorer d'introspection de la
+    Landing. Mêmes **seams** que `blueprint_resolver` (défauts : env `COCKPIT_MCP_JWT_SECRET_REF`,
+    `current_endpoint`, `cred_resolver`, la coquille réseau générique `_call_tool`) — tout injectable pour
+    un test sans réseau."""
     resolve_secret = resolver if resolver is not None else cred_resolver(settings)
     ep = endpoint if endpoint is not None else current_endpoint()
     return CapitalBrowser(endpoint=ep, resolve_secret=resolve_secret, secret_ref=secret_ref,

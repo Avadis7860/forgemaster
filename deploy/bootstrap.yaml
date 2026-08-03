@@ -18,5 +18,5 @@ tools:
     source_url: https://github.com/Avadis7860/front-map.git
   - slug: docs-map
     source_url: https://github.com/Avadis7860/docs-map.git
-  - slug: mcp-catalogs
-    source_url: https://github.com/Avadis7860/mcp-catalogs.git
+  - slug: forgemaster-catalogs
+    source_url: https://github.com/Avadis7860/forgemaster-catalogs.git

@@ -16,7 +16,7 @@ Invariants verrouillés :
 2. **Dispatch réel, sans crash** — `cockpit dispatch void-runner/<feature>` spawn un **vrai `claude -p`**
    (jamais un fake) qui termine `ok` (rc 0, `is_error` faux). Le fix historique (`--permission-mode
    acceptEdits` + allowlist) tient.
-3. **MCP câblé (post-création, jamais baké)** — un `.mcp.json` (serveur `mcp-catalogs` http + **Bearer JWT
+3. **MCP câblé (post-création, jamais baké)** — un `.mcp.json` (serveur `forgemaster-catalogs` http + **Bearer JWT
    minté à la demande**, scopé `sub=cockpit:<slug>`) est **injecté dans le worktree** au dispatch et chargé
    par `claude -p` via `--mcp-config`. Le secret HMAC partagé est résolu par le coffre à l'usage ; absent →
    **no-op honnête** (le worker tourne sans MCP, aucun crash — install public sans le corpus privé).
@@ -27,10 +27,10 @@ Invariants verrouillés :
 
 ## Nommage (verbatim assumé)
 
-Le serveur, l'`aud` et l'`iss` du JWT reproduisent **verbatim le contrat validé par le serveur mcp-catalogs**,
+Le serveur, l'`aud` et l'`iss` du JWT reproduisent **verbatim le contrat validé par le serveur forgemaster-catalogs**,
 hérité de son hébergement précédent. Ce n'est **pas** un bug : c'est ce qui authentifie
-aujourd'hui. Le retrait du verbatim (`vault-catalogs → mcp-catalogs`) est un renommage **coordonné**
-(serveur-d'abord), suivi hors de cet épic — backlog vault `mcp-catalogs-naming-coherence`. Surtout pas une
+aujourd'hui. Le retrait du verbatim (`vault-catalogs → forgemaster-catalogs`) est un renommage **coordonné**
+(serveur-d'abord), suivi hors de cet épic — backlog vault `forgemaster-catalogs-naming-coherence`. Surtout pas une
 demi-migration côté client.
 
 ## Vérification

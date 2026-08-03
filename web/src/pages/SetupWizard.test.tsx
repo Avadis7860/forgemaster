@@ -129,7 +129,7 @@ describe('SetupWizard', () => {
   })
 
   it('corpus MCP sans endpoint configuré : le câblage exige une cible, le secret seul ne suffit plus', () => {
-    // Fix 2026-08-03 : le daemon n'a plus d'instance mcp-catalogs par défaut (`endpoint: null`). Le serveur
+    // Fix 2026-08-03 : le daemon n'a plus d'instance forgemaster-catalogs par défaut (`endpoint: null`). Le serveur
     // refuserait en 400 un câblage sans cible → l'UI le dit AVANT le POST plutôt que de laisser partir.
     h.data = { secret_store: STORE, requirements: [], complete: true, project_count: 0, first_run: true, claude_auth: AUTHED, mcp: { wired: false, endpoint: null } }
     render(<SetupWizard />)

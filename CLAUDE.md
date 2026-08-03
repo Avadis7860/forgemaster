@@ -66,6 +66,6 @@ Ce que couvre chaque doc (cibles de `docsmap where`) :
 
 Le cockpit **automatise** `work-loop` : dispatch d'un worker `claude` local → worktree feature (mutex) →
 gate multi-tier → merge internal-first → GO humain fail-closed, **multi-projet**, avec DB + web. Chaque repo
-frère (`code-map`, `mcp-catalogs`, `front-map`) embarque le **même** `work-loop` en **manuel** et reste donc
+frère (`code-map`, `forgemaster-catalogs`, `front-map`) embarque le **même** `work-loop` en **manuel** et reste donc
 **auto-travaillable seul**, sans cette forge. La forge est un **orchestrateur optionnel** par-dessus des
 repos déjà autonomes — **mêmes invariants** partout (dev + worktree feature, gate vert, `main` protégé, GO humain).

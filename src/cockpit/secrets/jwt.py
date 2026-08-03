@@ -4,8 +4,9 @@ Port fidèle de `jwt_stdlib` du vault (source unique côté framework) : pas de 
 Garanties : anti alg-confusion (rejette `alg≠HS256`, donc `none`/asym), signature HMAC en comparaison
 constant-time, contrôle `exp`/`aud`/`iss`. Claims `sub/iss/aud/iat/exp`.
 
-Seul consommateur aujourd'hui : `provision.mcp` (mint du Bearer pour le `.mcp.json` injecté au dispatch).
-Le contrat de claims (`aud`, `iss`) est celui **validé par le serveur mcp-catalogs** — cf. `provision.mcp`.
+Seul consommateur aujourd'hui : `provision.mcp` (mint du Bearer pour le `.mcp.json` injecté au dispatch). Le
+contrat de claims (`aud`, `iss`) est celui **validé par le serveur forgemaster-catalogs** — cf.
+`provision.mcp`.
 """
 from __future__ import annotations
 
