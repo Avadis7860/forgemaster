@@ -337,12 +337,18 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   réponse = projet avec `credential_ref`, **jamais le token** ; **400** mauvais usage/backend, **404** projet
   absent) · `DELETE /api/projects/{p}/credential` (délie : `credential_ref` → NULL).
 - **version** — `GET /api/version` (provenance de build + **fraîcheur honnête** du wheel installé :
-  `{version, sha, committed_at, comparable, stale, behind_by, missing_types}`). Le SHA vient du tampon
+  `{version, sha, committed_at, comparable, stale, behind_by, missing_types, maps}`). Le SHA vient du tampon
   `cockpit/_build.json` embarqué au build (`deploy/build-wheel.sh`, jamais mtime) ; `stale`/`behind_by`/
   `missing_types` se calculent **par SHA** contre le HEAD du miroir SoT **local** de cockpit — **transport
   local**, zéro réseau. Sans tampon (éditable) ou sans miroir (install publique) → `comparable=false`
   (honnête, jamais faux-vert). Idempotent, sans secret, distinct de `/health` (I/O-free liveness).
-  *Additif (route neuve + champ `build` optionnel) → CHANGELOG, pas de bump `SCHEMA_VERSION` (cf. politique).*
+  `maps` = les **3 cartes hôte servies** par `tools/venv`, `[{name, sha, requested_ref, source, reason}]` lues
+  dans `direct_url.json` (PEP 610, posé par pip à l'install) — **transport local** lui aussi. Deuxième moitié
+  de l'identité d'une instance, **étiquetée à part** parce qu'elle bouge indépendamment du wheel (les cartes à
+  `cockpit tools install`, le wheel à la réinjection) : les fondre mentirait dès que l'une bouge seule. `sha`
+  `null` porte **toujours** son `reason` ; `[]` si l'outillage n'est pas lisible (la route ne tombe jamais).
+  Savoir si ces cartes sont **à jour** demande l'amont et reste **hors** de cette route (`cockpit tools check`).
+  *Additif (route neuve + champs `build`/`maps` optionnels) → CHANGELOG, pas de bump `SCHEMA_VERSION`.*
 - **bootstrap** — `GET /api/bootstrap` (aperçu **idempotent** de l'amorçage des outils du framework :
   `{available, tools:[{slug, source_url, kind, adopted}], adopted, total}` ; manifeste absent →
   `available:false` ; **400** manifeste invalide ; aucun secret, goto-only safe) · `POST /api/bootstrap`

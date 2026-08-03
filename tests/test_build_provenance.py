@@ -129,6 +129,36 @@ def test_provenance_never_raises_on_broken_mirror(tmp_path: Path):
     assert p["comparable"] is False                             # dégrade honnête, ne lève pas
 
 
+# -- cartes hôte servies (la 2e moitié de la provenance d'une instance) ------------------------------
+
+def test_provenance_reports_the_served_maps(tmp_path: Path):
+    """Une instance sait DIRE quelles cartes elle sert — ce que `/api/version` ne savait pas faire : il ne
+    parlait que du wheel, et les 3 cartes vieillissaient sans un mot."""
+    served = [{"name": "code-map", "sha": "775117a0", "requested_ref": "main",
+               "source": "vcs", "reason": None}]
+    p = bp.provenance(None, installed_types=(), stamp=_stamp_file(tmp_path, "abc123"),
+                      mirror_git_dir=tmp_path / "absent", maps=served)
+    assert p["maps"] == served
+
+
+def test_provenance_keeps_the_two_halves_separate(tmp_path: Path):
+    """Le wheel et les cartes bougent INDÉPENDAMMENT (réinjection vs `tools install`). Le SHA du wheel ne
+    doit donc jamais se confondre avec celui d'une carte : deux champs, deux vies."""
+    served = [{"name": "code-map", "sha": "775117a0", "requested_ref": "main",
+               "source": "vcs", "reason": None}]
+    p = bp.provenance(None, installed_types=(), stamp=_stamp_file(tmp_path, "abc123"),
+                      mirror_git_dir=tmp_path / "absent", maps=served)
+    assert p["sha"] == "abc123" and p["maps"][0]["sha"] == "775117a0"
+
+
+def test_provenance_survives_an_unreadable_toolchain(tmp_path: Path):
+    """Lecture des cartes impossible (pas de venv d'outils, settings inutilisable) → `maps` vide, jamais un
+    500 sur la sonde. `/api/version` doit rester répondable même quand l'outillage n'est pas là."""
+    p = bp.provenance(None, installed_types=(), stamp=_stamp_file(tmp_path, "abc123"),
+                      mirror_git_dir=tmp_path / "absent")
+    assert p["maps"] == [] and p["sha"] == "abc123"
+
+
 # -- hint de préflight ------------------------------------------------------------------------------
 
 def test_stale_type_hint_fires_on_missing_type():

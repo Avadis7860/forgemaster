@@ -5,6 +5,33 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Une instance sait quelles cartes elle sert, et si elles ont dérivé — **API additive, aucun bump de schéma**
+- **Défaut de produit** (prérequis de publication) : les 3 cartes hôte sont tirées **une fois**, au
+  provisioning, à `MAP_REF = "main"` — une réf **mobile** — puis plus jamais. Rien ne re-synchronise, et rien
+  ne le **disait** : `preflight_tools` teste une *présence* (`shutil.which`), jamais une version, et
+  `/api/version` ne parlait que du wheel. Une instance servait donc des cartes vieillissantes à la population
+  qui travaille **sans humain devant l'écran** — des adresses `fichier:ligne` fausses, en silence.
+  Mesuré le 2026-08-03 sur la VM 9311 : provisionnée à 00:34, les 3 cartes déjà différentes de leur amont à
+  04:19. Le figeage ne demande pas des semaines, il commence à la première heure.
+- **Aucun tampon n'a été écrit** : pip pose déjà `direct_url.json` (PEP 610) avec le `commit_id` **résolu** à
+  l'install. `tools.maps_provenance()` le **lit** — stdlib, **zéro réseau**, ne lève jamais, `sha=null`
+  toujours accompagné d'un `reason`. Même mécanisme que la provenance de `mcp-catalogs` : un mécanisme, deux
+  consommateurs. (Le cockpit tamponne son `_build.json` parce qu'il *construit un wheel* ; ce n'est pas le
+  cas des cartes.)
+- `GET /api/version` gagne `maps: [{name, sha, requested_ref, source, reason}]` — **champ additif**, et
+  **étiqueté à part** du wheel : les deux moitiés bougent indépendamment (cartes à `tools install`, wheel à la
+  réinjection), un verdict unique serait faux dès que l'une bouge seule.
+- `cockpit tools check` (neuf) compare les cartes servies à leur amont par `git ls-remote` **anonyme**, et
+  **rapporte sans muter**. Trois issues distinctes — exit **0** à jour · **1** au moins une diffère · **2**
+  fraîcheur **non vérifiée** : « je n'ai pas pu vérifier » n'est ni « à jour » ni « périmé ». Ne dit jamais
+  « en retard de N commits » (`ls-remote` ne rend que des réfs ; un compte inventé retirerait le doute qui
+  doit déclencher la vérification).
+- **Délibérément PAS dans `preflight_tools`** : ce chemin s'exécute avant chaque spawn ; 3 appels réseau y
+  rendraient le dispatch dépendant de GitHub — hors réseau il faudrait bloquer un dispatch sain ou se taire.
+  Même partage que la fraîcheur du wheel : le produit dit localement ce qu'il sert, la comparaison est
+  explicite. La remise à niveau reste `cockpit tools install` (idempotent) — une re-sync automatique
+  remplacerait un binaire sous un worker en vol.
+
 ### Endpoint MCP — **plus aucun défaut en dur** (`endpoint` devient nullable) — **API, aucun bump de schéma**
 - **Défaut de produit** (prérequis de publication) : `provision/mcp.py` portait `_DEFAULT_MCP_ENDPOINT =
   "http://192.168.0.153:8080/mcp"` — **notre** CT. Toute install sans câblage explicite tapait donc chez nous

@@ -8,6 +8,12 @@ cap silencieux** (un substrat périmé DOIT se déclarer, jamais faux-vert) · *
 LOCAL via le seul seam `InternalGit`, zéro réseau) · **I/O injectable** (résolveurs en argument → cœur
 testable, calqué sur `auth.claude_auth_status`).
 
+La sonde porte DEUX moitiés, étiquetées séparément : le **wheel** (ce module) et les **cartes hôte** servies
+par `tools/venv` (`maps`, lues par `tools.maps_provenance`). Elles bougent indépendamment — le wheel à la
+réinjection, les cartes à `cockpit tools install` — donc un verdict unique serait faux dès que l'une des deux
+bouge seule. Les deux se lisent LOCALEMENT ; la comparaison des cartes à leur amont reste explicite
+(`cockpit tools check`), jamais dans un chemin chaud.
+
 Trois états honnêtes, jamais un faux-vert :
 - `sha=None` : wheel sans tampon (checkout éditable/dev) → provenance inconnue, on ne PRÉTEND rien ;
 - `comparable=False` : pas de miroir SoT local à comparer (install publique) → provenance seule ;
@@ -70,16 +76,34 @@ def _installed_types() -> tuple[str, ...]:
     return tuple(discover_types())
 
 
+def _served_maps(settings: Settings) -> list[dict]:
+    """Les 3 cartes hôte servies par `tools/venv` (lazy import, même convention que `_installed_types`).
+    Lecture LOCALE de `direct_url.json` — zéro réseau, comme le reste de cette sonde. **Ne lève jamais** :
+    une lecture impossible dégrade en liste vide plutôt que de faire tomber `/api/version`."""
+    try:
+        from cockpit.tools import maps_provenance
+        return maps_provenance(settings)
+    except Exception:
+        return []
+
+
 def provenance(settings: Settings, *, installed_types: tuple[str, ...] | None = None,
                stamp: Path | None = None, git: InternalGit | None = None,
-               mirror_git_dir: Path | None = None) -> dict:
-    """Détecteur live : compose le tampon embarqué + la fraîcheur mesurée contre le miroir SoT **local**.
-    **Enveloppé, ne lève jamais** — un miroir absent/cassé dégrade honnêtement en `comparable=False` (jamais
-    de 500 sur la sonde onboarding, jamais de faux-vert). I/O via le seul seam `InternalGit` (transport
-    local, injectable comme `stamp`/`installed_types`/`mirror_git_dir` pour les tests)."""
+               mirror_git_dir: Path | None = None, maps: list[dict] | None = None) -> dict:
+    """Détecteur live : compose le tampon embarqué + la fraîcheur mesurée contre le miroir SoT **local**
+    + les **cartes hôte servies** (`maps`). **Enveloppé, ne lève jamais** — un miroir absent/cassé dégrade
+    honnêtement en `comparable=False` (jamais de 500 sur la sonde onboarding, jamais de faux-vert). I/O via
+    le seul seam `InternalGit` (transport local, injectable comme `stamp`/`installed_types`/`mirror_git_dir`/
+    `maps` pour les tests).
+
+    `maps` répond à « quelles cartes cette instance sert-elle ? », que rien ne savait dire : le wheel et les
+    3 cartes vieillissent SÉPARÉMENT (le wheel à la réinjection, les cartes à `tools install`), les fondre
+    en un seul verdict mentirait dans les deux sens. Ce champ RAPPORTE un SHA déjà présent sur le disque ;
+    savoir s'il est en retard exige l'amont et reste **explicite** (`cockpit tools check`)."""
     stampd = read_stamp(stamp)
     build_sha = stampd["sha"]
-    base = {"version": __version__, "sha": build_sha, "committed_at": stampd["committed_at"]}
+    base = {"version": __version__, "sha": build_sha, "committed_at": stampd["committed_at"],
+            "maps": maps if maps is not None else _served_maps(settings)}
     try:
         mgd = Path(mirror_git_dir) if mirror_git_dir is not None else _mirror_git_dir(settings)
         if not mgd.exists():

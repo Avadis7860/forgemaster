@@ -161,6 +161,169 @@ def preflight_tools(worktree: Path, settings: Settings, *, env: Mapping[str, str
             f"pose-les (`cockpit tools install`) puis relance. worktree={worktree}")
 
 
+# -- provenance de l'outillage SERVI (lecture LOCALE, zéro réseau, ne lève jamais) --------------------
+#
+# Une instance tire les 3 cartes UNE FOIS, au provisioning, à `MAP_REF` — une réf MOBILE. Rien ne
+# re-synchronise ensuite, et `preflight_tools` ne teste qu'une PRÉSENCE : l'instance sert donc des cartes
+# qui vieillissent sans que rien ne le dise. Mesuré le 2026-08-03 : un écart né en moins de 4 h.
+#
+# Il n'y a AUCUN tampon à écrire pour le savoir — pip pose déjà `direct_url.json` (PEP 610) dans le
+# `dist-info` à l'install, avec le `commit_id` RÉSOLU. On LIT ce qui existe. Même mécanisme que la
+# provenance de `mcp-catalogs` (un mécanisme, deux consommateurs) et même contrat de dégradation que
+# `build_provenance.read_stamp` : un `sha=None` s'accompagne TOUJOURS d'un `reason`, jamais d'un silence.
+_SHA_LENGTHS = (40, 64)             # sha1 (défaut de git) et sha256 (transition amont)
+
+
+def _looks_like_sha(value: str) -> bool:
+    """Une chaîne a-t-elle la FORME d'un SHA git. PUR. Garde-fou : mieux vaut avouer « pas un SHA
+    reconnaissable » que servir une valeur arbitraire lue dans un JSON comme si c'était une identité."""
+    return len(value) in _SHA_LENGTHS and all(c in "0123456789abcdef" for c in value.lower())
+
+
+def _read_text(path: Path) -> str | None:
+    """Le contenu d'un fichier, ou None s'il est absent/illisible. PUR-ish (lecture seule), ne lève pas."""
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def site_packages(settings: Settings) -> Path | None:
+    """Le `site-packages` du venv d'outils (`tools/venv/lib/python*/site-packages`), ou None s'il n'existe
+    pas — cas NORMAL d'un cockpit en checkout dev où `tools install` n'a jamais tourné. Ne lève pas."""
+    try:
+        for p in sorted((tools_venv(settings) / "lib").glob("python*/site-packages")):
+            if p.is_dir():
+                return p
+    except OSError:
+        return None
+    return None
+
+
+def _dist_info(sp: Path, dist_name: str) -> Path | None:
+    """Le `.dist-info` d'une distribution dans ce site-packages. Le nom de dossier est NORMALISÉ (PEP 503 :
+    `code-map` → `code_map`), d'où le glob plutôt qu'un chemin construit. Ne lève pas."""
+    stem = dist_name.replace("-", "_")
+    try:
+        for d in sorted(sp.glob(f"{stem}-*.dist-info")):
+            if d.is_dir():
+                return d
+    except OSError:
+        return None
+    return None
+
+
+def map_provenance(sp: Path | None, name: str) -> dict:
+    """Provenance d'UNE carte servie : `{name, sha, requested_ref, source, reason}`. Lecture locale d'un
+    seul fichier, **zéro réseau**, **ne lève jamais**. `source` dit d'où vient la réponse — `vcs` (install
+    git : le seul cas qui porte un SHA), `local-dir` (éditable/répertoire), `unknown` — et tout `sha=None`
+    porte son `reason`. Un SHA faux coûte plus cher qu'un SHA manquant : il retire le doute qui aurait
+    déclenché une vérification."""
+    out: dict = {"name": name, "sha": None, "requested_ref": None, "source": "unknown", "reason": None}
+    if sp is None:
+        out["reason"] = "aucun venv d'outils ici (`cockpit tools install` n'a pas tourné)"
+        return out
+    dist = _dist_info(sp, name)
+    if dist is None:
+        out["reason"] = f"`{name}` n'est pas installée dans le venv d'outils"
+        return out
+    raw = _read_text(dist / "direct_url.json")
+    if raw is None:
+        out["reason"] = ("aucun direct_url.json : installée depuis un index ou un wheel, "
+                         "PEP 610 n'enregistre alors pas d'origine")
+        return out
+    try:
+        info = json.loads(raw)
+    except json.JSONDecodeError:
+        out["reason"] = "direct_url.json présent mais illisible (JSON invalide)"
+        return out
+    vcs = info.get("vcs_info")
+    if isinstance(vcs, dict) and isinstance(vcs.get("commit_id"), str):
+        commit = vcs["commit_id"]
+        if not _looks_like_sha(commit):
+            out["reason"] = "vcs_info.commit_id présent mais n'est pas un SHA reconnaissable"
+            return out
+        out["sha"] = commit
+        req = vcs.get("requested_revision")
+        out["requested_ref"] = req if isinstance(req, str) else None
+        out["source"] = "vcs"
+        return out
+    if isinstance(info.get("dir_info"), dict):
+        out["source"] = "local-dir"
+        out["reason"] = "installée depuis un répertoire local — aucun SHA à servir"
+        return out
+    out["reason"] = "direct_url.json sans `vcs_info` ni `dir_info`"
+    return out
+
+
+def maps_provenance(settings: Settings) -> list[dict]:
+    """Les 3 cartes hôte que cette instance SERT, dans l'ordre de `MAP_REPOS`. Lecture locale, **zéro
+    réseau**, **ne lève jamais** → utilisable depuis une sonde HTTP (`GET /api/version`) sans risque de 500
+    ni d'attente. Dire ce qu'on SERT est local ; savoir si c'est à JOUR demande l'amont (`check_tools`)."""
+    sp = site_packages(settings)
+    return [map_provenance(sp, name) for name in MAP_REPOS]
+
+
+# -- sonde de fraîcheur : comparaison à l'amont (réseau EXPLICITE, jamais au dispatch) ----------------
+#
+# La comparaison n'est PAS faite dans `preflight_tools` : ce chemin s'exécute avant CHAQUE spawn de worker,
+# et y mettre 3 appels réseau rendrait le dispatch dépendant de GitHub — hors réseau il faudrait soit
+# bloquer un dispatch sain, soit se taire (le faux-vert qu'on répare). Même partage que la fraîcheur du
+# wheel (`build_provenance`) : le produit dit localement ce qu'il sert, la référence amont est explicite.
+_LS_REMOTE_TIMEOUT_S = 30       # une réf, pas un clone : borné court (le dispatch, lui, ne l'appelle pas).
+
+
+def check_plan(settings: Settings) -> list[dict]:
+    """Étapes `{name, argv}` de la sonde : un `git ls-remote <url> <ref>` par carte (PUR — construit les
+    argv, n'exécute rien). `ls-remote` ne transfère AUCUN objet : il rend la réf, pas l'historique."""
+    return [{"name": name, "argv": ["git", "ls-remote", url, MAP_REF]}
+            for name, url in MAP_REPOS.items()]
+
+
+def parse_ls_remote(stdout: str, ref: str = MAP_REF) -> str | None:
+    """Le SHA de `ref` dans une sortie `git ls-remote` (`<sha>\\trefs/heads/<ref>`), ou None si la réf n'y
+    est pas / la ligne n'est pas exploitable. PUR. On n'accepte que ce qui a la FORME d'un SHA."""
+    for line in stdout.splitlines():
+        sha, _, name = line.partition("\t")
+        sha = sha.strip()
+        if name.strip() in (f"refs/heads/{ref}", ref) and _looks_like_sha(sha):
+            return sha
+    return None
+
+
+def compare(served: list[dict], remote: Mapping[str, str | None]) -> list[dict]:
+    """Fonction **PURE** (zéro I/O) : confronte le commit SERVI de chaque carte à celui de `MAP_REF` en
+    amont. Les faits viennent de l'appelant (résolveurs injectables), comme `build_provenance.staleness`.
+
+    Trois états, jamais un faux-vert : `up-to-date` · `differs` (les DEUX SHA écrits) · `unknown` (+ son
+    `reason` : carte non installée, ou amont injoignable). **On ne dit jamais « en retard de N commits »** :
+    `ls-remote` ne rend que des réfs, compter exigerait de rapatrier les objets. Un compte inventé retirerait
+    le doute qui doit justement déclencher la vérification."""
+    out: list[dict] = []
+    for m in served:
+        name = m["name"]
+        upstream = remote.get(name)
+        entry: dict = {"name": name, "served": m["sha"], "remote": upstream,
+                       "state": "unknown", "reason": None}
+        if m["sha"] is None:
+            entry["reason"] = m["reason"]
+        elif upstream is None:
+            entry["reason"] = f"réf `{MAP_REF}` illisible en amont — comparaison impossible"
+        else:
+            entry["state"] = "up-to-date" if m["sha"] == upstream else "differs"
+        out.append(entry)
+    return out
+
+
+def overall_state(entries: list[dict]) -> str:
+    """L'état d'ensemble : `differs` dès qu'une carte diffère, sinon `unknown` dès qu'une n'a pas pu être
+    comparée, sinon `up-to-date`. PUR. « Pas pu vérifier » ne se fond JAMAIS dans « à jour »."""
+    states = {e["state"] for e in entries}
+    if "differs" in states:
+        return "differs"
+    return "unknown" if "unknown" in states else "up-to-date"
+
+
 def _symlink_sources(settings: Settings) -> dict[str, Path]:
     """Table `nom d'exécutable → source réelle` à exposer dans `tools/bin`. PUR (chemins seulement)."""
     venv_bin = tools_venv(settings) / "bin"
@@ -264,11 +427,39 @@ def _run_step(runner: Runner, step: dict, *, env: Mapping[str, str], steps: list
     return bool(entry["ok"])
 
 
+def check_tools(settings: Settings, *, runner: Runner | None = None) -> dict:
+    """Sonde de fraîcheur des 3 cartes servies (IMPUR : un `git ls-remote` par carte, via le runner injecté).
+    **Ne lève pas** — un amont injoignable devient un état `unknown` porteur de sa raison, jamais une
+    exception ni un vert. Clone ANONYME (`anonymous_env`) : les cartes sont publiques, aucun credential
+    n'entre ici. Retour `{ref, state, maps:[{name, served, remote, state, reason}]}`."""
+    from cockpit.core.run import RunError, RunTimeout
+    runner = runner or _default_runner
+    served = maps_provenance(settings)
+    # Une carte qu'on ne sert PAS n'a rien à comparer : la raison est déjà locale. Ne pas interroger l'amont
+    # pour elle évite d'attendre le réseau (jusqu'au timeout, hors ligne) pour une réponse déjà connue.
+    comparable = {m["name"] for m in served if m["sha"] is not None}
+    env = anonymous_env()
+    remote: dict[str, str | None] = {}
+    for step in check_plan(settings):
+        name = str(step["name"])
+        if name not in comparable:
+            continue
+        try:
+            r = runner(step["argv"], env=env, timeout=_LS_REMOTE_TIMEOUT_S)
+        except (RunTimeout, RunError, OSError):
+            remote[name] = None
+            continue
+        remote[name] = parse_ls_remote(r.stdout) if r.ok else None
+    entries = compare(served, remote)
+    return {"ref": MAP_REF, "state": overall_state(entries), "maps": entries}
+
+
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
-    """Route `cockpit tools install` : provisionne l'outillage hôte-niveau. Aucun credential — les 3 cartes
-    sont publiques, le clone est anonyme (le `--token-file` d'avant a été RETIRÉ, pas rendu optionnel : un
-    drapeau accepté-et-ignoré ferait croire qu'il sert encore). Imprime chaque étape ; code de sortie 1 si
-    une étape a échoué (fail-loud)."""
+    """Route `cockpit tools <install|check>`. Aucun credential sur aucune des deux — les 3 cartes sont
+    publiques, le clone est anonyme (le `--token-file` d'avant a été RETIRÉ, pas rendu optionnel : un
+    drapeau accepté-et-ignoré ferait croire qu'il sert encore)."""
+    if getattr(args, "action", None) == "check":
+        return _cli_check(settings)
     report = install_tools(settings)
     for s in report["steps"]:  # type: ignore[attr-defined]
         mark = "🟢" if s.get("ok") else "🔴"
@@ -280,3 +471,36 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
         return 0
     print(f"🔴 échec : {report.get('error')}")
     return 1
+
+
+_CHECK_MARKS = {"up-to-date": "🟢", "differs": "🔴", "unknown": "🟡"}
+# Trois issues DISTINCTES, parce que « je n'ai pas pu vérifier » n'est ni « à jour » ni « périmé » : le
+# confondre avec l'un des deux serait exactement le faux-vert (ou le faux-rouge) que cette sonde répare.
+_CHECK_EXITS = {"up-to-date": 0, "differs": 1, "unknown": 2}
+
+
+def _cli_check(settings: Settings) -> int:
+    """Rend l'écart entre les cartes SERVIES et `MAP_REF` en amont. Sortie **1** si au moins une diffère,
+    **2** si aucune ne diffère mais qu'au moins une n'a pas pu être comparée, **0** seulement quand les
+    trois sont vérifiées à jour. Le geste de remise à niveau est EXPLICITE (`cockpit tools install`,
+    idempotent) : cette commande rapporte, elle ne mute rien."""
+    report = check_tools(settings)
+    for e in report["maps"]:
+        mark = _CHECK_MARKS.get(e["state"], "🟡")
+        if e["state"] == "differs":
+            detail = f"servie {e['served'][:12]} · amont {e['remote'][:12]} — DIFFÈRE"
+        elif e["state"] == "up-to-date":
+            detail = f"servie {e['served'][:12]} — à jour"
+        else:
+            detail = f"non comparée ({e['reason']})"
+        print(f"  {mark} {e['name']:<10} {detail}")
+    state = str(report["state"])
+    if state == "differs":
+        print(f"🔴 au moins une carte diffère de `{report['ref']}` — `cockpit tools install` les remet à "
+              f"niveau (idempotent). Le nombre de commits d'écart n'est pas mesurable sans rapatrier "
+              f"l'historique : la sonde dit LESQUELLES ont bougé, pas de combien.")
+    elif state == "unknown":
+        print("🟡 fraîcheur NON vérifiée (amont injoignable ou carte absente) — ce n'est pas un vert.")
+    else:
+        print(f"🟢 les {len(report['maps'])} cartes servies sont à jour sur `{report['ref']}`.")
+    return _CHECK_EXITS.get(state, 2)

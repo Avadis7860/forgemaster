@@ -8,7 +8,7 @@ même convention forge : seams **purs** testables sans subprocess + exécution i
 en argv.
 
 ## tools.preflight_tools() / install_tools() — gate de présence + provisionnement hôte-niveau
-`src/cockpit/tools.py:151` (`preflight_tools`) · `src/cockpit/tools.py:204` (`install_tools`) · appelés par le
+`src/cockpit/tools.py:151` (`preflight_tools`) · `src/cockpit/tools.py:367` (`install_tools`) · appelés par le
 gate de dispatch (preflight avant spawn) et `cockpit tools install` (cli_dispatch).
 `preflight_tools` vérifie que tout binaire déclaré par la facette active (`<worktree>/.claude/settings.local.json`)
 résout sur le PATH worker (`tools_env`) et lève `ToolPreflightError` (`:43`) AVANT le spawn — ne gate QUE
@@ -59,7 +59,50 @@ paierait × 4 pour rien). Le chemin **wheel** (code-map vendoré, aucun sibling)
 
 Frontière : ceci couvre le venv d'un **checkout de dev**. Sur une instance provisionnée, les cartes viennent de
 `tools.install_plan()` (`pip install --upgrade git+…@main` dans `tools/venv`), figées à l'install — le preflight
-n'y vérifie qu'une **présence**, jamais une version.
+n'y vérifie qu'une **présence**, jamais une version. Ce que cette instance sert, et si ça a dérivé, se lit
+désormais par `maps_provenance` / `check_tools` (section suivante).
+
+## tools.maps_provenance() — quelles cartes cette instance sert-elle
+`src/cockpit/tools.py:259` (`maps_provenance`) · `src/cockpit/tools.py:216` (`map_provenance`) ·
+`src/cockpit/tools.py:191` (`site_packages`) · consommé par `build_provenance.provenance` → `GET /api/version`.
+
+**Il n'y a aucun tampon à écrire.** `pip install git+<url>@<ref>` pose déjà `direct_url.json` (PEP 610) dans le
+`dist-info`, avec le `commit_id` **résolu** — écrit par la machine, à l'install. On le **lit**. C'est le même
+mécanisme que la provenance de `mcp-catalogs` : un mécanisme, deux consommateurs. (Le cockpit, lui, doit
+tamponner son `_build.json` parce qu'il **construit un wheel** — cf. `build_provenance` ; ce n'est pas le cas ici.)
+
+Lecture **locale, zéro réseau, qui ne lève jamais** — d'où son usage sûr depuis une sonde HTTP. Contrat de
+dégradation identique à `read_stamp` : un `sha=None` s'accompagne **toujours** d'un `reason`, et `source` dit
+d'où vient la réponse (`vcs` — le seul cas porteur d'un SHA · `local-dir` · `unknown`). Un `commit_id` qui n'a
+pas la forme d'un SHA est **refusé** plutôt que servi comme identité : un SHA faux coûte plus cher qu'un SHA
+manquant, il retire le doute qui aurait déclenché la vérification.
+
+Mesure du 2026-08-03 (VM 9311) : instance provisionnée à 00:34, les 3 cartes déjà différentes de leur amont à
+04:19. Le figeage n'attend pas des semaines — il commence à la première heure.
+
+## tools.check_tools() — les cartes servies ont-elles dérivé de leur amont
+`src/cockpit/tools.py:430` (`check_tools`) · `src/cockpit/tools.py:294` (`compare`, PUR) ·
+`src/cockpit/tools.py:276` (`check_plan`, PUR) · `src/cockpit/tools.py:318` (`overall_state`, PUR) ·
+`src/cockpit/tools.py:482` (`_cli_check`) · appelé par `cockpit tools check`.
+
+Un `git ls-remote <url> <MAP_REF>` par carte (aucun objet transféré), sous `anonymous_env` — la sonde tape les
+mêmes dépôts publics que l'install et n'a donc **pas le droit** d'y ajouter un credential (un test l'asserte).
+Une carte qu'on ne sert pas n'est **pas** interrogée : sa raison est déjà locale, et l'interroger ferait attendre
+le réseau pour une réponse connue.
+
+**Pourquoi pas dans `preflight_tools`** : ce chemin s'exécute avant **chaque** spawn de worker. Y mettre 3
+appels réseau rendrait le dispatch dépendant de GitHub — hors réseau il faudrait soit bloquer un dispatch sain
+(un check qui s'allume sur ce qui est normal), soit se taire (le faux-vert qu'on répare). Même partage que la
+fraîcheur du wheel : le produit dit **localement** ce qu'il sert, la comparaison à l'amont est **explicite**.
+
+Trois issues **distinctes**, et c'est le cœur du contrat — exit **0** à jour · **1** au moins une diffère ·
+**2** rien ne diffère mais au moins une n'a pas pu être comparée. « Je n'ai pas pu vérifier » n'est ni « à
+jour » ni « périmé » ; le confondre avec l'un des deux refait le faux-vert (ou le faux-rouge) que cette sonde
+répare. **On ne dit jamais « en retard de N commits »** : `ls-remote` ne rend que des réfs, compter exigerait de
+rapatrier l'historique — la sonde dit *lesquelles* ont bougé, jamais *de combien*.
+
+`check` **rapporte, ne mute rien**. La remise à niveau reste le geste explicite `cockpit tools install`
+(idempotent, `--upgrade @main`) : une re-sync automatique remplacerait un binaire sous un worker en vol.
 
 ## service.install_service() / render_unit() — unité systemd du daemon
 `src/cockpit/service.py:154` (`install_service`) · `src/cockpit/service.py:98` (`render_unit`) · appelés par
@@ -111,7 +154,9 @@ valeur. `unlink_credential` remet `credential_ref` à NULL (le secret reste dans
 - `webbuild` : `find_map_src`, `ensure_map`, `ensure_maps` — la mise à disposition des index de maps pour le build du front (dérivés, régénérés si absents).
 - `tools` : helpers de chemin purs `tools_root`/`tools_venv`/`nodeenv_prefix`/`tools_bin`/`tools_env`,
   `required_bins`, `_symlink_sources`, `install_plan`, `_run_step`, `_default_runner`, constantes
-  `MAP_REPOS`/`PY_QUALITY`/`HOST_TOOLS`/`_VENV_BINS`/`_NODE_BINS`.
+  `MAP_REPOS`/`PY_QUALITY`/`HOST_TOOLS`/`_VENV_BINS`/`_NODE_BINS` ; côté provenance/sonde :
+  `parse_ls_remote`, `_looks_like_sha`, `_read_text`, `_dist_info`, `_CHECK_MARKS`/`_CHECK_EXITS`,
+  `_SHA_LENGTHS`/`_LS_REMOTE_TIMEOUT_S`.
 - `service` : `set_env_keys`/`load_env_file` (parité env CLI↔systemd), helpers `_cockpit_bin`/`_env_template`/
   `_unit_dir`.
 - `webbuild` : `find_web_dir`/`find_codemap_src` (localisation du checkout).

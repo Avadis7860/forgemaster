@@ -3,7 +3,8 @@ sous-commandes existent, `--help` marche) ; les handlers **délèguent aux couch
 de sorte que le parser se construit sans tirer fastapi/uvicorn ni aucune couche stub.
 
 Sous-commandes = la surface de la spine (phases du produit) :
-  project (create|list|get) · tool (sync) · tools (install) · roadmap (add-feature|show) · task (add|next) ·
+  project (create|list|get) · tool (sync) · tools (install|check) · roadmap (add-feature|show) ·
+  task (add|next) ·
   dispatch · run · gate (review|verify|toolchain) · merge · onboard · serve · setup · install-service
 
 Chaque handler reçoit `(settings, args)` et retourne un code de sortie. Les couches sont portées : aucun
@@ -65,6 +66,10 @@ def build_parser() -> argparse.ArgumentParser:
     # RETIRÉ plutôt qu'accepté-et-ignoré — un appelant qui le passe encore doit l'apprendre bruyamment.
     p_tools_sub.add_parser("install", parents=[common],
                            help="installer maps + Node + qualité py sous COCKPIT_HOME/tools (anonyme)")
+    # `check` RAPPORTE, ne mute rien : le geste de remise à niveau reste `install` (idempotent, --upgrade).
+    # Sortie 1 si une carte diffère, 2 si la fraîcheur n'a PAS pu être vérifiée — jamais confondus.
+    p_tools_sub.add_parser("check", parents=[common],
+                           help="comparer les cartes servies à leur amont (exit 1 diffère, 2 non vérifié)")
 
     # -- bundle -------------------------------------------------------------------------------------
     p_bundle = sub.add_parser("bundle", parents=[common],
