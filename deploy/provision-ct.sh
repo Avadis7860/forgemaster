@@ -245,9 +245,23 @@ else
   echo "   (pas de --manifest : install générique — le wizard /setup reste intact)"
 fi
 
+# Une adoption ratée est une DONNÉE manquante, pas une infrastructure cassée : elle ne doit pas empêcher le
+# service d'exister. Mesuré le 2026-08-03 sur une VM vierge — deux dépôts du manifeste encore privés
+# (`cockpit`, `mcp-catalogs`) faisaient rc 1 ici, et `set -e` tuait l'install AVANT [8/8] : cockpit jamais
+# activé, à cause de deux clones. Même conclusion pour un utilisateur dont une URL de manifeste a bougé.
+# On NE MASQUE RIEN : `cockpit bootstrap` a déjà imprimé un 🔴 par outil, on ajoute une bannière et la
+# commande de reprise, et on la RÉPÈTE en fin de script pour qu'elle ne soit pas enterrée sous [8/8].
+bootstrap_rc=0
 echo "→ [7/8] amorçage des outils (idempotent — skip ceux déjà adoptés)"
 if [ -n "$manifest" ]; then
-  if [ -n "$token_file" ]; then "$cockpit" bootstrap --token-file "$token_file"; else "$cockpit" bootstrap; fi
+  if [ -n "$token_file" ]; then "$cockpit" bootstrap --token-file "$token_file" || bootstrap_rc=$?
+  else "$cockpit" bootstrap || bootstrap_rc=$?; fi
+  if [ "$bootstrap_rc" != 0 ]; then
+    echo "   ⚠ amorçage INCOMPLET (détail ci-dessus). L'install CONTINUE : le service doit exister même"
+    echo "     si un dépôt du manifeste est injoignable (privé, renommé, hors ligne)."
+    echo "     Reprise quand l'accès est rétabli (idempotent, ne re-clone pas l'adopté) :"
+    echo "       $cockpit bootstrap${token_file:+ --token-file <token>}"
+  fi
 else
   echo "   (rien à amorcer sans manifeste)"
 fi
@@ -269,4 +283,9 @@ echo "  ouvre-le : le rail « Outils » présente les outils du manifeste, avec 
 # succès, ce qui casserait un appelant `set -e` / la CI-on-tag. On garde un rc 0 explicite.
 if [ "$with_claude" = "yes" ]; then
   echo "  onglet Terminal : tape \`claude\` pour lancer Claude Code (login au 1er run)."
+fi
+# Répété EN DERNIER : une alerte enterrée sous deux étapes vertes n'est pas une alerte.
+if [ "$bootstrap_rc" != 0 ]; then
+  echo "  ⚠ RAPPEL — l'amorçage [7/8] est INCOMPLET : des outils du manifeste ne sont PAS adoptés"
+  echo "    (le rail « Outils » les montrera absents). Relance \`$cockpit bootstrap\` une fois l'accès rétabli."
 fi

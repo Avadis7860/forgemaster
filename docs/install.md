@@ -121,15 +121,17 @@ Le wheel est buildé **depuis le code courant** (jamais un snapshot en retard) ;
 
 ### 2. Provision de l'hôte cible (Python seul, aucun Node)
 
-Copie sur l'hôte cible le wheel + `deploy/{provision-ct.sh,bootstrap.yaml}` (+ un token-file si les dépôts
-des outils sont privés), puis, **en tant que l'utilisateur du service** (jamais root pour un service `--user` :
-la base écrite par le bootstrap doit lui appartenir) :
+Copie sur l'hôte cible le wheel + `deploy/{provision-ct.sh,bootstrap.yaml}`, puis, **en tant que l'utilisateur
+du service** (jamais root pour un service `--user` : la base écrite par le bootstrap doit lui appartenir) :
 
 ```bash
 ./provision-ct.sh --wheel cockpit-<version>-py3-none-any.whl \
-                  --manifest bootstrap.yaml \
-                  --token-file read-token.txt      # omets-le quand les dépôts sont publics
+                  --manifest bootstrap.yaml
 ```
+
+**Aucun credential n'est requis pour l'outillage** : les 3 cartes (`code-map`, `docs-map`, `front-map`) sont
+publiques depuis le 2026-08-03, l'étape `[4]` les clone en **anonyme**. `--token-file` ne subsiste que pour
+l'amorçage `[7]`, et seulement si le manifeste déclare un dépôt encore **privé** — cf. § « Le manifeste ».
 
 Le script (idempotent, fail-loud, imprime chaque étape `[n/8]`) : `[1]` pose les **prérequis de base**
 (`python3-venv`, `git`, `curl` — absents d'une image cloud minimale) + crée un venv → `[2]` installe le wheel →
@@ -161,13 +163,19 @@ aucun secret ne transite par la recette. Sans le flag, l'install reste inchangé
 De la **donnée versionnée**, jamais un secret : `slug` + `source_url` + `kind: tool` par outil. Les 5 dépôts
 du framework (`cockpit`, `code-map`, `front-map`, `docs-map`, `mcp-catalogs`) y sont déclarés. Un `credential_ref`
 optionnel par entrée épingle un token dédié ; sinon le token partagé de `--token-file` (un PAT fine-grained
-`Contents:Read` sur les 5 dépôts) sert à tous. Le token vit dans le coffre — **jamais** dans ce fichier ni un repo.
+`Contents:Read`) sert de repli ; sinon le clone est **anonyme**. Le token vit dans le coffre — **jamais** dans
+ce fichier ni un repo.
 
-### Publier les outils plus tard (zéro changement)
+**État au 2026-08-03** : `code-map`, `docs-map`, `front-map` sont **publics** → adoptés sans credential.
+`cockpit` et `mcp-catalogs` restent **privés** → ce manifeste-ci est l'**édition maintainer**, et son amorçage
+complet demande encore un `--token-file`.
 
-Les dépôts sont privés aujourd'hui. Le jour où tu les publies (repos publics), le clone devient **anonyme** :
-retire simplement `--token-file` de la commande. Aucun changement du manifeste ni du code — l'auth au clone est
-optionnelle par conception.
+### Un amorçage incomplet n'annule pas l'install
+
+Si un dépôt du manifeste est injoignable (privé sans token, renommé, hors ligne), `[7]` le rapporte en 🔴 par
+outil, l'install **continue**, et `[8]` active le service : une adoption ratée est une **donnée** manquante,
+pas une infrastructure cassée. Le rail « Outils » montre l'outil absent, et `cockpit bootstrap` est
+**idempotent** — relance-le quand l'accès est rétabli, il ne re-clone pas ce qui est déjà adopté.
 
 ### Outillage hôte-niveau, preflight & câblage MCP
 
