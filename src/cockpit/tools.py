@@ -188,16 +188,23 @@ def _read_text(path: Path) -> str | None:
         return None
 
 
-def site_packages(settings: Settings) -> Path | None:
-    """Le `site-packages` du venv d'outils (`tools/venv/lib/python*/site-packages`), ou None s'il n'existe
-    pas — cas NORMAL d'un cockpit en checkout dev où `tools install` n'a jamais tourné. Ne lève pas."""
+def venv_site_packages(venv: Path) -> Path | None:
+    """Le `site-packages` d'UN venv quelconque (`<venv>/lib/python*/site-packages`), ou None. Ne lève pas.
+    Paramétré par le venv (et non par `Settings`) parce que cet hôte en porte plusieurs, de cycles de vie
+    distincts : celui des outils, et celui du serveur MCP co-installé (`mcp.local`)."""
     try:
-        for p in sorted((tools_venv(settings) / "lib").glob("python*/site-packages")):
+        for p in sorted((venv / "lib").glob("python*/site-packages")):
             if p.is_dir():
                 return p
     except OSError:
         return None
     return None
+
+
+def site_packages(settings: Settings) -> Path | None:
+    """Le `site-packages` du venv d'OUTILS, ou None s'il n'existe pas — cas NORMAL d'un cockpit en checkout
+    dev où `tools install` n'a jamais tourné. Ne lève pas."""
+    return venv_site_packages(tools_venv(settings))
 
 
 def _dist_info(sp: Path, dist_name: str) -> Path | None:
@@ -213,12 +220,16 @@ def _dist_info(sp: Path, dist_name: str) -> Path | None:
     return None
 
 
-def map_provenance(sp: Path | None, name: str) -> dict:
-    """Provenance d'UNE carte servie : `{name, sha, requested_ref, source, reason}`. Lecture locale d'un
-    seul fichier, **zéro réseau**, **ne lève jamais**. `source` dit d'où vient la réponse — `vcs` (install
-    git : le seul cas qui porte un SHA), `local-dir` (éditable/répertoire), `unknown` — et tout `sha=None`
-    porte son `reason`. Un SHA faux coûte plus cher qu'un SHA manquant : il retire le doute qui aurait
-    déclenché une vérification."""
+def dist_provenance(sp: Path | None, name: str) -> dict:
+    """Provenance d'UNE distribution installée : `{name, sha, requested_ref, source, reason}`. Lecture
+    locale d'un seul fichier, **zéro réseau**, **ne lève jamais**. `source` dit d'où vient la réponse —
+    `vcs` (install git : le seul cas qui porte un SHA), `local-dir` (éditable/répertoire), `unknown` — et
+    tout `sha=None` porte son `reason`. Un SHA faux coûte plus cher qu'un SHA manquant : il retire le doute
+    qui aurait déclenché une vérification.
+
+    Nommée `dist_*` et non `map_*` : elle ne lit rien de spécifique aux cartes — juste PEP 610 dans un
+    `.dist-info`. Le serveur MCP co-installé (`mcp.local.server_provenance`) l'appelle telle quelle, plutôt
+    que d'entretenir une seconde lecture du même format qui divergerait au premier cas tordu."""
     out: dict = {"name": name, "sha": None, "requested_ref": None, "source": "unknown", "reason": None}
     if sp is None:
         out["reason"] = "aucun venv d'outils ici (`cockpit tools install` n'a pas tourné)"
@@ -261,7 +272,7 @@ def maps_provenance(settings: Settings) -> list[dict]:
     réseau**, **ne lève jamais** → utilisable depuis une sonde HTTP (`GET /api/version`) sans risque de 500
     ni d'attente. Dire ce qu'on SERT est local ; savoir si c'est à JOUR demande l'amont (`check_tools`)."""
     sp = site_packages(settings)
-    return [map_provenance(sp, name) for name in MAP_REPOS]
+    return [dist_provenance(sp, name) for name in MAP_REPOS]
 
 
 # -- sonde de fraîcheur : comparaison à l'amont (réseau EXPLICITE, jamais au dispatch) ----------------
@@ -402,7 +413,7 @@ def install_tools(settings: Settings, *, runner: Runner | None = None) -> dict:
 
     # 1. venv d'outils (idempotent : `python -m venv` sur un venv existant est sûr).
     venv_step = {"name": "venv", "argv": [sys.executable, "-m", "venv", str(tools_venv(settings))]}
-    if not _run_step(runner, venv_step, env=dict(os.environ), steps=steps):
+    if not run_step(runner, venv_step, env=dict(os.environ), steps=steps):
         report["ok"] = False
         report["error"] = "création du venv d'outils échouée"
         return report
@@ -412,7 +423,7 @@ def install_tools(settings: Settings, *, runner: Runner | None = None) -> dict:
 
     # 3. installs (fail-loud : abandon au 1er rouge).
     for step in install_plan(settings):
-        if not _run_step(runner, step, env=env, steps=steps):
+        if not run_step(runner, step, env=env, steps=steps):
             report["ok"] = False
             report["error"] = f"étape {step['name']} échouée"
             return report
@@ -434,13 +445,19 @@ def install_tools(settings: Settings, *, runner: Runner | None = None) -> dict:
     return report
 
 
-def _run_step(runner: Runner, step: dict, *, env: Mapping[str, str], steps: list[dict]) -> bool:
-    """Lance une étape via le runner, journalise le résultat dans `steps`, retourne `ok`. Ne lève pas :
-    une erreur de transport (binaire absent…) devient un step rouge."""
+def run_step(runner: Runner, step: dict, *, env: Mapping[str, str], steps: list[dict],
+             timeout: float = _STEP_TIMEOUT_S) -> bool:
+    """Lance une étape `{name, argv}` via le runner, journalise le résultat dans `steps`, retourne `ok`.
+    **Ne lève pas** : une erreur de transport (binaire absent, timeout…) devient un step rouge porteur de
+    son motif — c'est ce qui distingue « l'étape a échoué » de « le provisioning a explosé ».
+
+    Public (et non `_run_step`) parce que le co-install du serveur MCP (`mcp.local`) déroule exactement la
+    même mécanique : sans ça, il ré-implémenterait la partie facile (le rc) en oubliant la partie qui
+    compte (les exceptions de transport)."""
     from cockpit.core.run import RunError, RunTimeout
     entry: dict = {"name": step["name"]}
     try:
-        r = runner(step["argv"], env=env, timeout=_STEP_TIMEOUT_S)
+        r = runner(step["argv"], env=env, timeout=timeout)
         entry.update(ok=r.ok, exit_code=r.returncode)
         if not r.ok:
             entry["error"] = (r.stderr.strip() or r.stdout.strip())[:300]

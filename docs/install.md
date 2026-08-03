@@ -133,14 +133,15 @@ du service** (jamais root pour un service `--user` : la base écrite par le boot
 publiques depuis le 2026-08-03, l'étape `[4]` les clone en **anonyme**. `--token-file` ne subsiste que pour
 l'amorçage `[7]`, et seulement si le manifeste déclare un dépôt encore **privé** — cf. § « Le manifeste ».
 
-Le script (idempotent, fail-loud, imprime chaque étape `[n/8]`) : `[1]` pose les **prérequis de base**
+Le script (idempotent, fail-loud, imprime chaque étape `[n/9]`) : `[1]` pose les **prérequis de base**
 (`python3-venv`, `git`, `curl` — absents d'une image cloud minimale) + crée un venv → `[2]` installe le wheel →
 `[3]` *(Claude, opt-in)* → `[4]` **`cockpit tools install`** — l'**outillage hôte-niveau** que les bundles
 DÉCLARENT (maps CLI + qualité py + **Node via nodeenv rootless**) rangé sous `$COCKPIT_HOME/tools/bin`, puis
 **`cockpit doctor`** qui **aborte fail-loud** si un outil déclaré manque (cf. § ci-dessous) → `[5]` écrit l'unité
 systemd → `[6]` dépose le manifeste sous `COCKPIT_HOME` → `[7]` **`cockpit bootstrap`** (adopte les 5 outils via
-leur **vrai clone git**) → `[8]` active le service. Résultat : `http://<hôte>:8700`, rail « Outils » peuplé au
-1ᵉʳ chargement. Ré-exécuter la commande est sûr (venv réutilisé, outils déjà là *skippés*).
+leur **vrai clone git**) → `[8]` *(serveur MCP co-installé, opt-in — cf. § ci-dessous)* → `[9]` active le
+service. Résultat : `http://<hôte>:8700`, rail « Outils » peuplé au 1ᵉʳ chargement. Ré-exécuter la commande
+est sûr (venv réutilisé, outils déjà là *skippés*).
 
 ### Claude Code dans le terminal web (`--with-claude`)
 
@@ -181,25 +182,41 @@ pas une infrastructure cassée. Le rail « Outils » montre l'outil absent, et `
 
 Deux mécanismes **distincts** peuplent un hôte cockpit — ne pas les confondre :
 
-- **`cockpit tools install`** (étape `[4/8]`, ci-dessus) — le **toolchain hôte-niveau** que les bundles
+- **`cockpit tools install`** (étape `[4/9]`, ci-dessus) — le **toolchain hôte-niveau** que les bundles
   *déclarent* (`allowedTools`) : maps CLI (`codemap`/`docsmap`/`frontmap`), qualité py (ruff/mypy/pytest) et
   **Node via nodeenv rootless**, installés dans un venv d'outils dédié sous `$COCKPIT_HOME/tools/` (symlinks en
   `tools/bin`). Idempotent, fail-loud. C'est ce qui rend le contrat d'outillage **réellement présent** sur l'hôte.
-- **`cockpit bootstrap`** (étape `[7/8]`) — l'**adoption des 5 dépôts-outils** du framework dans le rail
+- **`cockpit bootstrap`** (étape `[7/9]`) — l'**adoption des 5 dépôts-outils** du framework dans le rail
   « Outils » via leur clone git (donnée du manifeste). Peuple la *surface*, pas le PATH du worker.
 
 **Le runtime HONORE le contrat, pas seulement l'install.** Au **dispatch**, le PATH d'outils (`tools/bin` +
 Node) est **injecté explicitement** dans l'env du worker (fini l'héritage passif), et un **preflight fail-loud**
 refuse un dispatch dont un binaire déclaré manque — **avant** le spawn, avec un remède nommé (`cockpit tools
 install`) — plutôt que laisser le worker mourir à mi-course. La sonde jumelle **hors-ligne** est `cockpit
-doctor` (rc 0/1), rejouée à l'étape `[4/8]` et disponible à tout moment.
+doctor` (rc 0/1), rejouée à l'étape `[4/9]` et disponible à tout moment.
 
-**Câbler le corpus MCP (capital possédé).** Le câblage du serveur `forgemaster-catalogs` n'est **pas** posé par
-`provision-ct.sh` : il se fait au **wizard `/setup`** (1ᵉʳ démarrage) ou à la main via **`cockpit mcp wire`**
-(`--secret-file <f>` si on possède la valeur, ou `--secret-ref <uuid>` en BYO). Il pose dans `cockpit.env` une
-**référence opaque** au secret + l'endpoint (jamais le secret en clair) ; le prochain dispatch injecte alors un
-`.mcp.json` valide. Sans câblage, l'injection est un **no-op honnête** (le cockpit tourne, la doc tierce n'est
-juste pas atteignable). Un `systemctl restart cockpit` recharge l'`EnvironmentFile`. Détail : `docs/runbooks/provision.md`.
+### Le corpus MCP : deux topologies, et l'instance dit laquelle elle est
+
+Un cockpit n'a **pas** d'instance `forgemaster-catalogs` par défaut. Deux façons d'en avoir une, et
+`GET /api/version` (clé `mcp`) répond toujours laquelle est en place :
+
+- **`co-installed`** — le serveur tourne **sur cet hôte**, servi en **loopback**. Posé par
+  `provision-ct.sh --with-mcp <racine-corpus>` (étape `[8/9]`) ou après coup par
+  **`cockpit mcp install --data-root <racine-corpus>`**. La commande pose un venv dédié
+  (`$COCKPIT_HOME/mcp/venv`) au **SHA épinglé** de l'édition, génère le secret HS256, écrit un
+  `EnvironmentFile` en `600` + une unité systemd, et câble le cockpit dessus — aucune valeur à saisir.
+- **`remote`** — l'instance consomme un serveur d'ailleurs. Câblé au **wizard `/setup`** (1ᵉʳ démarrage) ou
+  via **`cockpit mcp wire --endpoint <url>`** (`--secret-file <f>` si on possède la valeur,
+  `--secret-ref <uuid>` en BYO). Pose dans `cockpit.env` une **référence opaque** au secret + l'endpoint,
+  jamais le secret en clair.
+
+**La racine de corpus est TA donnée.** Le co-install pose un **lecteur**, pas un corpus : `--data-root` est
+obligatoire et doit exister, et le cockpit ne clone aucun corpus — ni le sien, ni le tien. Sans racine, la
+commande **refuse** plutôt que de démarrer un serveur qui répondrait `200` sur un corpus vide.
+
+Dans les deux cas le prochain dispatch injecte un `.mcp.json` valide ; sans câblage l'injection est un
+**no-op honnête** (`topology: "none"` — le cockpit tourne, la doc tierce n'est juste pas atteignable). Un
+`systemctl restart cockpit` recharge l'`EnvironmentFile`. Détail : `docs/runbooks/provision.md`.
 
 ## Coffre de secrets
 

@@ -2,8 +2,8 @@
 # provision-ct.sh — provisionne un hôte VIERGE en cockpit prêt-à-l'emploi, batteries incluses, EN UNE
 # COMMANDE : venv → install du wheel → [Claude Code, opt-in] → service systemd → OUTILLAGE hôte-niveau
 # (`cockpit tools install` : maps + Node + qualité py, ce que les bundles DÉCLARENT) → dépôt du manifeste
-# → `cockpit bootstrap` → activation. AUCUN Node requis au build (l'UI voyage dans le wheel ; Node runtime
-# est provisionné par l'étape outillage pour les projets front que le worker travaillera).
+# → `cockpit bootstrap` → [serveur MCP co-installé, opt-in] → activation. AUCUN Node requis au build (l'UI
+# voyage dans le wheel ; Node runtime est provisionné par l'étape outillage pour les projets front).
 #
 # À lancer SUR l'hôte cible, en tant que l'utilisateur qui fera tourner le service (JAMAIS root pour un
 # service `--user` : la DB écrite par le bootstrap doit appartenir à l'utilisateur du service). Le wheel,
@@ -13,14 +13,19 @@
 # (ré-exécution sûre — venv réutilisé, bootstrap skip les outils déjà là, install-service n'écrase pas
 # cockpit.env) ; FAIL-LOUD (`set -euo pipefail`) ; AUCUN secret en argv (le token passe par --token-file).
 #
-# `--token-file` ne sert PLUS aux 3 cartes (publiques depuis 2026-08-03 → clone anonyme à l'étape [4/8]) :
-# il ne sert qu'à l'AMORÇAGE [7/8], et seulement pour les dépôts du manifeste encore privés. Manifeste
-# entièrement public → provisionnement complet sans aucun credential.
+# `--token-file` ne sert PLUS aux 3 cartes (publiques depuis 2026-08-03 → clone anonyme à l'étape [4/9]) :
+# il sert à l'AMORÇAGE [7/9] pour les dépôts du manifeste encore privés, et au co-install [8/9] tant que
+# `forgemaster-catalogs` l'est aussi. Manifeste entièrement public → provisionnement sans credential.
+#
+# `--with-mcp <racine-corpus>` co-installe le serveur MCP de corpus SUR CET HÔTE (topologie `co-installed`,
+# servie en loopback) au lieu de dépendre d'un endpoint distant. La racine est TA donnée : ce script n'en
+# clone aucune — le corpus ne se distribue pas avec le produit.
 #
 # Usage :
 #   deploy/provision-ct.sh --wheel <chemin.whl> [--manifest deploy/bootstrap.yaml] [--token-file <token>]
 #     [--venv ~/.venvs/cockpit] [--home ~/.cockpit] [--projects-root ~/projects]
 #     [--host 0.0.0.0] [--port 8700] [--system] [--no-enable] [--with-claude]
+#     [--with-mcp <racine-corpus>] [--mcp-port 8080]
 set -euo pipefail
 
 wheel=""; manifest=""; token_file=""
@@ -29,6 +34,7 @@ home="${COCKPIT_HOME:-$HOME/.cockpit}"
 projects_root="${COCKPIT_PROJECTS_ROOT:-$HOME/projects}"
 host="0.0.0.0"; port="8700"
 scope="user"; enable="yes"; with_claude="no"
+mcp_data=""; mcp_port="8080"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -43,7 +49,9 @@ while [ $# -gt 0 ]; do
     --system)        scope="system"; shift;;
     --no-enable)     enable="no"; shift;;
     --with-claude)   with_claude="yes"; shift;;
-    -h|--help)       sed -n '2,30p' "$0"; exit 0;;
+    --with-mcp)      mcp_data="$2"; shift 2;;
+    --mcp-port)      mcp_port="$2"; shift 2;;
+    -h|--help)       awk 'NR>1 { if (/^#/) print; else exit }' "$0"; exit 0;;
     *) echo "argument inconnu : $1" >&2; exit 2;;
   esac
 done
@@ -51,6 +59,9 @@ done
 [ -n "$wheel" ] && [ -f "$wheel" ] || { echo "✗ --wheel <chemin.whl> requis (fichier existant)" >&2; exit 2; }
 [ -z "$manifest" ] || [ -f "$manifest" ] || { echo "✗ manifeste introuvable : $manifest" >&2; exit 2; }
 [ -z "$token_file" ] || [ -f "$token_file" ] || { echo "✗ token-file introuvable : $token_file" >&2; exit 2; }
+# Validé ICI, avant la moindre écriture : découvrir une racine de corpus absente à l'étape [8/9] ferait
+# échouer un provisionnement de 10 minutes sur un argument qu'on pouvait refuser en 10 millisecondes.
+[ -z "$mcp_data" ] || [ -d "$mcp_data" ] || { echo "✗ --with-mcp : racine de corpus introuvable : $mcp_data" >&2; exit 2; }
 
 export COCKPIT_HOME="$home" COCKPIT_PROJECTS_ROOT="$projects_root"
 cockpit="$venv/bin/cockpit"
@@ -199,24 +210,24 @@ ensure_base_deps() {
   echo "   ✓ prérequis de base OK"
 }
 
-echo "→ [1/8] prérequis de base (python3-venv, git, curl) + venv Python : $venv"
+echo "→ [1/9] prérequis de base (python3-venv, git, curl) + venv Python : $venv"
 ensure_base_deps
 python3 -m venv "$venv"
 
-echo "→ [2/8] install du wheel (sans Node — l'UI est empaquetée dans le wheel)"
+echo "→ [2/9] install du wheel (sans Node — l'UI est empaquetée dans le wheel)"
 "$venv/bin/pip" install --quiet --upgrade "$wheel"
 echo -n "   "; "$cockpit" --version
 
-echo "→ [3/8] Claude Code dans le terminal ($([ "$with_claude" = yes ] && echo "installe" || echo "ignoré — passe --with-claude"))"
+echo "→ [3/9] Claude Code dans le terminal ($([ "$with_claude" = yes ] && echo "installe" || echo "ignoré — passe --with-claude"))"
 if [ "$with_claude" = "yes" ]; then install_claude; fi
 
 # Outillage hôte-niveau : ce que les bundles DÉCLARENT (codemap/docsmap/frontmap + Node + ruff/pytest/mypy),
 # installé dans un venv d'outils dédié sous COCKPIT_HOME et exposé sur tools/bin — le dispatch worker ET le
 # gate natif préfixent ce bin au PATH. Sans ça, un worker sur n'importe quel type CONSTATE ses outils absents
 # (le wheel n'expose que `cockpit`). Idempotent, fail-loud. Les 3 cartes sont PUBLIQUES → clone ANONYME :
-# cette étape ne reçoit AUCUN credential, même si un --token-file a été passé pour l'amorçage [7/8].
+# cette étape ne reçoit AUCUN credential, même si un --token-file a été passé pour l'amorçage [7/9].
 # Node via nodeenv (rootless), sans sudo.
-echo "→ [4/8] outillage hôte-niveau (maps + Node + qualité py → $home/tools/bin) — sans credential"
+echo "→ [4/9] outillage hôte-niveau (maps + Node + qualité py → $home/tools/bin) — sans credential"
 "$cockpit" tools install
 echo "   runtime conteneur (podman) pour \`cockpit deploy\` (P2)"
 install_podman
@@ -229,14 +240,14 @@ seed_verify_runner
 # + rappelle `cockpit tools install`). Sur rc 1 on ABORTE l'install ICI, au lieu de laisser le 1er worker le
 # constater absent. Sonde ≠ installe : on renvoie vers `cockpit tools install`, on ne réinstalle pas en boucle.
 echo "   auto-vérification de présence (cockpit doctor)"
-"$cockpit" doctor || { echo "✗ [4/8] outillage INCOMPLET après install (détail ci-dessus) — corrige (\`cockpit tools install\`) puis relance." >&2; exit 1; }
+"$cockpit" doctor || { echo "✗ [4/9] outillage INCOMPLET après install (détail ci-dessus) — corrige (\`cockpit tools install\`) puis relance." >&2; exit 1; }
 echo "   PATH du login shell (terminal web = bash -l) : ré-ajoute le toolchain après le reset /etc/profile"
 install_login_path
 
-echo "→ [5/8] unité systemd (portée $scope, host=$host port=$port)"
+echo "→ [5/9] unité systemd (portée $scope, host=$host port=$port)"
 "$cockpit" install-service $svc_flag --host "$host" --port "$port"
 
-echo "→ [6/8] dépôt du manifeste d'outils sous COCKPIT_HOME"
+echo "→ [6/9] dépôt du manifeste d'outils sous COCKPIT_HOME"
 mkdir -p "$home"
 if [ -n "$manifest" ]; then
   install -m 0644 "$manifest" "$home/bootstrap.yaml"
@@ -247,12 +258,13 @@ fi
 
 # Une adoption ratée est une DONNÉE manquante, pas une infrastructure cassée : elle ne doit pas empêcher le
 # service d'exister. Mesuré le 2026-08-03 sur une VM vierge — deux dépôts du manifeste encore privés
-# (`cockpit`, `forgemaster-catalogs`) faisaient rc 1 ici, et `set -e` tuait l'install AVANT [8/8] : cockpit jamais
+# (`cockpit`, `forgemaster-catalogs`) faisaient rc 1 ici, et `set -e` tuait l'install AVANT l'activation :
+# cockpit jamais
 # activé, à cause de deux clones. Même conclusion pour un utilisateur dont une URL de manifeste a bougé.
 # On NE MASQUE RIEN : `cockpit bootstrap` a déjà imprimé un 🔴 par outil, on ajoute une bannière et la
-# commande de reprise, et on la RÉPÈTE en fin de script pour qu'elle ne soit pas enterrée sous [8/8].
+# commande de reprise, et on la RÉPÈTE en fin de script pour qu'elle ne soit pas enterrée sous [8/9]+[9/9].
 bootstrap_rc=0
-echo "→ [7/8] amorçage des outils (idempotent — skip ceux déjà adoptés)"
+echo "→ [7/9] amorçage des outils (idempotent — skip ceux déjà adoptés)"
 if [ -n "$manifest" ]; then
   if [ -n "$token_file" ]; then "$cockpit" bootstrap --token-file "$token_file" || bootstrap_rc=$?
   else "$cockpit" bootstrap || bootstrap_rc=$?; fi
@@ -266,15 +278,35 @@ else
   echo "   (rien à amorcer sans manifeste)"
 fi
 
-echo "→ [8/8] activation du service"
+# Co-install du serveur MCP de corpus : l'instance fait tourner SON serveur au lieu d'en consommer un
+# distant (§4 de la décision d'édition : deux topologies, et l'instance DIT laquelle elle est — lisible
+# ensuite sur `GET /api/version`, clé `mcp`). Ce qu'on installe est un LECTEUR : la racine de corpus est la
+# donnée de l'opérateur, jamais clonée par nous. Opt-in — sans `--with-mcp`, l'instance reste `remote` (ou
+# `none` si aucun endpoint n'est câblé), ce qui est un état parfaitement valide.
+echo "→ [8/9] serveur MCP de corpus ($([ -n "$mcp_data" ] && echo "co-installé depuis $mcp_data" || echo "ignoré — passe --with-mcp <racine-corpus>"))"
+if [ -n "$mcp_data" ]; then
+  mcp_args=(mcp install --data-root "$mcp_data" --port "$mcp_port")
+  if [ "$scope" = "system" ]; then mcp_args+=(--system); fi
+  # Le dépôt du serveur est encore PRIVÉ (sa publication est le volet suivant) : le même PAT de lecture
+  # que l'amorçage sert au clone pip. Il devient inutile ici dès que le dépôt est public — même
+  # trajectoire que les 3 cartes, anonymes depuis le 2026-08-03.
+  if [ -n "$token_file" ]; then mcp_args+=(--token-file "$token_file"); fi
+  "$cockpit" "${mcp_args[@]}"
+fi
+
+echo "→ [9/9] activation du service"
 if [ "$enable" = "no" ]; then
-  echo "   (--no-enable) active-le : $sysctl daemon-reload && $sysctl enable --now cockpit"
+  echo "   (--no-enable) active-le : $sysctl daemon-reload && $sysctl enable --now cockpit${mcp_data:+ forgemaster-catalogs}"
 else
   if [ "$scope" = "user" ]; then
     loginctl enable-linger "$USER" 2>/dev/null || sudo loginctl enable-linger "$USER"
   fi
   $sysctl daemon-reload
   $sysctl enable --now cockpit
+  # Le serveur co-installé est une pièce de cette instance, pas un extra : il monte avec elle. Sans ça,
+  # `cockpit mcp install` aurait posé une unité que personne ne démarre, et le câblage loopback pointerait
+  # un port fermé — un « co-installé » qui ne répond pas est pire qu'un `remote` assumé.
+  if [ -n "$mcp_data" ]; then $sysctl enable --now forgemaster-catalogs; fi
 fi
 
 echo "✓ cockpit provisionné → http://$host:$port"
@@ -286,6 +318,6 @@ if [ "$with_claude" = "yes" ]; then
 fi
 # Répété EN DERNIER : une alerte enterrée sous deux étapes vertes n'est pas une alerte.
 if [ "$bootstrap_rc" != 0 ]; then
-  echo "  ⚠ RAPPEL — l'amorçage [7/8] est INCOMPLET : des outils du manifeste ne sont PAS adoptés"
+  echo "  ⚠ RAPPEL — l'amorçage [7/9] est INCOMPLET : des outils du manifeste ne sont PAS adoptés"
   echo "    (le rail « Outils » les montrera absents). Relance \`$cockpit bootstrap\` une fois l'accès rétabli."
 fi

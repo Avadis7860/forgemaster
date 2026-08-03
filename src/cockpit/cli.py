@@ -331,13 +331,21 @@ def build_parser() -> argparse.ArgumentParser:
                    help="sonder la présence de l'outillage déclaré par les facettes (rc 0 sain / 1 manquant)")
 
     # -- mcp ----------------------------------------------------------------------------------------
-    p_mcp = sub.add_parser("mcp", parents=[common], help="câbler un MCP de corpus (forgemaster-catalogs)")
+    p_mcp = sub.add_parser("mcp", parents=[common], help="câbler ou co-installer un MCP de corpus")
     p_mcp_sub = p_mcp.add_subparsers(dest="action", required=True, metavar="<action>")
     pmw = p_mcp_sub.add_parser("wire", parents=[common],
                                help="poser la ref du secret + l'endpoint MCP dans cockpit.env")
     pmw.add_argument("--secret-file", help="fichier du secret HMAC partagé (jamais en argv)")
     pmw.add_argument("--secret-ref", help="UUID d'un secret déjà dans le coffre (voie BWS)")
     pmw.add_argument("--endpoint", help="endpoint MCP (défaut : l'instance forgemaster-catalogs)")
+    pmi = p_mcp_sub.add_parser("install", parents=[common],
+                               help="co-installer le serveur forgemaster-catalogs sur CET hôte (loopback)")
+    pmi.add_argument("--data-root", required=True,
+                     help="racine du corpus à servir (TA donnée — le cockpit n'en clone aucune)")
+    pmi.add_argument("--port", type=int, default=None, help="port du serveur local (défaut : 8080)")
+    pmi.add_argument("--ref", default=None, help="réf du serveur (défaut : le SHA épinglé de l'édition)")
+    pmi.add_argument("--token-file", help="PAT de lecture — requis tant que le dépôt est privé")
+    pmi.add_argument("--system", action="store_true", help="unité systemd de portée system (défaut : user)")
 
     return parser
 
@@ -594,6 +602,12 @@ def _h_doctor(settings: Settings, args: argparse.Namespace) -> int:
 
 
 def _h_mcp(settings: Settings, args: argparse.Namespace) -> int:
+    # Deux modules, deux métiers : `provision.mcp` CÂBLE un endpoint (d'où qu'il vienne), `mcp.local` FAIT
+    # TOURNER le serveur ici. Le routage est fait là plutôt que dans l'un des deux pour ne pas les rendre
+    # importables l'un depuis l'autre (`mcp.local` tire déjà `provision.mcp` pour le contrat JWT).
+    if getattr(args, "action", None) == "install":
+        from cockpit.mcp import local
+        return local.cli_install(settings, args)
     from cockpit.provision import mcp
     return mcp.cli_dispatch(settings, args)
 

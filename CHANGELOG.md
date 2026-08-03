@@ -5,6 +5,35 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### All-in-one : une instance peut faire tourner SON serveur MCP, et dit laquelle des deux topologies elle est
+- **Schéma API** — `GET /api/version` gagne la clé **`mcp`** `{topology, sha, endpoint, reason}` (aussi visible
+  sous `build` dans `GET /api/onboarding`). Pas de bump `SCHEMA_VERSION` : champ additif d'API HTTP, aucune
+  migration SQLite déclenchée (cf. politique de versionnage). Contrat écrit dans `docs/schema-contract.md`.
+- **Ce que ça répond** : la décision d'édition du 2026-08-02 (§4) déclarait **deux** topologies MCP —
+  co-installée et endpoint distant — et exigeait que l'instance dise laquelle elle est. Seule la seconde
+  existait, et rien ne la nommait. `topology` ∈ `co-installed` | `remote` | `none` | `unknown`.
+- **`cockpit mcp install --data-root <racine>`** (et `provision-ct.sh --with-mcp <racine>`, étape `[8/9]`)
+  co-installe `forgemaster-catalogs` sur l'hôte : venv dédié `$COCKPIT_HOME/mcp/venv` au **SHA épinglé** de
+  l'édition, secret HS256 **généré**, `EnvironmentFile` en `600`, unité systemd, câblage **loopback**. Aucune
+  valeur à saisir ; le secret ne passe par aucun argv.
+- **On installe un LECTEUR, pas un corpus.** `--data-root` est **obligatoire et doit exister** — sans lui la
+  commande **refuse**, plutôt que de démarrer un serveur qui répondrait `200` sur un corpus vide. Le cockpit
+  ne clone aucun corpus : la racine est la donnée de l'opérateur.
+- **La topologie est déduite du disque, jamais déclarée.** Pas de clé d'env `…_TOPOLOGY` : elle mentirait au
+  premier re-câblage. Deux faits lisibles localement — serveur installé sous `mcp/venv` ? endpoint consommé en
+  loopback (aucun DNS résolu, `0.0.0.0` exclu — c'est une adresse de bind) ? — et leur conjonction EST la
+  réponse. `sha` n'est rendu que pour `co-installed` ; un serveur distant se **demande** (`GET /version` sous
+  JWT), il ne se devine pas.
+- **`none` est un état normal**, pas une panne : une install sans corpus n'a rien à interroger.
+- **Le piège pip-git-SHA re-appliqué d'emblée** : `forgemaster-catalogs` est figé à `0.1.0` comme les 3 cartes,
+  donc `--upgrade` seul sauterait l'install en rendant rc 0. Deux passes, la seconde en
+  `--force-reinstall --no-deps`, verrouillées par un test.
+- **`tools.map_provenance` → `tools.dist_provenance`**, et `tools._run_step` → `tools.run_step` : elles ne
+  lisaient déjà rien de spécifique aux cartes, et le co-install les réutilise telles quelles plutôt que
+  d'entretenir une seconde lecture du même format PEP 610.
+- **Renumérotation** des étapes de `provision-ct.sh` : `[n/8]` → `[n/9]`. `--help` n'imprime plus un
+  intervalle de lignes en dur (il fuyait déjà le `set -euo pipefail` de la ligne 30).
+
 ### Le serveur MCP frère s'appelle désormais `forgemaster-catalogs`
 - **Ce qui bouge ici** : le dépôt adopté par le rail (`deploy/bootstrap.yaml` — `slug` + `source_url`,
   verrouillé par `test_bootstrap`), et le nom du serveur partout où il est **visible par l'utilisateur**

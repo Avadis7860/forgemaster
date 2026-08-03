@@ -8,11 +8,12 @@ cap silencieux** (un substrat périmé DOIT se déclarer, jamais faux-vert) · *
 LOCAL via le seul seam `InternalGit`, zéro réseau) · **I/O injectable** (résolveurs en argument → cœur
 testable, calqué sur `auth.claude_auth_status`).
 
-La sonde porte DEUX moitiés, étiquetées séparément : le **wheel** (ce module) et les **cartes hôte** servies
-par `tools/venv` (`maps`, lues par `tools.maps_provenance`). Elles bougent indépendamment — le wheel à la
-réinjection, les cartes à `cockpit tools install` — donc un verdict unique serait faux dès que l'une des deux
-bouge seule. Les deux se lisent LOCALEMENT ; la comparaison des cartes à leur amont reste explicite
-(`cockpit tools check`), jamais dans un chemin chaud.
+La sonde porte TROIS volets, étiquetés séparément : le **wheel** (ce module), les **cartes hôte** servies par
+`tools/venv` (`maps`, lues par `tools.maps_provenance`) et le **serveur MCP de corpus** (`mcp`, lu par
+`mcp.local.topology`). Les trois bougent indépendamment — le wheel à la réinjection, les cartes à `cockpit
+tools install`, le serveur à l'édition — donc un verdict unique serait faux dès que l'un bouge seul. Tous se
+lisent LOCALEMENT ; les comparaisons à l'amont restent explicites (`cockpit tools check` pour les cartes,
+`GET /version` du serveur pour un MCP distant), jamais dans un chemin chaud.
 
 Trois états honnêtes, jamais un faux-vert :
 - `sha=None` : wheel sans tampon (checkout éditable/dev) → provenance inconnue, on ne PRÉTEND rien ;
@@ -87,9 +88,23 @@ def _served_maps(settings: Settings) -> list[dict]:
         return []
 
 
+def _mcp_topology(settings: Settings) -> dict:
+    """La topologie MCP de cette instance (lazy import, même convention que `_served_maps` — `mcp.local`
+    tire `provision.mcp` et `tools`, on ne les charge pas à l'import de ce module). Lecture LOCALE, zéro
+    réseau. **Ne lève jamais** : une sonde illisible dégrade en `unknown` plutôt que de faire tomber
+    `/api/version`."""
+    try:
+        from cockpit.mcp.local import topology
+        return topology(settings)
+    except Exception:
+        return {"topology": "unknown", "sha": None, "endpoint": None,
+                "reason": "topologie MCP illisible sur cet hôte"}
+
+
 def provenance(settings: Settings, *, installed_types: tuple[str, ...] | None = None,
                stamp: Path | None = None, git: InternalGit | None = None,
-               mirror_git_dir: Path | None = None, maps: list[dict] | None = None) -> dict:
+               mirror_git_dir: Path | None = None, maps: list[dict] | None = None,
+               mcp: dict | None = None) -> dict:
     """Détecteur live : compose le tampon embarqué + la fraîcheur mesurée contre le miroir SoT **local**
     + les **cartes hôte servies** (`maps`). **Enveloppé, ne lève jamais** — un miroir absent/cassé dégrade
     honnêtement en `comparable=False` (jamais de 500 sur la sonde onboarding, jamais de faux-vert). I/O via
@@ -99,11 +114,17 @@ def provenance(settings: Settings, *, installed_types: tuple[str, ...] | None = 
     `maps` répond à « quelles cartes cette instance sert-elle ? », que rien ne savait dire : le wheel et les
     3 cartes vieillissent SÉPARÉMENT (le wheel à la réinjection, les cartes à `tools install`), les fondre
     en un seul verdict mentirait dans les deux sens. Ce champ RAPPORTE un SHA déjà présent sur le disque ;
-    savoir s'il est en retard exige l'amont et reste **explicite** (`cockpit tools check`)."""
+    savoir s'il est en retard exige l'amont et reste **explicite** (`cockpit tools check`).
+
+    `mcp` répond à la question jumelle pour le serveur de corpus — **laquelle des deux topologies déclarées
+    (§4 de la décision d'édition du 2026-08-02) cette instance est-elle ?** Co-installé, le serveur est une
+    pièce de l'édition et porte un SHA lisible ici ; distant, il est un service dont on dépend et dont le
+    SHA ne se lit pas sans requête. Le champ dit lequel des deux, plutôt que de laisser deviner."""
     stampd = read_stamp(stamp)
     build_sha = stampd["sha"]
     base = {"version": __version__, "sha": build_sha, "committed_at": stampd["committed_at"],
-            "maps": maps if maps is not None else _served_maps(settings)}
+            "maps": maps if maps is not None else _served_maps(settings),
+            "mcp": mcp if mcp is not None else _mcp_topology(settings)}
     try:
         mgd = Path(mirror_git_dir) if mirror_git_dir is not None else _mirror_git_dir(settings)
         if not mgd.exists():

@@ -1,14 +1,15 @@
-# tooling — runbook (modules opérationnels top-level : rail d'outils, adoption d'outil, build front, unit systemd, self-check, auth claude, onboarding creds)
+# tooling — runbook (modules opérationnels top-level : rail d'outils, adoption d'outil, build front, unit systemd, co-install du serveur MCP, self-check, auth claude, onboarding creds)
 
-Les sept modules opérationnels top-level de la forge (hors spine cœur dispatch/spawn) : ils provisionnent et
-tiennent l'hôte plutôt que d'orchestrer une mission. Provisionnement de l'outillage (`tools`), re-sync d'un
-outil adopté (`toolsync`), build de la SPA (`webbuild`), unité systemd du daemon (`service`), sonde de présence
-(`doctor`), détection d'auth Claude (`auth`), liaison des credentials par projet (`onboarding`). Tous suivent la
+Les huit modules opérationnels de la forge (hors spine cœur dispatch/spawn) : ils provisionnent et tiennent
+l'hôte plutôt que d'orchestrer une mission. Provisionnement de l'outillage (`tools`), re-sync d'un outil
+adopté (`toolsync`), build de la SPA (`webbuild`), unité systemd du daemon (`service`), **co-install du
+serveur MCP de corpus** (`mcp.local`), sonde de présence (`doctor`), détection d'auth Claude (`auth`),
+liaison des credentials par projet (`onboarding`). Tous suivent la
 même convention forge : seams **purs** testables sans subprocess + exécution injectée, fail-loud, zéro secret
 en argv.
 
 ## tools.preflight_tools() / install_tools() — gate de présence + provisionnement hôte-niveau
-`src/cockpit/tools.py:151` (`preflight_tools`) · `src/cockpit/tools.py:389` (`install_tools`) · appelés par le
+`src/cockpit/tools.py:151` (`preflight_tools`) · `src/cockpit/tools.py:401` (`install_tools`) · appelés par le
 gate de dispatch (preflight avant spawn) et `cockpit tools install` (cli_dispatch).
 `preflight_tools` vérifie que tout binaire déclaré par la facette active (`<worktree>/.claude/settings.local.json`)
 résout sur le PATH worker (`tools_env`) et lève `ToolPreflightError` (`:43`) AVANT le spawn — ne gate QUE
@@ -68,8 +69,11 @@ n'y vérifie qu'une **présence**, jamais une version. Ce que cette instance ser
 désormais par `maps_provenance` / `check_tools` (section suivante).
 
 ## tools.maps_provenance() — quelles cartes cette instance sert-elle
-`src/cockpit/tools.py:259` (`maps_provenance`) · `src/cockpit/tools.py:216` (`map_provenance`) ·
-`src/cockpit/tools.py:191` (`site_packages`) · consommé par `build_provenance.provenance` → `GET /api/version`.
+`src/cockpit/tools.py:270` (`maps_provenance`) · `src/cockpit/tools.py:223` (`dist_provenance`) ·
+`src/cockpit/tools.py:191` (`venv_site_packages`) · consommé par `build_provenance.provenance` →
+`GET /api/version`. `dist_provenance` s'appelait `map_provenance` : elle ne lit pourtant rien de spécifique
+aux cartes (juste PEP 610 dans un `.dist-info`), et le serveur MCP co-installé (`mcp.local.server_provenance`)
+l'appelle **telle quelle** plutôt que d'entretenir une seconde lecture du même format.
 
 **Il n'y a aucun tampon à écrire.** `pip install git+<url>@<ref>` pose déjà `direct_url.json` (PEP 610) dans le
 `dist-info`, avec le `commit_id` **résolu** — écrit par la machine, à l'install. On le **lit**. C'est le même
@@ -86,9 +90,9 @@ Mesure du 2026-08-03 (VM 9311) : instance provisionnée à 00:34, les 3 cartes d
 04:19. Le figeage n'attend pas des semaines — il commence à la première heure.
 
 ## tools.check_tools() — les cartes servies ont-elles dérivé de leur amont
-`src/cockpit/tools.py:452` (`check_tools`) · `src/cockpit/tools.py:294` (`compare`, PUR) ·
-`src/cockpit/tools.py:276` (`check_plan`, PUR) · `src/cockpit/tools.py:318` (`overall_state`, PUR) ·
-`src/cockpit/tools.py:504` (`_cli_check`) · appelé par `cockpit tools check`.
+`src/cockpit/tools.py:470` (`check_tools`) · `src/cockpit/tools.py:313` (`compare`, PUR) ·
+`src/cockpit/tools.py:295` (`check_plan`, PUR) · `src/cockpit/tools.py:337` (`overall_state`, PUR) ·
+`src/cockpit/tools.py:522` (`_cli_check`) · appelé par `cockpit tools check`.
 
 Un `git ls-remote <url> <MAP_REF>` par carte (aucun objet transféré), sous `anonymous_env` — la sonde tape les
 mêmes dépôts publics que l'install et n'a donc **pas le droit** d'y ajouter un credential (un test l'asserte).
@@ -125,6 +129,38 @@ rapatrier l'historique — la sonde dit *lesquelles* ont bougé, jamais *de comb
 helper de credentials → fetch/push non-auth en silence). `install_service` écrit l'unité + un `cockpit.env`
 gabarit (jamais écrasé s'il existe) et retourne `(unit_path, env_path, systemctl_hint)` — l'appelant imprime le
 hint, on n'exécute PAS systemctl (pas de footgun privilège).
+
+## mcp.local.install() — co-installer le serveur de corpus SUR cet hôte
+`src/cockpit/mcp/local.py:245` (`install`) · `src/cockpit/mcp/local.py:120` (`install_plan`, pur) · appelés par
+`cockpit mcp install` et l'étape `[8/9]` de `deploy/provision-ct.sh` (`--with-mcp`).
+Pose un venv **dédié** (`$COCKPIT_HOME/mcp/venv` — ni celui du cockpit, ni celui des outils : trois cycles de
+vie distincts), installe `forgemaster-catalogs` au **SHA épinglé** (`SERVER_REF`, pas une réf mobile — §3 de la
+décision d'édition : une pièce de classe « nous » monte AVEC l'édition), **génère** le secret HS256 s'il n'y en
+a pas, écrit un `EnvironmentFile` en `600` + une unité systemd, puis câble le cockpit sur son **loopback**
+(`wire(live_env=True)`). Retourne `{ok, steps, unit, env_file, endpoint, sha, hint}` — l'appelant imprime le
+hint, **on n'exécute PAS systemctl** (même règle que `service.install_service`).
+Deux refus load-bearing : **`data_root` obligatoire et existant** (un serveur démarré sur une racine absente
+répond `200` sur un corpus vide — cette réussite apparente est pire qu'un échec), et **abandon avant d'écrire
+l'unité** si une étape pip est rouge (jamais de demi-provisioning qu'un `systemctl enable` viendrait démarrer).
+Le secret déjà câblé est **réutilisé** à la ré-exécution : le régénérer invaliderait les jetons du serveur qui
+tourne, à chaque appel d'une commande annoncée idempotente. Clone **anonyme** par défaut (`anonymous_env`) ;
+`--token-file` est une voie explicite, utile seulement tant que le dépôt du serveur est privé.
+`install_plan` refait les **deux passes** de `tools.install_plan` — même piège pip-git-SHA : la version est
+figée à `0.1.0`, donc `--upgrade` seul saute l'install en rendant rc 0.
+
+## mcp.local.topology() — laquelle des deux topologies cette instance est-elle
+`src/cockpit/mcp/local.py:199` · consommé par `build_provenance.provenance` → `GET /api/version` (clé `mcp`).
+Répond à l'exigence du §4 de la décision d'édition : deux topologies déclarées, et l'instance **dit** laquelle.
+Retourne `{topology, sha, endpoint, reason}`, lecture **locale, zéro réseau, qui ne lève jamais**.
+**Déduit du disque, jamais déclaré** — une clé d'env `…_TOPOLOGY` serait un champ qui peut mentir, que rien ne
+re-vérifie après un re-câblage. Deux faits suffisent : le serveur est-il installé sous `mcp/venv` (via
+`server_provenance` → `tools.dist_provenance`, PEP 610) ? l'endpoint consommé est-il en loopback (`is_loopback`,
+pur, **aucun DNS résolu** — `0.0.0.0` exclu : c'est une adresse de bind, jamais de destination) ?
+Quatre états : `none` (aucun endpoint — **normal**, une install sans corpus n'a rien à interroger) ·
+`co-installed` (installé ici + loopback — **seul cas qui porte un `sha`**) · `remote` (un endpoint d'ailleurs ;
+`sha: null` **avec son motif**, car le build d'une autre machine ne se lit pas localement — il se demande par
+`GET /version` sous JWT) · `unknown` (sonde illisible). Le cas tordu est nommé : serveur installé mais endpoint
+pointant ailleurs → `remote`, et le `reason` signale le serveur local inutilisé.
 
 ## doctor.scan() — sonde de présence par type/facette
 `src/cockpit/doctor.py:23` · appelé par `cockpit doctor` (cli_dispatch).
@@ -166,7 +202,8 @@ valeur. `unlink_credential` remet `credential_ref` à NULL (le secret reste dans
 - `tools.cli_env` : l'env d'outillage rendu à un appelant externe (même résolution que `tools_env`, exposée).
 - `webbuild` : `find_map_src`, `ensure_map`, `ensure_maps` — la mise à disposition des index de maps pour le build du front (dérivés, régénérés si absents).
 - `tools` : helpers de chemin purs `tools_root`/`tools_venv`/`nodeenv_prefix`/`tools_bin`/`tools_env`,
-  `required_bins`, `_symlink_sources`, `install_plan`, `_run_step`, `_default_runner`, constantes
+  `required_bins`, `_symlink_sources`, `install_plan`, `run_step` (public — partagé avec
+  `mcp.local.install`), `_default_runner`, constantes
   `MAP_REPOS`/`PY_QUALITY`/`HOST_TOOLS`/`_VENV_BINS`/`_NODE_BINS` ; côté provenance/sonde :
   `parse_ls_remote`, `_looks_like_sha`, `_read_text`, `_dist_info`, `_CHECK_MARKS`/`_CHECK_EXITS`,
   `_SHA_LENGTHS`/`_LS_REMOTE_TIMEOUT_S`.
@@ -175,3 +212,7 @@ valeur. `unlink_credential` remet `credential_ref` à NULL (le secret reste dans
 - `webbuild` : `find_web_dir`/`find_codemap_src` (localisation du checkout).
 - `doctor` : `_report_mcp`/`_report_runtime` (état token MCP P4 + runtime conteneur P2).
 - `toolsync` : table `_ACTION_GLYPH`, constante `TRACKED_BRANCHES`.
+- `mcp.local` : helpers de chemin purs `mcp_root`/`mcp_venv`/`env_file`/`unit_path`/`endpoint_url`,
+  rendus `render_env`/`render_unit`, `cli_install` (routage CLI), `_existing_secret` (réutilisation
+  du secret câblé), `McpInstallError`, constantes `SERVER_REPO`/`SERVER_REF`/`SERVER_DIST`/
+  `SERVER_UNIT`/`DEFAULT_PORT`/`LOOPBACK_HOST`/`JWT_ISSUER`/`JWT_AUDIENCE`.

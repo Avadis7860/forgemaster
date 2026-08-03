@@ -337,7 +337,7 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   réponse = projet avec `credential_ref`, **jamais le token** ; **400** mauvais usage/backend, **404** projet
   absent) · `DELETE /api/projects/{p}/credential` (délie : `credential_ref` → NULL).
 - **version** — `GET /api/version` (provenance de build + **fraîcheur honnête** du wheel installé :
-  `{version, sha, committed_at, comparable, stale, behind_by, missing_types, maps}`). Le SHA vient du tampon
+  `{version, sha, committed_at, comparable, stale, behind_by, missing_types, maps, mcp}`). Le SHA vient du tampon
   `cockpit/_build.json` embarqué au build (`deploy/build-wheel.sh`, jamais mtime) ; `stale`/`behind_by`/
   `missing_types` se calculent **par SHA** contre le HEAD du miroir SoT **local** de cockpit — **transport
   local**, zéro réseau. Sans tampon (éditable) ou sans miroir (install publique) → `comparable=false`
@@ -348,6 +348,14 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   `cockpit tools install`, le wheel à la réinjection) : les fondre mentirait dès que l'une bouge seule. `sha`
   `null` porte **toujours** son `reason` ; `[]` si l'outillage n'est pas lisible (la route ne tombe jamais).
   Savoir si ces cartes sont **à jour** demande l'amont et reste **hors** de cette route (`cockpit tools check`).
+  `mcp` = la **topologie du serveur de corpus** que cette instance consomme, `{topology, sha, endpoint,
+  reason}` — troisième volet de l'identité, étiqueté à part pour la même raison que `maps` (il bouge à
+  l'édition, pas à la réinjection). `topology` ∈ `co-installed` | `remote` | `none` | `unknown`, **déduit du
+  disque** (le serveur est-il installé sous `$COCKPIT_HOME/mcp/venv` ? l'endpoint consommé est-il en
+  loopback ?) et jamais déclaré par une clé d'env, qui pourrait mentir après un re-câblage. `sha` n'est
+  rendu que pour `co-installed` — seul cas où le binaire servi est sur ce disque ; un serveur distant se
+  demande (`GET /version` sous JWT), il ne se devine pas. `none` est un **état normal** (instance sans
+  corpus à interroger), pas une panne.
   *Additif (route neuve + champs `build`/`maps` optionnels) → CHANGELOG, pas de bump `SCHEMA_VERSION`.*
 - **bootstrap** — `GET /api/bootstrap` (aperçu **idempotent** de l'amorçage des outils du framework :
   `{available, tools:[{slug, source_url, kind, adopted}], adopted, total}` ; manifeste absent →
