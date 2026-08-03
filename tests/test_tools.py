@@ -47,14 +47,37 @@ def test_tools_env_empty_path(settings):
 def test_install_plan_covers_maps_quality_and_node(settings):
     plan = tools.install_plan(settings)
     names = [s["name"] for s in plan]
-    assert names == ["pip-tools", "pip-nodeenv", "nodeenv"]
+    assert names == ["pip-tools", "pip-maps-pin", "pip-nodeenv", "nodeenv"]
     pip_tools = plan[0]["argv"]
     # les 3 cartes en git+<url>@main + les 3 outils qualité, tous dans un seul pip install
     for repo_url in tools.MAP_REPOS.values():
         assert f"git+{repo_url}@{tools.MAP_REF}" in pip_tools
     for q in tools.PY_QUALITY:
         assert q in pip_tools
-    assert plan[2]["argv"][0].endswith("/nodeenv") and f"--node={tools.NODE_VERSION}" in plan[2]["argv"]
+    node_step = next(s for s in plan if s["name"] == "nodeenv")
+    assert node_step["argv"][0].endswith("/nodeenv") and f"--node={tools.NODE_VERSION}" in node_step["argv"]
+
+
+def test_install_plan_forces_the_maps_past_the_pip_git_sha_trap(settings):
+    """Le verrou du no-op silencieux. `pip install --upgrade git+<url>@main` résout le bon commit puis SAUTE
+    l'install à version égale — et les cartes sont figées à `0.1.0`, donc la version ne discrimine jamais.
+    Vu en vrai le 2026-08-03 : `cockpit tools install` répondait 🟢 sans avoir bougé une ligne.
+
+    La 2ᵈᵉ passe force le CODE des cartes sans retoucher aux deps (que la 1ʳᵉ a résolues). Retirer
+    `--force-reinstall`, `--no-deps`, ou l'étape entière, rétablit le faux-vert."""
+    pin = next(s for s in tools.install_plan(settings) if s["name"] == "pip-maps-pin")
+    assert "--force-reinstall" in pin["argv"] and "--no-deps" in pin["argv"]
+    for repo_url in tools.MAP_REPOS.values():
+        assert f"git+{repo_url}@{tools.MAP_REF}" in pin["argv"]
+    for q in tools.PY_QUALITY:            # les deps/outils qualité ne passent PAS par --no-deps
+        assert q not in pin["argv"]
+
+
+def test_install_plan_pins_the_maps_after_resolving_their_deps(settings):
+    """L'ORDRE est load-bearing : `--no-deps` seul n'installerait aucune dépendance sur une machine vierge.
+    L'épinglage forcé doit donc suivre la passe `--upgrade`, jamais la remplacer."""
+    names = [s["name"] for s in tools.install_plan(settings)]
+    assert names.index("pip-tools") < names.index("pip-maps-pin")
 
 
 def test_symlink_sources_split_venv_and_node(settings):
@@ -92,6 +115,7 @@ def _materializing_runner(settings, *, captured_envs=None, fail_on=None):
         step = ("venv" if "venv" in argv and "-m" in argv
                 else "nodeenv" if exe.endswith("/nodeenv")
                 else "pip-nodeenv" if "nodeenv" in argv
+                else "pip-maps-pin" if "--force-reinstall" in argv
                 else "pip-tools")
         if captured_envs is not None:
             captured_envs[step] = env

@@ -334,12 +334,26 @@ def _symlink_sources(settings: Settings) -> dict[str, Path]:
 
 
 def install_plan(settings: Settings) -> list[dict[str, object]]:
-    """Étapes ordonnées `{name, argv}` de l'install (PUR — construit les argv, n'exécute rien). Un seul
-    `pip install` pour les 3 cartes (`git+<url>@<ref>`) + les outils qualité py ; puis nodeenv ; puis Node."""
+    """Étapes ordonnées `{name, argv}` de l'install (PUR — construit les argv, n'exécute rien) : les 3 cartes
+    (`git+<url>@<ref>`) + les outils qualité py, puis l'**épinglage forcé** des cartes, puis nodeenv, Node.
+
+    **Pourquoi DEUX passes sur les cartes** — le piège pip-git-SHA, vu en vrai sur la VM 9311 le 2026-08-03 :
+    `pip install --upgrade git+<url>@main` clone, **résout `main` au bon commit**, prépare les métadonnées…
+    puis **saute l'install** parce que la version installée est identique. Les cartes sont figées à `0.1.0`,
+    donc la version ne discrimine JAMAIS : cette commande ne remet rien à niveau et rend pourtant rc 0. Un
+    `cockpit tools install` répondait « 🟢 » sans avoir bougé une ligne — le faux-vert exact que la sonde
+    `check_tools` a attrapé (elle est restée rouge après le « remède », et c'est comme ça qu'on l'a su).
+
+    La 1ʳᵉ passe reste `--upgrade` : c'est elle qui résout les **dépendances** (correcte sur une install
+    fraîche). La 2ᵈᵉ force le **code des cartes** à la réf demandée sans retoucher aux deps
+    (`--force-reinstall --no-deps`) — même parade que le cutover de `mcp-catalogs`. Retirer la 2ᵈᵉ passe
+    rétablit le no-op silencieux ; un test la verrouille."""
     pip = str(tools_venv(settings) / "bin" / "pip")
     map_specs = [f"git+{url}@{MAP_REF}" for url in MAP_REPOS.values()]
     return [
         {"name": "pip-tools", "argv": [pip, "install", "--upgrade", *map_specs, *PY_QUALITY]},
+        {"name": "pip-maps-pin",
+         "argv": [pip, "install", "--force-reinstall", "--no-deps", *map_specs]},
         {"name": "pip-nodeenv", "argv": [pip, "install", "--upgrade", "nodeenv"]},
         {"name": "nodeenv", "argv": [str(tools_venv(settings) / "bin" / "nodeenv"),
                                      f"--node={NODE_VERSION}", "--force", str(nodeenv_prefix(settings))]},

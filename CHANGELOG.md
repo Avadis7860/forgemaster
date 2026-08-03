@@ -5,6 +5,22 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### `cockpit tools install` ne remettait RIEN à niveau et rendait « 🟢 » — le piège pip-git-SHA
+- **Trouvé par la sonde livrée juste avant** : après un `tools install` répondant vert sur ses 4 étapes,
+  `cockpit tools check` est resté **rouge** et `codemap --help` n'avait pas récupéré son verbe. La garde a
+  attrapé un défaut que rien d'autre ne voyait — un `rc 0` sur un no-op.
+- **Cause, mesurée** (VM 9311, 2026-08-03) : `pip install --upgrade git+<url>@main` clone, **résout `main` au
+  bon commit** (`d04c2776d8c8`), prépare les métadonnées… puis **saute l'install** parce que la version
+  installée est identique. Les 3 cartes sont figées à `0.1.0` : la version ne discrimine **jamais**. pip
+  faisait le travail réseau, apprenait la bonne réponse, et la jetait — `direct_url.json` restait sur le
+  commit périmé. C'est le même piège que le cutover de `mcp-catalogs`, sur un autre chemin.
+- **Fix** : `install_plan` pose désormais les cartes en **deux passes** — `--upgrade` (qui résout les
+  **dépendances**, correcte sur une install fraîche) puis `--force-reinstall --no-deps` (qui force le **code**
+  des cartes à la réf demandée sans retoucher aux deps). L'ordre est load-bearing : `--no-deps` seul
+  n'installerait aucune dépendance sur une machine vierge.
+- Trois gardes verrouillent la parade (vues rouges d'abord) : étape supprimée · `--force-reinstall` retiré ·
+  `--no-deps` retiré · épinglage placé avant la résolution des deps.
+
 ### Une instance sait quelles cartes elle sert, et si elles ont dérivé — **API additive, aucun bump de schéma**
 - **Défaut de produit** (prérequis de publication) : les 3 cartes hôte sont tirées **une fois**, au
   provisioning, à `MAP_REF = "main"` — une réf **mobile** — puis plus jamais. Rien ne re-synchronise, et rien

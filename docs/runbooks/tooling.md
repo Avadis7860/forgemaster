@@ -8,15 +8,20 @@ même convention forge : seams **purs** testables sans subprocess + exécution i
 en argv.
 
 ## tools.preflight_tools() / install_tools() — gate de présence + provisionnement hôte-niveau
-`src/cockpit/tools.py:151` (`preflight_tools`) · `src/cockpit/tools.py:367` (`install_tools`) · appelés par le
+`src/cockpit/tools.py:151` (`preflight_tools`) · `src/cockpit/tools.py:381` (`install_tools`) · appelés par le
 gate de dispatch (preflight avant spawn) et `cockpit tools install` (cli_dispatch).
 `preflight_tools` vérifie que tout binaire déclaré par la facette active (`<worktree>/.claude/settings.local.json`)
 résout sur le PATH worker (`tools_env`) et lève `ToolPreflightError` (`:43`) AVANT le spawn — ne gate QUE
 `declared & HOST_TOOLS` (outils hôte-provisionnés). `install_tools` est idempotent/fail-loud : crée le venv
 d'outils, installe les **3** cartes (`task-map` est vendoré au wheel, pas une carte hôte) + qualité py + Node
 via nodeenv (`install_plan`), symlinke chaque exécutable dans `tools/bin` ; une étape rouge abandonne (jamais
-un demi-provisioning). **Aucun credential** : les 3 dépôts sont publics, le clone est anonyme — `anonymous_env`
-n'ajoute que `GIT_TERMINAL_PROMPT=0`, sans quoi un dépôt injoignable ferait *pendre* pip 900 s sur un prompt.
+un demi-provisioning). **Les cartes se posent en DEUX passes** — `--upgrade` (qui résout les dépendances) puis
+`--force-reinstall --no-deps` (qui force leur code à la réf demandée) : sans la seconde, `pip` clone, résout
+`main` au bon commit, **puis saute l'install** à version égale, et l'outillage ne bouge pas alors que la
+commande rend rc 0. Les cartes sont figées à `0.1.0`, donc la version ne discrimine jamais. Constaté en vrai
+sur la VM 9311 le 2026-08-03, attrapé par `check_tools` restée rouge après le prétendu remède.
+**Aucun credential** : les 3 dépôts sont publics, le clone est anonyme — `anonymous_env` n'ajoute que
+`GIT_TERMINAL_PROMPT=0`, sans quoi un dépôt injoignable ferait *pendre* pip 900 s sur un prompt.
 
 ## tools.missing_bins() — quels binaires ne résolvent pas
 `src/cockpit/tools.py:145` · appelé par `preflight_tools`, `doctor.scan`.
@@ -81,9 +86,9 @@ Mesure du 2026-08-03 (VM 9311) : instance provisionnée à 00:34, les 3 cartes d
 04:19. Le figeage n'attend pas des semaines — il commence à la première heure.
 
 ## tools.check_tools() — les cartes servies ont-elles dérivé de leur amont
-`src/cockpit/tools.py:430` (`check_tools`) · `src/cockpit/tools.py:294` (`compare`, PUR) ·
+`src/cockpit/tools.py:444` (`check_tools`) · `src/cockpit/tools.py:294` (`compare`, PUR) ·
 `src/cockpit/tools.py:276` (`check_plan`, PUR) · `src/cockpit/tools.py:318` (`overall_state`, PUR) ·
-`src/cockpit/tools.py:482` (`_cli_check`) · appelé par `cockpit tools check`.
+`src/cockpit/tools.py:496` (`_cli_check`) · appelé par `cockpit tools check`.
 
 Un `git ls-remote <url> <MAP_REF>` par carte (aucun objet transféré), sous `anonymous_env` — la sonde tape les
 mêmes dépôts publics que l'install et n'a donc **pas le droit** d'y ajouter un credential (un test l'asserte).
