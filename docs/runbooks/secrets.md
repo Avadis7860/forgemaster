@@ -27,11 +27,11 @@ Deux fichiers sous `secrets_dir` : `master.key` (clé Fernet en clair mais **060
 Transport = SDK officiel `bitwarden-sdk` (client in-process, auth réutilisée), via un `client_factory` **injectable** (swappable en test). Modèle **bring-your-own** v1 : l'utilisateur crée le secret dans Bitwarden et fournit son UUID comme `credential_ref` ; `get` le résout (cache mémoire par process) — `put`/`delete` lèvent `SecretUnsupported`, `list_entries` rend `[]`. Racine de confiance : `BWS_ACCESS_TOKEN` (env ou fichier-600), résolu localement, jamais loggé (`state_file=None`, auth en mémoire). Endpoints `.com` par défaut, surchargeables (`BWS_API_URL`/`BWS_IDENTITY_URL`, instances EU). `health()` ne fait PAS de login réseau : prêt seulement si le token se résout.
 
 ## mint_hs256() — forge un JWT HS256 (stdlib pure)
-`src/cockpit/secrets/jwt.py:29` · appelé par `provision.mcp` (Bearer du `.mcp.json` injecté au dispatch).
+`src/cockpit/secrets/jwt.py:30` · appelé par `provision.mcp` (Bearer du `.mcp.json` injecté au dispatch).
 Assemble `header{alg:HS256,typ:JWT}` + `payload{sub/iss/aud/iat/exp}` (défauts `issuer="vault-mcp"`, `ttl_seconds=3600`), signe en HMAC-SHA256 via `hmac`/`hashlib` (stdlib, pas de `pyjwt`). Rejette un `secret` < 32 caractères par `ValueError` (`_MIN_SECRET_LEN`). Le contrat de claims (`aud`, `iss`) est celui validé par le serveur forgemaster-catalogs.
 
 ## verify_hs256() — vérifie un JWT HS256
-`src/cockpit/secrets/jwt.py:44` · pendant de `mint_hs256` (port fidèle de `jwt_stdlib` du vault).
+`src/cockpit/secrets/jwt.py:45` · pendant de `mint_hs256` (port fidèle de `jwt_stdlib` du vault).
 Retourne les claims si valide, sinon `None`. Garanties : anti alg-confusion (rejette `alg≠HS256`, donc `none`/asym) ; signature comparée en **constant-time** (`hmac.compare_digest`) ; contrôles `exp` (avec `leeway`), `aud`, `iss` optionnel ; token malformé (≠3 parts ou décodage KO) → `None`.
 
 ## Zones non détaillées
