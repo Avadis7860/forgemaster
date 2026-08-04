@@ -1,13 +1,21 @@
 """build_provenance — provenance de BUILD de forgemaster + signal honnête de fraîcheur (staleness).
 
 Symétrique du tampon de provenance PAR-PROJET (`projects.registry` → `.forgemaster/provenance.toml`), mais
-pour
-forgemaster **lui-même** : de quel commit le wheel installé a-t-il été bâti, et est-il en retard sur le SoT
-qu'il sert ? Répond au cap silencieux qui a laissé une VM tourner 119 commits en retard (type de bundle
-manquant) sans un mot. Invariants (`CLAUDE.md`) : **fraîcheur par SHA de HEAD, jamais mtime** · **jamais de
-cap silencieux** (un substrat périmé DOIT se déclarer, jamais faux-vert) · **transport local** (miroir bare
-LOCAL via le seul seam `InternalGit`, zéro réseau) · **I/O injectable** (résolveurs en argument → cœur
+pour forgemaster **lui-même** : de quel commit le wheel installé a-t-il été bâti, et est-il en retard sur le
+SoT qu'il sert ? Répond au cap silencieux qui a laissé une VM tourner 119 commits en retard (type de bundle
+manquant) sans un mot.
+
+Invariants du repo (`CLAUDE.md`), cités **tels qu'ils y sont définis** : **fraîcheur par SHA de HEAD, jamais
+mtime** · **jamais de cap silencieux** (un substrat périmé DOIT se déclarer, jamais faux-vert) · **transport
+local** (`core.run`, zéro ssh/proxmox/CT/`/home/dev`) · **I/O injectable** (résolveurs en argument → cœur
 testable, calqué sur `auth.claude_auth_status`).
+
+CONTRAINTE PROPRE À CE MODULE, nommée à part parce qu'elle n'est PAS dans `transport local` : **aucun accès
+réseau**. Elle vient de l'usage — ce module sert `GET /version`, une sonde qui ne doit ni pendre ni rendre
+500 parce qu'un amont est injoignable — et non de l'invariant, qui interdit d'orchestrer des hôtes distants
+(ssh/proxmox/CT), pas de parler au réseau : `tools.py` fait `pip install git+https://…` sans rien violer.
+Elle a été fondue dans la citation de l'invariant jusqu'au 2026-08-04, ce qui a produit un contresens gravé
+dans un post-mortem (corrigé PR #1298) : **un invariant cité fait autorité**, donc il se cite exactement.
 
 La sonde porte TROIS volets, étiquetés séparément : le **wheel** (ce module), les **cartes hôte** servies par
 `tools/venv` (`maps`, lues par `tools.maps_provenance`) et le **serveur MCP de corpus** (`mcp`, lu par

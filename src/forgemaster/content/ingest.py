@@ -1,6 +1,8 @@
 """content.ingest — livraison **worktree-aware** d'un asset uploadé (règle #3 de la spec). Compose la
 résolution du worktree + l'écriture (`content.upload.write_project_upload`) + le commit forge, à l'image de
-`design.apply.apply_template`. `GitBackend` **injecté** ; zéro I/O réseau/ssh/proxmox (transport local).
+`design.apply.apply_template`. `GitBackend` **injecté** ; **transport local** (`core.run`, zéro
+ssh/proxmox/CT). Ce module ne touche par ailleurs aucun réseau — c'est un fait sur lui, pas le contenu de
+l'invariant, qui interdit d'orchestrer des hôtes distants et non de parler au réseau.
 
 Deux cas, une seule discipline forge (jamais d'acte outward autonome) :
 

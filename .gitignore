@@ -6,8 +6,14 @@ __pycache__/
 *.egg-info/
 .eggs/
 build/
-.venv/
-venv/
+# Sans slash final : le `work-loop` travaille en WORKTREE, et la façon normale d'y avoir un venv est de
+# SYMLINKER celui du dépôt principal (sinon l'editable install résout vers le mauvais `src/` → gate
+# faux-rouge). Un motif `.venv/` ne matche que des RÉPERTOIRES — le symlink passait donc à travers, et un
+# `git add -A` aurait versionné un lien vers un chemin absolu personnel. Invisible chez nous parce que
+# `.git/info/exclude` porte déjà `.venv` sans slash, mais ce fichier est LOCAL et n'est jamais cloné :
+# le défaut était donc inactif ici et actif chez tout tiers. Ne pas remettre les slashs « par rigueur ».
+.venv
+venv
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
