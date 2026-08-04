@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": ["Read", "Glob", "Grep",
+              "Bash(forgemaster dispatch:*)", "Bash(forgemaster run:*)", "Bash(forgemaster gate:*)",
+              "Bash(forgemaster merge:*)", "Bash(forgemaster roadmap:*)",
+              "Bash(git status:*)", "Bash(git log:*)", "Bash(git diff:*)"]
+  }
+}

@@ -28,7 +28,7 @@ remplace pas la **preuve statique déterministe** (types, lint, tests unitaires,
 3. **Convention d'abord, DÉCLARATION pour le reste** *(amendée 2026-07-31)*. Les routes connues restent
    détectées par convention (groupe `front`/`backend-node` si un `package.json` racine ou per-dir porte un
    script `gate` ; groupe `backend` si `pyproject.toml` à la racine). Le groupe `declared`, lui, est monté
-   depuis la table **`[bundle.gate]` du `.cockpit/bundle.toml`** du worktree :
+   depuis la table **`[bundle.gate]` du `.forgemaster/bundle.toml`** du worktree :
 
    ```toml
    [bundle.gate]
@@ -49,12 +49,12 @@ remplace pas la **preuve statique déterministe** (types, lint, tests unitaires,
    rouge (front a un `npm ci` de secours ; le venv py est supposé fourni par le worker/bundle).
 5. **Verdict SHA-bound CACHÉ, jamais exécuté dans un GET.** `evaluate_gate` (appelé par le `GET /api/gate`
    **poll-é**) ne fait que **LIRE** le verdict — invariant V4 : le GET reste cheap/idempotent, le runner
-   goto-only ne déclenche aucun effet. L'exécution est un **step séparé** (`cockpit gate toolchain` /
+   goto-only ne déclenche aucun effet. L'exécution est un **step séparé** (`forgemaster gate toolchain` /
    `POST …/toolchain`) qui **ÉCRIT** le verdict. Ancre = SHA de la branche de feature ; tout commit ultérieur
    **périme** la preuve (`is_fresh`).
 6. `compose_merge_decision` reste **inchangé** (cœur pur porté verbatim) : on lui **fournit** un `native_status`
    peuplé, on ne touche pas sa logique.
-7. La promesse du gate est **prouvée live (dogfood)** : `run_toolchain` contre le vrai `web/` du cockpit — vert
+7. La promesse du gate est **prouvée live (dogfood)** : `run_toolchain` contre le vrai `web/` du forgemaster — vert
    quand le front passe, **rouge** (`failed_step=npm-run-gate`) quand un vitest casse — sinon elle ne vaut rien.
 
 ## Invariants de test (encodés dans `tests/test_gate.py`)

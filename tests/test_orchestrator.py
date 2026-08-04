@@ -1,4 +1,4 @@
-"""Tests de l'orchestrateur parallèle (`cockpit run`) : drainage du DAG intra-feature, parallélisme borné
+"""Tests de l'orchestrateur parallèle (`forgemaster run`) : drainage du DAG intra-feature, parallélisme borné
 inter-features, mutex par feature, tolérance à l'échec, terminaison. DB **fichier** (les workers ouvrent
 leur propre connexion) + git réel (InternalGit, worktrees vrais, flock) + runner INJECTÉ (aucun `claude`).
 Le runner instrumenté mesure la concurrence réelle (pic global + pic par feature) pendant son délai."""
@@ -11,13 +11,13 @@ from pathlib import Path
 
 import pytest
 
-from cockpit.config import Settings
-from cockpit.core import run
-from cockpit.db import alerts, store
-from cockpit.dispatch import orchestrator
-from cockpit.git.internal import GitOpError, InternalGit
-from cockpit.projects import registry
-from cockpit.roadmap import model
+from forgemaster.config import Settings
+from forgemaster.core import run
+from forgemaster.db import alerts, store
+from forgemaster.dispatch import orchestrator
+from forgemaster.git.internal import GitOpError, InternalGit
+from forgemaster.projects import registry
+from forgemaster.roadmap import model
 
 
 @pytest.fixture
@@ -66,7 +66,8 @@ class _Runner:
 
 
 def _declare_gate(settings, slug: str) -> None:
-    """Déclare une toolchain triviale (`[bundle.gate]`) dans le `.cockpit/bundle.toml` du SoT et la COMMITTE
+    """Déclare une toolchain triviale (`[bundle.gate]`) dans le `.forgemaster/bundle.toml` du SoT et la
+    COMMITTE
     sur `dev` (les worktrees partagent l'arbre committé). Depuis le renversement 2026-07-31, un projet
     `generic` — qui ne porte ni `pyproject.toml` ni `package.json` — sort ROUGE dès qu'un worker produit de
     la source hors routes connues (`.sh`, `.css`…) tant qu'il n'a **rien déclaré** : c'est le contrat, et il
@@ -75,7 +76,7 @@ def _declare_gate(settings, slug: str) -> None:
     du chemin reviewer/merge-ready et pas du Tier-0."""
     InternalGit().overlay_commit(
         registry.sot_path_for(settings, slug), branch="dev",
-        files={".cockpit/bundle.toml": '[bundle]\nversion = "1"\nproject_type = "generic"\n\n'
+        files={".forgemaster/bundle.toml": '[bundle]\nversion = "1"\nproject_type = "generic"\n\n'
                                        '[bundle.gate]\nsteps = [{ name = "declared", argv = ["true"] }]\n'},
         message="chore: déclare la toolchain du projet", identity=("test", "test@local"))
 
@@ -151,7 +152,8 @@ def test_run_project_surfaces_interactive_task_as_needs_interview(ctx):
 
 def test_run_project_auto_reconciles_worked_socle_without_interview(ctx, monkeypatch):
     """Auto-heal (bullet 2) : un socle DÉJÀ travaillé (interview a authoré une feature de travail check-verte)
-    mais resté OUVERT — sa clôture perdue (PTY tué) — est RÉCONCILIÉ par la pré-passe de `cockpit run`, SANS
+    mais resté OUVERT — sa clôture perdue (PTY tué) — est RÉCONCILIÉ par la pré-passe de `forgemaster run`,
+    SANS
     session interactive : socle `done`, jamais tenu en `needs_interview`. Régression live 2026-07-18."""
     settings, conn = ctx
     fake_home = settings.home / "fakehome"
@@ -458,14 +460,15 @@ def test_run_project_summary_ventilates_dispositions_without_double_count(ctx):
     assert summary["aborted"] is False
 
 
-# -- CLI `cockpit run` : rapport (smoke, sans worker) -----------------------------------------------
+# -- CLI `forgemaster run` : rapport (smoke, sans worker) -----------------------------------------------
 
 def test_cli_dispatch_reports_empty_roadmap(ctx, capsys, monkeypatch):
     # Projet sans feature dispatchable → run_project ne spawn RIEN (aucun `claude`), imprime un rapport
     # ventilé PAR DISPOSITION (« 0 drainée(s), 0 tenue(s) interview, 0 bloquée(s), 0 échouée(s) ») — plus
     # l'agrégat trompeur « X dispatchée(s) » — et retourne 0. Prouve le chemin CLI → rapport de bout en bout.
     settings, conn = ctx
-    monkeypatch.setattr("cockpit.auth.claude_auth_status",             # auth présente → on teste le rapport
+    # auth présente → on teste le rapport
+    monkeypatch.setattr("forgemaster.auth.claude_auth_status",
                         lambda *a, **k: {"authenticated": True, "source": "test"})
     _new_project(conn, settings, "empty")
     import argparse
@@ -479,9 +482,9 @@ def test_cli_dispatch_reports_empty_roadmap(ctx, capsys, monkeypatch):
 
 
 def test_cli_dispatch_refuses_without_claude_auth(ctx, capsys, monkeypatch):
-    # Sans auth Claude, `cockpit run` refuse AVANT de spawner (sinon N features échoueraient en série).
+    # Sans auth Claude, `forgemaster run` refuse AVANT de spawner (sinon N features échoueraient en série).
     settings, conn = ctx
-    monkeypatch.setattr("cockpit.auth.claude_auth_status",
+    monkeypatch.setattr("forgemaster.auth.claude_auth_status",
                         lambda *a, **k: {"authenticated": False, "source": None})
     _new_project(conn, settings, "empty")
     import argparse
@@ -530,7 +533,7 @@ def test_run_finalizes_complete_feature_to_merge_ready(ctx, monkeypatch):
     assert summary["merge_ready"] == ["feat"]
     fin = summary["finalizations"][0]
     assert fin["merge_ready"] is True and fin["review"]["reviewed"] is True and fin["blockers"] == []
-    from cockpit.gate import review
+    from forgemaster.gate import review
     v = review.read_verdict(settings, "proj", "feat")
     assert v is not None and v["counts"]["red"] == 0     # verdict Tier-1 SHA-bound écrit, propre
 
@@ -546,7 +549,7 @@ def test_run_ui_feature_autoverified_becomes_merge_ready(ctx, monkeypatch):
     _new_project(conn, settings, "proj")
     _seed(conn, settings, "proj", "feat", [("impl", [])])
 
-    from cockpit.gate import verify
+    from forgemaster.gate import verify
     calls: list[tuple] = []
 
     def _spy(conn_, settings_, *, project, feature, sha, backend=None):    # preview-verify stubbé
@@ -659,7 +662,7 @@ def test_run_feature_drains_single_task_and_reviews(ctx, monkeypatch):
                                        runner=_writing_worker(), review_runner=_review_worker())
     assert summary["merge_ready"] == ["feat"]
     assert _statuses(conn, "feat") == {"impl": "done"}
-    from cockpit.gate import review
+    from forgemaster.gate import review
     v = review.read_verdict(settings, "proj", "feat")
     assert v is not None and v["counts"]["red"] == 0     # verdict Tier-1 SHA-bound écrit, propre
 
@@ -798,7 +801,8 @@ class _ConflictGit(InternalGit):
 def test_run_feature_survives_stale_base_conflict_as_needs_redrain(ctx):
     """A2 : un `GitOpError` de `worktree.reserve` (base périmée non réalignable, fondations en conflit) NE
     casse PAS le run — `_dispatch_one` le capture et le retourne en disposition `needs_redrain`, la feature
-    est tenue en échec-géré et une alerte ACTIONNABLE (`worker_failed`, raison → `cockpit redrain`) est posée.
+    est tenue en échec-géré et une alerte ACTIONNABLE (`worker_failed`, raison → `forgemaster redrain`) est
+    posée.
     Avant le fix, l'exception remontait crue par `fut.result()` et faisait un HTTP 500."""
     settings, conn = ctx
     _new_project(conn, settings, "proj")

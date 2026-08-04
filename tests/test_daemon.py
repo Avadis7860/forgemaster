@@ -13,18 +13,18 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from cockpit.config import Settings
-from cockpit.core import run
-from cockpit.daemon import app as app_mod
-from cockpit.db import alerts, merge_outcomes, store
-from cockpit.dispatch import jobs, worker, worktree
-from cockpit.gate import toolchain
-from cockpit.git.identity import resolve_identity
-from cockpit.git.internal import InternalGit, writeback_env
-from cockpit.projects import registry
-from cockpit.roadmap import model
-from cockpit.terminal import pty
-from cockpit.terminal import registry as term_reg
+from forgemaster.config import Settings
+from forgemaster.core import run
+from forgemaster.daemon import app as app_mod
+from forgemaster.db import alerts, merge_outcomes, store
+from forgemaster.dispatch import jobs, worker, worktree
+from forgemaster.gate import toolchain
+from forgemaster.git.identity import resolve_identity
+from forgemaster.git.internal import InternalGit, writeback_env
+from forgemaster.projects import registry
+from forgemaster.roadmap import model
+from forgemaster.terminal import pty
+from forgemaster.terminal import registry as term_reg
 
 
 @pytest.fixture
@@ -37,7 +37,7 @@ def _tok(c) -> list[str]:
     """Sous-protocole du token WS par-instance (garde CSWSH, cf. `daemon.wsguard`). Tout handshake WS le
     passe en `subprotocols=` — sans lui, la garde ferme `1008` avant `accept()`. Aucun `Origin` n'est posé
     par TestClient → la branche « Origin absent » (client non-navigateur) tolère, seul le token gate."""
-    return [f"cockpit.token.{c.app.state.ws_token}"]
+    return [f"forgemaster.token.{c.app.state.ws_token}"]
 
 
 # -- DI + santé ------------------------------------------------------------------------------------
@@ -159,7 +159,7 @@ def test_roadmap_surfaces_resolved_blueprint(client, monkeypatch):
     c, _ = client
     # blueprint_resolver(settings) → un resolver factice qui rend le corps du blueprint (hit MCP simulé)
     body = {"title": "Le gate déterministe", "status": "current"}
-    monkeypatch.setattr("cockpit.daemon.routes.roadmap.blueprint_resolver",
+    monkeypatch.setattr("forgemaster.daemon.routes.roadmap.blueprint_resolver",
                         lambda _s: (lambda _bp: body))
     c.post("/api/projects", json={"slug": "proj"})
     assert c.post("/api/projects/proj/features",
@@ -178,7 +178,7 @@ def test_roadmap_blueprint_honest_when_mcp_down(client, monkeypatch):
     """MCP injoignable / non câblé → le board dégrade honnêtement : `resolved:false` + raison, jamais inventé.
     Le contrat de la feature (state/blockers/next) reste inchangé."""
     c, _ = client
-    monkeypatch.setattr("cockpit.daemon.routes.roadmap.blueprint_resolver",
+    monkeypatch.setattr("forgemaster.daemon.routes.roadmap.blueprint_resolver",
                         lambda _s: (lambda _bp: None))                   # resolver rend None (down/empty)
     c.post("/api/projects", json={"slug": "proj"})
     c.post("/api/projects/proj/features", json={"slug": "gate", "blueprint": "deterministic-tooling-gate"})
@@ -216,7 +216,7 @@ def test_roadmap_check_unknown_project_is_404(client):
 def test_dispatch_refused_without_task_no_spawn(client, monkeypatch):
     c, _ = client
     # auth Claude présente (déterministe, indépendant du host CI) → on teste le gate no-task, pas l'auth
-    monkeypatch.setattr("cockpit.auth.claude_auth_status",
+    monkeypatch.setattr("forgemaster.auth.claude_auth_status",
                         lambda *a, **k: {"authenticated": True, "source": "test"})
     c.post("/api/projects", json={"slug": "proj"})
     c.post("/api/projects/proj/features", json={"slug": "empty"})
@@ -235,7 +235,7 @@ def test_web_dispatch_drains_and_produces_review(client, monkeypatch, fake_tools
     fake_home = settings.home / "fakehome"
     fake_home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("HOME", str(fake_home))              # trust_workspace n'écrit pas le vrai home
-    monkeypatch.setattr("cockpit.auth.claude_auth_status",
+    monkeypatch.setattr("forgemaster.auth.claude_auth_status",
                         lambda *a, **k: {"authenticated": True, "source": "test"})
 
     def _worker(argv, *, cwd, input_text, timeout, env=None):
@@ -258,7 +258,7 @@ def test_web_dispatch_drains_and_produces_review(client, monkeypatch, fake_tools
         fn = _worker if "WebSearch" in allow else _reviewer
         return fn(argv, cwd=cwd, input_text=input_text, timeout=timeout, env=env)
 
-    monkeypatch.setattr("cockpit.dispatch.worker._make_default_runner", lambda *a, **k: _route)
+    monkeypatch.setattr("forgemaster.dispatch.worker._make_default_runner", lambda *a, **k: _route)
 
     conn = store.open_db(settings)                          # seed projet/feature/task (todo) en direct
     registry.create_project(conn, settings, slug="proj")
@@ -268,7 +268,7 @@ def test_web_dispatch_drains_and_produces_review(client, monkeypatch, fake_tools
     # projet le ferait.
     InternalGit().overlay_commit(
         registry.sot_path_for(settings, "proj"), branch="dev",
-        files={".cockpit/bundle.toml": '[bundle]\nversion = "1"\nproject_type = "generic"\n\n'
+        files={".forgemaster/bundle.toml": '[bundle]\nversion = "1"\nproject_type = "generic"\n\n'
                                        '[bundle.gate]\nsteps = [{ name = "declared", argv = ["true"] }]\n'},
         message="chore: déclare la toolchain du projet", identity=("test", "test@local"))
     conn.execute("DELETE FROM tasks")                       # board CONTRÔLÉ : retire le socle d'amorçage
@@ -289,7 +289,7 @@ def test_gate_read_surface_exposes_toolchain_verdicts_and_history(client):
     """F4 : la trace se LIT dans l'UI. `GET /api/gate` porte `toolchain` (miroir review/verify) ; `verdicts`
     est la vue de lecture (review + toolchain, findings au niveau route) ; `.../history` rend l'historique
     par SHA → un rouge à SHA-A et un vert à SHA-B coexistent, sans ouvrir la DB à la main."""
-    from cockpit.gate import history
+    from forgemaster.gate import history
     c, settings = client
     conn = store.open_db(settings)
     registry.create_project(conn, settings, slug="proj")
@@ -313,7 +313,7 @@ def test_toolchain_gate_route_injects_tools_env(client, monkeypatch, fake_tools)
     (`gate/toolchain.py`) et l'orchestrator. Sans lui, sur un hôte au PATH minimal, la route rendrait un
     verdict DIFFÉRENT de la CLI (faux-rouge d'un veto Tier-0 natif NON-overridable, sans échappatoire).
     Régression : l'ancien appel `run_toolchain(wt, diff_files)` laissait `env=None`."""
-    from cockpit import tools
+    from forgemaster import tools
     c, settings = client
     fake_tools(settings)                                    # hôte provisionné (preflight worker + tools_bin)
     fake_home = settings.home / "fakehome"
@@ -354,7 +354,7 @@ def test_toolchain_gate_route_injects_tools_env(client, monkeypatch, fake_tools)
 
 def test_dispatch_refused_without_claude_auth(client, monkeypatch):
     c, _ = client
-    monkeypatch.setattr("cockpit.auth.claude_auth_status",
+    monkeypatch.setattr("forgemaster.auth.claude_auth_status",
                         lambda *a, **k: {"authenticated": False, "source": None})
     c.post("/api/projects", json={"slug": "proj"})
     c.post("/api/projects/proj/features", json={"slug": "feat"})
@@ -430,7 +430,7 @@ def test_reconcile_socle_endpoint_reports_result(client):
     assert r.status_code == 200                               # route atteinte (pas swallow par /{feature})
     body = r.json()
     assert body["status"] == "reconciled" and body["completed"] is True
-    assert body["socle_tasks_closed"] == 1 and "cockpit run" in body["next_step"]
+    assert body["socle_tasks_closed"] == 1 and "forgemaster run" in body["next_step"]
     conn = store.open_db(settings)
     try:
         assert conn.execute("SELECT status FROM tasks WHERE slug='cadrage'").fetchone()["status"] == "done"
@@ -555,11 +555,11 @@ def test_git_view_read_only_over_http(client):
     assert v.status_code == 200
     body = v.json()
     assert {b["name"] for b in body["branches"]} == {"dev", "main"}
-    assert all(b["sha"] and b["subject"] == "root: cockpit seed" for b in body["branches"])
+    assert all(b["sha"] and b["subject"] == "root: forgemaster seed" for b in body["branches"])
     assert body["tags"] == []                        # SoT neuf : aucun tag
     # dev == main sur un SoT neuf → 0 ahead / 0 behind (aucun merge encore)
     assert body["ahead_behind"] == {"base": "main", "head": "dev", "ahead": 0, "behind": 0}
-    assert body["logs"]["dev"][0]["subject"] == "root: cockpit seed"
+    assert body["logs"]["dev"][0]["subject"] == "root: forgemaster seed"
 
     # tag posé sur le SoT bare → remonté par la vue git (câblage route bout-en-bout)
     sot = registry.sot_path_for(settings, "proj")
@@ -601,19 +601,20 @@ def test_git_blame_over_http(client):
 
 def test_git_search_over_http(client):
     c, _ = client
-    c.post("/api/projects", json={"slug": "proj"})   # SoT auto-seedé (CLAUDE.md scaffold porte « cockpit »)
+    # SoT auto-seedé (CLAUDE.md scaffold porte « forgemaster »)
+    c.post("/api/projects", json={"slug": "proj"})
     search = "/api/projects/{}/git/search"
-    r = c.get(search.format("proj"), params={"ref": "dev", "q": "cockpit"})
+    r = c.get(search.format("proj"), params={"ref": "dev", "q": "forgemaster"})
     assert r.status_code == 200
     body = r.json()
-    assert body["project"] == "proj" and body["ref"] == "dev" and body["q"] == "cockpit"
+    assert body["project"] == "proj" and body["ref"] == "dev" and body["q"] == "forgemaster"
     assert body["results"] and all({"path", "line", "text"} <= m.keys() for m in body["results"])
     assert body["truncated"] is False and body["count"] == len(body["results"])
     # q vide → 200 vide (pas de match-tout) ; réf inconnue → 404 ; projet inconnu → 404
     empty = c.get(search.format("proj"), params={"ref": "dev", "q": "   "})
     assert empty.status_code == 200 and empty.json()["results"] == []
-    assert c.get(search.format("proj"), params={"ref": "nope", "q": "cockpit"}).status_code == 404
-    assert c.get(search.format("ghost"), params={"ref": "dev", "q": "cockpit"}).status_code == 404
+    assert c.get(search.format("proj"), params={"ref": "nope", "q": "forgemaster"}).status_code == 404
+    assert c.get(search.format("ghost"), params={"ref": "dev", "q": "forgemaster"}).status_code == 404
 
 
 def test_git_sync_endpoint_reports_divergence_and_degrades(client, tmp_path: Path):
@@ -640,7 +641,7 @@ def test_git_sync_endpoint_reports_divergence_and_degrades(client, tmp_path: Pat
     assert s1["state"] == "synced" and s1["fetched"] is True
     assert s1["branches"]["dev"] == {"ahead": 0, "behind": 0, "state": "synced"}
 
-    # le miroir prend de l'avance sur `dev` (travail hors cockpit) → `remote_ahead` visible sans faux-vert
+    # le miroir prend de l'avance sur `dev` (travail hors forgemaster) → `remote_ahead` visible sans faux-vert
     wt = tmp_path / "mwt"
     assert run.run(["git", "-C", str(mirror), "worktree", "add", "-q", str(wt), "dev"], env=env).ok
     (wt / "x.txt").write_text("ahead\n", encoding="utf-8")
@@ -700,8 +701,8 @@ def test_tool_sync_ff_and_fail_close_on_project(client, tmp_path: Path, monkeypa
     route → 409 (sa voie est `reconcile`) ; entité absente → 404. Pré-chauffage d'index monkeypatché (test
     — la glue best-effort est couverte par test_toolsync)."""
     c, settings = client
-    from cockpit import toolsync
-    from cockpit.codemap.index import IndexHandle
+    from forgemaster import toolsync
+    from forgemaster.codemap.index import IndexHandle
     monkeypatch.setattr(toolsync, "ensure_index",
                         lambda s, p, sot, *, ref="dev", runner=None:
                         IndexHandle(project=p, ref=ref, sha="d", root=Path(sot)))
@@ -757,10 +758,10 @@ def test_git_tree_and_blob_read_only_over_http(client):
     types = [e["type"] for e in body["entries"]]
     assert types == sorted(types, key=lambda t: t != "tree")  # tous les arbres avant les blobs
     # enrichissement Phase B : dernier commit par entrée + « latest commit » du dossier (SoT neuf = 1 commit)
-    assert entries["CLAUDE.md"]["last_commit"]["subject"] == "root: cockpit seed"
+    assert entries["CLAUDE.md"]["last_commit"]["subject"] == "root: forgemaster seed"
     assert entries[".claude"]["last_commit"]["short"] and entries[".claude"]["last_commit"]["date"]
     latest = body["latest_commit"]
-    assert latest["subject"] == "root: cockpit seed" and latest["author"] == "cockpit"
+    assert latest["subject"] == "root: forgemaster seed" and latest["author"] == "forgemaster"
     assert latest["count"] == 1
     # descente dans un sous-dossier
     sub = c.get("/api/projects/proj/git/tree", params={"ref": "dev", "path": ".claude"})
@@ -803,7 +804,7 @@ def test_git_raw_and_download_serve_bytes_with_safe_headers(client, monkeypatch)
     assert c.get("/api/projects/ghost/git/raw",
                  params={"ref": "dev", "path": "CLAUDE.md"}).status_code == 404
     # 413 SIGNALÉ au-delà du plafond (jamais un flux tronqué en silence)
-    from cockpit.git import internal
+    from forgemaster.git import internal
     monkeypatch.setattr(internal, "_MAX_BLOB_READ", 4)
     assert c.get("/api/projects/proj/git/raw",
                  params={"ref": "dev", "path": "CLAUDE.md"}).status_code == 413
@@ -811,14 +812,14 @@ def test_git_raw_and_download_serve_bytes_with_safe_headers(client, monkeypatch)
 
 def test_git_intelligence_commit_diff_history_over_http(client):
     c, _ = client
-    c.post("/api/projects", json={"slug": "proj"})   # SoT neuf : dev == main sur « root: cockpit seed »
+    c.post("/api/projects", json={"slug": "proj"})   # SoT neuf : dev == main sur « root: forgemaster seed »
     head = c.get("/api/projects/proj/git").json()["logs"]["dev"][0]["sha"]
 
     # détail du commit racine : métadonnées + fichiers touchés (le payload auto-travaillable)
     d = c.get(f"/api/projects/proj/git/commit/{head}")
     assert d.status_code == 200
     detail = d.json()
-    assert detail["subject"] == "root: cockpit seed" and detail["author"] == "cockpit"
+    assert detail["subject"] == "root: forgemaster seed" and detail["author"] == "forgemaster"
     paths = {f["path"] for f in detail["files"]}
     assert "CLAUDE.md" in paths and all("additions" in f and "binary" in f for f in detail["files"])
     assert c.get("/api/projects/proj/git/commit/deadbeef").status_code == 404
@@ -831,7 +832,7 @@ def test_git_intelligence_commit_diff_history_over_http(client):
 
     # historique d'un fichier du payload → au moins le commit racine ; fichier inconnu → liste vide (200)
     h = c.get("/api/projects/proj/git/history", params={"ref": "dev", "path": "CLAUDE.md"})
-    assert h.status_code == 200 and h.json()["commits"][0]["subject"] == "root: cockpit seed"
+    assert h.status_code == 200 and h.json()["commits"][0]["subject"] == "root: forgemaster seed"
     ghost = c.get("/api/projects/proj/git/history", params={"ref": "dev", "path": "nope.txt"})
     assert ghost.status_code == 200 and ghost.json()["commits"] == []
     assert c.get("/api/projects/proj/git/history",
@@ -988,7 +989,8 @@ def test_api_version_reports_build_provenance(client):
     assert r.status_code == 200
     v = r.json()
     assert "version" in v and "sha" in v and "comparable" in v                 # signal de fraîcheur présent
-    assert v["comparable"] is False                            # pas de miroir cockpit local en test → honnête
+    # pas de miroir forgemaster local en test → honnête
+    assert v["comparable"] is False
 
     # le bloc `build` doit AUSSI apparaître (additif) dans /api/onboarding, sans casser le reste
     st = c.get("/api/onboarding").json()
@@ -1138,7 +1140,7 @@ def test_terminal_ws_refuses_unknown_project_before_accept(client, monkeypatch):
     l'hôte **non authentifié** pour prouver que le refus vient bien du **gate projet**, pas d'un gate d'auth
     (qui n'existe plus ici)."""
     c, _ = client
-    monkeypatch.setattr("cockpit.auth.claude_auth_status",
+    monkeypatch.setattr("forgemaster.auth.claude_auth_status",
                         lambda *a, **k: {"authenticated": False, "source": None})
     # fermé avant accept → disconnect levé au connect
     with pytest.raises(WebSocketDisconnect), \
@@ -1155,20 +1157,21 @@ def test_terminal_ws_opens_when_host_unauthenticated(client, monkeypatch):
     c, _ = client
     c.post("/api/projects", json={"slug": "real"})       # projet existant → gate projet passe
     c.app.state.terminals = term_reg.PtySessionRegistry()  # normalement posé par le lifespan (app.py:96)
-    monkeypatch.setattr("cockpit.auth.claude_auth_status",
+    monkeypatch.setattr("forgemaster.auth.claude_auth_status",
                         lambda *a, **k: {"authenticated": False, "source": None})
 
     async def _fake_serve(websocket, registry, **kwargs):
         await websocket.send_text(json.dumps({"t": "session", "fresh": True}))
 
-    monkeypatch.setattr("cockpit.terminal.pty.serve_project_terminal", _fake_serve)
+    monkeypatch.setattr("forgemaster.terminal.pty.serve_project_terminal", _fake_serve)
     with c.websocket_connect("/ws/terminal/real", subprotocols=_tok(c)) as ws:   # accept OK
         assert json.loads(ws.receive_text()) == {"t": "session", "fresh": True}
 
 
 def test_terminal_and_interview_ws_are_distinct_sessions(client, monkeypatch):
     """L'interview est une session PTY DÉDIÉE : /ws/interview/{p} sert avec la clé `interview:{p}` et l'argv
-    `cockpit interview`, DISTINCTE de la session shell /ws/terminal/{p} (clé `{p}`, argv `bash -l`). C'est le
+    `forgemaster interview`, DISTINCTE de la session shell /ws/terminal/{p} (clé `{p}`, argv `bash -l`). C'est
+    le
     cœur du fix : les deux flavors coexistent sans collision → la session interview a sa propre fraîcheur, le
     shell de login persistant ne la bloque plus (fini le handoff tapé gaté sur `fresh`)."""
     c, _ = client
@@ -1180,7 +1183,7 @@ def test_terminal_and_interview_ws_are_distinct_sessions(client, monkeypatch):
         seen.append((session_key, argv))
         await websocket.send_text(json.dumps({"t": "session", "fresh": True}))
 
-    monkeypatch.setattr("cockpit.terminal.pty.serve_project_terminal", _fake_serve)
+    monkeypatch.setattr("forgemaster.terminal.pty.serve_project_terminal", _fake_serve)
     with c.websocket_connect("/ws/terminal/real", subprotocols=_tok(c)) as ws:
         assert json.loads(ws.receive_text())["t"] == "session"
     with c.websocket_connect("/ws/interview/real", subprotocols=_tok(c)) as ws:
@@ -1199,14 +1202,15 @@ def test_terminal_ws_injects_mcp_config_at_project_cwd_when_wired(client, monkey
     c, settings = client
     c.post("/api/projects", json={"slug": "real"})
     c.app.state.terminals = term_reg.PtySessionRegistry()
-    monkeypatch.setenv("COCKPIT_MCP_JWT_SECRET_REF", "ref")           # MCP câblé = une ref DE SECRET…
-    monkeypatch.setenv("COCKPIT_MCP_ENDPOINT", "http://mcp.example/mcp")   # …ET une cible (plus de défaut)
-    monkeypatch.setattr("cockpit.provision.mcp.cred_resolver", lambda s: (lambda r: "k" * 40))
+    monkeypatch.setenv("FORGEMASTER_MCP_JWT_SECRET_REF", "ref")           # MCP câblé = une ref DE SECRET…
+    # …ET une cible (plus de défaut)
+    monkeypatch.setenv("FORGEMASTER_MCP_ENDPOINT", "http://mcp.example/mcp")
+    monkeypatch.setattr("forgemaster.provision.mcp.cred_resolver", lambda s: (lambda r: "k" * 40))
 
     async def _fake_serve(websocket, registry, **kwargs):
         await websocket.send_text(json.dumps({"t": "session", "fresh": True}))
 
-    monkeypatch.setattr("cockpit.terminal.pty.serve_project_terminal", _fake_serve)
+    monkeypatch.setattr("forgemaster.terminal.pty.serve_project_terminal", _fake_serve)
     with c.websocket_connect("/ws/terminal/real", subprotocols=_tok(c)) as ws:
         ws.receive_text()
     mcp_json = settings.projects_root / "real" / ".mcp.json"
@@ -1221,12 +1225,12 @@ def test_terminal_ws_mcp_injection_is_honest_noop_when_not_wired(client, monkeyp
     c, settings = client
     c.post("/api/projects", json={"slug": "real"})
     c.app.state.terminals = term_reg.PtySessionRegistry()
-    monkeypatch.delenv("COCKPIT_MCP_JWT_SECRET_REF", raising=False)   # MCP non câblé
+    monkeypatch.delenv("FORGEMASTER_MCP_JWT_SECRET_REF", raising=False)   # MCP non câblé
 
     async def _fake_serve(websocket, registry, **kwargs):
         await websocket.send_text(json.dumps({"t": "session", "fresh": True}))
 
-    monkeypatch.setattr("cockpit.terminal.pty.serve_project_terminal", _fake_serve)
+    monkeypatch.setattr("forgemaster.terminal.pty.serve_project_terminal", _fake_serve)
     with c.websocket_connect("/ws/terminal/real", subprotocols=_tok(c)) as ws:
         assert json.loads(ws.receive_text())["t"] == "session"       # ouverture normale
     assert not (settings.projects_root / "real" / ".mcp.json").exists()
@@ -1235,9 +1239,9 @@ def test_terminal_ws_mcp_injection_is_honest_noop_when_not_wired(client, monkeyp
 def test_interview_ws_refuses_unknown_project_before_accept(client, monkeypatch):
     """Même garde projet que le shell : un projet inexistant est refusé (1008) AVANT `accept()` (sinon
     `Popen(cwd=absent)` crashe post-accept). Prouvé sans auth (le WS interview ne gate pas l'auth ; c'est
-    `cockpit interview` côté CLI qui la regate dans le PTY)."""
+    `forgemaster interview` côté CLI qui la regate dans le PTY)."""
     c, _ = client
-    monkeypatch.setattr("cockpit.auth.claude_auth_status",
+    monkeypatch.setattr("forgemaster.auth.claude_auth_status",
                         lambda *a, **k: {"authenticated": False, "source": None})
     with pytest.raises(WebSocketDisconnect), \
             c.websocket_connect("/ws/interview/does-not-exist", subprotocols=_tok(c)):
@@ -1255,7 +1259,7 @@ def _open_terminal_ok(c, monkeypatch):
     async def _fake_serve(websocket, registry, **kwargs):
         await websocket.send_text(json.dumps({"t": "session", "fresh": True}))
 
-    monkeypatch.setattr("cockpit.terminal.pty.serve_project_terminal", _fake_serve)
+    monkeypatch.setattr("forgemaster.terminal.pty.serve_project_terminal", _fake_serve)
 
 
 def test_ws_refuses_handshake_without_token(client, monkeypatch):
@@ -1272,7 +1276,7 @@ def test_ws_refuses_handshake_with_wrong_token(client, monkeypatch):
     c, _ = client
     _open_terminal_ok(c, monkeypatch)
     with pytest.raises(WebSocketDisconnect), \
-            c.websocket_connect("/ws/terminal/real", subprotocols=["cockpit.token.deadbeef"]):
+            c.websocket_connect("/ws/terminal/real", subprotocols=["forgemaster.token.deadbeef"]):
         pass
 
 
@@ -1301,8 +1305,8 @@ def test_ws_accepts_same_origin_with_valid_token(client, monkeypatch):
 # -- fail-loud UI : dist absente → page d'aide, jamais un 404 muet ----------------------------------
 
 def test_missing_ui_serves_loud_placeholder_not_silent_404(tmp_path, monkeypatch):
-    # COCKPIT_WEB_DIST pointe un dossier VIDE → aucune dist → placeholder fail-loud.
-    monkeypatch.setenv("COCKPIT_WEB_DIST", str(tmp_path / "empty-dist"))
+    # FORGEMASTER_WEB_DIST pointe un dossier VIDE → aucune dist → placeholder fail-loud.
+    monkeypatch.setenv("FORGEMASTER_WEB_DIST", str(tmp_path / "empty-dist"))
     settings = Settings.resolve(home=tmp_path / "home", projects_root=tmp_path / "projects")
     c = TestClient(app_mod.build_app(settings))
     # L'API reste pleinement valable.
@@ -1310,10 +1314,10 @@ def test_missing_ui_serves_loud_placeholder_not_silent_404(tmp_path, monkeypatch
     assert c.post("/api/projects", json={"slug": "p"}).status_code == 201
     # `/api/...` inconnu → 404 JSON (jamais le placeholder à la place d'une API).
     assert c.get("/api/nope").status_code == 404
-    # `/` (et non-api) → 200 HTML d'aide qui pointe `cockpit setup` (fail-loud, pas silencieux).
+    # `/` (et non-api) → 200 HTML d'aide qui pointe `forgemaster setup` (fail-loud, pas silencieux).
     r = c.get("/")
     assert r.status_code == 200
-    assert "cockpit setup" in r.text and "non buildée" in r.text
+    assert "forgemaster setup" in r.text and "non buildée" in r.text
 
 
 # -- alertes (v17, no-silent-block) : lecture + acquittement via HTTP ------------------------------

@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import pytest
 
-from cockpit.config import Settings
-from cockpit.secrets import SecretStoreError, build_store
-from cockpit.secrets.base import SecretStore
-from cockpit.secrets.bws_store import BwsStore
-from cockpit.secrets.file_store import EncryptedFileStore
+from forgemaster.config import Settings
+from forgemaster.secrets import SecretStoreError, build_store
+from forgemaster.secrets.base import SecretStore
+from forgemaster.secrets.bws_store import BwsStore
+from forgemaster.secrets.file_store import EncryptedFileStore
 
 
 def _settings(tmp_path, backend="file"):
@@ -15,7 +15,7 @@ def _settings(tmp_path, backend="file"):
 
 
 def test_default_backend_is_file(tmp_path, monkeypatch):
-    monkeypatch.delenv("COCKPIT_SECRET_STORE", raising=False)
+    monkeypatch.delenv("FORGEMASTER_SECRET_STORE", raising=False)
     settings = Settings.resolve(home=tmp_path / "h", projects_root=tmp_path / "p")
     assert settings.secret_store == "file"
     store = build_store(settings)
@@ -37,7 +37,7 @@ def test_bws_backend_selected(tmp_path):
 
 
 def test_env_selects_backend(tmp_path, monkeypatch):
-    monkeypatch.setenv("COCKPIT_SECRET_STORE", "bws")
+    monkeypatch.setenv("FORGEMASTER_SECRET_STORE", "bws")
     settings = Settings.resolve(home=tmp_path / "h", projects_root=tmp_path / "p")
     assert settings.secret_store == "bws"
 

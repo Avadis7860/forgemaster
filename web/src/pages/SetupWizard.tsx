@@ -46,7 +46,7 @@ export function SetupWizard() {
     <div className="mx-auto max-w-3xl space-y-6 p-6">
       <div className="flex items-start justify-between gap-3">
         <div className="space-y-1">
-          <SectionTitle eyebrow="self-hosted" title="Configuration du cockpit" />
+          <SectionTitle eyebrow="self-hosted" title="Configuration du forgemaster" />
           <p className="text-sm text-muted">
             Quelques étapes pour rendre ton instance opérationnelle. Tu peux quitter et revenir à tout moment.
           </p>
@@ -55,14 +55,14 @@ export function SetupWizard() {
       </div>
 
       {ready && !tokensPending && (
-        <Alert tone="ok" title="Ton cockpit est prêt">
+        <Alert tone="ok" title="Ton forgemaster est prêt">
           Tout est configuré. Cette page reste accessible depuis Réglages si tu ajoutes des projets plus tard.
         </Alert>
       )}
 
       <Step n={1} title="Bienvenue" done>
         <p className="text-sm text-muted">
-          Tu héberges ta propre instance de cockpit — une forge locale : projet → roadmap → dispatch worker →
+          Tu héberges ta propre instance de forgemaster — une forge locale : projet → roadmap → dispatch worker →
           gate → merge. Aucun compte serveur, aucun secret en clair. On configure l'essentiel ci-dessous.
         </p>
       </Step>
@@ -79,7 +79,7 @@ export function SetupWizard() {
           {data.secret_store.backend === 'file' && (
             <p className="text-xs text-faint">
               Défaut zéro-config : la clé de chiffrement est créée à la 1ʳᵉ écriture. Pour un coffre Bitwarden,
-              pose <code>COCKPIT_SECRET_STORE=bws</code> + <code>BWS_ACCESS_TOKEN</code> et redémarre le daemon.
+              pose <code>FORGEMASTER_SECRET_STORE=bws</code> + <code>BWS_ACCESS_TOKEN</code> et redémarre le daemon.
             </p>
           )}
         </div>
@@ -117,7 +117,7 @@ export function SetupWizard() {
       <Step n={7} title="Prêt à travailler" done={ready}>
         <div className="space-y-3 text-sm text-muted">
           <p>
-            Le daemon sert l'API et l'UI (<code>cockpit serve --host 0.0.0.0</code> pour l'exposer au réseau
+            Le daemon sert l'API et l'UI (<code>forgemaster serve --host 0.0.0.0</code> pour l'exposer au réseau
             local). Ouvre un projet dans le rail pour lancer roadmap, dispatch et gate.
           </p>
           {tokensPending && (
@@ -128,7 +128,7 @@ export function SetupWizard() {
           )}
           <div className="flex flex-wrap gap-2">
             <Link to="/">
-              <Button variant="primary">Aller au cockpit</Button>
+              <Button variant="primary">Aller au forgemaster</Button>
             </Link>
             <Link to="/settings">
               <Button variant="secondary">Réglages (miroirs & tokens)</Button>
@@ -141,7 +141,7 @@ export function SetupWizard() {
 }
 
 /** Étape « Outils du framework » — l'exigence batteries-included : adopter la boîte à outils (code-map,
- *  docs-map, front-map, forgemaster-catalogs, cockpit) déclarée dans le manifeste maintainer, d'un clic, avec leur
+ *  docs-map, front-map, forgemaster-catalogs, forgemaster) déclarée dans le manifeste maintainer, d'un clic, avec leur
  *  VRAI contenu git. **Choix shallow (D4)** : nos outils (le manifeste) ou aucun (ignorer l'étape) ; pour
  *  ses propres outils, on édite `bootstrap.yaml` / on crée des projets `tool`. Pas de manifeste = install
  *  générique : on n'affiche qu'une note (le wizard reste intact). L'aperçu est un GET idempotent. */

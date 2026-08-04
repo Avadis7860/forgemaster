@@ -9,8 +9,8 @@ même convention forge : seams **purs** testables sans subprocess + exécution i
 en argv.
 
 ## tools.preflight_tools() / install_tools() — gate de présence + provisionnement hôte-niveau
-`src/cockpit/tools.py:151` (`preflight_tools`) · `src/cockpit/tools.py:401` (`install_tools`) · appelés par le
-gate de dispatch (preflight avant spawn) et `cockpit tools install` (cli_dispatch).
+`src/forgemaster/tools.py:151` (`preflight_tools`) · `src/forgemaster/tools.py:401` (`install_tools`) · appelés par le
+gate de dispatch (preflight avant spawn) et `forgemaster toolchain install` (cli_dispatch).
 `preflight_tools` vérifie que tout binaire déclaré par la facette active (`<worktree>/.claude/settings.local.json`)
 résout sur le PATH worker (`tools_env`) et lève `ToolPreflightError` (`:43`) AVANT le spawn — ne gate QUE
 `declared & HOST_TOOLS` (outils hôte-provisionnés). `install_tools` est idempotent/fail-loud : crée le venv
@@ -25,12 +25,12 @@ sur la VM 9311 le 2026-08-03, attrapé par `check_tools` restée rouge après le
 `GIT_TERMINAL_PROMPT=0`, sans quoi un dépôt injoignable ferait *pendre* pip 900 s sur un prompt.
 
 ## tools.missing_bins() — quels binaires ne résolvent pas
-`src/cockpit/tools.py:145` · appelé par `preflight_tools`, `doctor.scan`.
+`src/forgemaster/tools.py:145` · appelé par `preflight_tools`, `doctor.scan`.
 Seam **pur** : sous-ensemble trié de `bins` que `shutil.which` ne trouve pas via `env["PATH"]`. C'est la vérité
 unique partagée entre le gate de dispatch et la sonde `doctor` — aucune duplication de logique de présence.
 
 ## toolsync.sync_tool() — re-sync pull-only d'un outil adopté
-`src/cockpit/toolsync.py:38` · appelé par `cockpit tool sync <slug>` (cli_dispatch).
+`src/forgemaster/toolsync.py:38` · appelé par `forgemaster tool sync <slug>` (cli_dispatch).
 Re-synchronise un `kind=tool` avec son amont, **pull-only ff seulement** (frontière read-only stricte). Refuse un
 `kind=project` par `NotAToolError` (`:33`, → 409) : un projet se réconcilie via la voie gatée `reconcile`, jamais
 ici. Fetch+ff via `InternalGit.sync_tracking` sur `TRACKED_BRANCHES=("dev","main")` sous auth transitoire
@@ -38,8 +38,8 @@ ici. Fetch+ff via `InternalGit.sync_tracking` sur `TRACKED_BRANCHES=("dev","main
 jamais bloquant → `index_refreshed=False` honnête).
 
 ## webbuild.build_front() / ensure_codemap() — build SPA + garantie code-map
-`src/cockpit/webbuild.py:35` (`build_front`) · `src/cockpit/webbuild.py:113` (`ensure_codemap`) · appelés par
-`cockpit setup` (chemin from-clone) et le hook de packaging (`hatch_build.py`).
+`src/forgemaster/webbuild.py:35` (`build_front`) · `src/forgemaster/webbuild.py:113` (`ensure_codemap`) · appelés par
+`forgemaster setup` (chemin from-clone) et le hook de packaging (`hatch_build.py`).
 `build_front` build la SPA Vite dans `web_dir` (→ `web_dir/dist`), `npm ci` si lockfile sinon `npm install`, et
 lève `FrontBuildError` (`:19`, message actionnable) si Node/npm absent ou npm échoue. `ensure_codemap` garantit
 `python -m codemap` dans le venv courant (requis par l'onglet Flow) : no-op en install wheel, install **éditable**
@@ -47,7 +47,7 @@ depuis un sibling `../code-map` en from-clone — **jamais fatal** (Flow est une
 stdlib-pur, s'importe sans le serveur.
 
 ## webbuild.served_from() / ensure_map() — une carte installée n'est pas une carte à jour
-`src/cockpit/webbuild.py:71` (`served_from`) · `:87` (`_install_from_sibling`) · `:154` (`ensure_map`) ·
+`src/forgemaster/webbuild.py:71` (`served_from`) · `:87` (`_install_from_sibling`) · `:154` (`ensure_map`) ·
 `:174` (`ensure_maps`, les 4 cartes).
 
 **L'ordre est load-bearing** : on cherche le sibling **avant** de se satisfaire d'un module importable. L'inverse
@@ -60,7 +60,7 @@ session qui obéissait à `CLAUDE.md` et tapait `codemap check` recevait `invali
 Une copie de `site-packages` répond non même si le module s'importe parfaitement. L'install est donc **éditable**
 (`pip install -e`) : la carte suit le `git pull` de son repo, sans entretien ni fenêtre de dérive. Écarté — une
 copie ré-installée avec `--upgrade` : elle re-fige au commit du jour, on paie le même défaut plus tard.
-Idempotent **sans relancer pip** (`pip install -e` reconstruit un wheel à chaque appel, `cockpit setup` le
+Idempotent **sans relancer pip** (`pip install -e` reconstruit un wheel à chaque appel, `forgemaster setup` le
 paierait × 4 pour rien). Le chemin **wheel** (code-map vendoré, aucun sibling) est inchangé.
 
 Frontière : ceci couvre le venv d'un **checkout de dev**. Sur une instance provisionnée, les cartes viennent de
@@ -69,15 +69,15 @@ n'y vérifie qu'une **présence**, jamais une version. Ce que cette instance ser
 désormais par `maps_provenance` / `check_tools` (section suivante).
 
 ## tools.maps_provenance() — quelles cartes cette instance sert-elle
-`src/cockpit/tools.py:270` (`maps_provenance`) · `src/cockpit/tools.py:223` (`dist_provenance`) ·
-`src/cockpit/tools.py:191` (`venv_site_packages`) · consommé par `build_provenance.provenance` →
+`src/forgemaster/tools.py:270` (`maps_provenance`) · `src/forgemaster/tools.py:223` (`dist_provenance`) ·
+`src/forgemaster/tools.py:191` (`venv_site_packages`) · consommé par `build_provenance.provenance` →
 `GET /api/version`. `dist_provenance` s'appelait `map_provenance` : elle ne lit pourtant rien de spécifique
 aux cartes (juste PEP 610 dans un `.dist-info`), et le serveur MCP co-installé (`mcp.local.server_provenance`)
 l'appelle **telle quelle** plutôt que d'entretenir une seconde lecture du même format.
 
 **Il n'y a aucun tampon à écrire.** `pip install git+<url>@<ref>` pose déjà `direct_url.json` (PEP 610) dans le
 `dist-info`, avec le `commit_id` **résolu** — écrit par la machine, à l'install. On le **lit**. C'est le même
-mécanisme que la provenance de `forgemaster-catalogs` : un mécanisme, deux consommateurs. (Le cockpit, lui, doit
+mécanisme que la provenance de `forgemaster-catalogs` : un mécanisme, deux consommateurs. (Le forgemaster, lui, doit
 tamponner son `_build.json` parce qu'il **construit un wheel** — cf. `build_provenance` ; ce n'est pas le cas ici.)
 
 Lecture **locale, zéro réseau, qui ne lève jamais** — d'où son usage sûr depuis une sonde HTTP. Contrat de
@@ -90,9 +90,9 @@ Mesure du 2026-08-03 (VM 9311) : instance provisionnée à 00:34, les 3 cartes d
 04:19. Le figeage n'attend pas des semaines — il commence à la première heure.
 
 ## tools.check_tools() — les cartes servies ont-elles dérivé de leur amont
-`src/cockpit/tools.py:470` (`check_tools`) · `src/cockpit/tools.py:313` (`compare`, PUR) ·
-`src/cockpit/tools.py:295` (`check_plan`, PUR) · `src/cockpit/tools.py:337` (`overall_state`, PUR) ·
-`src/cockpit/tools.py:522` (`_cli_check`) · appelé par `cockpit tools check`.
+`src/forgemaster/tools.py:470` (`check_tools`) · `src/forgemaster/tools.py:313` (`compare`, PUR) ·
+`src/forgemaster/tools.py:295` (`check_plan`, PUR) · `src/forgemaster/tools.py:337` (`overall_state`, PUR) ·
+`src/forgemaster/tools.py:522` (`_cli_check`) · appelé par `forgemaster toolchain check`.
 
 Un `git ls-remote <url> <MAP_REF>` par carte (aucun objet transféré), sous `anonymous_env` — la sonde tape les
 mêmes dépôts publics que l'install et n'a donc **pas le droit** d'y ajouter un credential (un test l'asserte).
@@ -118,25 +118,25 @@ jour » ni « périmé » ; le confondre avec l'un des deux refait le faux-vert 
 répare. **On ne dit jamais « en retard de N commits »** : `ls-remote` ne rend que des réfs, compter exigerait de
 rapatrier l'historique — la sonde dit *lesquelles* ont bougé, jamais *de combien*.
 
-`check` **rapporte, ne mute rien**. La remise à niveau reste le geste explicite `cockpit tools install`
+`check` **rapporte, ne mute rien**. La remise à niveau reste le geste explicite `forgemaster toolchain install`
 (idempotent, `--upgrade @main`) : une re-sync automatique remplacerait un binaire sous un worker en vol.
 
 ## service.install_service() / render_unit() — unité systemd du daemon
-`src/cockpit/service.py:154` (`install_service`) · `src/cockpit/service.py:98` (`render_unit`) · appelés par
-`cockpit service install` (cli_dispatch).
-`render_unit` est **pur** : rend l'unité systemd pour `cockpit serve`, deux portées `user` (défaut, sans root) /
+`src/forgemaster/service.py:154` (`install_service`) · `src/forgemaster/service.py:98` (`render_unit`) · appelés par
+`forgemaster service install` (cli_dispatch).
+`render_unit` est **pur** : rend l'unité systemd pour `forgemaster serve`, deux portées `user` (défaut, sans root) /
 `system` (root, épingle `User=`/`Group=`). `Environment=HOME` est **obligatoire** (sans lui git ne lit pas le
-helper de credentials → fetch/push non-auth en silence). `install_service` écrit l'unité + un `cockpit.env`
+helper de credentials → fetch/push non-auth en silence). `install_service` écrit l'unité + un `forgemaster.env`
 gabarit (jamais écrasé s'il existe) et retourne `(unit_path, env_path, systemctl_hint)` — l'appelant imprime le
 hint, on n'exécute PAS systemctl (pas de footgun privilège).
 
 ## mcp.local.install() — co-installer le serveur de corpus SUR cet hôte
-`src/cockpit/mcp/local.py:245` (`install`) · `src/cockpit/mcp/local.py:120` (`install_plan`, pur) · appelés par
-`cockpit mcp install` et l'étape `[8/9]` de `deploy/provision-ct.sh` (`--with-mcp`).
-Pose un venv **dédié** (`$COCKPIT_HOME/mcp/venv` — ni celui du cockpit, ni celui des outils : trois cycles de
+`src/forgemaster/mcp/local.py:245` (`install`) · `src/forgemaster/mcp/local.py:120` (`install_plan`, pur) · appelés par
+`forgemaster mcp install` et l'étape `[8/9]` de `deploy/provision-ct.sh` (`--with-mcp`).
+Pose un venv **dédié** (`$FORGEMASTER_HOME/mcp/venv` — ni celui du forgemaster, ni celui des outils : trois cycles de
 vie distincts), installe `forgemaster-catalogs` au **SHA épinglé** (`SERVER_REF`, pas une réf mobile — §3 de la
 décision d'édition : une pièce de classe « nous » monte AVEC l'édition), **génère** le secret HS256 s'il n'y en
-a pas, écrit un `EnvironmentFile` en `600` + une unité systemd, puis câble le cockpit sur son **loopback**
+a pas, écrit un `EnvironmentFile` en `600` + une unité systemd, puis câble le forgemaster sur son **loopback**
 (`wire(live_env=True)`). Retourne `{ok, steps, unit, env_file, endpoint, sha, hint}` — l'appelant imprime le
 hint, **on n'exécute PAS systemctl** (même règle que `service.install_service`).
 Deux refus load-bearing : **`data_root` obligatoire et existant** (un serveur démarré sur une racine absente
@@ -149,7 +149,7 @@ tourne, à chaque appel d'une commande annoncée idempotente. Clone **anonyme** 
 figée à `0.1.0`, donc `--upgrade` seul saute l'install en rendant rc 0.
 
 ## mcp.local.topology() — laquelle des deux topologies cette instance est-elle
-`src/cockpit/mcp/local.py:199` · consommé par `build_provenance.provenance` → `GET /api/version` (clé `mcp`).
+`src/forgemaster/mcp/local.py:199` · consommé par `build_provenance.provenance` → `GET /api/version` (clé `mcp`).
 Répond à l'exigence du §4 de la décision d'édition : deux topologies déclarées, et l'instance **dit** laquelle.
 Retourne `{topology, sha, endpoint, reason}`, lecture **locale, zéro réseau, qui ne lève jamais**.
 **Déduit du disque, jamais déclaré** — une clé d'env `…_TOPOLOGY` serait un champ qui peut mentir, que rien ne
@@ -163,14 +163,14 @@ Quatre états : `none` (aucun endpoint — **normal**, une install sans corpus n
 pointant ailleurs → `remote`, et le `reason` signale le serveur local inutilisé.
 
 ## doctor.scan() — sonde de présence par type/facette
-`src/cockpit/doctor.py:23` · appelé par `cockpit doctor` (cli_dispatch).
+`src/forgemaster/doctor.py:23` · appelé par `forgemaster doctor` (cli_dispatch).
 Pour chaque `settings.local.json` de facette des bundles vendorés, calcule `required_bins & HOST_TOOLS` et
 `missing_bins` sous `tools_env`. Retourne `[{type, facet, required, missing}]`. **Même vérité** que
-`preflight_tools`, mais en lecture globale — une sonde d'install shell (`cockpit doctor; echo $?`, rc 0/1).
+`preflight_tools`, mais en lecture globale — une sonde d'install shell (`forgemaster doctor; echo $?`, rc 0/1).
 Déterministe : glob local + `shutil.which`, zéro réseau/LLM.
 
 ## auth.claude_auth_status() / trust_workspace() — auth Claude de l'hôte
-`src/cockpit/auth.py:30` (`claude_auth_status`) · `src/cockpit/auth.py:46` (`trust_workspace`) · appelés par
+`src/forgemaster/auth.py:30` (`claude_auth_status`) · `src/forgemaster/auth.py:46` (`trust_workspace`) · appelés par
 l'onboarding (`status`) et le gate de dispatch.
 `claude_auth_status` répond « cette machine est-elle authentifiée ? » **sans jamais lire le secret** : présence de
 `~/.claude/.credentials.json` ou d'une clé d'env → `{authenticated, source}` (source ∈ credentials-file /
@@ -179,8 +179,8 @@ env-api-key / env-oauth / None). Auth **par machine**, pas par projet. `trust_wo
 ça `claude -p` headless IGNORE les `allowedTools` d'un workspace non-trusted (worker inerte).
 
 ## onboarding.status() / link_credential() / unlink_credential() — liaison des credentials par projet
-`src/cockpit/onboarding.py:30` (`status`) · `:89` (`link_credential`) · `:118` (`unlink_credential`) · appelés par
-`cockpit onboard <action>` (cli_dispatch).
+`src/forgemaster/onboarding.py:30` (`status`) · `:89` (`link_credential`) · `:118` (`unlink_credential`) · appelés par
+`forgemaster onboard <action>` (cli_dispatch).
 `status` compose **cinq axes**, sans jamais révéler un secret : le **store** (backend actif + racine de confiance
 joignable) ; les **requirements** par projet (un projet à miroir a besoin d'un token pour pousser → satisfait ssi
 il porte un `credential_ref`) ; `claude_auth` (axe **orthogonal** à `complete` — le gate « peut dispatcher » :
@@ -188,7 +188,7 @@ l'install ne travaille qu'après un `claude login` explicite, jamais en héritan
 `mcp` (le corpus privé est-il câblé ? `{wired, endpoint}` via `provision.mcp.wire_state`, **optionnel** — une
 install publique sans corpus reste valide et n'entre donc pas dans `complete`) ; et `build` (provenance +
 fraîcheur du wheel installé — `{version, sha, committed_at, comparable, stale, behind_by, missing_types}`, cf.
-`build_provenance` : un cockpit en retard sur son SoT local se **déclare**, jamais faux-vert). Plus deux
+`build_provenance` : un forgemaster en retard sur son SoT local se **déclare**, jamais faux-vert). Plus deux
 verdicts : `complete` (store prêt ET toutes les exigences satisfaites) et `first_run` (aucun projet créé — le
 wizard doit guider, pas annoncer « complet »), qui distinguent *rien-à-faire-car-réglé* de *rien-encore-réglé*.
 Les axes `claude_auth`/`mcp`/`build` sont **injectables** pour les tests ; à défaut ils sont détectés live.
@@ -207,7 +207,7 @@ valeur. `unlink_credential` remet `credential_ref` à NULL (le secret reste dans
   `MAP_REPOS`/`PY_QUALITY`/`HOST_TOOLS`/`_VENV_BINS`/`_NODE_BINS` ; côté provenance/sonde :
   `parse_ls_remote`, `_looks_like_sha`, `_read_text`, `_dist_info`, `_CHECK_MARKS`/`_CHECK_EXITS`,
   `_SHA_LENGTHS`/`_LS_REMOTE_TIMEOUT_S`.
-- `service` : `set_env_keys`/`load_env_file` (parité env CLI↔systemd), helpers `_cockpit_bin`/`_env_template`/
+- `service` : `set_env_keys`/`load_env_file` (parité env CLI↔systemd), helpers `_forgemaster_bin`/`_env_template`/
   `_unit_dir`.
 - `webbuild` : `find_web_dir`/`find_codemap_src` (localisation du checkout).
 - `doctor` : `_report_mcp`/`_report_runtime` (état token MCP P4 + runtime conteneur P2).

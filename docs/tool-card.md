@@ -1,4 +1,4 @@
-# cockpit — la forge : orchestrer des workers IA isolés
+# forgemaster — la forge : orchestrer des workers IA isolés
 
 ## Ce que c'est
 
@@ -10,15 +10,15 @@ une branche = un **worktree git isolé** (le mutex) ; N features en parallèle. 
 
 ## Pourquoi l'utiliser avec Claude
 
-Lâcher un agent sur un repo sans cadre → dérive, conflits, merges non vérifiés. Le cockpit **borne** le
+Lâcher un agent sur un repo sans cadre → dérive, conflits, merges non vérifiés. Le forgemaster **borne** le
 travail : **pas de task ⇒ pas de dispatch** (le worker part d'un objectif défini) ; chaque worker travaille
 dans un **worktree isolé** (aucune collision entre features parallèles) ; un **gate** (tests + review) bloque
 **avant** le merge. L'agent travaille dans une boucle **définie et vérifiable**, pas en roue libre. Les autres
 outils l'**ancrent** (code-map le code, front-map l'UI, docs-map la prose, forgemaster-catalogs la doc tierce) ; le
-cockpit l'**orchestre**.
+forgemaster l'**orchestre**.
 
 ## En bref
 
-- `cockpit serve` — daemon + UI (rail projets/outils, onglets par projet).
+- `forgemaster serve` — daemon + UI (rail projets/outils, onglets par projet).
 - boucle : roadmap → dispatch → worktree isolé → gate (tests + review) → merge → cleanup.
-- `cockpit run <projet>` — orchestrateur parallèle (drainage du DAG, mutex par feature).
+- `forgemaster run <projet>` — orchestrateur parallèle (drainage du DAG, mutex par feature).

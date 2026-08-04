@@ -1,4 +1,4 @@
-# schema-contract — contrats figés du cockpit
+# schema-contract — contrats figés du forgemaster
 
 Trois schémas sont un **contrat** : une couche produit, une autre consomme. On change une *implémentation*
 librement ; changer un **schéma** exige une entrée CHANGELOG + un bump. Un schéma partiel qui se dit complet
@@ -6,7 +6,7 @@ est un bug (jamais de cap silencieux).
 
 ## 1. Schéma SQLite (`db/schema.py`, `SCHEMA_VERSION` = **11**)
 
-Base unique sous `settings.db_path` (`$COCKPIT_HOME/cockpit.db`). Modèle **feature-groupe-des-tasks**.
+Base unique sous `settings.db_path` (`$FORGEMASTER_HOME/forgemaster.db`). Modèle **feature-groupe-des-tasks**.
 
 - **`projects`** — `id` (uuid), `slug` (kebab, unique), `name`, `sot_path` (repo bare LOCAL co-localisé),
   `mirror_remote` (miroir GitHub best-effort, nullable), `backend` (`internal`|`github`), `kind`
@@ -20,7 +20,7 @@ Base unique sous `settings.db_path` (`$COCKPIT_HOME/cockpit.db`). Modèle **feat
 - **`features`** — `id`, `project_id`→projects (cascade), `slug`, `title`, `branch` (`feature/<slug>`),
   `worktree_path` (nullable hors-vol), `status` (`planned`|`active`|`ready`|`merged`|`cancelled`),
   `facet` (nullable, **v6** — la facette de dispatch `backend`|`frontend`|`tool`|`doc` qui aligne le worker ;
-  `NULL` → défaut résolu du `.cockpit/bundle.toml` au dispatch), `blueprint` (nullable, **v9** — **ref STAMP** :
+  `NULL` → défaut résolu du `.forgemaster/bundle.toml` au dispatch), `blueprint` (nullable, **v9** — **ref STAMP** :
   l'id d'un blueprint du capital central, résolu **en direct au read du board** via le client MCP, `NULL` →
   pas de blueprint), `created_at` ; unique `(project_id, slug)`.
 - **`tasks`** — `id`, `feature_id`→features (cascade), `slug`, `title`, `status`
@@ -72,7 +72,7 @@ pas le CHECK, mais aucun `kind` hors-enum ne peut être inséré. Ajout **non-br
 **Migration v3→v4** : `projects` gagne `credential_ref` (`TEXT`, nullable, **aucun défaut**) via
 `ensure_columns` — les lignes existantes prennent `NULL` (aucun token lié rétroactivement ; l'onboarding
 posera la référence via `registry.set_credential_ref`). La DB ne porte que la **référence** opaque ; la
-valeur du token vit dans le store de secrets (`COCKPIT_SECRET_STORE`), résolue à l'usage au writeback git
+valeur du token vit dans le store de secrets (`FORGEMASTER_SECRET_STORE`), résolue à l'usage au writeback git
 (`gate/merge` → `git/internal.merge_writeback`, env `GIT_CONFIG_*` injecté le temps du push, jamais
 persisté — spec merge-writeback). Ajout **non-breaking**.
 
@@ -107,7 +107,7 @@ No-op sur une base sans CHECK (montée par ALTER) ; idempotent. Changement d'enu
 **Migration v8→v9** (board-native blueprint) : `features` gagne `blueprint` (`TEXT`, nullable, **aucun défaut**)
 via `ensure_columns` — les lignes existantes prennent `NULL` (pas de blueprint). C'est la **ref STAMP** (id d'un
 blueprint du capital central) portée par une feature ; l'id est stocké brut (opaque au niveau DB/modèle) et
-**résolu au read** du board via le client MCP runtime (`cockpit.mcp.blueprint_resolver`, seam
+**résolu au read** du board via le client MCP runtime (`forgemaster.mcp.blueprint_resolver`, seam
 `taskmap.context`) → `GET …/roadmap` rend `{blueprint:{id, posture, resolved, reason, …}}`, dégradation honnête
 si le MCP est coupé (`resolved:false` + raison, jamais inventé). Même patron additif que `facet` (v6). Ajout
 **non-breaking**.
@@ -135,14 +135,14 @@ filles `cockpit-trace-job-sinks` / `cockpit-gate-verdict-history`.
 **Migration v11→v12** (interview de 1ʳᵉ session) : `tasks` gagne `mode` (`TEXT NOT NULL DEFAULT 'headless'` —
 défaut littéral requis par `ALTER` ; les tasks existantes sont toutes des runs headless → `'headless'` est exact),
 via `ensure_columns`. Enum `headless|interactive` : une task `interactive` est **routée vers un terminal
-interactif** (`cockpit interview`) par le dispatch au lieu d'un worker `claude -p` headless (une interview / un
+interactif** (`forgemaster interview`) par le dispatch au lieu d'un worker `claude -p` headless (une interview / un
 cadrage ne se mène pas en headless). Le `CHECK (mode IN …)` vit dans le `DDL` (base neuve) ; un `ALTER` SQLite ne
 re-porte pas le CHECK → l'invariant `mode∈{headless,interactive}` est tenu par le code qui écrit
 (`model.add_task`). Le hint naît de la **graine** (le socle semé marque `cadrage`/`interview` `interactive`), lu
 par le **dispatch générique** — zéro heuristique métier dans le moteur. Ajout **non-breaking** (le bump déclenche
 la migration).
 
-## 2. Schéma `.cockpit/roadmap.yaml` (in-repo, `roadmap/model.py`)
+## 2. Schéma `.forgemaster/roadmap.yaml` (in-repo, `roadmap/model.py`)
 
 Versionné **avec le projet** (source de vérité côté repo), synchronisé vers la DB (index). Manifeste SEC
 (noms/listes, pas de prose libre). Forme :
@@ -167,7 +167,7 @@ features:
 
 `facet:`/`acceptance:` (v6), `blueprint:` (v9), le `depends_on:` feature-level (v10) et `mode:` (v12) sont **émis
 seulement si présents/non-défaut** — une roadmap sans ces champs reste identique au contrat v1 (rétro-compatible).
-`mode: interactive` route la task vers le terminal interactif (`cockpit interview`) au lieu d'un worker headless. Le `depends_on:` d'une
+`mode: interactive` route la task vers le terminal interactif (`forgemaster interview`) au lieu d'un worker headless. Le `depends_on:` d'une
 feature est le DAG INTER-feature (non-dispatchable tant qu'une prérequise n'est pas `merged`) ; celui d'une task
 reste intra-feature. `facet` tague la feature du type de travail (aligne le
 worker au dispatch) ; `acceptance` porte les critères de succès de la task, rendus verbatim dans le prompt ;
@@ -177,9 +177,9 @@ worker au dispatch) ; `acceptance` porte les critères de succès de la task, re
 `phases:`, comportement identique au `depends_on` seul (opt-in rétro-compatible). Cf. spec
 `task-next-resolver-dag`.
 
-## 2b. Manifeste `bootstrap.yaml` (sous `COCKPIT_HOME`, `bootstrap.py`)
+## 2b. Manifeste `bootstrap.yaml` (sous `FORGEMASTER_HOME`, `bootstrap.py`)
 
-Édition **maintainer** : les outils du framework adoptés au 1er démarrage (`cockpit bootstrap` / wizard).
+Édition **maintainer** : les outils du framework adoptés au 1er démarrage (`forgemaster bootstrap` / wizard).
 Manifeste SEC (noms/listes/URLs, **aucun secret**). Absent → no-op propre (install générique). Forme :
 
 ```yaml
@@ -198,12 +198,12 @@ entrée isolé (`failed`), un manifeste invalide avorte (fail-loud).
 ## 2c. Manifestes de PROFONDEUR — `depth-axes.yaml` (semé) + `deferred-axes.yaml` (worker)
 
 Deux manifestes **SECS** au service du gate de profondeur (`roadmap/check.py : check_depth_axes`, opt-in
-`cockpit roadmap check <projet> --depth`). **Hors contrat figé** (comme `bundle.toml`/`bootstrap.yaml`) : ce
+`forgemaster roadmap check <projet> --depth`). **Hors contrat figé** (comme `bundle.toml`/`bootstrap.yaml`) : ce
 sont des listes/maps sans prose, versionnées avec le repo, **pas de `SCHEMA_VERSION` ni de bump** à l'édition.
 
-- **`depth-axes.yaml`** — catalogue `archétype → {axe: [mots-clés]}`, semé en **`bundles/base/.cockpit/`**
+- **`depth-axes.yaml`** — catalogue `archétype → {axe: [mots-clés]}`, semé en **`bundles/base/.forgemaster/`**
   (hérité par TOUS les types, composition whole-file). L'archétype d'un projet est déclaré par le champ
-  `archetype` de son `.cockpit/bundle.toml` (`game`/`tool`/`service`/`app`/`doc`). Lu depuis le **bundle
+  `archetype` de son `.forgemaster/bundle.toml` (`game`/`tool`/`service`/`app`/`doc`). Lu depuis le **bundle
   source** (`load_bundle`), jamais le MCP. Un type sans `archetype`, un catalogue absent, ou un archétype
   hors catalogue ⇒ gate **no-op** honnête.
 
@@ -226,7 +226,7 @@ Sémantique du gate : pour chaque axe de l'archétype du projet — **couvert** 
 acceptance d'une feature/task) OU **différé** (raison non vide) ⇒ OK ; sinon issue **`UNCOVERED_AXIS`**
 (`Issue.task` = l'axe). Le drop silencieux est refusé ; les différés sont surfacés (jamais de cap muet).
 `check_depth_axes` est **séparé** de `check_roadmap` (complétude structurelle) — les deux fusionnent dans
-`cockpit roadmap check --depth` et la route `GET …/roadmap/check?depth=true`.
+`forgemaster roadmap check --depth` et la route `GET …/roadmap/check?depth=true`.
 
 ## 3. Contrat API HTTP (`daemon/`, porté)
 
@@ -237,7 +237,7 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
 - **projects** — `GET /api/projects` · `POST /api/projects` `{slug, name?, mirror_remote?, kind?, source_url?}`
   (201 ; `source_url` → **adopte** le repo (clone son vrai historique comme SoT, `dev`/`main` normalisés) au
   lieu de semer le toolkit — via l'API = repos **publics** ; l'adoption privée avec token passe par
-  `cockpit bootstrap` ; **400** si le clone échoue) ·
+  `forgemaster bootstrap` ; **400** si le clone échoue) ·
   `GET /api/projects/{slug}` · `PATCH /api/projects/{slug}` `{mirror_remote?}` (édite le miroir GitHub —
   `null`/vide le retire ; rend un projet GitHub-backed → un token de push devient requis ; **404** absent) ·
   `POST /api/projects/{slug}/upload` **multipart** `file` + `dest?`(défaut `brand`) + `feature?` (201 —
@@ -326,7 +326,7 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   index_refreshed}`, `action ∈ {already_synced, fast_forward, local_ahead_skipped, blocked_worktree,
   blocked_diverged}` (jamais `pushed` : un outil ne réécrit pas son amont). **Fail-close** : entité qui n'est pas
   un outil → **409** (un projet passe par la réconciliation gatée `reconcile`) ; entité absente → **404** ; op git
-  dure → **422**. CLI miroir : `cockpit tool sync <slug>`.
+  dure → **422**. CLI miroir : `forgemaster tool sync <slug>`.
 - **onboarding** — `GET /api/onboarding` (état de config-requise : `secret_store` `{backend, ready, detail}`
   via `health()`, `requirements` `[{project, mirror_remote, needs_credential, linked, satisfied}]`,
   `complete`, `project_count`, `first_run` (aucun projet → instance neuve, le wizard guide au lieu d'annoncer
@@ -338,20 +338,20 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   absent) · `DELETE /api/projects/{p}/credential` (délie : `credential_ref` → NULL).
 - **version** — `GET /api/version` (provenance de build + **fraîcheur honnête** du wheel installé :
   `{version, sha, committed_at, comparable, stale, behind_by, missing_types, maps, mcp}`). Le SHA vient du tampon
-  `cockpit/_build.json` embarqué au build (`deploy/build-wheel.sh`, jamais mtime) ; `stale`/`behind_by`/
-  `missing_types` se calculent **par SHA** contre le HEAD du miroir SoT **local** de cockpit — **transport
+  `forgemaster/_build.json` embarqué au build (`deploy/build-wheel.sh`, jamais mtime) ; `stale`/`behind_by`/
+  `missing_types` se calculent **par SHA** contre le HEAD du miroir SoT **local** de forgemaster — **transport
   local**, zéro réseau. Sans tampon (éditable) ou sans miroir (install publique) → `comparable=false`
   (honnête, jamais faux-vert). Idempotent, sans secret, distinct de `/health` (I/O-free liveness).
   `maps` = les **3 cartes hôte servies** par `tools/venv`, `[{name, sha, requested_ref, source, reason}]` lues
   dans `direct_url.json` (PEP 610, posé par pip à l'install) — **transport local** lui aussi. Deuxième moitié
   de l'identité d'une instance, **étiquetée à part** parce qu'elle bouge indépendamment du wheel (les cartes à
-  `cockpit tools install`, le wheel à la réinjection) : les fondre mentirait dès que l'une bouge seule. `sha`
+  `forgemaster toolchain install`, le wheel à la réinjection) : les fondre mentirait dès que l'une bouge seule. `sha`
   `null` porte **toujours** son `reason` ; `[]` si l'outillage n'est pas lisible (la route ne tombe jamais).
-  Savoir si ces cartes sont **à jour** demande l'amont et reste **hors** de cette route (`cockpit tools check`).
+  Savoir si ces cartes sont **à jour** demande l'amont et reste **hors** de cette route (`forgemaster toolchain check`).
   `mcp` = la **topologie du serveur de corpus** que cette instance consomme, `{topology, sha, endpoint,
   reason}` — troisième volet de l'identité, étiqueté à part pour la même raison que `maps` (il bouge à
   l'édition, pas à la réinjection). `topology` ∈ `co-installed` | `remote` | `none` | `unknown`, **déduit du
-  disque** (le serveur est-il installé sous `$COCKPIT_HOME/mcp/venv` ? l'endpoint consommé est-il en
+  disque** (le serveur est-il installé sous `$FORGEMASTER_HOME/mcp/venv` ? l'endpoint consommé est-il en
   loopback ?) et jamais déclaré par une clé d'env, qui pourrait mentir après un re-câblage. `sha` n'est
   rendu que pour `co-installed` — seul cas où le binaire servi est sur ce disque ; un serveur distant se
   demande (`GET /version` sous JWT), il ne se devine pas. `none` est un **état normal** (instance sans
@@ -360,7 +360,7 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
 - **bootstrap** — `GET /api/bootstrap` (aperçu **idempotent** de l'amorçage des outils du framework :
   `{available, tools:[{slug, source_url, kind, adopted}], adopted, total}` ; manifeste absent →
   `available:false` ; **400** manifeste invalide ; aucun secret, goto-only safe) · `POST /api/bootstrap`
-  `{shared_ref?}` (adopte les outils du manifeste `<COCKPIT_HOME>/bootstrap.yaml` via P1 — **idempotent**,
+  `{shared_ref?}` (adopte les outils du manifeste `<FORGEMASTER_HOME>/bootstrap.yaml` via P1 — **idempotent**,
   skip existants ; `shared_ref` = réf credential DÉJÀ stockée pour repos privés, absente = anonyme/public ;
   réponse `{created, skipped, failed:[{slug, error}], available}` ; manifeste absent → no-op propre).
 - **docs** — `GET /api/projects/{p}/docs?ref=` (la **carte** d'un projet/outil, LUE depuis son repo/SoT bare :
@@ -377,7 +377,7 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   cassée, silo en défaut) → **502** + le **détail serveur réel** (jamais repeint en « non câblé » — mislabel
   corrigé) ; `collections:[]` d'un type plat = réponse **valide** (200, indispo ≠ vide). Tous idempotents (goto-safe).
 - **terminal** — `WS /ws/terminal/{project}` (PTY **local** `bash -l`, workdir borné) · `WS /ws/interview/{project}`
-  (PTY dédié `cockpit interview`). Frames de **contrôle TEXTE** serveur→client (la sortie PTY, elle, est toujours
+  (PTY dédié `forgemaster interview`). Frames de **contrôle TEXTE** serveur→client (la sortie PTY, elle, est toujours
   BINAIRE) : `{"t":"session","fresh":bool}` à la (ré)connexion ; `{"t":"exit","code":int|null,"reason":"clean|failed_start|crash"}`
   à la fin du PTY (`reason` dérivée du code de sortie par `terminal.pty.classify_exit` → l'UI branche une erreur
   *technique* distincte du cadrage *métier* « pas de roadmap »). Additif : le client **ignore** tout `t:` inconnu

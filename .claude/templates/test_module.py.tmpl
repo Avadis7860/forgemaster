@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cockpit.config import Settings
-from cockpit.db import store
+from forgemaster.config import Settings
+from forgemaster.db import store
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -20,7 +20,7 @@ def test_{cas}_nominal(tmp_path: Path):
     """{ce que la couche doit produire} sur une base + SoT minimal."""
     s = _settings(tmp_path)
     conn = store.open_db(s)
-    # from cockpit.{module} import {fonction}
+    # from forgemaster.{module} import {fonction}
     # result = {fonction}(conn, s, ...)
     # assert ...
     conn.close()

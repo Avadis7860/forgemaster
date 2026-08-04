@@ -47,10 +47,10 @@ describe('SetupWizard', () => {
     // le formulaire de création est présent (source unique NewProjectForm)
     expect(screen.getByRole('button', { name: 'Créer ce projet' })).toBeInTheDocument()
     // pas de faux « prêt » sur une instance neuve
-    expect(screen.queryByText('Ton cockpit est prêt')).toBeNull()
+    expect(screen.queryByText('Ton forgemaster est prêt')).toBeNull()
   })
 
-  it('tout réglé : annonce que le cockpit est prêt', () => {
+  it('tout réglé : annonce que le forgemaster est prêt', () => {
     h.data = {
       secret_store: STORE,
       requirements: [{ project: 'p', mirror_remote: null, needs_credential: false, linked: false, satisfied: true }],
@@ -61,7 +61,7 @@ describe('SetupWizard', () => {
       mcp: MCP_UNWIRED,
     }
     render(<SetupWizard />)
-    expect(screen.getByText('Ton cockpit est prêt')).toBeInTheDocument()
+    expect(screen.getByText('Ton forgemaster est prêt')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Créer ce projet' })).toBeNull() // projet déjà là
   })
 
@@ -99,7 +99,7 @@ describe('SetupWizard', () => {
     render(<SetupWizard />)
     // le wizard ne duplique plus l'affordance de liaison (retirée — elle vit dans Réglages)
     expect(screen.queryByRole('button', { name: 'Lier un token' })).toBeNull()
-    expect(screen.queryByText('Ton cockpit est prêt')).toBeNull()      // pas « prêt » tant qu'un token manque
+    expect(screen.queryByText('Ton forgemaster est prêt')).toBeNull()      // pas « prêt » tant qu'un token manque
     expect(screen.getByText(/token de push/i)).toBeInTheDocument()      // renvoi explicite
     expect(screen.getByRole('button', { name: 'Réglages (miroirs & tokens)' })).toBeInTheDocument()
   })

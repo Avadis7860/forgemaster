@@ -1,0 +1,256 @@
+"""provision — policy de provisioning : le « Toolkit auto-travaillable » semé dans le SoT de tout projet
+créé par le forgemaster. Le CONTENU (bundles génériques, zéro spécifique-projet) est **vendoré** sous
+`bundles/` ; ce module le compose en mapping `chemin-relatif → contenu`.
+
+**Système de bundles par type (typed-bundles).** Un bundle = `base ⊕ overlay(type)` :
+- `bundles/base/` — la couche commune (CLAUDE.md socle, skills work-loop/quality-gate, configs cartes,
+  `.forgemaster/bundle.toml`, facette `doc`) semée dans TOUT projet ;
+- `bundles/types/<type>/` — un overlay par type qui **ajoute ou surcharge** des fichiers (persona, doc
+  pré-optimisée, facettes spécifiques). Composition **whole-file** : un fichier de l'overlay remplace
+  intégralement son homologue de base (`base_map | overlay_map`) ; les fichiers overlay-only s'ajoutent.
+
+Le REGISTRE des types est le **filesystem** (`discover_types`) : déposer `bundles/types/<type>/` suffit à
+rendre un type créable — aucun enum en dur, aucune migration DB (spec bundle-storage-registry). La policy
+(quel bundle semer) vit ici, PAS dans `git/internal.py` (qui reste primitives git seules) :
+`projects.registry.create_project` **valide** (`validate_bundle`, fail-closed) puis lit `load_bundle(type)`
+et le passe à `InternalGit().init_sot`. Déterministe : lecture de fichiers vendorés, ordre trié, `|`
+déterministe, zéro I/O réseau, zéro LLM.
+"""
+from __future__ import annotations
+
+import tomllib
+from collections.abc import Iterator
+from pathlib import Path
+
+import yaml
+
+_BUNDLES_DIR = Path(__file__).parent / "bundles"
+_MANIFEST_PATH = ".forgemaster/bundle.toml"   # descripteur [bundle], vendoré, lu au dispatch (facet.py)
+_LAUNCH_ROADMAP_PATH = ".forgemaster/launch-roadmap.yaml"   # graine de roadmap de lancement (seed au create)
+_LAUNCH_TEMPLATES_DIR = Path(__file__).parent / "launch_templates"   # mirrors vendorés du SoT central
+
+
+class BundleError(ValueError):
+    """Un bundle (type de projet) est absent du registre, ou son manifeste `.forgemaster/bundle.toml` est
+    invalide. Sous-classe de `ValueError` → routée en 400 (API) / message CLI comme les autres erreurs
+    d'entrée, sans handler dédié."""
+
+
+def discover_types() -> tuple[str, ...]:
+    """Le REGISTRE des types de projet, dérivé du **filesystem** : `generic` (base seule) plus chaque
+    sous-dossier de `bundles/types/`. Trié, déterministe, `generic` en tête. Ajouter un type = déposer
+    `bundles/types/<type>/` — zéro code, zéro migration DB."""
+    types_dir = _BUNDLES_DIR / "types"
+    overlays = sorted(d.name for d in types_dir.iterdir() if d.is_dir()) if types_dir.is_dir() else []
+    return ("generic", *overlays)
+
+
+# Dossiers d'artefacts/caches JAMAIS semés : sources only. Un cache d'outil (`.ruff_cache`, `.mypy_cache`,
+# `node_modules`…) porte des fichiers **binaires** qui casseraient la lecture UTF-8 du payload ET pollueraient
+# le SoT d'un projet. Ces caches peuvent apparaître dans un bundle si un outil tourne sur son manifeste
+# (ex. `ruff` descend dans un `pyproject.toml` de seed) → on les ignore à la lecture, par principe.
+_SKIP_DIRS = frozenset({
+    "__pycache__", ".ruff_cache", ".mypy_cache", ".pytest_cache", "node_modules", ".git",
+})
+
+
+def _walk_files(base: Path) -> Iterator[Path]:
+    """Parcourt récursivement `base`, ordre **trié** par nom à chaque niveau (déterministe). `iterdir()`
+    inclut les dotfiles (`.docsmap.toml`, `.claude/`, `.forgemaster/`) — voulu. Les artefacts de compilation
+    et
+    caches d'outils (`_SKIP_DIRS`, `*.pyc`) sont **exclus** : un payload semé porte des SOURCES, jamais du
+    binaire (qui casserait la lecture UTF-8 et polluerait le SoT d'un projet)."""
+    for entry in sorted(base.iterdir(), key=lambda p: p.name):
+        if entry.name in _SKIP_DIRS:
+            continue
+        if entry.is_dir():
+            yield from _walk_files(entry)
+        elif entry.is_file() and entry.suffix != ".pyc":
+            yield entry
+
+
+def _read_tree(root: Path) -> dict[str, str]:
+    """Un arbre de fichiers en mapping `chemin-relatif-POSIX (à root) → contenu texte`. Ordre trié
+    (déterministe). Répertoire absent → mapping vide (fail-soft)."""
+    if not root.is_dir():
+        return {}
+    return {f.relative_to(root).as_posix(): f.read_text(encoding="utf-8") for f in _walk_files(root)}
+
+
+def load_bundle(project_type: str = "generic") -> dict[str, str]:
+    """Le bundle d'un type = `base ⊕ overlay(type)` en mapping `chemin-relatif-POSIX → contenu`. `generic`
+    = base seule. Composition **whole-file** : `base | overlay` (l'overlay écrase les clés communes, ajoute
+    les siennes). Déterministe. Lève `BundleError` si `project_type` n'est pas dans le registre
+    (`discover_types`)."""
+    if project_type not in discover_types():
+        raise BundleError(
+            f"type de projet inconnu : {project_type!r} (attendu {' | '.join(discover_types())})")
+    files = _read_tree(_BUNDLES_DIR / "base")
+    if project_type != "generic":
+        files |= _read_tree(_BUNDLES_DIR / "types" / project_type)
+    return files
+
+
+def _parse_manifest(files: dict[str, str], project_type: str) -> dict:
+    """La table `[bundle]` du manifeste `.forgemaster/bundle.toml` d'un bundle composé. Lève `BundleError`
+    si le manifeste est absent ou illisible."""
+    raw = files.get(_MANIFEST_PATH)
+    if raw is None:
+        raise BundleError(f"bundle {project_type!r} : manifeste {_MANIFEST_PATH} absent")
+    try:
+        return tomllib.loads(raw).get("bundle", {})
+    except tomllib.TOMLDecodeError as exc:
+        raise BundleError(f"bundle {project_type!r} : manifeste illisible ({exc})") from exc
+
+
+def read_bundle_manifest(project_type: str = "generic") -> dict:
+    """Le manifeste `[bundle]` (version, project_type, facets, default_facet…) du bundle composé
+    `base ⊕ overlay(type)`. Point d'accès amont pour la sélection, la provenance et la gestion."""
+    return _parse_manifest(load_bundle(project_type), project_type)
+
+
+def read_reseed_owned(project_type: str = "generic") -> list[str]:
+    """La liste FERMÉE des chemins « scaffold-owned » d'un type — les fichiers du **contrat de run** possédés
+    par le forgemaster (Dockerfile, compose.yaml, nginx.conf…) que la primitive `reseed` re-matérialise dans
+    un
+    projet **existant**. Tout chemin HORS de cette liste (`web/src`, `docs`, contenu, tasks…) est **préservé**
+    par construction : `reseed` n'écrit QUE l'owned. `[]` par défaut (un type sans contrat de run n'a rien à
+    re-semer). Lue de `[bundle].reseed_owned` du bundle composé `base ⊕ overlay(type)` (validée à la source
+    par `validate_bundle` : liste de chemins, chacun présent dans le bundle)."""
+    owned = read_bundle_manifest(project_type).get("reseed_owned", [])
+    return list(owned) if isinstance(owned, list) else []
+
+
+def validate_bundle(project_type: str = "generic") -> None:
+    """Valide un bundle **avant toute copie** (fail-closed). Lève `BundleError` si : type hors registre ;
+    manifeste absent/illisible ; `version` manquante ; `project_type` du manifeste ≠ nom du dossier ;
+    `facets` vide ; `default_facet` ∉ `facets` ; une facette déclarée sans dossier `.claude/facets/<f>/`
+    de support dans le bundle composé ; un bloc `[bundle.mcp]` présent mais mal typé (`corpus` non-booléen).
+    Le bloc `mcp` est **optionnel** (absent ⇒ valide) : déclaration sèche du besoin de corpus (un booléen),
+    jamais un secret ni un endpoint. Les silos tech pertinents ne vivent PAS ici mais dans la prose du
+    `CLAUDE.md §4` (SoT unique, le lever réellement lu par le worker)."""
+    files = load_bundle(project_type)                      # lève BundleError si type hors registre
+    manifest = _parse_manifest(files, project_type)
+    if not manifest.get("version"):
+        raise BundleError(f"bundle {project_type!r} : `version` manquante au manifeste")
+    declared = manifest.get("project_type")
+    if declared != project_type:
+        raise BundleError(
+            f"bundle {project_type!r} : manifeste project_type={declared!r} ≠ nom du dossier")
+    facets = manifest.get("facets") or []
+    if not facets:
+        raise BundleError(f"bundle {project_type!r} : aucune facette déclarée (`facets` vide)")
+    if manifest.get("default_facet") not in facets:
+        raise BundleError(
+            f"bundle {project_type!r} : default_facet={manifest.get('default_facet')!r} ∉ {facets}")
+    for fac in facets:
+        prefix = f".claude/facets/{fac}/"
+        if not any(p.startswith(prefix) for p in files):
+            raise BundleError(f"bundle {project_type!r} : facette {fac!r} sans dossier {prefix}")
+    mcp_decl = manifest.get("mcp")                             # bloc optionnel, sec (jamais de secret)
+    if mcp_decl is not None:
+        if not isinstance(mcp_decl, dict):
+            raise BundleError(f"bundle {project_type!r} : `[bundle.mcp]` doit être une table")
+        corpus = mcp_decl.get("corpus")
+        if corpus is not None and not isinstance(corpus, bool):
+            raise BundleError(f"bundle {project_type!r} : `mcp.corpus` doit être un booléen")
+    owned = manifest.get("reseed_owned")                       # liste des fichiers scaffold-owned (optionnel)
+    if owned is not None:
+        if not isinstance(owned, list) or not all(isinstance(p, str) for p in owned):
+            raise BundleError(f"bundle {project_type!r} : `reseed_owned` doit être une liste de chemins")
+        for path in owned:
+            if path not in files:                              # on ne peut posséder un fichier non semé
+                raise BundleError(
+                    f"bundle {project_type!r} : reseed_owned={path!r} absent du bundle composé")
+    fmodels = manifest.get("facet_models")            # tiering de modèle par facette (optionnel, sec)
+    if fmodels is not None:
+        if not isinstance(fmodels, dict):
+            raise BundleError(f"bundle {project_type!r} : `[bundle.facet_models]` doit être une table")
+        for fac, mdl in fmodels.items():
+            if fac not in facets:                              # pas de modèle pour une facette non déclarée
+                raise BundleError(
+                    f"bundle {project_type!r} : facet_models[{fac!r}] ∉ facets déclarées {facets}")
+            if not isinstance(mdl, str) or not mdl:
+                raise BundleError(
+                    f"bundle {project_type!r} : facet_models[{fac!r}] doit être un alias/id non vide")
+
+
+def list_valid_types() -> list[dict]:
+    """Les types de projet **valides** (registre filesystem filtré par `validate_bundle`, fail-closed) avec
+    leurs métadonnées de manifeste — LA source unique des types *offerts* : le dropdown de création (UI) ET
+    le durcissement des `choices` CLI la consomment (zéro liste dupliquée). Un overlay cassé (manifeste
+    absent/incohérent, facette sans dossier de support) est **silencieusement écarté** : on n'offre jamais
+    un type qu'on ne saurait pas semer. Chaque entrée : `{type, version, project_type, facets,
+    default_facet, mcp}` (`mcp` = déclaration sèche du manifeste, `{}` si absente). Déterministe, ordre de
+    `discover_types` (generic en tête)."""
+    valid: list[dict] = []
+    for project_type in discover_types():
+        try:
+            validate_bundle(project_type)
+        except BundleError:
+            continue                                           # cassé → non offert (fail-closed)
+        manifest = read_bundle_manifest(project_type)
+        valid.append({
+            "type": project_type,
+            "version": manifest.get("version", ""),
+            "project_type": manifest.get("project_type", project_type),
+            "facets": manifest.get("facets", []),
+            "default_facet": manifest.get("default_facet", ""),
+            "mcp": manifest.get("mcp", {}),
+        })
+    return valid
+
+
+def load_launch_roadmap(project_type: str = "generic") -> dict:
+    """La graine de **roadmap de lancement** d'un type (`base ⊕ overlay(type)`, whole-file), parsée depuis
+    `.forgemaster/launch-roadmap.yaml` du bundle composé. Schéma = contrat `roadmap.yaml` SANS la clé
+    `project:`
+    (le slug est fourni au seed). Retourne `{}` **fail-soft** si le type ne porte aucune graine (aucun seed,
+    jamais un crash). Le parse est **strict** (un YAML vendoré cassé = bug dev, attrapé par les tests, jamais
+    avalé). Déterministe. Lève `BundleError` si `project_type` est hors registre (via `load_bundle`)."""
+    raw = load_bundle(project_type).get(_LAUNCH_ROADMAP_PATH)
+    if raw is None:
+        return {}
+    return yaml.safe_load(raw) or {}
+
+
+def _canonical_launch_roadmap(project_type: str) -> tuple[str, dict] | None:
+    """Le `(nom-de-mirror, roadmap-parsée)` du template SoT central **vendoré** (`launch_templates/`) contre
+    lequel la graine de lancement de `project_type` doit être en phase (SoT-and-derive, I6 du blueprint
+    `cockpit-launch-pipeline`). Le mirror est choisi par la **présence d'un overlay** : un type qui surcharge
+    `.forgemaster/launch-roadmap.yaml` a son propre mirror `<type>.yaml` ; sinon il hérite de `generic.yaml`
+    (le
+    socle base). `None` si le mirror attendu est absent (divergence indétectable → surfacée par le check)."""
+    overlay_seed = _BUNDLES_DIR / "types" / project_type / _LAUNCH_ROADMAP_PATH
+    mirror_name = f"{project_type}.yaml" if overlay_seed.is_file() else "generic.yaml"
+    mirror = _LAUNCH_TEMPLATES_DIR / mirror_name
+    if not mirror.is_file():
+        return None
+    return mirror_name, yaml.safe_load(mirror.read_text(encoding="utf-8")) or {}
+
+
+def check_launch_roadmap_drift(project_type: str = "generic") -> list[str]:
+    """Garde de drift déterministe : la graine `.forgemaster/launch-roadmap.yaml` du bundle composé
+    `base ⊕ overlay(type)` a-t-elle divergé du **template SoT central vendoré** (`launch_templates/`) ?
+    Retourne la liste des problèmes (`[]` = en phase). C'est la garde qui interdit à la graine de re-diverger
+    du template après la décision SoT-and-derive (décider que X dérive de Y sans check ne suffit pas —
+    cf. décision `cockpit-template-derives-bundle-seed`) ; câblée en pytest ET en
+    `forgemaster bundle validate`.
+    Compare la **structure YAML parsée** (robuste aux commentaires). Un type sans graine (`{}`) passe."""
+    seed = load_launch_roadmap(project_type)                   # lève BundleError si type hors registre
+    if not seed:
+        return []
+    canon = _canonical_launch_roadmap(project_type)
+    if canon is None:
+        return [f"{project_type} : graine de lancement présente mais aucun mirror vendoré "
+                f"(launch_templates/{project_type}.yaml) — divergence indétectable"]
+    mirror_name, expected = canon
+    if seed != expected:
+        return [f"{project_type} : {_LAUNCH_ROADMAP_PATH} diverge du template SoT vendoré "
+                f"(launch_templates/{mirror_name}) — distille au CENTRE puis re-dérive, ne patche pas ici"]
+    return []
+
+
+def load_payload() -> dict[str, str]:
+    """Compat : le bundle générique (base seule). Conservé pour les appelants qui ne typent pas encore."""
+    return load_bundle("generic")

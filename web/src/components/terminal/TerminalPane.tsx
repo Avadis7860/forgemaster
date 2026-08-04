@@ -23,7 +23,7 @@ const STATUS: Record<TermStatus, { tone: 'info' | 'ok' | 'neutral' | 'danger'; l
 
 const FONT_MIN = 10
 const FONT_MAX = 22
-const FONT_KEY = 'cockpit.terminal.fontSize'
+const FONT_KEY = 'forgemaster.terminal.fontSize'
 
 function readFontSize(): number {
   try {
@@ -90,7 +90,7 @@ export function parseControlFrame(data: string): ControlFrame | null {
 
 /** Terminal PTY d'un projet, `session` détermine le flavor et donc la route WS (`ptyPath`) :
  *  `shell` → `/ws/terminal/{project}` (login `bash -l`, surface `claude login`) ; `interview` →
- *  `/ws/interview/{project}` (session DÉDIÉE dont le process EST `cockpit interview` — plus de commande
+ *  `/ws/interview/{project}` (session DÉDIÉE dont le process EST `forgemaster interview` — plus de commande
  *  tapée dans un shell partagé). xterm.js (addons fit + search + web-links). Frames BINAIRES = frappes ;
  *  frames TEXTE = contrôle `{"type":"resize",cols,rows}`. Le process tourne dans la racine du projet côté
  *  daemon ; à sa sortie le socket se ferme. La barre d'outils et l'état de fin BRANCHENT sur le flavor : en
@@ -180,7 +180,7 @@ export function TerminalPane({ project, session = 'shell' }: { project: string; 
       if (ctl.kind === 'unknown') return // frame de contrôle à `t:` non reconnu → ignorée
       // Bannière cliente (repère stable pour la boucle visuelle + « où suis-je »), fraîche vs restaurée.
       // Le flavor de session pilote le libellé — l'interview est une session DÉDIÉE (son process EST
-      // `cockpit interview`), le shell est le `bash -l` de login du projet. Aucun handoff tapé : le process
+      // `forgemaster interview`), le shell est le `bash -l` de login du projet. Aucun handoff tapé : le process
       // démarre de lui-même à la session neuve, et une ré-attache REPREND l'interview en cours.
       const flavor = session === 'interview' ? 'interview' : 'bash -l'
       term.writeln(
@@ -233,7 +233,7 @@ export function TerminalPane({ project, session = 'shell' }: { project: string; 
 
   const connected = status === 'connected'
   // Garde de départ : quitter la vue Ops démonterait ce pane → `ws.close()` → le daemon tue le login shell
-  // (SIGHUP) et toute commande en cours (ex. `cockpit interview`). Tant que la session est connectée, on
+  // (SIGHUP) et toute commande en cours (ex. `forgemaster interview`). Tant que la session est connectée, on
   // bloque la navigation SPA (confirmation) ET la fermeture d'onglet navigateur (`enableBeforeUnload` natif).
   const leaveBlocker = useBlocker({
     shouldBlockFn: () => connected,
@@ -257,7 +257,7 @@ export function TerminalPane({ project, session = 'shell' }: { project: string; 
   const st = STATUS[status]
   // Flavor : le terminal est générique (shell OU interview) — sa barre d'outils et son état de fin BRANCHENT
   // sur `session`. Le shell est le `bash -l` de login (surface `claude login`) ; l'interview est une session
-  // DÉDIÉE dont le process EST `cockpit interview` — pas de hints shell, pas de « Lancer Claude », et à sa
+  // DÉDIÉE dont le process EST `forgemaster interview` — pas de hints shell, pas de « Lancer Claude », et à sa
   // fermeture (EOF propre) un état de fin qui ouvre le chemin suivant au lieu d'un « Relancer » trompeur.
   const isInterview = session === 'interview'
   // Fin d'interview : le PTY a quitté (fermeture propre) ou le transport a lâché. Dans cet état, l'organisateur
@@ -269,7 +269,7 @@ export function TerminalPane({ project, session = 'shell' }: { project: string; 
       <div className="flex shrink-0 flex-wrap items-center gap-2">
         {isInterview ? (
           <p className="mr-auto text-xs text-faint">
-            Interview de conception (<span className="font-mono">cockpit interview</span>) — mène-la dans le
+            Interview de conception (<span className="font-mono">forgemaster interview</span>) — mène-la dans le
             terminal ; à la sortie, le socle se clôt.
           </p>
         ) : (
@@ -306,7 +306,7 @@ export function TerminalPane({ project, session = 'shell' }: { project: string; 
           Effacer
         </Button>
         {/* « Lancer Claude » et le « Relancer » générique sont des affordances SHELL : l'interview est déjà un
-            process `cockpit interview` (y taper `claude` n'a aucun sens), et sa fermeture propre est gérée par
+            process `forgemaster interview` (y taper `claude` n'a aucun sens), et sa fermeture propre est gérée par
             l'état de fin dédié ci-dessous (reprise honnête ou hand-off vers le lancement), pas par un « Relancer »
             qui recréerait une interview sur un socle déjà clos. */}
         {!isInterview && (
@@ -328,7 +328,7 @@ export function TerminalPane({ project, session = 'shell' }: { project: string; 
           </Badge>
         )}
       </div>
-      {/* État de FIN de l'interview : à la fermeture du socket (le PTY `cockpit interview` a quitté), on ne laisse
+      {/* État de FIN de l'interview : à la fermeture du socket (le PTY `forgemaster interview` a quitté), on ne laisse
           plus un terminal gelé — on lit la roadmap et on ouvre le chemin suivant (reprise ou lancement). */}
       {interviewClosed && (
         <InterviewEndState

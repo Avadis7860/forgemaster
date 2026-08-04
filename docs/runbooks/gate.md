@@ -10,7 +10,7 @@ humain**. Chaque tier écrit un **verdict lié au SHA** de la branche de feature
 jamais au mtime ; et `run_merge` ne mute **rien** sans `human_go is True` (le LLM ne merge jamais seul).
 
 ## toolchain.run_toolchain() — Tier-0 déterministe
-`src/cockpit/gate/toolchain.py:281` · appelé par `toolchain.cli_dispatch` (`cockpit gate toolchain <feature>`)
+`src/forgemaster/gate/toolchain.py:281` · appelé par `toolchain.cli_dispatch` (`forgemaster gate toolchain <feature>`)
 Lance, dans le worktree, les steps des groupes à la fois **présents** ET **déclenchés** par le diff, dans l'ordre,
 en s'arrêtant au 1ᵉʳ rouge. Ne lève **jamais** (timeout/binaire absent → step rouge). Un trigger déclenché mais
 **non couvert** par une unité de gate → **step rouge synthétique** (« toolchain non montable »), jamais un drop
@@ -22,16 +22,16 @@ l'appelant préfixe `tools/bin` au PATH pour résoudre ruff/mypy/pytest/npm sur 
 passif, conservé pour les tests).
 
 ## toolchain.detect_groups() — Tier-0 déterministe
-`src/cockpit/gate/toolchain.py:112`
+`src/forgemaster/gate/toolchain.py:112`
 Quatre groupes **présents (couvrables)** dans le worktree. Trois par **convention** : `front` (`web/` ou racine
 portant un script npm `gate`), `backend-node` (`server/` ou racine unifié), `backend` (`pyproject.toml` racine).
-Le quatrième, `declared`, quand le projet **déclare** sa toolchain (`[bundle.gate]` du `.cockpit/bundle.toml`) —
+Le quatrième, `declared`, quand le projet **déclare** sa toolchain (`[bundle.gate]` du `.forgemaster/bundle.toml`) —
 c'est la porte de sortie d'un projet dont la stack n'est aucune des trois routes connues. **Descriptif** —
 l'autorité du RUN reste `_steps_for` (qui porte le fail-closed sur trigger non couvert). Un `package.json`
 racine avec script `gate` couvre `web/` ET `server/` (workspaces).
 
 ## toolchain.applicable_triggers() — Tier-0 déterministe
-`src/cockpit/gate/toolchain.py:165` · appelé par `run_toolchain`, `status`, `cli_dispatch`
+`src/forgemaster/gate/toolchain.py:165` · appelé par `run_toolchain`, `status`, `cli_dispatch`
 Groupes **déclenchés par le diff seul** (sans worktree — le `GET /api/gate` poll-é n'a que le diff sous la main),
 dans l'ordre `front → backend-node → backend → declared` : `web/` touché → `front` ; un fichier node (`.ts/.js…`)
 **hors `web/`** → `backend-node` ; un `*.py` → `backend`. C'est la source d'autorité de l'**applicabilité** côté
@@ -42,34 +42,34 @@ résidu de source déclenche `declared`**. `[]` — donc Tier-0 natif **N/A** �
 sortir en N/A : le seul veto non-overridable de la pile ne s'éteint plus en silence.
 
 ## review.partition_findings() — Tier-1 review
-`src/cockpit/gate/review.py:123` · appelé par `review.build_verdict`
+`src/forgemaster/gate/review.py:123` · appelé par `review.build_verdict`
 Sépare `(kept, rejected)` par la garde déterministe **`evidence ⊂ diff`** (anti-hallucination, fail-closed) : un
 finding dont la citation verbatim n'apparaît pas dans une ligne **ajoutée** (`+`) du diff `base...HEAD` est
 **rejeté** et porte `reject_reason` (`pas-de-file:line` / `pas-de-citation` / `file-absent-du-diff` /
 `citation-absente-du-diff`). PUR (aucun git/réseau) — le diff lui est fourni.
 
 ## review.evidence_in_diff() — Tier-1 review
-`src/cockpit/gate/review.py:118`
+`src/forgemaster/gate/review.py:118`
 Prédicat unitaire : `True` ssi la citation verbatim d'**un** finding apparaît dans une ligne ajoutée du diff
 `base...HEAD` (délègue à la même logique que `partition_findings`, réponse booléenne). La comparaison est
 normalisée (strip + collapse des espaces) → robuste à l'indentation ; c'est le CONTENU cité qui compte, pas le
 numéro de ligne.
 
 ## review.build_verdict() — Tier-1 review
-`src/cockpit/gate/review.py:138` · appelé par `review.write_verdict`
+`src/forgemaster/gate/review.py:138` · appelé par `review.write_verdict`
 PUR (aucune I/O). Assemble le verdict `review-gate-v2` : applique la garde `evidence ⊂ diff` si `diff_text` fourni
 (non citables → `rejected[]`, **hors** counts/gate), dérive les `counts` (🔴/🟡/🟣), fige `reviewed_sha`/`ts`
 **fournis par l'appelant** (jamais de fallback git/horloge implicite → c'est ce qui le rend pur). Instance Tier-1
 de la forme `build_verdict` partagée.
 
 ## review.gate_blocking() — Tier-1 review
-`src/cockpit/gate/review.py:229` · appelé par `review.status`
+`src/forgemaster/gate/review.py:229` · appelé par `review.status`
 `True` ssi le verdict porte au moins un **🔴** reviewer. Un 🔴 **bloque** le merge — mais est **levable** par un
 override humain explicite et tracé (`t1_override` dans `compose_merge_decision`), contrairement au filet Tier-0 qui,
 lui, n'est jamais overridable. Les 🟡/🟣 sont consultatifs (surfacés, non bloquants).
 
 ## verify.has_ui() / has_visual_change() — Tier-1.5 feature-verified
-`src/cockpit/gate/verify.py:48` (has_ui) · `:95` (has_visual_change, **le trigger réel du gate**)
+`src/forgemaster/gate/verify.py:48` (has_ui) · `:95` (has_visual_change, **le trigger réel du gate**)
 `has_ui` est un prédicat **coarse**, par NOM seul : `True` ssi un fichier du diff a un suffixe front
 (`.tsx/.jsx/.vue/.svelte`) ou un chemin de page/composant. **Ce n'est PAS lui que `evaluate_gate` appelle** — il
 est conservé comme référence et pour les tests. Le trigger du gate est `has_visual_change`, **hybride nom +
@@ -81,8 +81,8 @@ contenu** : les fichiers de STYLE et les dossiers RENDUS (`pages/`, `components/
 = **N/A** (non bloquant).
 
 ## verify.verify_target() — Tier-1.5 feature-verified
-`src/cockpit/gate/verify.py:253` · appelé par `verify.cli_dispatch` (`cockpit gate verify <feature>`)
-Prouve **une** cible via le runner Node (Playwright, résolu par `COCKPIT_VERIFY_RUNNER` ou
+`src/forgemaster/gate/verify.py:253` · appelé par `verify.cli_dispatch` (`forgemaster gate verify <feature>`)
+Prouve **une** cible via le runner Node (Playwright, résolu par `FORGEMASTER_VERIFY_RUNNER` ou
 `<home>/runners/render_check.js`) : charge l'URL, vérifie les marqueurs attendus dans le DOM. Ne lève **JAMAIS** —
 runner absent / node ko / browser ko / timeout / sortie non-JSON → `{ok: False, error: …}` (**fail-closed** : un
 target non prouvé n'est pas un target vert). L'`env` est celui de `tools.tools_env` : le PATH systemd minimal du
@@ -95,7 +95,7 @@ canvas** — si `canvas` est déclaré, l'élément doit avoir *peint* (pixels n
 distingue une transition prouvée d'un marqueur qui était déjà là.
 
 ## verify.build_verdict() — Tier-1.5 feature-verified
-`src/cockpit/gate/verify.py:303` · appelé par `verify.write_verdict`
+`src/forgemaster/gate/verify.py:303` · appelé par `verify.write_verdict`
 PUR. Assemble le verdict `feature-verify-v2` (`CONTRACT_VERSION`, preuve deux-temps) : `ok=True` ssi **≥1 cible
 ET toutes ok** (jamais blanchi par 0 cible — pas de vert par absence de preuve). Expose `n_targets`/`n_failed`.
 Une cible « jalon jouable » n'est ok que si son `after_marker` apparaît **après** le geste et était **absent**
@@ -104,7 +104,7 @@ at-rest (`pre_present` vide). `sha`/`ts` injectés par l'appelant
 bloque dès `n_failed > 0` ou `ok=False`.
 
 ## merge.compose_merge_decision() — merge (cœur PUR)
-`src/cockpit/gate/merge.py:58` · appelé par `evaluate_gate`
+`src/forgemaster/gate/merge.py:58` · appelé par `evaluate_gate`
 La **chaîne d'autorité**, PURE. Conditions CUMULATIVES : **Tier-0** propre (0 🔴 déterministe,
 **non-overridable**) ; **Tier-0 natif** propre si `native_status['applicable']` (veto déterministe
 **non-overridable**, N/A si absent) ; **Tier-1 présent + FRAIS + PASS** (garde de process non-overridable ; un 🔴
@@ -119,7 +119,7 @@ confondre avec un fail-closed serait l'erreur coûteuse. Le retour porte aussi `
 qu'un worker peut corriger, cf. `dispatch.refix`).
 
 ## merge.evaluate_gate() — merge (évaluation sans mutation)
-`src/cockpit/gate/merge.py:203` · appelé par `run_merge` et par le GET gate (preview)
+`src/forgemaster/gate/merge.py:203` · appelé par `run_merge` et par le GET gate (preview)
 **Source unique** de l'évaluation, **ne mute rien** : résout le SHA de HEAD de la branche, **lit** les verdicts
 Tier-1 (`review.status`), Tier-1.5 (`verify.status`) et woaw (`woaw.status`, advisory) ancrés sur ce SHA, tire le
 diff **une seule fois** puis en dérive `ui_touched` (`verify.has_visual_change`, hybride nom+contenu) et
@@ -130,7 +130,7 @@ sinon **lu** via `toolchain.status` — **jamais exécuté ici**, le GET est pol
 merge. Le GET l'expose avec `human_go=False` → `hold`, sans jamais POSTer de merge.
 
 ## merge.run_merge() — merge (orchestration IMPURE)
-`src/cockpit/gate/merge.py:248` · appelé par `merge.cli_dispatch` (`cockpit merge <feature>`)
+`src/forgemaster/gate/merge.py:248` · appelé par `merge.cli_dispatch` (`forgemaster merge <feature>`)
 Compose le gate via `evaluate_gate` puis, **seulement si `decision['allow']`** (gate vert **ET** `human_go`),
 exécute internal-first : **réalignement anti-stale-base** si `dev` n'est plus ancêtre de la branche (un merge de
 sibling l'a fait avancer pendant le drain parallèle) — rebase linéaire qui préserve les commits worker et
@@ -143,7 +143,7 @@ Une feature planifiée mais **jamais dispatchée** n'a pas de branche : outcome 
 (`decision=None`, « rien à merger »), pas un traceback.
 
 ## merge._close_feature_tasks() — merge (writeback DB)
-`src/cockpit/gate/merge.py:190` · appelé par `run_merge` (post-merge)
+`src/forgemaster/gate/merge.py:190` · appelé par `run_merge` (post-merge)
 Writeback DB après un merge réussi : la feature passe `merged`, ses tasks **landées** (`in_progress`) passent
 `done` ; retourne leurs slugs. Les tasks jamais dispatchées (`todo`) restent telles quelles (surfacées comme
 `pending_tasks` par `run_merge`).
@@ -151,7 +151,7 @@ Writeback DB après un merge réussi : la feature passe `merged`, ses tasks **la
 ## Zones non détaillées
 - Le quatuor `state_path`/`write_verdict`/`read_verdict`/`is_fresh`/`status` répété par tier (`toolchain`,
   `review`, `verify` — forme identique, verdict SHA-bound sous `settings.home/gate/<projet>/<feature>/`) ;
-  `cli_dispatch` par module (routes `cockpit gate toolchain|review|verify` et `cockpit merge`).
+  `cli_dispatch` par module (routes `forgemaster gate toolchain|review|verify` et `forgemaster merge`).
 - **`toolchain.py` — les prédicats de périmètre** : `touches_front`/`touches_node_backend`/`touches_py`/
   `touches_undeclared_source` (les quatre déclencheurs lus par `applicable_triggers`), `is_tier0_source`
   (qu'est-ce qu'une source exécutable), `is_docs_only` et `has_reviewable_code` (le prédicat qui rend le Tier-1

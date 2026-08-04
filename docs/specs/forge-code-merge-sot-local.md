@@ -12,7 +12,7 @@ ledger / close PR / `git clean` manuels, gardes de branche héritées) ?
 
 ## Règles verrouillées — frontière forge
 
-- **Le cockpit EST la forge** (native-IA-worker) : PR/merge, review-gate, CI Tier-0, registre, dispatch, CD
+- **Le forgemaster EST la forge** (native-IA-worker) : PR/merge, review-gate, CI Tier-0, registre, dispatch, CD
   sont déjà possédés. **On ne réintroduit pas** un produit forge externe comme SoT.
 - **GitHub = stockage/transport git brut loué + miroir/backup.** Forgejo reste seulement candidat
   **backend-muet swappable** pour une phase OSS-later. Garder les seams swappables (storage / events /
@@ -32,7 +32,7 @@ ledger / close PR / `git clean` manuels, gardes de branche héritées) ?
 - **Fail-close voulu** : une route reset/merge `sot:local` répond **409 si `backend != internal`** tant que
   le conducteur n'existe pas (garde-fou, pas un bug).
 
-## Invariants de test (à encoder dans cockpit)
+## Invariants de test (à encoder dans forgemaster)
 
 - Reset **idempotent** sur ≥2 itérations (cœur pur vert sans toucher au live, I/O injectée).
 - `push_mirror` KO → respawn `ok` + erreur miroir surfacée (jamais de blocage sur backup, jamais faux-vert).

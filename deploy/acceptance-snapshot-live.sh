@@ -2,7 +2,7 @@
 # acceptance-snapshot-live.sh — prise à chaud SANS perturber, puis retour arrière RÉEL par le chemin manuel.
 #
 # Les tests unitaires simulent l'écrivain concurrent ; ici c'est le VRAI daemon qui écrit, par la VRAIE API,
-# et le VRAI verbe `cockpit snapshot create` qui prend — daemon NON arrêté. Ce que ce niveau prouve et qu'un
+# et le VRAI verbe `forgemaster snapshot create` qui prend — daemon NON arrêté. Ce que ce niveau prouve et qu'un
 # test unitaire ne peut pas montrer : la prise n'est PAS une écriture (« VACUUM (but not VACUUM INTO) is a
 # write operation »), donc l'instance reste saine, sert toujours et accepte encore d'écrire APRÈS ; et
 # surtout (étapes 6-8) que la restauration lancée à la MAIN, depuis le chemin stable `<home>/restore.py`,
@@ -11,7 +11,7 @@
 # Ce que ce script ne prétend PAS prouver : la perte qu'un `cp` subirait. Constaté en écrivant ce script —
 # `daemon/deps.py` ouvre une connexion PAR REQUÊTE et la referme, donc SQLite checkpointe et supprime le
 # `-wal` : au repos le daemon ne laisse pas de WAL peuplé. Le régime dangereux n'arrive que connexion TENUE
-# (requête en vol, `cockpit run` et ses N connexions-par-thread). L'étape [3/8] CONSTATE l'état réel au lieu
+# (requête en vol, `forgemaster run` et ses N connexions-par-thread). L'étape [3/8] CONSTATE l'état réel au lieu
 # de le fabriquer ; la perte elle-même est prouvée au niveau unitaire
 # (`tests/test_snapshot.py::test_prise_a_chaud_emporte_le_valide_qui_vit_encore_dans_le_wal`, falsifié par
 # mutation : une copie naïve rougit ce test-là et lui seul).
@@ -24,14 +24,14 @@ py="${PYTHON:-$root/.venv/bin/python}"
 
 tmp="$(mktemp -d)"; srv=""
 trap 'set +e; [ -n "$srv" ] && kill "$srv" 2>/dev/null; rm -rf "$tmp"' EXIT
-export COCKPIT_HOME="$tmp/home" COCKPIT_PROJECTS_ROOT="$tmp/projects" PYTHONPATH="$root/src"
+export FORGEMASTER_HOME="$tmp/home" FORGEMASTER_PROJECTS_ROOT="$tmp/projects" PYTHONPATH="$root/src"
 
 port="$("$py" -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
-echo "→ daemon sur 127.0.0.1:$port, home jetable $COCKPIT_HOME"
-# `cockpit.env` semé comme le pose `install-service` : le réglage de l'instance est une VRAIE
+echo "→ daemon sur 127.0.0.1:$port, home jetable $FORGEMASTER_HOME"
+# `forgemaster.env` semé comme le pose `install-service` : le réglage de l'instance est une VRAIE
 # entrée du périmètre, pas une absence commode.
-mkdir -p "$COCKPIT_HOME" && printf 'COCKPIT_SECRET_STORE=file\n' > "$COCKPIT_HOME/cockpit.env"
-"$py" -m cockpit serve --host 127.0.0.1 --port "$port" >"$tmp/serve.log" 2>&1 & srv=$!
+mkdir -p "$FORGEMASTER_HOME" && printf 'FORGEMASTER_SECRET_STORE=file\n' > "$FORGEMASTER_HOME/forgemaster.env"
+"$py" -m forgemaster serve --host 127.0.0.1 --port "$port" >"$tmp/serve.log" 2>&1 & srv=$!
 
 if ! "$py" - "$port" "$tmp" "$srv" <<'PY'
 import json, os, shutil, signal, sqlite3, subprocess, sys, time, urllib.error, urllib.request
@@ -67,7 +67,7 @@ assert status == 201, f"✗ POST /api/projects = {status}"
 # …et le coffre est peuplé par le chemin du produit (`onboard link`), pas en écrivant le blob à la main :
 # les trois entrées du périmètre existent donc vraiment quand on prend l'instantané.
 (tmp / "jeton").write_text("jeton-fictif\n", encoding="utf-8")
-subprocess.run([sys.executable, "-m", "cockpit", "onboard", "link", "atelier-fictif",
+subprocess.run([sys.executable, "-m", "forgemaster", "onboard", "link", "atelier-fictif",
                 "--token-file", str(tmp / "jeton"), "--label", "forge"],
                capture_output=True, text=True, check=True)
 assert (home / "secrets" / "store.enc").exists(), "✗ le coffre n'a pas été peuplé par `onboard link`"
@@ -76,10 +76,10 @@ print("→ [3/8] état réel du WAL au moment de la prise — CONSTATÉ, pas sup
 # `daemon/deps.py` ouvre une connexion PAR REQUÊTE et la referme : à la dernière fermeture SQLite
 # checkpointe et SUPPRIME le `-wal`. Au repos, le daemon ne laisse donc pas de WAL peuplé — le régime
 # dangereux (transaction validée encore dans le `-wal`) n'arrive que connexion TENUE : requête en vol, ou
-# `cockpit run` qui garde N connexions-par-thread. On le CONSTATE ici au lieu de le fabriquer ; la perte que
+# `forgemaster run` qui garde N connexions-par-thread. On le CONSTATE ici au lieu de le fabriquer ; la perte que
 # subirait un `cp` est prouvée au niveau unitaire (`test_prise_a_chaud_emporte_le_valide…`, falsifié).
-db = home / "cockpit.db"
-wal = db.with_name("cockpit.db-wal")
+db = home / "forgemaster.db"
+wal = db.with_name("forgemaster.db-wal")
 if wal.exists() and wal.stat().st_size:
     seul = sqlite3.connect(f"file:{db}?immutable=1", uri=True)
     dans_le_fichier = [r[0] for r in seul.execute("SELECT slug FROM projects")]
@@ -92,21 +92,21 @@ else:
           "bon choix : un fichier AUTONOME, correct dans les deux régimes, sans avoir à savoir qui tient "
           "une connexion à cet instant.")
 
-print("→ [4/8] `cockpit snapshot create` pendant que le daemon SERT (non arrêté)")
-out = subprocess.run([sys.executable, "-m", "cockpit", "snapshot", "create"],
+print("→ [4/8] `forgemaster snapshot create` pendant que le daemon SERT (non arrêté)")
+out = subprocess.run([sys.executable, "-m", "forgemaster", "snapshot", "create"],
                      capture_output=True, text=True, check=True).stdout
 dest = Path(out.splitlines()[0].split("→", 1)[1].strip())
 manifest = json.loads((dest / "manifest.json").read_text(encoding="utf-8"))
 assert manifest["schema"] == 1, manifest["schema"]
-assert [e["name"] for e in manifest["entries"]] == ["cockpit.db", "cockpit.env",
+assert [e["name"] for e in manifest["entries"]] == ["forgemaster.db", "forgemaster.env",
                                                     "secrets/store.enc"], manifest["entries"]
 assert manifest["absent"] == [], f"✗ une entrée du périmètre manquait : {manifest['absent']}"
 
-copie = sqlite3.connect(str(dest / "cockpit.db"))
+copie = sqlite3.connect(str(dest / "forgemaster.db"))
 slugs = [r[0] for r in copie.execute("SELECT slug FROM projects")]
 copie.close()
 assert slugs == ["atelier-fictif"], f"✗ l'instantané a PERDU le projet validé : {slugs}"
-assert not list(dest.glob("cockpit.db-wal")), "✗ l'instantané traîne un -wal : il n'est pas autonome"
+assert not list(dest.glob("forgemaster.db-wal")), "✗ l'instantané traîne un -wal : il n'est pas autonome"
 assert not list(dest.rglob("master.key")), "✗ la clé maîtresse est partie dans l'instantané"
 assert "secrets/master.key" in manifest["excluded"], "✗ l'exclusion n'est pas dite dans le manifeste"
 print(f"   ✓ {dest.name} : {[e['name'] for e in manifest['entries']]}, absent={manifest['absent']}")
@@ -151,7 +151,7 @@ print("   " + "\n   ".join(r.stdout.strip().splitlines()[-2:]))
 
 print("→ [8/8] un daemon RELANCÉ sert l'état restauré")
 log = (tmp / "serve2.log").open("w")
-srv2 = subprocess.Popen([sys.executable, "-m", "cockpit", "serve", "--host", "127.0.0.1", "--port", port],
+srv2 = subprocess.Popen([sys.executable, "-m", "forgemaster", "serve", "--host", "127.0.0.1", "--port", port],
                         stdout=log, stderr=subprocess.STDOUT)
 try:
     for _ in range(40):

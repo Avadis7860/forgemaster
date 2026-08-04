@@ -13,7 +13,7 @@ import { OpsTab } from './pages/OpsTab'
 import { SettingsTab } from './pages/SettingsTab'
 import { SetupWizard } from './pages/SetupWizard'
 
-// Routing code-based (pas de codegen) — l'échelle du cockpit ne justifie pas le file-based.
+// Routing code-based (pas de codegen) — l'échelle du forgemaster ne justifie pas le file-based.
 const rootRoute = createRootRoute({ component: AppShell })
 
 const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: Landing })

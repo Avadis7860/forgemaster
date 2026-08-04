@@ -1,0 +1,46 @@
+"""store — ouverture et migration de la base SQLite du forgemaster. Connexion configurée une fois
+(row_factory dict-like, FK ON, WAL pour la concurrence CLI↔daemon, busy_timeout pour l'orchestrateur
+parallèle), migration idempotente.
+
+Le CRUD haut-niveau (create_project/list_features/…) sera porté à la phase logique via `projects.registry`
+et consorts, qui reçoivent une connexion — jamais un module-global (correctif anti god-module)."""
+from __future__ import annotations
+
+import sqlite3
+from pathlib import Path
+
+from forgemaster.config import Settings
+from forgemaster.db import schema
+
+
+def connect(db_path: str | Path) -> sqlite3.Connection:
+    """Ouvre une connexion configurée : dossier parent créé, `Row` dict-like, FK activées, WAL."""
+    fp = Path(db_path)
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(fp))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    # busy_timeout : sous `forgemaster run` (orchestrateur parallèle), N connexions-par-thread écrivent la
+    # même
+    # base ; WAL autorise N lecteurs + 1 écrivain → deux écrivains concurrents donnent SQLITE_BUSY. 5 s de
+    # retry absorbent les rares chevauchements (fenêtres d'écriture minuscules, le run est du subprocess sans
+    # I/O DB) sans sérialiser le parallélisme. Bénin pour tous les appelants mono.
+    conn.execute("PRAGMA busy_timeout = 5000")
+    return conn
+
+
+def migrate(conn: sqlite3.Connection) -> int:
+    """Applique le schéma si la base est vierge (ou en retard). Idempotent. Retourne la version finale.
+    `create_schema` gère à la fois la base neuve (tout par DDL) et l'évolution en place d'une base d'une
+    version antérieure (tables neuves via `IF NOT EXISTS`, colonnes neuves via `ensure_columns`)."""
+    if schema.schema_version(conn) < schema.SCHEMA_VERSION:
+        schema.create_schema(conn)
+    return schema.schema_version(conn)
+
+
+def open_db(settings: Settings) -> sqlite3.Connection:
+    """Connexion migrée à la base du forgemaster (`settings.db_path`). Point d'entrée des couches."""
+    conn = connect(settings.db_path)
+    migrate(conn)
+    return conn

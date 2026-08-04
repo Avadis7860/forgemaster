@@ -8,16 +8,16 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cockpit.config import Settings
-from cockpit.core.run import RunResult
-from cockpit.daemon import app as app_mod
-from cockpit.db import store
-from cockpit.dispatch import ports
-from cockpit.projects import deployments, registry
-from cockpit.runtime import backend as backend_mod
-from cockpit.runtime import engine
-from cockpit.runtime.backend import PodmanCompose
-from cockpit.runtime.paths import compose_project_name, deploy_dir_for
+from forgemaster.config import Settings
+from forgemaster.core.run import RunResult
+from forgemaster.daemon import app as app_mod
+from forgemaster.db import store
+from forgemaster.dispatch import ports
+from forgemaster.projects import deployments, registry
+from forgemaster.runtime import backend as backend_mod
+from forgemaster.runtime import engine
+from forgemaster.runtime.backend import PodmanCompose
+from forgemaster.runtime.paths import compose_project_name, deploy_dir_for
 
 
 @pytest.fixture
@@ -87,7 +87,7 @@ class FakeBackend:
 # -- paths : le nom de compose-project EST la frontière d'isolation --------------------------------
 
 def test_compose_project_name_is_isolation_namespace():
-    assert compose_project_name("alpha", "dev") == "cockpit-alpha-dev"
+    assert compose_project_name("alpha", "dev") == "forgemaster-alpha-dev"
     assert compose_project_name("alpha", "dev") != compose_project_name("beta", "dev")   # inter-projets
     assert compose_project_name("alpha", "dev") != compose_project_name("alpha", "main")  # inter-branches
 
@@ -107,32 +107,32 @@ def _recorder():
 def test_podman_compose_builds_scoped_argv_and_merges_env(tmp_path: Path):
     calls, rec = _recorder()
     PodmanCompose(cmd=("podman", "compose"), runner=rec).up(
-        "cockpit-x-dev", tmp_path, env={"COCKPIT_PORT": "5250"})
+        "forgemaster-x-dev", tmp_path, env={"FORGEMASTER_PORT": "5250"})
     argv, cwd, env, _ = calls[0]
-    assert argv == ["podman", "compose", "-p", "cockpit-x-dev", "up", "-d", "--build"]
+    assert argv == ["podman", "compose", "-p", "forgemaster-x-dev", "up", "-d", "--build"]
     assert cwd == str(tmp_path)
-    assert env["COCKPIT_PORT"] == "5250"          # overlay injecté (interpolation ${COCKPIT_PORT})
+    assert env["FORGEMASTER_PORT"] == "5250"          # overlay injecté (interpolation ${FORGEMASTER_PORT})
     assert "PATH" in env                          # base allowlist du daemon (le nécessaire pour tourner)
 
 
 def test_compose_env_seals_daemon_secrets_out(tmp_path: Path, monkeypatch):
     """Anti-pollution P4 : l'env passé à la CLI compose est une **allowlist** — aucun secret du daemon
-    (BWS_ACCESS_TOKEN, COCKPIT_*, GITHUB_TOKEN…) n'y fuit, même s'il est présent dans l'environnement du
+    (BWS_ACCESS_TOKEN, FORGEMASTER_*, GITHUB_TOKEN…) n'y fuit, même s'il est présent dans l'environnement du
     daemon. Seuls la base autorisée ⊕ l'overlay explicite atteignent le build/run."""
-    for leaky in ("BWS_ACCESS_TOKEN", "COCKPIT_ADMIN_TOKEN", "GITHUB_TOKEN"):
+    for leaky in ("BWS_ACCESS_TOKEN", "FORGEMASTER_ADMIN_TOKEN", "GITHUB_TOKEN"):
         monkeypatch.setenv(leaky, "s3cr3t-sentinelle")
     calls, rec = _recorder()
-    PodmanCompose(runner=rec).up("cockpit-x-dev", tmp_path, env={"COCKPIT_PORT": "5250"})
+    PodmanCompose(runner=rec).up("forgemaster-x-dev", tmp_path, env={"FORGEMASTER_PORT": "5250"})
     env = calls[0][2]
     assert "s3cr3t-sentinelle" not in env.values()                 # le secret n'a pas fui
-    for leaky in ("BWS_ACCESS_TOKEN", "COCKPIT_ADMIN_TOKEN", "GITHUB_TOKEN"):
+    for leaky in ("BWS_ACCESS_TOKEN", "FORGEMASTER_ADMIN_TOKEN", "GITHUB_TOKEN"):
         assert leaky not in env                                    # clé hors allowlist → absente
-    assert set(env) <= set(backend_mod._COMPOSE_ENV_ALLOW) | {"COCKPIT_PORT"}   # allowlist ∪ overlay
+    assert set(env) <= set(backend_mod._COMPOSE_ENV_ALLOW) | {"FORGEMASTER_PORT"}   # allowlist ∪ overlay
 
 
 def test_compose_engine_is_a_setting_not_code(tmp_path: Path):
     calls, rec = _recorder()
-    PodmanCompose(cmd=("docker", "compose"), runner=rec).down("cockpit-x-dev", tmp_path)
+    PodmanCompose(cmd=("docker", "compose"), runner=rec).down("forgemaster-x-dev", tmp_path)
     assert calls[0][0][:2] == ["docker", "compose"]   # bascule moteur = simple réglage
 
 
@@ -154,7 +154,7 @@ def test_logs_queries_engine_directly_bounded_readonly(tmp_path: Path):
             return RunResult(argv=list(argv), returncode=0, stdout='[{"Id": "abc123"}]', stderr="")
         return RunResult(argv=list(argv), returncode=0, stdout="", stderr="")
 
-    PodmanCompose(cmd=("podman", "compose"), runner=rec).logs("cockpit-x-dev", tmp_path, tail=100)
+    PodmanCompose(cmd=("podman", "compose"), runner=rec).logs("forgemaster-x-dev", tmp_path, tail=100)
     logs_argv = calls[1]
     assert logs_argv == ["podman", "logs", "--timestamps", "--tail", "100", "abc123"]
     assert "--follow" not in logs_argv and "-f" not in logs_argv    # borné : jamais un flux long-vécu
@@ -174,7 +174,7 @@ def test_logs_reads_both_stdout_and_stderr(tmp_path: Path):
 def test_runtime_available_resolves_engine_binary():
     """Sonde de présence du moteur (podman/docker) — `sh` résout, un binaire bidon non."""
     assert backend_mod.runtime_available(["sh"]) is True
-    assert backend_mod.runtime_available(["cockpit-no-such-engine-zzz"]) is False
+    assert backend_mod.runtime_available(["forgemaster-no-such-engine-zzz"]) is False
     assert backend_mod.runtime_available([]) is False
 
 
@@ -216,8 +216,8 @@ def test_standalone_compose_up_builds_binary_argv(tmp_path: Path):
     """Le défaut `podman-compose` (standalone) : `up` construit `podman-compose -p <name> up -d --build`."""
     calls, rec = _recorder()
     PodmanCompose(cmd=("podman-compose",), runner=rec).up(
-        "cockpit-x-dev", tmp_path, env={"COCKPIT_PORT": "5250"})
-    assert calls[0][0] == ["podman-compose", "-p", "cockpit-x-dev", "up", "-d", "--build"]
+        "forgemaster-x-dev", tmp_path, env={"FORGEMASTER_PORT": "5250"})
+    assert calls[0][0] == ["podman-compose", "-p", "forgemaster-x-dev", "up", "-d", "--build"]
 
 
 def test_ps_uses_derived_engine_for_standalone_compose(tmp_path: Path):
@@ -229,10 +229,10 @@ def test_ps_uses_derived_engine_for_standalone_compose(tmp_path: Path):
         calls.append(list(argv))
         return RunResult(argv=list(argv), returncode=0, stdout='[{"State": "running"}]', stderr="")
 
-    PodmanCompose(cmd=("podman-compose",), runner=cap).ps("cockpit-x-dev", tmp_path)
+    PodmanCompose(cmd=("podman-compose",), runner=cap).ps("forgemaster-x-dev", tmp_path)
     assert calls[0][0] == "podman"                                   # moteur dérivé, PAS `podman-compose`
     assert calls[0][1] == "ps" and "--format" in calls[0]
-    assert "label=com.docker.compose.project=cockpit-x-dev" in calls[0]
+    assert "label=com.docker.compose.project=forgemaster-x-dev" in calls[0]
 
 
 def test_missing_engine_raises_compose_error_not_filenotfound(tmp_path: Path):
@@ -240,9 +240,9 @@ def test_missing_engine_raises_compose_error_not_filenotfound(tmp_path: Path):
     `FileNotFoundError` brut : le runner par défaut sonde le PATH avant le sous-process. C'est ce qui rend
     `deploy status` gracieux (l'engine catch `ComposeError` → `unhealthy`, jamais une stacktrace)."""
     # runner par DÉFAUT (which réel), binaire de moteur introuvable
-    engine_cli = PodmanCompose(cmd=("cockpit-no-such-engine-zzz", "compose"))
+    engine_cli = PodmanCompose(cmd=("forgemaster-no-such-engine-zzz", "compose"))
     with pytest.raises(backend_mod.ComposeError, match="runtime conteneur absent"):
-        engine_cli.ps("cockpit-x-dev", tmp_path)
+        engine_cli.ps("forgemaster-x-dev", tmp_path)
 
 
 def test_ps_queries_container_engine_directly_by_compose_label(tmp_path: Path):
@@ -255,11 +255,11 @@ def test_ps_queries_container_engine_directly_by_compose_label(tmp_path: Path):
         calls.append(list(argv))
         return RunResult(argv=list(argv), returncode=0, stdout='[{"State": "running"}]', stderr="")
 
-    rows = PodmanCompose(cmd=("podman", "compose"), runner=cap).ps("cockpit-x-dev", tmp_path)
+    rows = PodmanCompose(cmd=("podman", "compose"), runner=cap).ps("forgemaster-x-dev", tmp_path)
     argv = calls[0]
     assert argv[0] == "podman" and argv[1] == "ps"           # moteur direct, jamais `compose ps`
     assert "--format" in argv and "json" in argv
-    assert "label=com.docker.compose.project=cockpit-x-dev" in argv
+    assert "label=com.docker.compose.project=forgemaster-x-dev" in argv
     assert rows == [{"State": "running"}]                    # état honnête parsé (is_running le lit)
 
 
@@ -291,10 +291,10 @@ def test_deploy_records_running_with_port_url_sha_and_compose_ref(ctx):
     assert engine.DEPLOY_RANGE[0] <= dep["port"] <= engine.DEPLOY_RANGE[1]
     assert dep["url"] == f"http://127.0.0.1:{dep['port']}"
     assert dep["last_deploy_sha"] == "cafe1234"
-    assert dep["compose_ref"] == "cockpit-svc-dev"
+    assert dep["compose_ref"] == "forgemaster-svc-dev"
     op, name, _, env = be.calls[0]
-    assert (op, name) == ("up", "cockpit-svc-dev")           # namespace d'isolation
-    assert env["COCKPIT_PORT"] == str(dep["port"])           # port injecté dans l'env compose
+    assert (op, name) == ("up", "forgemaster-svc-dev")           # namespace d'isolation
+    assert env["FORGEMASTER_PORT"] == str(dep["port"])           # port injecté dans l'env compose
 
 
 def test_deploy_port_is_in_deploy_pool_not_worktree_pool(ctx):
@@ -372,7 +372,7 @@ def test_stop_downs_and_marks_stopped_keeping_port(ctx):
     st = engine.stop(conn, settings, slug="svc", branch="dev", backend=be)
     assert st["status"] == "stopped"
     assert st["port"] == up["port"]                # port gardé → URL stable, re-up idempotent
-    assert (be.calls[-1][0], be.calls[-1][1]) == ("down", "cockpit-svc-dev")
+    assert (be.calls[-1][0], be.calls[-1][1]) == ("down", "forgemaster-svc-dev")
 
 
 def test_stop_is_a_honest_noop_when_never_deployed(ctx):
@@ -479,7 +479,7 @@ def test_deploy_refuses_tree_without_compose(ctx):
 # -- preview-deploy (Tier-1.5 pré-merge) : worktree éphémère, hors table deployments ---------------
 
 def _seed_worktree(settings, slug: str, feature: str, *, compose: bool = True) -> Path:
-    from cockpit.dispatch.worktree import worktree_path_for
+    from forgemaster.dispatch.worktree import worktree_path_for
     wt = worktree_path_for(settings, slug, feature)
     wt.mkdir(parents=True, exist_ok=True)
     if compose:
@@ -497,12 +497,13 @@ def test_deploy_preview_serves_worktree_on_deploy_pool_port(ctx):
     prev = engine.deploy_preview(conn, settings, slug="svc", feature="feat", backend=be)
     assert engine.DEPLOY_RANGE[0] <= prev["port"] <= engine.DEPLOY_RANGE[1]       # pool deploy
     assert prev["url"] == f"http://127.0.0.1:{prev['port']}"
-    assert prev["name"] == "cockpit-svc-preview-feat"                             # slash-safe (feature kebab)
+    # slash-safe (feature kebab)
+    assert prev["name"] == "forgemaster-svc-preview-feat"
     assert prev["workdir"] == str(wt)
     op, name, workdir, env = be.calls[0]
-    assert (op, name) == ("up", "cockpit-svc-preview-feat")
+    assert (op, name) == ("up", "forgemaster-svc-preview-feat")
     assert workdir == str(wt)                                                     # up pointe le WORKTREE
-    assert env["COCKPIT_PORT"] == str(prev["port"])
+    assert env["FORGEMASTER_PORT"] == str(prev["port"])
 
 
 def test_deploy_preview_port_distinct_from_deploy_and_worktree(ctx):
@@ -524,7 +525,7 @@ def test_teardown_preview_downs_and_releases_port(ctx):
     be = FakeBackend()
     engine.deploy_preview(conn, settings, slug="svc", feature="feat", backend=be)
     engine.teardown_preview(conn, settings, slug="svc", feature="feat", backend=be)
-    assert (be.calls[-1][0], be.calls[-1][1]) == ("down", "cockpit-svc-preview-feat")
+    assert (be.calls[-1][0], be.calls[-1][1]) == ("down", "forgemaster-svc-preview-feat")
     assert wt.exists()                                                           # worktree préservé
     re_prev = engine.deploy_preview(conn, settings, slug="svc", feature="feat", backend=FakeBackend())
     assert engine.DEPLOY_RANGE[0] <= re_prev["port"] <= engine.DEPLOY_RANGE[1]   # release n'a pas bloqué
@@ -578,13 +579,14 @@ def test_deploy_preview_unhealthy_when_ps_introspection_fails(ctx):
 
 def test_autoverify_feature_writes_fresh_verdict_and_always_tears_down(ctx, monkeypatch):
     """`autoverify_feature` orchestre : preview-deploy (worktree) → attend → markers DÉCLARÉS → preuve →
-    verdict SHA-bound frais → teardown. Les markers viennent de `.cockpit/verify-markers.json` du worktree."""
-    from cockpit.gate import verify
+    verdict SHA-bound frais → teardown. Les markers viennent de `.forgemaster/verify-markers.json` du
+    worktree."""
+    from forgemaster.gate import verify
     settings, conn = ctx
     registry.create_project(conn, settings, slug="svc")
     wt = _seed_worktree(settings, "svc", "feat")
-    (wt / ".cockpit").mkdir()
-    (wt / ".cockpit" / "verify-markers.json").write_text('{"markers": ["Accueil"]}', encoding="utf-8")
+    (wt / ".forgemaster").mkdir()
+    (wt / ".forgemaster" / "verify-markers.json").write_text('{"markers": ["Accueil"]}', encoding="utf-8")
     seen: dict = {}
     monkeypatch.setattr(verify, "_wait_http_ready", lambda url, **k: True)
 
@@ -599,7 +601,7 @@ def test_autoverify_feature_writes_fresh_verdict_and_always_tears_down(ctx, monk
     assert verdict["ok"] is True and verdict["reviewed_sha"] == "abc123"
     assert seen["markers"] == ["Accueil"]                                    # cibles = markers déclarés
     assert seen["url"].startswith("http://127.0.0.1:")
-    assert ("down", "cockpit-svc-preview-feat") in [(c[0], c[1]) for c in be.calls]
+    assert ("down", "forgemaster-svc-preview-feat") in [(c[0], c[1]) for c in be.calls]
     assert verify.status(settings, "svc", "feat", current_sha="abc123")["fresh"] is True
 
 
@@ -607,12 +609,12 @@ def test_autoverify_feature_probes_declared_route(ctx, monkeypatch):
     """Le contrat peut déclarer une `path` : `autoverify_feature` sonde `<url racine> + path` (pas seulement
     `/`) — le cas qui bloquait `avagency/design-system` (showcase sur `/design-system`). Défaut `/` couvert
     par le test au-dessus."""
-    from cockpit.gate import verify
+    from forgemaster.gate import verify
     settings, conn = ctx
     registry.create_project(conn, settings, slug="svc")
     wt = _seed_worktree(settings, "svc", "feat")
-    (wt / ".cockpit").mkdir()
-    (wt / ".cockpit" / "verify-markers.json").write_text(
+    (wt / ".forgemaster").mkdir()
+    (wt / ".forgemaster" / "verify-markers.json").write_text(
         '{"markers": ["Design system"], "path": "/design-system"}', encoding="utf-8")
     seen: dict = {}
     monkeypatch.setattr(verify, "_wait_http_ready", lambda url, **k: True)
@@ -625,7 +627,7 @@ def test_autoverify_feature_probes_declared_route(ctx, monkeypatch):
 
 def test_autoverify_feature_tears_down_even_when_verify_raises(ctx, monkeypatch):
     """Le `finally` démonte TOUJOURS (jamais de fuite de port/conteneur), même si la vérif explose."""
-    from cockpit.gate import verify
+    from forgemaster.gate import verify
     settings, conn = ctx
     registry.create_project(conn, settings, slug="svc")
     _seed_worktree(settings, "svc", "feat")
@@ -638,7 +640,7 @@ def test_autoverify_feature_tears_down_even_when_verify_raises(ctx, monkeypatch)
     be = FakeBackend()
     with pytest.raises(RuntimeError):
         verify.autoverify_feature(conn, settings, project="svc", feature="feat", sha="s", backend=be)
-    assert ("down", "cockpit-svc-preview-feat") in [(c[0], c[1]) for c in be.calls]
+    assert ("down", "forgemaster-svc-preview-feat") in [(c[0], c[1]) for c in be.calls]
     re_prev = engine.deploy_preview(conn, settings, slug="svc", feature="feat", backend=FakeBackend())
     assert engine.DEPLOY_RANGE[0] <= re_prev["port"] <= engine.DEPLOY_RANGE[1]  # port relâché → re-preview OK
 
@@ -648,7 +650,7 @@ def test_wait_http_ready_polls_bounded(monkeypatch):
     import urllib.error
     import urllib.request
 
-    from cockpit.gate import verify
+    from forgemaster.gate import verify
     monkeypatch.setattr(urllib.request, "urlopen", lambda url, timeout=5: object())
     assert verify._wait_http_ready("http://x/", timeout_s=1) is True
 

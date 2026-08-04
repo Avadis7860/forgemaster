@@ -1,0 +1,28 @@
+# .gitignore semé par le forgemaster — garde le repo propre dès sa création.
+# Les index d'outils sont DÉRIVÉS et per-racine : bâtis au setup, jamais committés (isolation par-repo).
+
+# Index de cartes (docs-map / code-map / front-map) — dérivés, bâtis localement
+.docsmap/
+.codemap/
+.frontmap/
+
+# État local de session (Claude Code) — jamais partagé
+.claude/settings.local.json
+.claude/*.local.json
+
+# Câblage MCP injecté au dispatch — porte un Bearer (JWT) → JAMAIS committé (le `git add -A` de la forge
+# doit l'ignorer, sinon le token fuit dans l'historique). Cf. provision/mcp.py.
+.mcp.json
+
+# Artefacts de build / caches
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+dist/
+build/
+node_modules/
+
+# Éditeurs / OS
+.DS_Store
+*.swp

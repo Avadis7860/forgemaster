@@ -4,7 +4,7 @@ import { deriveLaunchStage } from '@/lib/launch'
 import { useRoadmap, useRoadmapCheck } from '@/lib/queries'
 import type { ExitReason } from './TerminalPane'
 
-/** État de FIN du terminal d'INTERVIEW (flavor `interview`, socket fermé). Le PTY `cockpit interview` a quitté
+/** État de FIN du terminal d'INTERVIEW (flavor `interview`, socket fermé). Le PTY `forgemaster interview` a quitté
  *  (`exec` → EOF → fermeture PROPRE, ce n'est pas un crash) : au lieu du « fermé » shell générique + « Relancer »
  *  trompeur, on lit la roadmap (source unique serveur, MÊME dérivation que la frise de lancement `LaunchCycle`)
  *  pour dire honnêtement où en est le socle et OUVRIR le chemin suivant — au lieu de laisser l'humain devant un
@@ -40,7 +40,7 @@ export function InterviewEndState({
         ci-dessous pour la cause. « Reprendre » rejouerait le même échec tant que l'environnement n'est pas corrigé.
         <div className="mt-3">
           {/* Recours subordonné : ghost (n'invite pas à rejouer l'échec) mais préfixé d'un glyphe d'affordance
-              `↻` (idiome cockpit : ▸/►/↻) → se lit comme une ACTION at-rest, pas comme un fragment de prose. */}
+              `↻` (idiome forgemaster : ▸/►/↻) → se lit comme une ACTION at-rest, pas comme un fragment de prose. */}
           <Button variant="ghost" size="sm" onClick={onReconnect}>
             ↻ Reprendre quand même
           </Button>

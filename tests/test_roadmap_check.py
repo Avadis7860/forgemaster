@@ -1,4 +1,4 @@
-"""Tests du gate de complétude `cockpit roadmap check` : classe les défauts qui rendent une roadmap
+"""Tests du gate de complétude `forgemaster roadmap check` : classe les défauts qui rendent une roadmap
 non-drainable (deps dangling, cycle, DoD manquante, facette manquante/invalide, vide) en réutilisant le
 DAG du résolveur. Sémantique de gate : `cli_dispatch` retourne 1 dès une issue, 0 sinon."""
 from __future__ import annotations
@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from cockpit.config import Settings
-from cockpit.db import store
-from cockpit.projects import registry
-from cockpit.roadmap import check, model
+from forgemaster.config import Settings
+from forgemaster.db import store
+from forgemaster.projects import registry
+from forgemaster.roadmap import check, model
 
 
 @pytest.fixture
@@ -228,12 +228,12 @@ def test_depth_noop_when_all_axes_covered_or_deferred(ctx):
 
 
 def test_load_deferred_axes_from_worktree(ctx, tmp_path):
-    """`load_deferred_axes` lit `.cockpit/deferred-axes.yaml` du working-tree, raisons vides ignorées."""
+    """`load_deferred_axes` lit `.forgemaster/deferred-axes.yaml` du working-tree, raisons vides ignorées."""
     settings, conn = ctx
     registry.create_project(conn, settings, slug="proj", project_type="browser-game")
     wt = tmp_path / "wt"
-    (wt / ".cockpit").mkdir(parents=True)
-    (wt / ".cockpit" / "deferred-axes.yaml").write_text(
+    (wt / ".forgemaster").mkdir(parents=True)
+    (wt / ".forgemaster" / "deferred-axes.yaml").write_text(
         "replayability: méta cross-run reportée au jalon 3\nedge-states: ''\n", encoding="utf-8")
     loaded = check.load_deferred_axes(settings, "proj", cwd=wt)
     assert loaded == {"replayability": "méta cross-run reportée au jalon 3"}   # raison vide filtrée
@@ -260,8 +260,8 @@ def test_cli_dispatch_depth_flag(ctx, capsys, tmp_path, monkeypatch):
     assert "UNCOVERED_AXIS" in capsys.readouterr().out
     # trace tous les axes non couverts dans le working-tree (cwd), puis relance --depth → vert
     uncovered = {i.task for i in check.check_depth_axes(conn, "proj")}
-    (tmp_path / ".cockpit").mkdir(parents=True)
-    (tmp_path / ".cockpit" / "deferred-axes.yaml").write_text(
+    (tmp_path / ".forgemaster").mkdir(parents=True)
+    (tmp_path / ".forgemaster" / "deferred-axes.yaml").write_text(
         "".join(f"{a}: reporté au jalon 2\n" for a in uncovered), encoding="utf-8")
     monkeypatch.chdir(tmp_path)
     rc = check.cli_dispatch(settings, argparse.Namespace(project="proj", depth=True))

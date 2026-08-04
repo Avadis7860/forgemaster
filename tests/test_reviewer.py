@@ -8,13 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from cockpit.config import Settings
-from cockpit.core import run
-from cockpit.db import store
-from cockpit.dispatch import reviewer, worker
-from cockpit.gate import review
-from cockpit.projects import registry
-from cockpit.roadmap import model
+from forgemaster.config import Settings
+from forgemaster.core import run
+from forgemaster.db import store
+from forgemaster.dispatch import reviewer, worker
+from forgemaster.gate import review
+from forgemaster.projects import registry
+from forgemaster.roadmap import model
 
 
 @pytest.fixture
@@ -183,7 +183,7 @@ def test_build_review_prompt_carries_mandate_diff_and_dod(ctx):
     _seed(conn, settings)
     _dispatch_worker_and_complete(conn, settings, content="def f():\n    return 1\n")
     feat = model.resolve_feature(conn, "proj/feat")
-    from cockpit.dispatch import worktree as wt_mod
+    from forgemaster.dispatch import worktree as wt_mod
     wt = wt_mod.worktree_path_for(settings, "proj", "feat")
     tasks = [{"slug": "impl", "acceptance": "Le module expose f()."}]
     diff = "diff --git a/feature.py b/feature.py\n+return 1\n"

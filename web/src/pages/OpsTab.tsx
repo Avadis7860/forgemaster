@@ -23,7 +23,7 @@ export function OpsTab() {
   const { panel, run } = useSearch({ strict: false }) as { panel?: string; run?: string }
   const navigate = useNavigate()
   // Handoff depuis le dispatch d'un socle interactif (`?run=interview`) : le pane se branche sur la session
-  // PTY **interview** (dédiée, son process EST `cockpit interview`), sinon sur le **shell** de login. Le
+  // PTY **interview** (dédiée, son process EST `forgemaster interview`), sinon sur le **shell** de login. Le
   // search param d'URL EST le canal (deep-linkable, capturable at-rest) — il sélectionne la SESSION, plus
   // aucune commande n'est tapée dans un shell partagé (l'ancien modèle cassait dès que le shell persistait).
   const session: PtySession = run === 'interview' ? 'interview' : 'shell'

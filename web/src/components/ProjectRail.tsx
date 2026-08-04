@@ -10,7 +10,7 @@ import type { Project } from '@/lib/schemas'
 // Le lien « Réglages » du rail a été retiré (2026-07-03) : doublon du header (haut-droite), il occupait de
 // la place inutile. Le signal « à régler » (onboarding incomplet) a migré sur le Réglages du header (App.tsx).
 
-const RAIL_COLLAPSE_KEY = 'cockpit.rail.collapse'
+const RAIL_COLLAPSE_KEY = 'forgemaster.rail.collapse'
 
 // Idiome DS de la rangée nav (ghost) : au repos discret, hover = fond token, actif = fond surélevé. Aucune
 // bordure par item (règle tissu > panneau) — le relief porte l'état, pas le panneau. Cf. RepoExplorer.
@@ -141,7 +141,7 @@ export function ProjectRail({ open = false, onClose }: { open?: boolean; onClose
           <LoadingState label="Chargement de l’espace…" />
         ) : projects.isError ? (
           <Alert tone="danger" title="Daemon injoignable">
-            Vérifie que <code>cockpit serve</code> tourne.
+            Vérifie que <code>forgemaster serve</code> tourne.
           </Alert>
         ) : (
           <>
@@ -170,7 +170,7 @@ export function ProjectRail({ open = false, onClose }: { open?: boolean; onClose
           <ExplorerRow
             to="/bundles"
             label="Explorer les bundles"
-            hint="ce que le cockpit sème"
+            hint="ce que le forgemaster sème"
             active={pathname.startsWith('/bundles')}
           />
           <ExplorerRow

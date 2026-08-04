@@ -311,7 +311,7 @@ export const ProjectCostSchema = z.object({
 export type ProjectCost = z.infer<typeof ProjectCostSchema>
 
 // Rapport agrégé du POST dispatch (orchestrator.run_feature) : DRAINE la feature (DAG intra-feature) PUIS
-// la FINALISE (Tier-0 + review Tier-1) — bloquant, rendu à la FIN. Même forme que le rapport CLI (`cockpit
+// la FINALISE (Tier-0 + review Tier-1) — bloquant, rendu à la FIN. Même forme que le rapport CLI (`forgemaster
 // run`) : `dispatched`/`ok`/`failed` = COMPTEURS de runs, `finalizations` = review produite par feature.
 const FeatureRunSchema = z.object({
   feature: z.string(),
@@ -362,7 +362,7 @@ export const AbortResultSchema = z.object({
 export type AbortResult = z.infer<typeof AbortResultSchema>
 
 // Gate de complétude de la roadmap (`GET /api/projects/{project}/roadmap/check`) — même autorité que le CLI
-// `cockpit roadmap check`. Le front n'en lit que `ok` (l'étape « Design rempli » de la frise de lancement).
+// `forgemaster roadmap check`. Le front n'en lit que `ok` (l'étape « Design rempli » de la frise de lancement).
 export const RoadmapCheckSchema = z.object({
   project: z.string(),
   ok: z.boolean(),
@@ -923,7 +923,7 @@ export type OnboardingRequirement = z.infer<typeof OnboardingRequirementSchema>
 
 // Auth Claude de l'HÔTE : la machine peut-elle spawner des workers `claude` ? `source` ∈
 // {credentials-file, env-api-key, env-oauth, null} — la PRÉSENCE, jamais la valeur du token. Axe
-// **orthogonal** à `complete` (config du store) : un cockpit « complet » côté secrets refuse quand même de
+// **orthogonal** à `complete` (config du store) : un forgemaster « complet » côté secrets refuse quand même de
 // dispatcher tant que cette machine n'a pas fait `claude login`. Surfacé pour que l'usage ne soit jamais silencieux.
 export const ClaudeAuthSchema = z.object({
   authenticated: z.boolean(),
@@ -979,7 +979,7 @@ export interface CredentialLinkInput {
   label?: string
 }
 
-// -- Amorçage « outils du framework » (bootstrap) : manifeste sous COCKPIT_HOME → adoption idempotente ----
+// -- Amorçage « outils du framework » (bootstrap) : manifeste sous FORGEMASTER_HOME → adoption idempotente ----
 
 // Un outil du manifeste + son état d'adoption (`adopted` = slug déjà présent). Aucun secret exposé.
 export const BootstrapToolSchema = z.object({

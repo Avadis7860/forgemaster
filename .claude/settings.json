@@ -41,7 +41,7 @@
       "Bash(pytest:*)",
       "Bash(ruff:*)",
       "Bash(mypy:*)",
-      "Bash(cockpit:*)",
+      "Bash(forgemaster:*)",
       "Bash(uvicorn:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",

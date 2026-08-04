@@ -1,6 +1,6 @@
 """Tests du preflight de présence (P1 tooling-fulfillment) : le parseur `allowedTools`, la résolution
 `missing_bins`, la greffe au dispatch (un binaire hôte déclaré absent → dispatch refusé AVANT le spawn, le
-runner n'est JAMAIS appelé), et la sonde `cockpit doctor`. Runner injecté, coffre/worktree réels.
+runner n'est JAMAIS appelé), et la sonde `forgemaster doctor`. Runner injecté, coffre/worktree réels.
 """
 from __future__ import annotations
 
@@ -8,14 +8,14 @@ import argparse
 import json
 from pathlib import Path
 
-from cockpit import doctor
-from cockpit.config import Settings
-from cockpit.core import run
-from cockpit.db import store
-from cockpit.dispatch import worker
-from cockpit.projects import registry
-from cockpit.roadmap import model
-from cockpit.tools import missing_bins, required_bins, tools_bin
+from forgemaster import doctor
+from forgemaster.config import Settings
+from forgemaster.core import run
+from forgemaster.db import store
+from forgemaster.dispatch import worker
+from forgemaster.projects import registry
+from forgemaster.roadmap import model
+from forgemaster.tools import missing_bins, required_bins, tools_bin
 
 
 def _settings(tmp_path: Path) -> Settings:
@@ -30,7 +30,7 @@ def _seed_project(conn, settings, *, project="proj", feature="feat", task="t") -
 
 def _seed_runner(settings: Settings) -> None:
     """Pose le runner Tier-1.5 à son chemin défaut → la sonde `runner verify` passe au vert."""
-    from cockpit.gate.verify import runner_path
+    from forgemaster.gate.verify import runner_path
     p = runner_path(settings)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("// stub runner\n")
@@ -39,9 +39,9 @@ def _seed_runner(settings: Settings) -> None:
 def _force_runtime_green(monkeypatch) -> None:
     """Rend déterministes runtime + provider compose + device TUN (le vrai `which`/`/dev/net/tun`
     dépendrait du podman hôte)."""
-    monkeypatch.setattr("cockpit.runtime.backend.runtime_available", lambda *a, **k: True)
-    monkeypatch.setattr("cockpit.runtime.backend.compose_provider_available", lambda *a, **k: True)
-    monkeypatch.setattr("cockpit.doctor._tun_present", lambda: True)
+    monkeypatch.setattr("forgemaster.runtime.backend.runtime_available", lambda *a, **k: True)
+    monkeypatch.setattr("forgemaster.runtime.backend.compose_provider_available", lambda *a, **k: True)
+    monkeypatch.setattr("forgemaster.doctor._tun_present", lambda: True)
 
 
 # -- parseur `allowedTools` -------------------------------------------------------------------------
@@ -123,7 +123,7 @@ def test_preflight_passes_when_tools_present(tmp_path: Path, fake_tools):
         conn.close()
 
 
-# -- sonde `cockpit doctor` -------------------------------------------------------------------------
+# -- sonde `forgemaster doctor` -------------------------------------------------------------------------
 
 def test_doctor_green_when_all_host_tools_present(tmp_path: Path, fake_tools, capsys, monkeypatch):
     settings = _settings(tmp_path)
@@ -164,8 +164,8 @@ def test_doctor_red_when_compose_provider_missing(tmp_path: Path, fake_tools, ca
     fake_tools(settings)
     _seed_runner(settings)
     # podman présent (moteur), mais son provider compose absent
-    monkeypatch.setattr("cockpit.runtime.backend.runtime_available", lambda *a, **k: True)
-    monkeypatch.setattr("cockpit.runtime.backend.compose_provider_available", lambda *a, **k: False)
+    monkeypatch.setattr("forgemaster.runtime.backend.runtime_available", lambda *a, **k: True)
+    monkeypatch.setattr("forgemaster.runtime.backend.compose_provider_available", lambda *a, **k: False)
     rc = doctor.cli_dispatch(settings, argparse.Namespace())
     out = capsys.readouterr().out
     assert rc == 1
@@ -173,13 +173,13 @@ def test_doctor_red_when_compose_provider_missing(tmp_path: Path, fake_tools, ca
 
 
 def test_doctor_red_when_tun_absent(tmp_path: Path, fake_tools, capsys, monkeypatch):
-    """Outils + runtime + runner OK mais `/dev/net/tun` absent → 🔴 (sinon le build `cockpit deploy` meurt
+    """Outils + runtime + runner OK mais `/dev/net/tun` absent → 🔴 (sinon le build `forgemaster deploy` meurt
     sur `slirp4netns EOF` sans que le doctor prévienne)."""
     settings = _settings(tmp_path)
     fake_tools(settings)
     _force_runtime_green(monkeypatch)                        # runtime + provider + tun forcés verts…
     _seed_runner(settings)
-    monkeypatch.setattr("cockpit.doctor._tun_present", lambda: False)   # …puis TUN absent
+    monkeypatch.setattr("forgemaster.doctor._tun_present", lambda: False)   # …puis TUN absent
     rc = doctor.cli_dispatch(settings, argparse.Namespace())
     out = capsys.readouterr().out
     assert rc == 1

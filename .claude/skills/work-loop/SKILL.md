@@ -1,19 +1,19 @@
 ---
 name: work-loop
-description: Boucle de travail sûre et lightweight sur CE repo — sans centre de contrôle. Toujours sur une worktree feature depuis dev, gate vert, main jamais cassé. Version manuelle de ce que le cockpit automatise.
+description: Boucle de travail sûre et lightweight sur CE repo — sans centre de contrôle. Toujours sur une worktree feature depuis dev, gate vert, main jamais cassé. Version manuelle de ce que le forgemaster automatise.
 inputs: [sujet de la feature]
 outputs: [feature mergée dans dev, gate vert, worktree nettoyée]
 related_catalogs: []
 ---
 
-# work-loop — travailler ce repo en autonomie légère (sans cockpit)
+# work-loop — travailler ce repo en autonomie légère (sans forgemaster)
 
 ## Quand l'utiliser
 
 À **chaque** évolution du repo, que tu sois une IA (`claude`) ou un humain, sur un simple clone GitHub.
-C'est la version **manuelle et lightweight** de la boucle que le **cockpit automatise** (dispatch →
+C'est la version **manuelle et lightweight** de la boucle que le **forgemaster automatise** (dispatch →
 worktree → gate → merge). Aucun daemon, aucune DB, aucun réseau requis : juste `git` + le skill
-`quality-gate`. Le repo est **auto-travaillable seul** ; le cockpit est un orchestrateur *optionnel*
+`quality-gate`. Le repo est **auto-travaillable seul** ; le forgemaster est un orchestrateur *optionnel*
 par-dessus, aux **mêmes invariants**.
 
 ## Invariants (non négociables)
@@ -66,10 +66,10 @@ git -C "$REPO" branch -d "feature/$FEAT"
 Une feature **complète**, gate vert, mergée dans `dev` en ff-only, `main` promu depuis un `dev` vert, la
 worktree et la branche nettoyées. À aucun moment `main` n'a été la surface de travail ni cassé.
 
-## Rapport au cockpit
+## Rapport au forgemaster
 
-Le cockpit fait **exactement** ceci — worktree feature comme mutex, gate multi-tier, merge internal-first,
+Le forgemaster fait **exactement** ceci — worktree feature comme mutex, gate multi-tier, merge internal-first,
 GO humain fail-closed — mais **automatisé**, **multi-projet**, avec DB + web. Ce skill est le même contrat
 en **manuel** : suffisant pour faire vivre un clone seul. Si tu veux l'automatiser sur un seul repo sans le
-cockpit complet, c'est le moment d'écrire un petit script `work`/`land` (déférer tant qu'il n'y a pas de
+forgemaster complet, c'est le moment d'écrire un petit script `work`/`land` (déférer tant qu'il n'y a pas de
 friction réelle — sobriété).

@@ -7,7 +7,7 @@ import sqlite3
 
 import pytest
 
-from cockpit.db import alerts, schema
+from forgemaster.db import alerts, schema
 
 
 class _BoomConn:

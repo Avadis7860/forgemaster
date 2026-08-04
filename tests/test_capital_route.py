@@ -14,10 +14,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from cockpit.config import Settings
-from cockpit.daemon.deps import Deps
-from cockpit.daemon.routes.capital import make_capital_router
-from cockpit.mcp import CapitalServerError
+from forgemaster.config import Settings
+from forgemaster.daemon.deps import Deps
+from forgemaster.daemon.routes.capital import make_capital_router
+from forgemaster.mcp import CapitalServerError
 
 
 class _FakeBrowser:

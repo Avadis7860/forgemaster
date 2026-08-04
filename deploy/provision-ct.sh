@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# provision-ct.sh — provisionne un hôte VIERGE en cockpit prêt-à-l'emploi, batteries incluses, EN UNE
+# provision-ct.sh — provisionne un hôte VIERGE en forgemaster prêt-à-l'emploi, batteries incluses, EN UNE
 # COMMANDE : venv → install du wheel → [Claude Code, opt-in] → service systemd → OUTILLAGE hôte-niveau
-# (`cockpit tools install` : maps + Node + qualité py, ce que les bundles DÉCLARENT) → dépôt du manifeste
-# → `cockpit bootstrap` → [serveur MCP co-installé, opt-in] → activation. AUCUN Node requis au build (l'UI
+# (`forgemaster toolchain install` : maps + Node + qualité py, ce que les bundles DÉCLARENT) → dépôt du manifeste
+# → `forgemaster bootstrap` → [serveur MCP co-installé, opt-in] → activation. AUCUN Node requis au build (l'UI
 # voyage dans le wheel ; Node runtime est provisionné par l'étape outillage pour les projets front).
 #
 # À lancer SUR l'hôte cible, en tant que l'utilisateur qui fera tourner le service (JAMAIS root pour un
@@ -11,7 +11,7 @@
 #
 # Propriétés (discipline no-footgun, cf. service.py) : IMPRIME chaque étape (rien en douce) ; IDEMPOTENT
 # (ré-exécution sûre — venv réutilisé, bootstrap skip les outils déjà là, install-service n'écrase pas
-# cockpit.env) ; FAIL-LOUD (`set -euo pipefail`) ; AUCUN secret en argv (le token passe par --token-file).
+# forgemaster.env) ; FAIL-LOUD (`set -euo pipefail`) ; AUCUN secret en argv (le token passe par --token-file).
 #
 # `--token-file` ne sert PLUS aux 3 cartes (publiques depuis 2026-08-03 → clone anonyme à l'étape [4/9]) :
 # il sert à l'AMORÇAGE [7/9] pour les dépôts du manifeste encore privés, et au co-install [8/9] tant que
@@ -23,15 +23,15 @@
 #
 # Usage :
 #   deploy/provision-ct.sh --wheel <chemin.whl> [--manifest deploy/bootstrap.yaml] [--token-file <token>]
-#     [--venv ~/.venvs/cockpit] [--home ~/.cockpit] [--projects-root ~/projects]
+#     [--venv ~/.venvs/forgemaster] [--home ~/.forgemaster] [--projects-root ~/projects]
 #     [--host 0.0.0.0] [--port 8700] [--system] [--no-enable] [--with-claude]
 #     [--with-mcp <racine-corpus>] [--mcp-port 8080]
 set -euo pipefail
 
 wheel=""; manifest=""; token_file=""
-venv="$HOME/.venvs/cockpit"
-home="${COCKPIT_HOME:-$HOME/.cockpit}"
-projects_root="${COCKPIT_PROJECTS_ROOT:-$HOME/projects}"
+venv="$HOME/.venvs/forgemaster"
+home="${FORGEMASTER_HOME:-$HOME/.forgemaster}"
+projects_root="${FORGEMASTER_PROJECTS_ROOT:-$HOME/projects}"
 host="0.0.0.0"; port="8700"
 scope="user"; enable="yes"; with_claude="no"
 mcp_data=""; mcp_port="8080"
@@ -63,8 +63,8 @@ done
 # échouer un provisionnement de 10 minutes sur un argument qu'on pouvait refuser en 10 millisecondes.
 [ -z "$mcp_data" ] || [ -d "$mcp_data" ] || { echo "✗ --with-mcp : racine de corpus introuvable : $mcp_data" >&2; exit 2; }
 
-export COCKPIT_HOME="$home" COCKPIT_PROJECTS_ROOT="$projects_root"
-cockpit="$venv/bin/cockpit"
+export FORGEMASTER_HOME="$home" FORGEMASTER_PROJECTS_ROOT="$projects_root"
+forgemaster="$venv/bin/forgemaster"
 
 # systemctl : portée user (défaut, sans root) ou system (root). En user, le linger fait survivre le service
 # à l'absence de session (hôte headless).
@@ -103,8 +103,8 @@ install_claude() {
   echo "   ✓ Claude OK : $(claude --version 2>/dev/null || echo installé) — tape \`claude\` dans le terminal pour te connecter"
 }
 
-# Podman = le moteur de run conteneur pour `cockpit deploy` (P2). Le wheel n'apporte QUE `cockpit`, jamais le
-# runtime → sans podman, `cockpit deploy` échouerait (le `doctor` ci-dessous le rougit comme bloquant, cf.
+# Podman = le moteur de run conteneur pour `forgemaster deploy` (P2). Le wheel n'apporte QUE `forgemaster`, jamais le
+# runtime → sans podman, `forgemaster deploy` échouerait (le `doctor` ci-dessous le rougit comme bloquant, cf.
 # provisioning-loop-gaps). Idempotent (skip si présent), fail-loud, imprime. apt exige root → `sudo` sinon.
 install_podman() {
   if command -v podman >/dev/null 2>&1; then
@@ -119,7 +119,7 @@ install_podman() {
   echo "   ✓ podman OK : $(podman --version 2>/dev/null || echo installé)"
 }
 
-# Moteur compose : `cockpit deploy` lance `podman-compose` (défaut config). Debian 12 ne package QUE podman
+# Moteur compose : `forgemaster deploy` lance `podman-compose` (défaut config). Debian 12 ne package QUE podman
 # 4.3.1, DÉPOURVU de la sous-commande `podman compose` (≥ 4.4) → on installe le binaire STANDALONE
 # `podman-compose` (celui contre lequel le backend est écrit, cf. runtime/backend.py ; le backend interroge le
 # moteur `podman` DIRECTEMENT pour ps/logs). Idempotent (skip si présent), fail-loud. apt root → `sudo` sinon.
@@ -131,28 +131,28 @@ install_compose_provider() {
   [ "$(id -u)" -eq 0 ] || APT="sudo apt-get"
   echo "   installe podman-compose (moteur compose standalone) via $APT…"
   $APT update -qq && $APT install -y -qq podman-compose \
-    || { echo "✗ install podman-compose échouée — installe-le à la main ou configure COCKPIT_COMPOSE_CMD=docker compose" >&2; return 1; }
+    || { echo "✗ install podman-compose échouée — installe-le à la main ou configure FORGEMASTER_COMPOSE_CMD=docker compose" >&2; return 1; }
   command -v podman-compose >/dev/null 2>&1 \
     || { echo "✗ podman-compose absent après install" >&2; return 1; }
   echo "   ✓ podman-compose OK"
 }
 
-# Runner de vérification visuelle (gate Tier-1.5 `cockpit gate verify`) : Playwright headless. `verify.py` le
-# résout au défaut `$COCKPIT_HOME/runners/render_check.js` (aucun env à câbler). On sème le .js vendoré
+# Runner de vérification visuelle (gate Tier-1.5 `forgemaster gate verify`) : Playwright headless. `verify.py` le
+# résout au défaut `$FORGEMASTER_HOME/runners/render_check.js` (aucun env à câbler). On sème le .js vendoré
 # (deploy/runners/) + ses deps `playwright-core` (pinné) et `pngjs` (plancher canvas, package.json) + le browser Chromium (peuplé
 # sous `~/.cache/ms-playwright` de l'utilisateur du service ; sous --system root = /root = le HOME du service).
-# Node vient de `cockpit tools install` (tools/bin). Idempotent (install browser skip si déjà au bon SHA).
+# Node vient de `forgemaster toolchain install` (tools/bin). Idempotent (install browser skip si déjà au bon SHA).
 seed_verify_runner() {
   local rdir src pw
-  # Le runner est EMBARQUÉ dans le wheel (`cockpit/_verify_runner`) → on le tire du PACKAGE installé, jamais
+  # Le runner est EMBARQUÉ dans le wheel (`forgemaster/_verify_runner`) → on le tire du PACKAGE installé, jamais
   # d'un fichier voisin (provision-ct.sh voyage seul sur l'hôte). Le wheel est l'artefact unique auto-contenu.
-  src="$("$venv/bin/python" -c 'import cockpit, pathlib; print(pathlib.Path(cockpit.__file__).parent / "_verify_runner")' 2>/dev/null)"
+  src="$("$venv/bin/python" -c 'import forgemaster, pathlib; print(pathlib.Path(forgemaster.__file__).parent / "_verify_runner")' 2>/dev/null)"
   rdir="$home/runners"
   [ -n "$src" ] && [ -f "$src/render_check.js" ] && [ -f "$src/package.json" ] \
-    || { echo "✗ runner absent du wheel installé ($src) — wheel sans cockpit/_verify_runner ? (rebuild build-wheel.sh)" >&2; return 1; }
+    || { echo "✗ runner absent du wheel installé ($src) — wheel sans forgemaster/_verify_runner ? (rebuild build-wheel.sh)" >&2; return 1; }
   command -v node >/dev/null 2>&1 || export PATH="$home/tools/bin:$PATH"
   command -v node >/dev/null 2>&1 \
-    || { echo "✗ node introuvable (tools/bin) — le runner exige Node ; relance \`cockpit tools install\`" >&2; return 1; }
+    || { echo "✗ node introuvable (tools/bin) — le runner exige Node ; relance \`forgemaster toolchain install\`" >&2; return 1; }
   mkdir -p "$rdir"
   install -m 0644 "$src/render_check.js" "$rdir/render_check.js"
   install -m 0644 "$src/package.json"    "$rdir/package.json"
@@ -171,20 +171,20 @@ seed_verify_runner() {
 }
 
 # PATH du LOGIN shell (le terminal web est un `bash -l`). `/etc/profile` RÉINITIALISE `PATH` (root → défaut
-# Debian), écrasant tout PATH hérité/injecté → sans ça `cockpit`/`codemap`/`node` sont `command not found`
-# dans le terminal (et le handoff « auto-run `cockpit interview` » casse). On ré-ajoute le toolchain APRÈS ce
+# Debian), écrasant tout PATH hérité/injecté → sans ça `forgemaster`/`codemap`/`node` sont `command not found`
+# dans le terminal (et le handoff « auto-run `forgemaster interview` » casse). On ré-ajoute le toolchain APRÈS ce
 # reset : via `/etc/profile.d` (root, système) ou `~/.profile`+`~/.bashrc` (portée user), tous deux sourcés
-# après `/etc/profile`. Idempotent (overwrite / guard). Le venv cockpit + `tools/bin` d'abord.
+# après `/etc/profile`. Idempotent (overwrite / guard). Le venv forgemaster + `tools/bin` d'abord.
 install_login_path() {
   local line="export PATH=\"$venv/bin:$home/tools/bin:\$PATH\""
   if [ "$(id -u)" -eq 0 ]; then
-    printf '# cockpit — toolchain sur le PATH du login shell (terminal web), APRÈS le reset de /etc/profile.\n%s\n' \
-      "$line" > /etc/profile.d/cockpit-path.sh
-    echo "   PATH login shell → /etc/profile.d/cockpit-path.sh ($venv/bin + $home/tools/bin)"
+    printf '# forgemaster — toolchain sur le PATH du login shell (terminal web), APRÈS le reset de /etc/profile.\n%s\n' \
+      "$line" > /etc/profile.d/forgemaster-path.sh
+    echo "   PATH login shell → /etc/profile.d/forgemaster-path.sh ($venv/bin + $home/tools/bin)"
   else
     for rc in "$HOME/.profile" "$HOME/.bashrc"; do
-      grep -qs 'cockpit toolchain PATH' "$rc" 2>/dev/null \
-        || printf '# cockpit toolchain PATH\n%s\n' "$line" >> "$rc"
+      grep -qs 'forgemaster toolchain PATH' "$rc" 2>/dev/null \
+        || printf '# forgemaster toolchain PATH\n%s\n' "$line" >> "$rc"
     done
     echo "   PATH login shell → $HOME/.profile + ~/.bashrc ($venv/bin + $home/tools/bin)"
   fi
@@ -216,38 +216,38 @@ python3 -m venv "$venv"
 
 echo "→ [2/9] install du wheel (sans Node — l'UI est empaquetée dans le wheel)"
 "$venv/bin/pip" install --quiet --upgrade "$wheel"
-echo -n "   "; "$cockpit" --version
+echo -n "   "; "$forgemaster" --version
 
 echo "→ [3/9] Claude Code dans le terminal ($([ "$with_claude" = yes ] && echo "installe" || echo "ignoré — passe --with-claude"))"
 if [ "$with_claude" = "yes" ]; then install_claude; fi
 
 # Outillage hôte-niveau : ce que les bundles DÉCLARENT (codemap/docsmap/frontmap + Node + ruff/pytest/mypy),
-# installé dans un venv d'outils dédié sous COCKPIT_HOME et exposé sur tools/bin — le dispatch worker ET le
+# installé dans un venv d'outils dédié sous FORGEMASTER_HOME et exposé sur tools/bin — le dispatch worker ET le
 # gate natif préfixent ce bin au PATH. Sans ça, un worker sur n'importe quel type CONSTATE ses outils absents
-# (le wheel n'expose que `cockpit`). Idempotent, fail-loud. Les 3 cartes sont PUBLIQUES → clone ANONYME :
+# (le wheel n'expose que `forgemaster`). Idempotent, fail-loud. Les 3 cartes sont PUBLIQUES → clone ANONYME :
 # cette étape ne reçoit AUCUN credential, même si un --token-file a été passé pour l'amorçage [7/9].
 # Node via nodeenv (rootless), sans sudo.
 echo "→ [4/9] outillage hôte-niveau (maps + Node + qualité py → $home/tools/bin) — sans credential"
-"$cockpit" tools install
-echo "   runtime conteneur (podman) pour \`cockpit deploy\` (P2)"
+"$forgemaster" tools install
+echo "   runtime conteneur (podman) pour \`forgemaster deploy\` (P2)"
 install_podman
 echo "   moteur compose (podman-compose standalone — podman 4.3.1 de Debian 12 n'a pas \`podman compose\`)"
 install_compose_provider
-echo "   runner de vérification visuelle (gate Tier-1.5) + Chromium sous \$COCKPIT_HOME/runners"
+echo "   runner de vérification visuelle (gate Tier-1.5) + Chromium sous \$FORGEMASTER_HOME/runners"
 seed_verify_runner
 # Auto-vérification (fail-loud) : les binaires que les bundles DÉCLARENT résolvent-ils vraiment sous
-# `tools_env` ? `cockpit doctor` = SONDE PURE (rc 0 = tout présent ; rc 1 = un binaire manque, il le nomme
-# + rappelle `cockpit tools install`). Sur rc 1 on ABORTE l'install ICI, au lieu de laisser le 1er worker le
-# constater absent. Sonde ≠ installe : on renvoie vers `cockpit tools install`, on ne réinstalle pas en boucle.
-echo "   auto-vérification de présence (cockpit doctor)"
-"$cockpit" doctor || { echo "✗ [4/9] outillage INCOMPLET après install (détail ci-dessus) — corrige (\`cockpit tools install\`) puis relance." >&2; exit 1; }
+# `tools_env` ? `forgemaster doctor` = SONDE PURE (rc 0 = tout présent ; rc 1 = un binaire manque, il le nomme
+# + rappelle `forgemaster toolchain install`). Sur rc 1 on ABORTE l'install ICI, au lieu de laisser le 1er worker le
+# constater absent. Sonde ≠ installe : on renvoie vers `forgemaster toolchain install`, on ne réinstalle pas en boucle.
+echo "   auto-vérification de présence (forgemaster doctor)"
+"$forgemaster" doctor || { echo "✗ [4/9] outillage INCOMPLET après install (détail ci-dessus) — corrige (\`forgemaster toolchain install\`) puis relance." >&2; exit 1; }
 echo "   PATH du login shell (terminal web = bash -l) : ré-ajoute le toolchain après le reset /etc/profile"
 install_login_path
 
 echo "→ [5/9] unité systemd (portée $scope, host=$host port=$port)"
-"$cockpit" install-service $svc_flag --host "$host" --port "$port"
+"$forgemaster" install-service $svc_flag --host "$host" --port "$port"
 
-echo "→ [6/9] dépôt du manifeste d'outils sous COCKPIT_HOME"
+echo "→ [6/9] dépôt du manifeste d'outils sous FORGEMASTER_HOME"
 mkdir -p "$home"
 if [ -n "$manifest" ]; then
   install -m 0644 "$manifest" "$home/bootstrap.yaml"
@@ -258,21 +258,21 @@ fi
 
 # Une adoption ratée est une DONNÉE manquante, pas une infrastructure cassée : elle ne doit pas empêcher le
 # service d'exister. Mesuré le 2026-08-03 sur une VM vierge — deux dépôts du manifeste encore privés
-# (`cockpit`, `forgemaster-catalogs`) faisaient rc 1 ici, et `set -e` tuait l'install AVANT l'activation :
-# cockpit jamais
+# (`forgemaster`, `forgemaster-catalogs`) faisaient rc 1 ici, et `set -e` tuait l'install AVANT l'activation :
+# forgemaster jamais
 # activé, à cause de deux clones. Même conclusion pour un utilisateur dont une URL de manifeste a bougé.
-# On NE MASQUE RIEN : `cockpit bootstrap` a déjà imprimé un 🔴 par outil, on ajoute une bannière et la
+# On NE MASQUE RIEN : `forgemaster bootstrap` a déjà imprimé un 🔴 par outil, on ajoute une bannière et la
 # commande de reprise, et on la RÉPÈTE en fin de script pour qu'elle ne soit pas enterrée sous [8/9]+[9/9].
 bootstrap_rc=0
 echo "→ [7/9] amorçage des outils (idempotent — skip ceux déjà adoptés)"
 if [ -n "$manifest" ]; then
-  if [ -n "$token_file" ]; then "$cockpit" bootstrap --token-file "$token_file" || bootstrap_rc=$?
-  else "$cockpit" bootstrap || bootstrap_rc=$?; fi
+  if [ -n "$token_file" ]; then "$forgemaster" bootstrap --token-file "$token_file" || bootstrap_rc=$?
+  else "$forgemaster" bootstrap || bootstrap_rc=$?; fi
   if [ "$bootstrap_rc" != 0 ]; then
     echo "   ⚠ amorçage INCOMPLET (détail ci-dessus). L'install CONTINUE : le service doit exister même"
     echo "     si un dépôt du manifeste est injoignable (privé, renommé, hors ligne)."
     echo "     Reprise quand l'accès est rétabli (idempotent, ne re-clone pas l'adopté) :"
-    echo "       $cockpit bootstrap${token_file:+ --token-file <token>}"
+    echo "       $forgemaster bootstrap${token_file:+ --token-file <token>}"
   fi
 else
   echo "   (rien à amorcer sans manifeste)"
@@ -291,25 +291,25 @@ if [ -n "$mcp_data" ]; then
   # que l'amorçage sert au clone pip. Il devient inutile ici dès que le dépôt est public — même
   # trajectoire que les 3 cartes, anonymes depuis le 2026-08-03.
   if [ -n "$token_file" ]; then mcp_args+=(--token-file "$token_file"); fi
-  "$cockpit" "${mcp_args[@]}"
+  "$forgemaster" "${mcp_args[@]}"
 fi
 
 echo "→ [9/9] activation du service"
 if [ "$enable" = "no" ]; then
-  echo "   (--no-enable) active-le : $sysctl daemon-reload && $sysctl enable --now cockpit${mcp_data:+ forgemaster-catalogs}"
+  echo "   (--no-enable) active-le : $sysctl daemon-reload && $sysctl enable --now forgemaster${mcp_data:+ forgemaster-catalogs}"
 else
   if [ "$scope" = "user" ]; then
     loginctl enable-linger "$USER" 2>/dev/null || sudo loginctl enable-linger "$USER"
   fi
   $sysctl daemon-reload
-  $sysctl enable --now cockpit
+  $sysctl enable --now forgemaster
   # Le serveur co-installé est une pièce de cette instance, pas un extra : il monte avec elle. Sans ça,
-  # `cockpit mcp install` aurait posé une unité que personne ne démarre, et le câblage loopback pointerait
+  # `forgemaster mcp install` aurait posé une unité que personne ne démarre, et le câblage loopback pointerait
   # un port fermé — un « co-installé » qui ne répond pas est pire qu'un `remote` assumé.
   if [ -n "$mcp_data" ]; then $sysctl enable --now forgemaster-catalogs; fi
 fi
 
-echo "✓ cockpit provisionné → http://$host:$port"
+echo "✓ forgemaster provisionné → http://$host:$port"
 echo "  ouvre-le : le rail « Outils » présente les outils du manifeste, avec leur VRAI contenu git."
 # `if` (pas `[ … ] && echo`) : en fin de script, un test faux hériterait son rc au script → sortie ≠ 0 en
 # succès, ce qui casserait un appelant `set -e` / la CI-on-tag. On garde un rc 0 explicite.
@@ -319,5 +319,5 @@ fi
 # Répété EN DERNIER : une alerte enterrée sous deux étapes vertes n'est pas une alerte.
 if [ "$bootstrap_rc" != 0 ]; then
   echo "  ⚠ RAPPEL — l'amorçage [7/9] est INCOMPLET : des outils du manifeste ne sont PAS adoptés"
-  echo "    (le rail « Outils » les montrera absents). Relance \`$cockpit bootstrap\` une fois l'accès rétabli."
+  echo "    (le rail « Outils » les montrera absents). Relance \`$forgemaster bootstrap\` une fois l'accès rétabli."
 fi

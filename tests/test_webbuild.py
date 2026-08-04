@@ -10,10 +10,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from cockpit import webbuild
+from forgemaster import webbuild
 
-# hatch_build.py vit à la RACINE du repo (hook de packaging, volontairement hors du package cockpit — il
-# tourne au build quand `cockpit` n'est pas encore importable). On l'importe en ajoutant la racine au path.
+# hatch_build.py vit à la RACINE du repo (hook de packaging, volontairement hors du package forgemaster — il
+# tourne au build quand `forgemaster` n'est pas encore importable). On l'importe en ajoutant la racine au
+# path.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO_ROOT))
 import hatch_build  # noqa: E402
@@ -56,7 +57,7 @@ def test_build_front_fails_loud_without_node(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(webbuild.shutil, "which", lambda _name: None)  # Node absent
     with pytest.raises(webbuild.FrontBuildError) as exc:
         webbuild.build_front(web)
-    assert "Node" in str(exc.value) and "cockpit setup" in str(exc.value)
+    assert "Node" in str(exc.value) and "forgemaster setup" in str(exc.value)
 
 
 # -- code-map (from-clone : rendre `python -m codemap` dispo, requis par l'onglet Flow) -------------------
@@ -71,14 +72,14 @@ def _seed_codemap_sibling(root: Path) -> Path:
 
 def test_find_codemap_src_locates_sibling(tmp_path: Path):
     _seed_codemap_sibling(tmp_path)
-    start = tmp_path / "cockpit" / "src" / "cockpit" / "webbuild.py"
+    start = tmp_path / "forgemaster" / "src" / "forgemaster" / "webbuild.py"
     start.parent.mkdir(parents=True)
     start.write_text("")
     assert webbuild.find_codemap_src(start) == tmp_path / "code-map"
 
 
 def test_find_codemap_src_none_when_no_sibling(tmp_path: Path):
-    start = tmp_path / "cockpit" / "webbuild.py"
+    start = tmp_path / "forgemaster" / "webbuild.py"
     start.parent.mkdir(parents=True)
     start.write_text("")
     assert webbuild.find_codemap_src(start) is None
@@ -96,7 +97,7 @@ def test_ensure_codemap_noop_when_already_importable(monkeypatch):
 
 def test_ensure_codemap_noop_si_deja_editable_depuis_le_sibling(monkeypatch, tmp_path: Path):
     """Idempotence SANS relancer pip : `pip install -e` reconstruit un wheel à chaque appel, et
-    `cockpit setup` le paierait × 4 pour rien."""
+    `forgemaster setup` le paierait × 4 pour rien."""
     src = tmp_path / "code-map"
     monkeypatch.setattr(webbuild, "find_codemap_src", lambda: src)
     monkeypatch.setattr(webbuild, "served_from", lambda _m, _s: True)
@@ -174,7 +175,7 @@ def _seed_map_sibling(root: Path, repo: str, module: str) -> Path:
 
 def test_find_map_src_locates_sibling(tmp_path: Path):
     _seed_map_sibling(tmp_path, "front-map", "frontmap")
-    start = tmp_path / "cockpit" / "src" / "cockpit" / "webbuild.py"
+    start = tmp_path / "forgemaster" / "src" / "forgemaster" / "webbuild.py"
     start.parent.mkdir(parents=True)
     start.write_text("")
     assert webbuild.find_map_src("front-map", "frontmap", start) == tmp_path / "front-map"
@@ -237,18 +238,18 @@ def _stage_all(root: Path) -> None:
     _touch(root / "build" / "vendor" / "codemap" / "__main__.py")
     _touch(root / "build" / "vendor" / "taskmap" / "__init__.py")
     _touch(root / "build" / "vendor" / "verify-runner" / "render_check.js")
-    _touch(root / "src" / "cockpit" / "_build.json")
+    _touch(root / "src" / "forgemaster" / "_build.json")
 
 
 def test_plan_force_includes_embeds_all_when_staged(tmp_path: Path):
     _stage_all(tmp_path)
     force, warnings = hatch_build.plan_force_includes(tmp_path)
     assert force == {
-        "web/dist": "cockpit/_web_dist",
+        "web/dist": "forgemaster/_web_dist",
         "build/vendor/codemap": "codemap",
         "build/vendor/taskmap": "taskmap",
-        "build/vendor/verify-runner": "cockpit/_verify_runner",
-        "src/cockpit/_build.json": "cockpit/_build.json",
+        "build/vendor/verify-runner": "forgemaster/_verify_runner",
+        "src/forgemaster/_build.json": "forgemaster/_build.json",
     }
     assert warnings == []
 
@@ -284,7 +285,7 @@ def test_plan_force_includes_warns_when_build_stamp_absent(tmp_path: Path):
     _touch(tmp_path / "build" / "vendor" / "taskmap" / "__init__.py")
     _touch(tmp_path / "build" / "vendor" / "verify-runner" / "render_check.js")
     force, warnings = hatch_build.plan_force_includes(tmp_path)
-    assert "src/cockpit/_build.json" not in force               # provenance NON embarquée
+    assert "src/forgemaster/_build.json" not in force               # provenance NON embarquée
     assert any("_build.json" in w or "provenance" in w for w in warnings)
 
 

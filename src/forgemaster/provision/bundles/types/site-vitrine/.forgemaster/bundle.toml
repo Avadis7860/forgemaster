@@ -1,0 +1,51 @@
+[bundle]
+version = "1"
+project_type = "site-vitrine"
+facets = ["frontend", "content", "deploy", "doc"]
+default_facet = "frontend"
+archetype = "app"           # gate de profondeur : axes UX d'un site présentational (cf. depth-axes.yaml)
+
+# reseed_owned — le contrat de RUN + QUALITÉ possédé par le forgemaster, re-matérialisable dans un projet EXISTANT
+# par `forgemaster scaffold reseed` (préserve le travail worker : `web/`, contenu, docs, gardes de test). Deux
+# familles, réunies par un même invariant : le worker ne les édite JAMAIS → sûres à réécrire depuis le bundle.
+#   • contrat de RUN — l'infra scaffold (build web + service nginx).
+#   • contrat de QUALITÉ — la DISCIPLINE des facettes (`.claude/facets/*/METHOD.md`), que le worker LIT et suit,
+#     jamais n'édite. NB : les GARDES semées (`web/src/**/*.test.ts`) ne sont volontairement PAS owned — la garde
+#     d'un worker est plus riche et propre à son produit ; l'écraser retirerait de la couverture. Le worker hérite
+#     la discipline corrigée par la METHOD (owned) et re-dérive sa garde au drain.
+# Portée de la famille QUALITÉ, rendue uniforme sur les 5 types : les `METHOD.md` de CET overlay, **toutes**
+# (`deploy` était le résidu — même nature que les autres, exclue par le seul périmètre de la mission qui a
+# introduit le bloc). Les facettes de la BASE (`doc`…) restent hors liste : les posséder depuis 5 manifestes
+# serait la duplication qui dérive — c'est une décision base-wide, pas par-type.
+reseed_owned = [
+  "Dockerfile", "compose.yaml", "nginx.conf", ".dockerignore",
+  ".claude/facets/frontend/METHOD.md", ".claude/facets/content/METHOD.md",
+  ".claude/facets/deploy/METHOD.md",
+]
+
+# Déclaration MCP sèche (sans secret ni endpoint). `corpus = true` = ce type bénéficie du capital-token servi.
+# Un overlay surcharge `bundle.toml` en whole-file → sans ce bloc, le `corpus = true` de la base est PERDU.
+# Silos tech pertinents (astro·tailwind·react·mdx·motion·typescript·vitest·wai-aria-apg) : nommés dans la prose
+# du `CLAUDE.md §4`. Un blueprint générique `site-vitrine` est aussi servi (query(type=blueprint, scope=…)).
+[bundle.mcp]
+corpus = true
+
+# facet_models — tiering du modèle LLM du worker par NATURE de travail (facette → alias/id passé à
+# `claude -p --model`). Facette omise ⇒ modèle moteur par défaut (opus). Le mécanique (contenu MDX, config de
+# déploiement nginx/docker) tolère un modèle plus léger : la gate (Tier-0 natif + gardes semées Phase B +
+# Tier-1.5/Tier-1) reste le garde-fou qualité. `frontend` reste au défaut (a11y/visuel de la vitrine =
+# l'axe sensible ; à basculer sonnet seulement après une mesure propre confirmant que les gardes tiennent).
+[bundle.facet_models]
+content = "sonnet"
+deploy = "sonnet"
+
+# gate DÉCLARÉE — couvre le RÉSIDU hors routes connues du Tier-0 : le contrat de RUN possédé
+# (Dockerfile/compose.yaml/nginx.conf/.dockerignore, cf. reseed_owned ci-dessus). Sans ce bloc, un diff de
+# facette `deploy` — qui ne touche QUE ces fichiers — sortirait en ROUGE « toolchain non déclarée »
+# (fail-closed voulu, cf. docs/specs/tier0-native-toolchain-gate.md §Amendement). Un overlay surcharge
+# bundle.toml en whole-file → le bloc de la base ne serait PAS hérité : chaque type porte le sien.
+# Même step que la route `front` (unité per-dir `web/`, pas de package.json racine) : dédupliqué.
+[bundle.gate]
+steps = [
+  { name = "npm-run-gate", argv = ["npm", "run", "gate"], cwd = "web" },
+]

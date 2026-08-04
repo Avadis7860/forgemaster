@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ui_shot.py — boucle visuelle d'ITÉRATION de la SPA cockpit (rend l'assistant VOYANT).
+"""ui_shot.py — boucle visuelle d'ITÉRATION de la SPA forgemaster (rend l'assistant VOYANT).
 
 Après un changement `web/`, screenshote une ou plusieurs routes et imprime les chemins PNG — que
 l'assistant LIT (Read) pour critiquer le rendu, au lieu de coder en aveugle. C'est l'ITÉRATION, pas le
@@ -7,9 +7,10 @@ GATE : aucun marqueur, aucun verdict SHA (≠ feature-verified). Adapté du ui_s
 (le daemon local n'a pas de session) et en **browser-history** (le fallback SPA sert index.html, donc un
 deep-link `/slug` s'ouvre côté serveur — pas de `#`).
 
-Mécanique : build (optionnel) → home cockpit JETABLE seedé de projets démo → `cockpit serve` sert la dist
+Mécanique : build (optionnel) → home forgemaster JETABLE seedé de projets démo → `forgemaster serve` sert la
+dist
 → pour chaque route, le runner Playwright `render_check.js` fait goto+screenshot → PNG. Teardown par PID
-(jamais `pkill`). Le runner est celui du vault (playwright-core vendoré) ; override par COCKPIT_UI_RUNNER.
+(jamais `pkill`). Le runner est celui du vault (playwright-core vendoré) ; override par FORGEMASTER_UI_RUNNER.
 
 Usage :
   python web/tools/ui_shot.py /                       # accueil (rail projets)
@@ -33,10 +34,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]             # web/tools/ui_shot.py → repo
 WEB = REPO / "web"
 DIST = WEB / "dist"
-VENV_COCKPIT = REPO / ".venv" / "bin" / "cockpit"
+VENV_FORGEMASTER = REPO / ".venv" / "bin" / "forgemaster"
 DEFAULT_RUNNER = Path(
     os.environ.get(
-        "COCKPIT_UI_RUNNER",
+        "FORGEMASTER_UI_RUNNER",
         "/home/avadis/Documents/Vault-V1/.claude/skills/playwright/render_check.js",
     )
 )
@@ -182,7 +183,8 @@ _DEMO_INTERVIEW_TRANSCRIPT = [
 def _seed(port: int, slugs: list[str], *, home: Path) -> None:
     """Crée les projets démo + une roadmap dans le premier (graphe), et un JOB terminé avec transcript pour
     rendre l'onglet Dispatch (transcript live). Le job est inséré EN DIRECT dans la DB jetable du daemon
-    (mêmes settings via l'env COCKPIT_HOME) — aucune API ne fabrique un run sans spawner un vrai `claude`."""
+    (mêmes settings via l'env FORGEMASTER_HOME) — aucune API ne fabrique un run sans spawner un vrai
+    `claude`."""
     for slug in slugs:
         body = {"slug": slug, "name": slug.replace("-", " ").title()}
         if slug in DEMO_TYPES:                         # projet typé → badge de bundle sur l'entête
@@ -207,15 +209,16 @@ def _seed(port: int, slugs: list[str], *, home: Path) -> None:
 
 
 def _seed_dispatch_job(home: Path, proj: str) -> None:
-    """Insère 3 runs + leurs transcripts dans la DB du daemon (import local des couches cockpit) pour rendre
+    """Insère 3 runs + leurs transcripts dans la DB du daemon (import local des couches forgemaster) pour
+    rendre
     l'historique VOYANT : un run task `done`, un run **reviewer** `review` `done` (badge de genre + transcript
     consultable sur un pass 0-finding), un run task `failed` (pied « raison de l'échec »)."""
     try:
-        from cockpit.config import Settings
-        from cockpit.db import store
-        from cockpit.dispatch import jobs
+        from forgemaster.config import Settings
+        from forgemaster.db import store
+        from forgemaster.dispatch import jobs
     except ImportError:
-        return  # cockpit non importable (build-only) → on saute le seed du run, sans casser le screenshot
+        return  # forgemaster non importable (build-only) → on saute le seed du run, sans casser le screenshot
     settings = Settings.resolve(home=home / "home", projects_root=home / "projects")
 
     def _write(name: str, events: list[dict]) -> str:
@@ -262,9 +265,9 @@ def _seed_interview_cost(home: Path, proj: str) -> None:
     interactif sous `<HOME>/.claude/projects/…` (là où `Path.home()` de la route le résout — d'où le
     `HOME=<temp>` sur le daemon). Rend VOYANTE la ligne « interview · cadrage » (tokens-only, $ = « — »)."""
     try:
-        from cockpit.config import Settings
-        from cockpit.db import store
-        from cockpit.projects import registry
+        from forgemaster.config import Settings
+        from forgemaster.db import store
+        from forgemaster.projects import registry
     except ImportError:
         return  # build-only → pas de seed interview (screenshot non cassé)
     settings = Settings.resolve(home=home / "home", projects_root=home / "projects")
@@ -289,9 +292,9 @@ def _seed_interview_socle(home: Path, proj: str) -> None:
     mutation). En direct-DB car l'API task-add n'expose pas `mode`. Le voir :
     `…/atlas-demo/travail?feature=socle-design`."""
     try:
-        from cockpit.config import Settings
-        from cockpit.db import store
-        from cockpit.roadmap import model
+        from forgemaster.config import Settings
+        from forgemaster.db import store
+        from forgemaster.roadmap import model
     except ImportError:
         return  # build-only → le bouton interview ne sera pas seedé (screenshot non cassé)
     settings = Settings.resolve(home=home / "home", projects_root=home / "projects")
@@ -320,14 +323,14 @@ def _seed_gate_states(home: Path, proj: str) -> None:
     Réplique le patron des tests (worktree réservé → commit worker → `review.write_verdict` SHA-bound) en
     direct sur la DB jetable — aucune API ne fabrique une branche sans dispatcher un vrai worker."""
     try:
-        from cockpit.config import Settings
-        from cockpit.db import store
-        from cockpit.dispatch import worktree
-        from cockpit.gate import review
-        from cockpit.git.identity import resolve_identity
-        from cockpit.git.internal import InternalGit
-        from cockpit.projects import registry
-        from cockpit.roadmap import model
+        from forgemaster.config import Settings
+        from forgemaster.db import store
+        from forgemaster.dispatch import worktree
+        from forgemaster.gate import review
+        from forgemaster.git.identity import resolve_identity
+        from forgemaster.git.internal import InternalGit
+        from forgemaster.projects import registry
+        from forgemaster.roadmap import model
     except ImportError:
         return  # build-only → on saute (le screenshot montrera « aucune branche à merger »)
     settings = Settings.resolve(home=home / "home", projects_root=home / "projects")
@@ -354,7 +357,7 @@ def _seed_gate_states(home: Path, proj: str) -> None:
                                  sha=head_sha, diff_text=diff_text)
         # + un état review-ABSENTE : branche committée + Tier-0 vert mais AUCUN verdict Tier-1 → rend le
         #   nouveau bloc « Re-lancer la review Tier-1 » du GatePanel (le dead-end « attend review » refermé).
-        from cockpit.gate import toolchain
+        from forgemaster.gate import toolchain
         slug = "gate-review-absent-demo"
         model.add_feature(conn, project_slug=proj, slug=slug, title="Gate — review à produire")
         model.add_task(conn, feature_ref=f"{proj}/{slug}", slug="impl", title="Implémentation")
@@ -378,13 +381,13 @@ def _seed_git_state(home: Path, proj: str) -> None:
     """Avance `dev` d'un cran au-dessus de `main` (ff dev sur une feature déjà committée par le seed Gate),
     pour rendre l'onglet Git VOYANT : la bannière montre « main en retard de N sur dev » (le signal
     main-rattrape-dev), sans toucher main. PUIS câble un **miroir bare LOCAL** en avance sur le SoT (cas
-    vécu : travail hors cockpit) → le badge sync miroir affiche `remote_ahead` après un refresh manuel.
+    vécu : travail hors forgemaster) → le badge sync miroir affiche `remote_ahead` après un refresh manuel.
     Aucune API ne fait ça — plumbing direct sur le SoT + un « GitHub » jetable local (zéro réseau)."""
     try:
-        from cockpit.config import Settings
-        from cockpit.core import run
-        from cockpit.git.internal import GitOpError, InternalGit, writeback_env
-        from cockpit.projects import registry
+        from forgemaster.config import Settings
+        from forgemaster.core import run
+        from forgemaster.git.internal import GitOpError, InternalGit, writeback_env
+        from forgemaster.projects import registry
     except ImportError:
         return  # build-only → vue à 0/0, sans casser le screenshot
     settings = Settings.resolve(home=home / "home", projects_root=home / "projects")
@@ -396,7 +399,7 @@ def _seed_git_state(home: Path, proj: str) -> None:
     # Miroir divergent LOCAL : cloné du SoT (histoire partagée), câblé comme remote `mirror`, puis SON `dev`
     # avancé de 2 commits → le miroir prend de l'avance sur le SoT (remote_ahead). L'endpoint /git/sync le
     # verra au refresh manuel ; le badge rend « GitHub +2 » (jamais un faux-vert). Zéro réseau.
-    env = writeback_env(("Seed", "seed@cockpit.local"))
+    env = writeback_env(("Seed", "seed@forgemaster.local"))
     mirror = home / "seed-mirror" / f"{proj}.git"
     mirror.parent.mkdir(parents=True, exist_ok=True)
     if not run.run(["git", "clone", "--bare", "-q", str(sot), str(mirror)], env=env).ok:
@@ -405,9 +408,9 @@ def _seed_git_state(home: Path, proj: str) -> None:
     wt = home / "seed-mirror" / f"{proj}-wt"
     if run.run(["git", "-C", str(mirror), "worktree", "add", "-q", str(wt), "dev"], env=env).ok:
         for i in (1, 2):
-            (wt / f"hors-cockpit-{i}.txt").write_text("travail hors cockpit\n", encoding="utf-8")
+            (wt / f"hors-forgemaster-{i}.txt").write_text("travail hors forgemaster\n", encoding="utf-8")
             run.run(["git", "-C", str(wt), "add", "-A"], env=env)
-            run.run(["git", "-C", str(wt), "commit", "-q", "-m", f"hors cockpit {i}"], env=env)
+            run.run(["git", "-C", str(wt), "commit", "-q", "-m", f"hors forgemaster {i}"], env=env)
 
 
 def _seed_credential_state(home: Path, slugs: list[str]) -> None:
@@ -416,11 +419,11 @@ def _seed_credential_state(home: Path, slugs: list[str]) -> None:
     requis », panneau Réglages mixte (✅ lié / 🔴 requis) + carte credential sur la vue projet (onglet Git).
     Plumbing direct sur la DB + le store jetables (aucune API ne fabrique cet état)."""
     try:
-        from cockpit.config import Settings
-        from cockpit.db import store
-        from cockpit.onboarding import link_credential
-        from cockpit.projects import registry  # noqa: F401 (garantit le package cockpit importable)
-        from cockpit.secrets import build_store
+        from forgemaster.config import Settings
+        from forgemaster.db import store
+        from forgemaster.onboarding import link_credential
+        from forgemaster.projects import registry  # noqa: F401 (garantit le package forgemaster importable)
+        from forgemaster.secrets import build_store
     except ImportError:
         return  # build-only → onboarding « complet » (aucun miroir), sans casser le screenshot
     settings = Settings.resolve(home=home / "home", projects_root=home / "projects")
@@ -443,9 +446,9 @@ def _seed_deploy_state(home: Path, proj: str) -> None:
     visuelle, pas le smoke ; la santé live se réconcilierait à `stopped` sans conteneur, ce qu'on ne fait pas
     ici pour figer l'état running visible)."""
     try:
-        from cockpit.config import Settings
-        from cockpit.db import store
-        from cockpit.projects import deployments, registry
+        from forgemaster.config import Settings
+        from forgemaster.db import store
+        from forgemaster.projects import deployments, registry
     except ImportError:
         return  # build-only → 2 cartes `no_deploy`, sans casser le screenshot
     settings = Settings.resolve(home=home / "home", projects_root=home / "projects")
@@ -463,19 +466,19 @@ def shoot(routes: list[str], *, port: int, viewport: dict | None, full_page: boo
           runner: Path, timeout_ms: int, seed: bool, wait_text: str | None = None,
           clicks: list[dict] | None = None) -> list[dict]:
     out_dir.mkdir(parents=True, exist_ok=True)
-    home = Path(tempfile.mkdtemp(prefix="cockpit-uishot-"))
+    home = Path(tempfile.mkdtemp(prefix="forgemaster-uishot-"))
     # Sers EXACTEMENT la dist qu'on vient de bâtir/valider (`DIST`), pas celle que le daemon résoudrait par
-    # défaut. Sans cet override, `web_dist_dir()` tombe sur la dist empaquetée (`cockpit/_web_dist`) ou le
+    # défaut. Sans cet override, `web_dist_dir()` tombe sur la dist empaquetée (`forgemaster/_web_dist`) ou le
     # layout source du repo de l'install éditable — soit, depuis une WORKTREE, la dist du repo PRINCIPAL, pas
     # celle du worktree → on screenshoterait une UI PÉRIMÉE (faux-vert visuel). L'override ferme ce trou.
     # HOME=<temp> : `dispatch/cost.py` résout les transcripts d'interview sous `Path.home()/.claude/projects/`
     # (là où `claude` les écrit en prod). Le caler sur le temp jetable garde le seed self-contained (le daemon
     # serve-only ne spawn pas de `claude` → aucun besoin du vrai ~).
-    env = {**os.environ, "HOME": str(home), "COCKPIT_HOME": str(home / "home"),
-           "COCKPIT_PROJECTS_ROOT": str(home / "projects"),
-           "COCKPIT_WEB_DIST": str(DIST)}
+    env = {**os.environ, "HOME": str(home), "FORGEMASTER_HOME": str(home / "home"),
+           "FORGEMASTER_PROJECTS_ROOT": str(home / "projects"),
+           "FORGEMASTER_WEB_DIST": str(DIST)}
     proc = subprocess.Popen(
-        [str(VENV_COCKPIT), "serve", "--host", "127.0.0.1", "--port", str(port)],
+        [str(VENV_FORGEMASTER), "serve", "--host", "127.0.0.1", "--port", str(port)],
         env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
     )
     results: list[dict] = []
@@ -539,7 +542,7 @@ def main(argv: list[str] | None = None) -> int:
     if not (DIST / "index.html").exists():
         raise SystemExit(f"build absent : {DIST}/index.html — lance avec --build ou `npm run build`")
     if not Path(a.runner).exists():
-        raise SystemExit(f"runner playwright introuvable : {a.runner} (override COCKPIT_UI_RUNNER)")
+        raise SystemExit(f"runner playwright introuvable : {a.runner} (override FORGEMASTER_UI_RUNNER)")
 
     results = shoot(a.routes, port=a.port, viewport=_parse_viewport(a.viewport),
                     full_page=a.full_page, out_dir=Path(a.out), runner=Path(a.runner),

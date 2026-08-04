@@ -1,14 +1,14 @@
 # cli — runbook (spine CLI : surface de commandes + dispatch vers les `cli_dispatch` de chaque sous-système)
 
-`src/cockpit/cli.py` est la porte unifiée `cockpit` (entry-point `console_scripts`). Elle assemble tout
+`src/forgemaster/cli.py` est la porte unifiée `forgemaster` (entry-point `console_scripts`). Elle assemble tout
 l'arbre argparse **sans tirer aucune couche lourde** (fastapi/uvicorn/couches stub), puis route la
 sous-commande parsée vers un handler mince qui, lui, importe la couche **paresseusement** et l'appelle.
 Deux responsabilités : (1) déclarer la surface (`build_parser`), (2) parser + configurer l'env + dispatcher
 (`main` via la table `_HANDLERS`). Toute la logique métier vit dans les `cli_dispatch` des sous-systèmes.
 
 ## build_parser() — assemble l'arbre argparse complet (pur, import léger)
-`src/cockpit/cli.py:22` · appelé par main()
-Entrées : aucune. Comportement : construit le parser racine `cockpit` (+ `--version`), un parent `common`
+`src/forgemaster/cli.py:22` · appelé par main()
+Entrées : aucune. Comportement : construit le parser racine `forgemaster` (+ `--version`), un parent `common`
 (`--home`, `--projects-root`) hérité par chaque sous-parser, puis déclare les **27** sous-commandes de la spine
 et leurs actions. Les groupes à sous-actions : `project` (create/list/get), `tool` (sync), `tools` (install),
 `bundle` (list/validate/show/version/derive), `scaffold` (reseed), `roadmap` (add-feature/set-deps/show/check),
@@ -16,7 +16,7 @@ et leurs actions. Les groupes à sous-actions : `project` (create/list/get), `to
 woaw-dispatch), `onboard` (status/link/unlink), `mcp` (wire). Les verbes plats : `dispatch`, `cost`, `run`,
 `abort`, `refix`, `redrain`, `interview`, `inspire`, `upload`, `deploy`, `merge`, `bootstrap`, `serve`,
 `setup`, `install-service`, `doctor`. **Cet inventaire est daté, pas un contrat** — la vérité vit dans le code,
-`grep 'add_parser' src/cockpit/cli.py` la rend en une commande ; ce runbook dit la FORME (un parent commun, des
+`grep 'add_parser' src/forgemaster/cli.py` la rend en une commande ; ce runbook dit la FORME (un parent commun, des
 groupes, `set_defaults(func=…)`), pas la liste. Sortie :
 l'`ArgumentParser`. Invariant : **pur et sans dépendance lourde** — le seul import est
 `provision.list_valid_types` (stdlib-only, fail-closed : un overlay cassé n'est pas offert à `--type`), de
@@ -24,7 +24,7 @@ sorte que `--help` marche et que le parser se construit même quand les couches 
 `main()` (et les tests de câblage argparse).
 
 ## main() — parse, configure l'env, résout Settings, dispatche
-`src/cockpit/cli.py:372` · point d'entrée console_scripts
+`src/forgemaster/cli.py:372` · point d'entrée console_scripts
 Séquence : `build_parser().parse_args(argv)` → `_autoload_env(args)` (parité CLI ↔ service) →
 `settings = _settings(args)` → lookup `handler = _HANDLERS[args.command]` → `return handler(settings, args)`.
 Le cœur du dispatch est la **table `_HANDLERS`** (`cli.py:615`), un dict `command → _h_*` : chaque `_h_*`
@@ -37,13 +37,13 @@ une fonction dédiée plutôt qu'un `cli_dispatch` (`_h_serve` → `app.serve`, 
 `_h_install_service` → `service.install_service`). Sortie : le code de retour du handler.
 
 ## _settings() / _autoload_env() — résolution de config avant dispatch
-`src/cockpit/cli.py:353` (`_settings`) · `src/cockpit/cli.py:358` (`_autoload_env`) · appelés par main()
+`src/forgemaster/cli.py:353` (`_settings`) · `src/forgemaster/cli.py:358` (`_autoload_env`) · appelés par main()
 `_settings(args)` retourne `Settings.resolve(home=…, projects_root=…)` en lisant les flags `--home` /
 `--projects-root` (via `getattr`, tolérant à leur absence). `_autoload_env(args)` charge
-`$COCKPIT_HOME/cockpit.env` dans `os.environ` **avant** de résoudre les Settings, pour garantir la **parité
+`$FORGEMASTER_HOME/forgemaster.env` dans `os.environ` **avant** de résoudre les Settings, pour garantir la **parité
 CLI ↔ service** : le service systemd lit son `EnvironmentFile`, la CLI doit voir la même config (dont le
-câblage MCP) — sinon un `cockpit dispatch` lancé en shell perdait le MCP en silence. Home résolu selon la
-même priorité que `_settings` (flag `--home` > `$COCKPIT_HOME` > `DEFAULT_HOME`) ; invariant : le fichier
+câblage MCP) — sinon un `forgemaster dispatch` lancé en shell perdait le MCP en silence. Home résolu selon la
+même priorité que `_settings` (flag `--home` > `$FORGEMASTER_HOME` > `DEFAULT_HOME`) ; invariant : le fichier
 **ne surcharge jamais** une clé déjà présente dans l'environnement réel.
 
 ## Zones non détaillées

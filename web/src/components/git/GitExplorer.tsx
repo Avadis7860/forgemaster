@@ -30,7 +30,7 @@ const VIEWS = [
 
 // Dernier projet consulté — défaut malin quand on atterrit sur `/git` nu (git est per-projet). Persisté en
 // localStorage (patron `useRailCollapse`) ; dégrade silencieusement (mode privé / quota) vers « pas de défaut ».
-const LAST_PROJECT_KEY = 'cockpit.git.lastProject'
+const LAST_PROJECT_KEY = 'forgemaster.git.lastProject'
 
 const readLastProject = (): string | null => {
   try {
@@ -325,7 +325,7 @@ function ReconcilePanel({ project, sync, onDone, onClose }: {
           ) : (
             <Alert tone="danger" title="Divergence non fast-forward">
               Aucune branche n'est réconciliable automatiquement (divergence réelle SoT↔GitHub). Résous le
-              conflit à la main — le cockpit ne merge jamais de non-ff (le SoT reste autoritaire).
+              conflit à la main — le forgemaster ne merge jamais de non-ff (le SoT reste autoritaire).
             </Alert>
           )}
         </>

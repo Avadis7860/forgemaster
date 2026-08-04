@@ -30,7 +30,7 @@ export function RoadmapTab() {
       <div className="mx-auto max-w-2xl p-8">
         <EmptyState
           title="Roadmap vide"
-          description="Aucune feature. Ajoute une feature et ses tasks (CLI cockpit ou API) pour voir le graphe de séquencement."
+          description="Aucune feature. Ajoute une feature et ses tasks (CLI forgemaster ou API) pour voir le graphe de séquencement."
         />
       </div>
     )

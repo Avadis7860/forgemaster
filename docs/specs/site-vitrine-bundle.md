@@ -3,20 +3,20 @@
 > Phase P0 de l'épic vault `cockpit-vitrine-e2e`. Ce document **verrouille** le cadrage du 2ᵉ E2E de création
 > de bundle (après `browser-game`/`ogame-rogue-like-pve`), sur un projet **non-jeu présentationnel**. But méta :
 > apprendre à créer/ingérer des bundles. **Rien n'est construit ici** — P0 est la décision + l'architecture ;
-> le bundle se bâtit en P1, le cockpit construit le site en P2, le déploiement VPS est en P3, la distillation
+> le bundle se bâtit en P1, le forgemaster construit le site en P2, le déploiement VPS est en P3, la distillation
 > capital (blueprint/templates) en P4. Précédent de format : `docs/specs/ogame-rogue-like-pve-bundle.md`.
 
 ## Problème tranché
 
 Aucun bundle **présentationnel** n'existe (vérifié 2026-07-26 via MCP : `query(type=blueprint, "site vitrine …")`
 → `empty:true` ; aucun template présentational ; 1 seul template UI servi, `browser-game-pve`). Une **vitrine du
-framework** (le cockpit + son protocole) est le **besoin réel** qui matérialise proprement la classe `site-vitrine`
+framework** (le forgemaster + son protocole) est le **besoin réel** qui matérialise proprement la classe `site-vitrine`
 sans forward-feature. On crée donc un **nouveau type de bundle générique** `site-vitrine` — pas taillé pour ce
 contenu précis, réutilisable pour toute vitrine/landing.
 
 ## Décisions verrouillées (confirme l'interview 2026-07-23)
 
-1. **Nouveau type `site-vitrine`** — enregistrement **zéro-code** : déposer `src/cockpit/provision/bundles/types/
+1. **Nouveau type `site-vitrine`** — enregistrement **zéro-code** : déposer `src/forgemaster/provision/bundles/types/
    site-vitrine/` suffit (`discover_types()`, `provision/__init__.py:39-45`). Aucun enum, aucune migration DB.
 2. **Stack** : **Astro** (SSG → perf/SEO natifs) + **Tailwind** + **îlots React** + **motion** (motion.dev, WOW)
    + **MDX** (contenu). **i18n natif Astro**, **EN par défaut**, FR, DE.
@@ -24,13 +24,13 @@ contenu précis, réutilisable pour toute vitrine/landing.
    ⚠ Piège toolchain : `.astro` **n'est pas** un node-suffix (`gate/toolchain.py:47`) — le groupe `front` ne se
    déclenche qu'au **contact d'un chemin `web/`**. Le scaffold DOIT donc porter un fichier sous `web/` (la probe)
    et un `package.json` racine au `gate` composite pour que le gate se monte réellement.
-4. **Bundle générique** — *pas* over-fitté au contenu cockpit, *pas* taillé pour l'observation. **Le contenu vit
-   dans le PROJET** `cockpit-vitrine` (P2) ; côté bundle, **placeholder neutre**. Le suivi logs / auto-amélioration
+4. **Bundle générique** — *pas* over-fitté au contenu forgemaster, *pas* taillé pour l'observation. **Le contenu vit
+   dans le PROJET** `forgemaster-vitrine` (P2) ; côté bundle, **placeholder neutre**. Le suivi logs / auto-amélioration
    est une **couche externe** (l'instrument de l'E2E), pas le bundle.
-5. **Le cockpit pilote la complétion** (dispatch → gate → itère → GO). **On ne hand-code pas la vitrine** — c'est
+5. **Le forgemaster pilote la complétion** (dispatch → gate → itère → GO). **On ne hand-code pas la vitrine** — c'est
    tout le sens de l'E2E (et de la doctrine capital-jeton : le worker construit, on distille).
 6. **Déploiement VPS** (P3, **différé** — accès existe, pas l'urgence) : Docker + reverse-proxy multi-tenant
-   (Traefik **ou** Coolify — tranché en P3) + TLS, DNS `cockpit.avagency.pro`. Esquissé, non construit ici.
+   (Traefik **ou** Coolify — tranché en P3) + TLS, DNS `forgemaster.avagency.pro`. Esquissé, non construit ici.
 
 ## IA de contenu — 5 piliers → one-pager scrollytelling (le PROJET, pas le bundle)
 
@@ -44,9 +44,9 @@ Direction visuelle : **bold editorial + motion**, one-pager scrollytelling, anim
 5. **Le « pourquoi »** (hero) — né de la douleur de la **mémoire long-terme** ; résultat : Claude Code + les outils
    **reprennent un projet à froid, comme si Claude ne l'avait jamais vu**.
 
-> **Frontière** : ces piliers sont l'IA de contenu **du projet** `cockpit-vitrine` (authoré en P2). Le **bundle**
+> **Frontière** : ces piliers sont l'IA de contenu **du projet** `forgemaster-vitrine` (authoré en P2). Le **bundle**
 > ne les porte PAS — il sème une structure one-pager i18n **neutre** (placeholders). Ne jamais figer le contenu
-> cockpit dans le bundle générique.
+> forgemaster dans le bundle générique.
 
 ## QueryPlan tech (silos que les workers P2 interrogeront — TOUS vérifiés servis 2026-07-26)
 
@@ -70,12 +70,12 @@ Contrat auto-imposé : `tests/test_provision.py` est **paramétré sur `discover
 existe, `pytest` **exige** le contrat ci-dessous (durcir `validate_bundle` serait redondant — trust-by-boundary).
 
 ```
-src/cockpit/provision/bundles/types/site-vitrine/
-├── .cockpit/bundle.toml         # RE-déclarer [bundle.mcp] corpus=true (override whole-file, sinon perdu) ;
+src/forgemaster/provision/bundles/types/site-vitrine/
+├── .forgemaster/bundle.toml         # RE-déclarer [bundle.mcp] corpus=true (override whole-file, sinon perdu) ;
 │                                #   project_type="site-vitrine" ; facets=["frontend","i18n","deploy","doc"] ;
 │                                #   default_facet="frontend" ; archetype="app"
 ├── CLAUDE.md                    # 6 sections canoniques : §2 persona VITRINE senior · §3 stack · §4 silos en
-│                                #   prose (query(type=tech, scope=<silo>) + `cockpit mcp wire`, PAS de
+│                                #   prose (query(type=tech, scope=<silo>) + `forgemaster mcp wire`, PAS de
 │                                #   scope=browser-game mort) · `GO humain` · `docsmap where`
 ├── docs/architecture.md         # non-stub : `## Comment ce projet se travaille`, ≤1 `À renseigner`
 ├── src/README.md                # ancre par-dossier (type src-bearing → ajouter à _SRC_README_TYPES)
@@ -86,7 +86,7 @@ src/cockpit/provision/bundles/types/site-vitrine/
 ├── src/layouts/… src/i18n/…     # squelette i18n (dictionnaires en/fr/de neutres)
 ├── web/Probe.tsx                # PROBE toolchain sous web/ → déclenche le groupe `front` (gate montable)
 ├── Dockerfile                   # multi-stage : astro build → nginx servant sur :8000
-├── compose.yaml                 # web: build "." ; "${COCKPIT_PORT:?…}:8000" ; PAS de volumes:/networks:
+├── compose.yaml                 # web: build "." ; "${FORGEMASTER_PORT:?…}:8000" ; PAS de volumes:/networks:
 ├── .dockerignore
 └── .claude/facets/{frontend,i18n,deploy}/{PERSONA.md,METHOD.md,settings.local.json}
                                  # (le facet `doc` est hérité de bundles/base — ne pas le redéposer)
@@ -106,7 +106,7 @@ build-time), pas interdit ; par défaut le bundle est authoré verbatim (aucune 
 
 - **Bundle** (générique, capital construit à la main en P1) : la structure Astro i18n neutre + le gate + le seed
   deploy + le `CLAUDE.md` type-level (stack, silos, persona).
-- **Projet** `cockpit-vitrine` (P2, construit par le cockpit) : le contenu réel (5 piliers), le design visuel,
+- **Projet** `forgemaster-vitrine` (P2, construit par le forgemaster) : le contenu réel (5 piliers), le design visuel,
   les 3 langues.
 - **Worker** : lit le `CLAUDE.md` du bundle + interroge les silos `tech` ; construit ; passe le gate ; GO humain.
 
@@ -117,7 +117,7 @@ Le capital grandit par **distillation**, jamais construit en amont « pour voir 
 - **P1 — le BUNDLE** (`bundles/types/site-vitrine/`) : seul artefact capital **construit à la main**, générique.
   Les décisions type-level (stack, gate, silos, persona) vivent dans **son `CLAUDE.md`** — c'est là que le 1er
   build puise, pas dans un blueprint central (le worker ne lit pas le blueprint).
-- **P2 — le cockpit CONSTRUIT** `cockpit-vitrine` depuis le bundle (vrai drain → **peuple `merge_outcomes` →
+- **P2 — le forgemaster CONSTRUIT** `forgemaster-vitrine` depuis le bundle (vrai drain → **peuple `merge_outcomes` →
   alimente la campagne de fiabilité E3**). Les manques du bundle révélés ici → patch **générique**.
 - **P4 — DISTILLER** le pattern prouvé → graduer un **blueprint** `site-vitrine` + **templates** dans
   `mcp-catalogs-data`, **si réutilisabilité prouvée**. **Jamais en amont.**
@@ -131,15 +131,15 @@ Le capital grandit par **distillation**, jamais construit en amont « pour voir 
 ## Phases (GO humain par phase — fail-closed)
 
 - **P0 — cadrage** *(ce document + le tracker vault = P0)*. ✅ à la validation de ce doc.
-- **P1 — bundle générique** (repo cockpit, skill `work-loop`) : scaffold + facets + gate + seed deploy + câblage
+- **P1 — bundle générique** (repo forgemaster, skill `work-loop`) : scaffold + facets + gate + seed deploy + câblage
   tests. Gate vert → GO → merge.
-- **P2 — le cockpit pilote la complétion** de `cockpit-vitrine` sur la VM 9310 fraîche (E2E). Monitorer les logs,
+- **P2 — le forgemaster pilote la complétion** de `forgemaster-vitrine` sur la VM 9310 fraîche (E2E). Monitorer les logs,
   remonter les manques du bundle (patch générique).
-- **P3 — déploiement VPS multi-tenant** (Docker + Traefik/Coolify + TLS + DNS `cockpit.avagency.pro`). Différé.
+- **P3 — déploiement VPS multi-tenant** (Docker + Traefik/Coolify + TLS + DNS `forgemaster.avagency.pro`). Différé.
 - **P4 — distillation & capital** : enseignements ingestion/création de bundles → docs/specs ; graduation
   blueprint + templates `site-vitrine` si réutilisable prouvé ; post-mortem vault.
 
-## Sources (contrat vérifié 2026-07-26, cockpit @e698b71)
+## Sources (contrat vérifié 2026-07-26, forgemaster @e698b71)
 
 - Découverte zéro-code : `provision/__init__.py:39-45` ; composition base|overlay whole-file `:79-90`.
 - Contrat de type : `tests/test_provision.py` (paramétré sur `discover_types()`) — CLAUDE.md 6 sections

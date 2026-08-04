@@ -55,7 +55,7 @@ export function LaunchCycle({ project, roadmap }: { project: string; roadmap: Ro
       )}
       <p className="text-xs text-faint">
         Le socle est le design de ton projet. Une fois l'interview finie, la forge le valide (réconciliation)
-        puis lance les features de travail — tu n'as pas besoin de connaître « cockpit run ».
+        puis lance les features de travail — tu n'as pas besoin de connaître « forgemaster run ».
       </p>
 
       {canReconcile && (

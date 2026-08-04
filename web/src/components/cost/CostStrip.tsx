@@ -5,7 +5,7 @@ import { cn } from '@/lib/cn'
 import { useProjectCost } from '@/lib/queries'
 import type { CostAcc, CostFeature, ProjectCost } from '@/lib/schemas'
 
-// Formats alignés sur la CLI (`cockpit cost`) : $ à 2 décimales dès $0.01 (repère de coût), 4 en dessous ;
+// Formats alignés sur la CLI (`forgemaster cost`) : $ à 2 décimales dès $0.01 (repère de coût), 4 en dessous ;
 // tokens compacts `1.24M`/`480k`. Le $ vient de Claude — jamais recalculé.
 function fmtUsd(v: number): string {
   return v >= 0.01 ? `$${v.toFixed(2)}` : `$${v.toFixed(4)}`

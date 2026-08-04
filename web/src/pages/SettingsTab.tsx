@@ -7,7 +7,7 @@ import { useOnboarding } from '@/lib/queries'
 import type { OnboardingRequirement, SecretStoreHealth } from '@/lib/schemas'
 
 /** Réglages / Onboarding (instance-level, self-hosted) : racine du coffre de secrets + credential par
- *  repo. Panneau **non bloquant** (le cockpit reste utilisable) — complète le bandeau du shell. Sert la
+ *  repo. Panneau **non bloquant** (le forgemaster reste utilisable) — complète le bandeau du shell. Sert la
  *  question « qu'est-ce qui manque pour être opérationnel ? » sans jamais révéler un secret. */
 export function SettingsTab() {
   const { data, isLoading, isError, error, refetch, isFetching } = useOnboarding()

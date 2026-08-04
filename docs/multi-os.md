@@ -1,14 +1,14 @@
-# multi-os — portabilité du cockpit
+# multi-os — portabilité du forgemaster
 
 **WSL-first** : l'édition lightweight tourne par défaut sous WSL (substrat de l'édition lightweight,
-north-star v3), Debian et macOS en cibles secondaires. Le cockpit orchestre des process locaux et une base
+north-star v3), Debian et macOS en cibles secondaires. Le forgemaster orchestre des process locaux et une base
 SQLite — pas de dépendance OS exotique, mais quelques points de vigilance.
 
 | Risque cross-OS | Mesure |
 |---|---|
 | Fins de ligne (git `core.autocrlf`) faussent hash/diff | `.gitattributes` : `* text=auto eol=lf` + `*.yaml/*.jsonl eol=lf`. Le même source → même comportement partout. |
 | Chemins Windows vs POSIX | Chemins **POSIX** partout ; `pathlib.Path` ; `core.fs.safe_path` borne à une racine POSIX. Jamais de séparateur `\`. |
-| SQLite : verrouillage réseau / WAL sur montage | Base sous `COCKPIT_HOME` (FS local, pas un partage réseau) ; `journal_mode=WAL` pour la concurrence CLI↔daemon locale. |
+| SQLite : verrouillage réseau / WAL sur montage | Base sous `FORGEMASTER_HOME` (FS local, pas un partage réseau) ; `journal_mode=WAL` pour la concurrence CLI↔daemon locale. |
 | `flock` (sérialisation worktree) indisponible/varie | `flock` sur un fichier du `.git` partagé — POSIX (Linux/macOS/WSL) ; documenter si une cible sans `flock` apparaît. |
 | Worker `claude` / `git` absents du PATH | Résolus via PATH au runtime ; `core.run` capture l'échec proprement (rc≠0, jamais un faux-vert). |
 | PTY (terminal web) : API `pty`/`os.openpty` POSIX | Terminal intégré = cible POSIX (WSL/Debian/macOS). Windows natif hors périmètre V1. |

@@ -1,4 +1,4 @@
-# CLAUDE.md — cockpit (forge/orchestrateur local de projets)
+# CLAUDE.md — forgemaster (forge/orchestrateur local de projets)
 
 > Lu au début de **chaque** session dans ce repo. Persona `tool-builder`.
 > Ce fichier = **règles + index + outils**, PAS la spec. Le détail (mission, cadre verrouillé,
@@ -44,7 +44,7 @@ Ce que couvre chaque doc (cibles de `docsmap where`) :
 - `docs/architecture.md` — la spine (cœur / daemon / web), les couches, frontières.
 - `docs/specs/*.md` — les **décisions distillées** portées comme specs (contraintes verrouillées +
   invariants de test) : forge-merge, worktree-cleanup, writeback-creds, task-next DAG, sot-local split,
-  feature-verified, tier0-native-toolchain, review-readiness-gate, web-cockpit-spa, runtime-seed-deploy-config,
+  feature-verified, tier0-native-toolchain, review-readiness-gate, web-forgemaster-spa, runtime-seed-deploy-config,
   bundle-crash-test, template-ui-application-lifecycle, ws-origin-token-boundary,
   ogame-rogue-like-pve-bundle (superseded — style servi, plus un bundle-type).
 - `docs/schema-contract.md` — SQLite / `roadmap.yaml` / API HTTP, **figés** inter-couches.
@@ -64,7 +64,7 @@ Ce que couvre chaque doc (cibles de `docsmap where`) :
 
 ## Ce repo EST la forge (rapport aux autres)
 
-Le cockpit **automatise** `work-loop` : dispatch d'un worker `claude` local → worktree feature (mutex) →
+Le forgemaster **automatise** `work-loop` : dispatch d'un worker `claude` local → worktree feature (mutex) →
 gate multi-tier → merge internal-first → GO humain fail-closed, **multi-projet**, avec DB + web. Chaque repo
 frère (`code-map`, `forgemaster-catalogs`, `front-map`) embarque le **même** `work-loop` en **manuel** et reste donc
 **auto-travaillable seul**, sans cette forge. La forge est un **orchestrateur optionnel** par-dessus des

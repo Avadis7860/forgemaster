@@ -19,11 +19,11 @@ du clone-SoT que le reviewer/gate/merge sondent → le reviewer « se kill sans 
 - **Dans un 2e worktree, ne JAMAIS `git checkout -B <base>`** (la base est déjà sortie dans le worktree
   principal → « 'dev' is already used by worktree… »). Ancrer directement :
   `git worktree add -B <branche-cible> <wt> origin/<base>`.
-- **Concurrence sérialisée par `flock` sur un fichier du `.git` PARTAGÉ** (`.git/cockpit-worktree.lock`,
+- **Concurrence sérialisée par `flock` sur un fichier du `.git` PARTAGÉ** (`.git/forgemaster-worktree.lock`,
   fd dédié), **pas** un lock in-process (qui ne couvre pas des relais/process concurrents — refactor #12).
 - **Routage pur d'abord** (`route(decision) → {kind, branch, slug}`), wiring minimal ensuite.
 
-## Invariants de test (à encoder dans cockpit)
+## Invariants de test (à encoder dans forgemaster)
 
 - Repro du split : pousser dans un `.git` que le consommateur ne sonde pas → `head-sha-introuvable` ; le
   worktree partagé rend la branche visible (`reviewed_sha == HEAD`).

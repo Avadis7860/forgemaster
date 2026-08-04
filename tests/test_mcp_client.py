@@ -1,4 +1,4 @@
-"""Tests du client MCP runtime (`cockpit.mcp.blueprint_resolver`) — **aucun réseau**, seams injectés.
+"""Tests du client MCP runtime (`forgemaster.mcp.blueprint_resolver`) — **aucun réseau**, seams injectés.
 
 Prouve la **dégradation honnête** (secret absent/court, MCP down transport, réponse vide → `None`) et le
 **hit** (dict rendu tel quel) ; côté `capital_browser`, prouve aussi la **propagation typée** d'une erreur
@@ -14,8 +14,8 @@ from pathlib import Path
 import pytest
 from taskmap.context import _blueprint_verdict
 
-from cockpit.config import Settings
-from cockpit.mcp import CapitalServerError, blueprint_resolver, capital_browser
+from forgemaster.config import Settings
+from forgemaster.mcp import CapitalServerError, blueprint_resolver, capital_browser
 
 _SECRET = "x" * 40                      # ≥32 → le mint HS256 réel passe
 _FAKE_REF = "ref-opaque"
@@ -28,7 +28,7 @@ def _wired_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     suppose une cible MCP câblée. Autouse ici (et seulement ici) pour que ces axes restent testés pour ce
     qu'ils sont et non parce qu'il n'y a pas d'endpoint. L'axe endpoint a son propre test explicite, avec
     l'env retiré : `test_no_endpoint_returns_none_without_calling`."""
-    monkeypatch.setenv("COCKPIT_MCP_ENDPOINT", _ENDPOINT)
+    monkeypatch.setenv("FORGEMASTER_MCP_ENDPOINT", _ENDPOINT)
 
 
 @pytest.fixture
@@ -43,7 +43,7 @@ def _ok_secret(_ref: str) -> str:
 # -- dégradation honnête : toujours None, jamais d'exception -----------------------------------------
 
 def test_no_secret_ref_returns_none_without_calling_mcp(settings, monkeypatch):
-    monkeypatch.delenv("COCKPIT_MCP_JWT_SECRET_REF", raising=False)
+    monkeypatch.delenv("FORGEMASTER_MCP_JWT_SECRET_REF", raising=False)
     called: list = []
 
     def caller(*a, **k):
@@ -59,7 +59,7 @@ def test_no_endpoint_returns_none_without_calling(settings, monkeypatch):
     """Fix 2026-08-03 : aucune cible configurée (plus de défaut en dur vers notre CT) → les deux clients
     rendent `None` **sans le moindre appel réseau**, comme pour un secret absent. Une install publique sans
     corpus privé est un état normal, pas une erreur."""
-    monkeypatch.delenv("COCKPIT_MCP_ENDPOINT", raising=False)
+    monkeypatch.delenv("FORGEMASTER_MCP_ENDPOINT", raising=False)
     called: list = []
 
     def caller(*a, **k):
@@ -144,7 +144,7 @@ def test_plugs_into_taskmap_seam_down(settings):
 
 def test_capital_no_secret_ref_returns_none_without_calling_mcp(settings, monkeypatch):
     """MCP non câblé (aucun ref) → chaque méthode rend None sans jamais toucher le réseau."""
-    monkeypatch.delenv("COCKPIT_MCP_JWT_SECRET_REF", raising=False)
+    monkeypatch.delenv("FORGEMASTER_MCP_JWT_SECRET_REF", raising=False)
     called: list = []
 
     def caller(*a, **k):

@@ -12,13 +12,13 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cockpit.config import Settings
-from cockpit.daemon import app as app_mod
-from cockpit.db import store
-from cockpit.design import apply, seed
-from cockpit.git.internal import InternalGit
-from cockpit.projects import registry
-from cockpit.roadmap import model
+from forgemaster.config import Settings
+from forgemaster.daemon import app as app_mod
+from forgemaster.db import store
+from forgemaster.design import apply, seed
+from forgemaster.git.internal import InternalGit
+from forgemaster.projects import registry
+from forgemaster.roadmap import model
 
 _TOML = """\
 [template]
@@ -156,7 +156,7 @@ def test_inspire_endpoint_applies_and_guards(env, tmp_path: Path, monkeypatch: p
     (td / "template.toml").write_text(_TOML, encoding="utf-8")
     (td / "tokens.css").write_text(":root{--accent:#c60}", encoding="utf-8")
     (td / "preview.png").write_bytes(b"\x89PNG\r\n fake")
-    monkeypatch.setenv("COCKPIT_WEB_DIST", str(dist))        # web_dist_dir() → notre dist factice
+    monkeypatch.setenv("FORGEMASTER_WEB_DIST", str(dist))        # web_dist_dir() → notre dist factice
     client = TestClient(app_mod.build_app(settings))
 
     r = client.post("/api/projects/vr/inspire", json={"template": "browser-game-spatial"})

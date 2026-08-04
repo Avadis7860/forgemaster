@@ -2,7 +2,7 @@
 
 Deux niveaux : (1) unité sur `_scan` (scan `dist/templates/*/template.toml`, fail-closed silencieux sur tout
 dossier mal formé) ; (2) HTTP via TestClient — la liste servie depuis `web_dist_dir()` (surchargée par
-`COCKPIT_WEB_DIST` vers un dist factice), idempotence goto-safe, vide honnête sans build.
+`FORGEMASTER_WEB_DIST` vers un dist factice), idempotence goto-safe, vide honnête sans build.
 """
 from __future__ import annotations
 
@@ -11,9 +11,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cockpit.config import Settings
-from cockpit.daemon import app as app_mod
-from cockpit.daemon.routes import templates
+from forgemaster.config import Settings
+from forgemaster.daemon import app as app_mod
+from forgemaster.daemon.routes import templates
 
 _VALID_TOML = """\
 [template]
@@ -91,7 +91,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     dist = tmp_path / "dist"
     dist.mkdir()
     _make_template(dist, "browser-game-spatial", _VALID_TOML)
-    monkeypatch.setenv("COCKPIT_WEB_DIST", str(dist))              # web_dist_dir() → notre dist factice
+    monkeypatch.setenv("FORGEMASTER_WEB_DIST", str(dist))              # web_dist_dir() → notre dist factice
     settings = Settings.resolve(home=tmp_path / "home", projects_root=tmp_path / "projects")
     return TestClient(app_mod.build_app(settings))
 

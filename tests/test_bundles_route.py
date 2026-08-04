@@ -11,10 +11,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cockpit.config import Settings
-from cockpit.daemon import app as app_mod
-from cockpit.daemon.routes import bundles
-from cockpit.provision import load_bundle
+from forgemaster.config import Settings
+from forgemaster.daemon import app as app_mod
+from forgemaster.daemon.routes import bundles
+from forgemaster.provision import load_bundle
 
 
 @pytest.fixture
@@ -29,7 +29,7 @@ def test_classify_taxonomy_puts_quality_first_and_defaults_to_plumbing():
     """La taxonomie met en avant ce qui porte la qualité (méthode, contrat deploy, seed, docs) et relègue la
     plomberie d'outillage en défaut. Premier match, déterministe."""
     assert bundles._classify(".claude/facets/backend/METHOD.md") == bundles.GROUP_METHOD
-    assert bundles._classify(".cockpit/bundle.toml") == bundles.GROUP_DEPLOY
+    assert bundles._classify(".forgemaster/bundle.toml") == bundles.GROUP_DEPLOY
     assert bundles._classify("compose.yaml") == bundles.GROUP_DEPLOY
     assert bundles._classify("Dockerfile") == bundles.GROUP_DEPLOY
     assert bundles._classify("src/index.ts") == bundles.GROUP_SEED
@@ -49,7 +49,7 @@ def test_classify_taxonomy_puts_quality_first_and_defaults_to_plumbing():
 
 def test_tree_serves_sorted_files_with_groups_from_load_bundle(client):
     """L'arbre d'un type = les fichiers de `load_bundle` triés, chacun avec son groupe de curation. `generic`
-    (base seule) porte au moins CLAUDE.md (docs) et son manifeste .cockpit (deploy)."""
+    (base seule) porte au moins CLAUDE.md (docs) et son manifeste .forgemaster (deploy)."""
     r = client.get("/api/bundles/generic/tree")
     assert r.status_code == 200
     body = r.json()
@@ -59,7 +59,7 @@ def test_tree_serves_sorted_files_with_groups_from_load_bundle(client):
     assert set(paths) == set(load_bundle("generic"))               # vérité = ce que reçoit un seed
     by_path = {f["path"]: f["group"] for f in body["files"]}
     assert by_path["CLAUDE.md"] == bundles.GROUP_DOCS
-    assert by_path[".cockpit/bundle.toml"] == bundles.GROUP_DEPLOY
+    assert by_path[".forgemaster/bundle.toml"] == bundles.GROUP_DEPLOY
 
 
 def test_tree_of_typed_overlay_surfaces_method_and_seed(client):

@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import stat
 
-from cockpit.config import Settings
-from cockpit.daemon.ws_token import ensure_ws_token
-from cockpit.daemon.wsguard import (
+from forgemaster.config import Settings
+from forgemaster.daemon.ws_token import ensure_ws_token
+from forgemaster.daemon.wsguard import (
     DEV_ORIGINS,
     match_token_subprotocol,
     origin_allowed,
@@ -25,7 +25,7 @@ def test_same_origin_matches_host_zero_config():
     """L'autorité de l'Origin == l'en-tête Host → same-origin, autorisé sans configuration (couvre l'hôte
     public réel de l'instance, LAN inclus)."""
     assert origin_allowed("http://192.168.0.59:8700", "192.168.0.59:8700", ()) is True
-    assert origin_allowed("https://cockpit.lan:8700", "cockpit.lan:8700", ()) is True
+    assert origin_allowed("https://forgemaster.lan:8700", "forgemaster.lan:8700", ()) is True
 
 
 def test_cross_origin_refused_even_when_host_present():
@@ -41,8 +41,8 @@ def test_dev_origins_allowed():
 
 def test_configured_allowlist_allows_reverse_proxy_origin():
     """Cas reverse-proxy à nom public différent : une origine de `ws_allowed_origins` est autorisée."""
-    assert origin_allowed("https://cockpit.example", "internal:8700",
-                          ("https://cockpit.example",)) is True
+    assert origin_allowed("https://forgemaster.example", "internal:8700",
+                          ("https://forgemaster.example",)) is True
 
 
 def test_null_origin_refused():
@@ -53,17 +53,17 @@ def test_null_origin_refused():
 # -- match_token_subprotocol : extraction + comparaison temps-constant ------------------------------
 
 def test_matches_correct_token_and_echoes_exact_subprotocol():
-    """Un `cockpit.token.<valeur>` offert dont la valeur == attendu → retourne le sous-protocole EXACT à
+    """Un `forgemaster.token.<valeur>` offert dont la valeur == attendu → retourne le sous-protocole EXACT à
     echo à l'accept (obligation RFC : le serveur sélectionne un des offerts)."""
-    assert match_token_subprotocol(["cockpit.token.abc123"], "abc123") == "cockpit.token.abc123"
+    assert match_token_subprotocol(["forgemaster.token.abc123"], "abc123") == "forgemaster.token.abc123"
 
 
 def test_picks_token_among_several_offered():
-    assert match_token_subprotocol(["chat", "cockpit.token.xyz", "v2"], "xyz") == "cockpit.token.xyz"
+    assert match_token_subprotocol(["chat", "forgemaster.token.xyz", "v2"], "xyz") == "forgemaster.token.xyz"
 
 
 def test_wrong_token_value_rejected():
-    assert match_token_subprotocol(["cockpit.token.wrong"], "right") is None
+    assert match_token_subprotocol(["forgemaster.token.wrong"], "right") is None
 
 
 def test_no_token_subprotocol_rejected():

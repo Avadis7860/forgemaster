@@ -11,13 +11,13 @@ du crash d'origine (« un worker sur void-runner a crashé, il ne connaissait pa
 
 Invariants verrouillés :
 
-1. **Création de zéro** — `cockpit project create void-runner --type browser-game` sème le SoT (bundle
-   `base ⊕ browser-game`, `.cockpit/provenance.toml` stampée `browser-game@<v>`), sans toucher Python ni DB.
-2. **Dispatch réel, sans crash** — `cockpit dispatch void-runner/<feature>` spawn un **vrai `claude -p`**
+1. **Création de zéro** — `forgemaster project create void-runner --type browser-game` sème le SoT (bundle
+   `base ⊕ browser-game`, `.forgemaster/provenance.toml` stampée `browser-game@<v>`), sans toucher Python ni DB.
+2. **Dispatch réel, sans crash** — `forgemaster dispatch void-runner/<feature>` spawn un **vrai `claude -p`**
    (jamais un fake) qui termine `ok` (rc 0, `is_error` faux). Le fix historique (`--permission-mode
    acceptEdits` + allowlist) tient.
 3. **MCP câblé (post-création, jamais baké)** — un `.mcp.json` (serveur `forgemaster-catalogs` http + **Bearer JWT
-   minté à la demande**, scopé `sub=cockpit:<slug>`) est **injecté dans le worktree** au dispatch et chargé
+   minté à la demande**, scopé `sub=forgemaster:<slug>`) est **injecté dans le worktree** au dispatch et chargé
    par `claude -p` via `--mcp-config`. Le secret HMAC partagé est résolu par le coffre à l'usage ; absent →
    **no-op honnête** (le worker tourne sans MCP, aucun crash — install public sans le corpus privé).
 4. **Sécurité (load-bearing)** — le `.mcp.json` porte un Bearer → il est **gitignoré** (bundle de base). Le
@@ -40,7 +40,7 @@ demi-migration côté client.
   -A` ne stage pas `.mcp.json` sur un worktree réel), câblage `--mcp-config` + chemin de dispatch réel (coffre
   fichier + runner injecté).
 - **Live (hors gate natif, rejouable)** : `scripts/e2e_crash_test_voidrunner.py` — vrai `claude -p`, lent, non
-  déterministe (comme `runtime-e2e-verification`, règle 6). `COCKPIT_HOME` jetable, teardown garanti. Exige le
+  déterministe (comme `runtime-e2e-verification`, règle 6). `FORGEMASTER_HOME` jetable, teardown garanti. Exige le
   coffre résolvant le secret MCP + `claude` authentifié (prérequis env documentés dans l'entête du script).
 
 ## Preuve live enregistrée

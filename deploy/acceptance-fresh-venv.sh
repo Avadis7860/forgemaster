@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # acceptance-fresh-venv.sh — prouve que le wheel LIVRÉ est auto-suffisant : l'onglet **Flow** ET l'**UI servie**.
 #
-# Le venv de DEV du cockpit a code-map en éditable (sibling) → il MASQUE le trou de packaging. Ici on crée un
+# Le venv de DEV du forgemaster a code-map en éditable (sibling) → il MASQUE le trou de packaging. Ici on crée un
 # venv JETABLE, on installe le wheel SEUL, et on rejoue les 3 appels exacts du consommateur
-# (`src/cockpit/codemap/{index,flow}.py` : `python -m codemap --schema-version | build | flow --list`). C'est
+# (`src/forgemaster/codemap/{index,flow}.py` : `python -m codemap --schema-version | build | flow --list`). C'est
 # le test qui aurait attrapé « No module named codemap ». Aucun réseau, aucun code-map éditable.
 #
 # Puis [4/4] on démarre le daemon depuis ce même wheel et on vérifie que `/` sert la VRAIE SPA (pas le
@@ -11,10 +11,10 @@
 # prouve qu'elle est aussi servie COMPORTEMENTALEMENT (une régression de web_dist_dir/_mount_spa passerait
 # sinon tous les gates verts). Sonde en `urllib` stdlib : `httpx`/TestClient sont dev-only, absents du wheel.
 #
-# Usage : deploy/acceptance-fresh-venv.sh [chemin.whl]   (défaut : le dernier dist/cockpit-*.whl)
+# Usage : deploy/acceptance-fresh-venv.sh [chemin.whl]   (défaut : le dernier dist/forgemaster-*.whl)
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-whl="${1:-$(ls -t "$root"/dist/cockpit-*-py3-none-any.whl 2>/dev/null | head -1)}"
+whl="${1:-$(ls -t "$root"/dist/forgemaster-*-py3-none-any.whl 2>/dev/null | head -1)}"
 [ -n "$whl" ] && [ -f "$whl" ] || {
   echo "✗ wheel introuvable — lance deploy/build-wheel.sh (ou passe le .whl en argument)" >&2; exit 1; }
 echo "→ wheel testé : $whl"
@@ -50,7 +50,7 @@ PY
 ( cd "$seed" && git init -q && git add -A && git -c user.email=a@b.c -c user.name=acc commit -qm seed )
 "$py" -m codemap build --root "$seed" >/dev/null
 
-echo "→ [3/4] \`codemap flow --list\` rend des opérations (contrat consommé par le cockpit)"
+echo "→ [3/4] \`codemap flow --list\` rend des opérations (contrat consommé par le forgemaster)"
 "$py" - "$seed" <<'PY'
 import subprocess, sys, json
 seed = sys.argv[1]
@@ -63,13 +63,13 @@ print(f"   opérations découvertes : {len(ops)}")
 PY
 
 echo "→ [4/4] le wheel SERT la SPA à / (UI empaquetée dans le wheel, servie — pas seulement présente)"
-export COCKPIT_HOME="$tmp/home" COCKPIT_PROJECTS_ROOT="$tmp/projects"
+export FORGEMASTER_HOME="$tmp/home" FORGEMASTER_PROJECTS_ROOT="$tmp/projects"
 port="$("$py" - <<'PY'
 import socket
 s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()
 PY
 )"
-"$tmp/venv/bin/cockpit" serve --host 127.0.0.1 --port "$port" >"$tmp/serve.log" 2>&1 & srv=$!
+"$tmp/venv/bin/forgemaster" serve --host 127.0.0.1 --port "$port" >"$tmp/serve.log" 2>&1 & srv=$!
 if ! "$py" - "$port" <<'PY'
 import sys, time, urllib.request, urllib.error
 base = f"http://127.0.0.1:{sys.argv[1]}"

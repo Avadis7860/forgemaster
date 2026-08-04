@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from cockpit.provision import (
+from forgemaster.provision import (
     discover_types,
     facet,
     list_valid_types,
@@ -110,8 +110,8 @@ def test_validate_bundle_passes_for_all_discovered():
 def test_validate_bundle_rejects_broken(tmp_path, monkeypatch):
     # Un type découvert mais incohérent (default_facet hors facets) est refusé (fail-closed), sans toucher
     # au vrai registre : on monkeypatche `_BUNDLES_DIR` sur une arbo temporaire isolée.
-    import cockpit.provision as prov
-    meta = tmp_path / "bundles" / "base" / ".cockpit"
+    import forgemaster.provision as prov
+    meta = tmp_path / "bundles" / "base" / ".forgemaster"
     meta.mkdir(parents=True)
     (meta / "bundle.toml").write_text(
         '[bundle]\nversion = "1"\nproject_type = "generic"\nfacets = ["doc"]\ndefault_facet = "doc"\n',
@@ -119,7 +119,7 @@ def test_validate_bundle_rejects_broken(tmp_path, monkeypatch):
     doc = tmp_path / "bundles" / "base" / ".claude" / "facets" / "doc"
     doc.mkdir(parents=True)
     (doc / "PERSONA.md").write_text("x", encoding="utf-8")
-    broken = tmp_path / "bundles" / "types" / "broken" / ".cockpit"
+    broken = tmp_path / "bundles" / "types" / "broken" / ".forgemaster"
     broken.mkdir(parents=True)
     (broken / "bundle.toml").write_text(
         '[bundle]\nversion = "1"\nproject_type = "broken"\nfacets = ["doc"]\ndefault_facet = "nope"\n',
@@ -167,14 +167,14 @@ def test_bundles_wire_corpus_query_in_claude():
     for t in discover_types():
         claude = load_bundle(t)["CLAUDE.md"]
         assert "query(type=tech, scope=" in claude, f"{t} : CLAUDE.md ne câble pas la requête corpus"
-        assert "cockpit mcp wire" in claude, f"{t} : CLAUDE.md ne mentionne pas le câblage MCP"
+        assert "forgemaster mcp wire" in claude, f"{t} : CLAUDE.md ne mentionne pas le câblage MCP"
         assert "scope=browser-game" not in claude, f"{t} : pointeur tech mort (scope=browser-game)"
 
 
 def test_validate_bundle_rejects_malformed_mcp(tmp_path, monkeypatch):
     """Le bloc `[bundle.mcp]` est optionnel mais **typé fail-closed** : `corpus` non-booléen → refus."""
-    import cockpit.provision as prov
-    meta = tmp_path / "bundles" / "base" / ".cockpit"
+    import forgemaster.provision as prov
+    meta = tmp_path / "bundles" / "base" / ".forgemaster"
     meta.mkdir(parents=True)
     (meta / "bundle.toml").write_text(
         '[bundle]\nversion = "1"\nproject_type = "generic"\nfacets = ["doc"]\ndefault_facet = "doc"\n'
@@ -191,10 +191,10 @@ def test_validate_bundle_rejects_malformed_mcp(tmp_path, monkeypatch):
 def test_validate_bundle_rejects_malformed_facet_models(tmp_path, monkeypatch):
     """`[bundle.facet_models]` optionnel mais **fail-closed** : un modèle pour une facette NON déclarée
     (dérive silencieuse) ou une valeur non-str/vide est refusé avant toute copie."""
-    import cockpit.provision as prov
+    import forgemaster.provision as prov
 
     def _seed(models_block: str) -> None:
-        meta = tmp_path / "bundles" / "base" / ".cockpit"
+        meta = tmp_path / "bundles" / "base" / ".forgemaster"
         meta.mkdir(parents=True, exist_ok=True)
         (meta / "bundle.toml").write_text(
             '[bundle]\nversion = "1"\nproject_type = "generic"\nfacets = ["doc"]\ndefault_facet = "doc"\n'
@@ -217,8 +217,8 @@ def test_validate_bundle_rejects_malformed_facet_models(tmp_path, monkeypatch):
 def test_list_valid_types_excludes_broken(tmp_path, monkeypatch):
     """Fail-closed : un overlay cassé (default_facet hors facets) est DÉCOUVERT mais **écarté** de
     `list_valid_types` — on n'offre jamais un type qu'on ne saurait pas semer. Le valide reste offert."""
-    import cockpit.provision as prov
-    meta = tmp_path / "bundles" / "base" / ".cockpit"
+    import forgemaster.provision as prov
+    meta = tmp_path / "bundles" / "base" / ".forgemaster"
     meta.mkdir(parents=True)
     (meta / "bundle.toml").write_text(
         '[bundle]\nversion = "1"\nproject_type = "generic"\nfacets = ["doc"]\ndefault_facet = "doc"\n',
@@ -226,7 +226,7 @@ def test_list_valid_types_excludes_broken(tmp_path, monkeypatch):
     doc = tmp_path / "bundles" / "base" / ".claude" / "facets" / "doc"
     doc.mkdir(parents=True)
     (doc / "PERSONA.md").write_text("x", encoding="utf-8")
-    broken = tmp_path / "bundles" / "types" / "broken" / ".cockpit"
+    broken = tmp_path / "bundles" / "types" / "broken" / ".forgemaster"
     broken.mkdir(parents=True)
     (broken / "bundle.toml").write_text(
         '[bundle]\nversion = "1"\nproject_type = "broken"\nfacets = ["doc"]\ndefault_facet = "nope"\n',
@@ -305,8 +305,8 @@ def test_launch_roadmap_browser_game_overrides_with_design_socle():
 
 
 def test_launch_roadmap_absent_type_is_failsoft(tmp_path, monkeypatch):
-    # un type sans .cockpit/launch-roadmap.yaml → {} (aucun seed), jamais un crash
-    monkeypatch.setattr("cockpit.provision.load_bundle", lambda *_a, **_k: {"CLAUDE.md": "x"})
+    # un type sans .forgemaster/launch-roadmap.yaml → {} (aucun seed), jamais un crash
+    monkeypatch.setattr("forgemaster.provision.load_bundle", lambda *_a, **_k: {"CLAUDE.md": "x"})
     assert load_launch_roadmap("whatever") == {}
 
 
@@ -323,10 +323,10 @@ def test_overlay_adds_facets_and_overrides_whole_file():
     assert ".claude/facets/backend/PERSONA.md" not in base
     # (b) la facette `doc` de base est CONSERVÉE (union, pas remplacement de dossier)
     assert ".claude/facets/doc/PERSONA.md" in svc
-    # (c) SURCHARGE whole-file : docs/architecture.md, .cockpit/bundle.toml ET CLAUDE.md diffèrent de base
+    # (c) SURCHARGE whole-file : docs/architecture.md, .forgemaster/bundle.toml ET CLAUDE.md diffèrent de base
     assert svc["docs/architecture.md"] != base["docs/architecture.md"]
     assert "service / API" in svc["docs/architecture.md"]
-    assert 'project_type = "service-api"' in svc[".cockpit/bundle.toml"]
+    assert 'project_type = "service-api"' in svc[".forgemaster/bundle.toml"]
     assert svc["CLAUDE.md"] != base["CLAUDE.md"]                # CLAUDE.md est spécialisé par type
     assert "ingénieur backend senior Python" in svc["CLAUDE.md"]
     # (d) les skills (contrat commun) restent ceux de base (non dupliqués par l'overlay)
@@ -335,10 +335,10 @@ def test_overlay_adds_facets_and_overrides_whole_file():
 
 @pytest.mark.parametrize("project_type", _OVERLAY_TYPES)
 def test_declared_facets_have_backing_dirs(project_type):
-    """Cohérence : chaque facette déclarée dans `.cockpit/bundle.toml` a un dossier `.claude/facets/<f>/`
+    """Cohérence : chaque facette déclarée dans `.forgemaster/bundle.toml` a un dossier `.claude/facets/<f>/`
     avec PERSONA.md/METHOD.md/settings.local.json dans le bundle composé. `default_facet` ∈ facets."""
     bundle = load_bundle(project_type)
-    manifest = tomllib.loads(bundle[".cockpit/bundle.toml"])["bundle"]
+    manifest = tomllib.loads(bundle[".forgemaster/bundle.toml"])["bundle"]
     assert manifest["project_type"] == project_type
     assert manifest["default_facet"] in manifest["facets"]
     for fac in manifest["facets"]:
@@ -377,7 +377,7 @@ def test_typed_seed_ships_mountable_toolchain(project_type: str, tmp_path: Path)
     Depuis le renversement 2026-07-31, il **garde aussi le piège whole-file** : un overlay de type surcharge
     `bundle.toml` en entier, donc un type qui a un résidu (contrat de RUN, entrées de toolchain) sans porter
     son PROPRE `[bundle.gate]` échoue ici — et pas au premier drain de l'utilisateur."""
-    from cockpit.gate import toolchain
+    from forgemaster.gate import toolchain
     wt = tmp_path / project_type
     for rel, content in load_bundle(project_type).items():
         p = wt / rel
@@ -416,7 +416,7 @@ def test_typed_seed_declared_group_costs_nothing(project_type: str, tmp_path: Pa
     joué DEUX fois, le second en duplicate-module → **faux rouge** sur un projet normal. D'où l'absence
     volontaire de `mypy` dans les `[bundle.gate]` Python : la route en reste propriétaire. Ré-ajouter un step
     à cible layout-dépendante rallume ce test."""
-    from cockpit.gate import toolchain
+    from forgemaster.gate import toolchain
     wt = tmp_path / project_type
     for rel, content in load_bundle(project_type).items():
         p = wt / rel
@@ -451,7 +451,8 @@ def test_typed_seed_declared_group_costs_nothing(project_type: str, tmp_path: Pa
 
 
 def test_site_vitrine_nginx_never_advertises_internal_authority():
-    """**Garde anti-récidive réputation** : le nginx semé sert sur le port INTERNE 8000, publié par le cockpit
+    """**Garde anti-récidive réputation** : le nginx semé sert sur le port INTERNE 8000, publié par le
+    forgemaster
     sur un port dynamique différent. Un 301 de dossier (`/x`→`/x/`, cascade normale d'Astro SSG multi-pages)
     avec `absolute_redirect on` (défaut) fuit `Location: http://127.0.0.1:8000/x/` → le visiteur suit vers un
     port non publié → ERR_CONNECTION_REFUSED (cause racine du 🔴 Tier-1.5 drain avagency 2026-07-29).
@@ -482,7 +483,7 @@ def test_browser_game_seeds_runnable_ts_mono_skeleton():
     assert "tailwindcss" in pkg["devDependencies"]               # UI de gestion dense : Tailwind semé né-avec
     assert "{{game_name}}" in bundle["src/index.ts"]            # jeton de mission laissé (seed verbatim)
     for rel in ("web/App.tsx", "web/index.html"):               # genericité : aucun slug figé côté client
-        assert "cockpit-" not in bundle[rel] and "demo" not in bundle[rel].lower()
+        assert "forgemaster-" not in bundle[rel] and "demo" not in bundle[rel].lower()
 
 
 _BASE_CROSS_FACETS = ("code", "test", "infra", "review")
@@ -493,7 +494,7 @@ def test_generic_exposes_cross_cutting_facets_not_just_doc():
     seulement `doc` : déclarées au bundle.toml, dossiers backing complets, bundle valide. → un generic peut
     dispatcher du code (ou test/infra/review), plus une persona « Doc » pour tout travail."""
     bundle = load_bundle("generic")
-    manifest = tomllib.loads(bundle[".cockpit/bundle.toml"])["bundle"]
+    manifest = tomllib.loads(bundle[".forgemaster/bundle.toml"])["bundle"]
     for fac in ("doc", *_BASE_CROSS_FACETS):
         assert fac in manifest["facets"], f"generic ne déclare pas la facette {fac!r}"
         for leaf in ("PERSONA.md", "METHOD.md", "settings.local.json"):
@@ -504,18 +505,18 @@ def test_generic_exposes_cross_cutting_facets_not_just_doc():
 
 def test_orchestrator_role_facet_carries_loop_verbs_not_write():
     """Le rôle **orchestrateur** (boucle `claude -p` dispatch→gate→merge) est semé dans base : allow-list
-    scopée aux VERBES DU LOOP (`cockpit dispatch/gate/merge/run`), SANS Write/Edit (il pilote, les workers
+    scopée aux VERBES DU LOOP (`forgemaster dispatch/gate/merge/run`), SANS Write/Edit (il pilote, les workers
     écrivent). Rôle, pas facette worker → **non déclaré** au vocab du bundle (pas dispatchable comme feature).
-    Ne widen PAS le terminal humain (`.claude/settings.json`, qui n'a jamais les verbes cockpit)."""
+    Ne widen PAS le terminal humain (`.claude/settings.json`, qui n'a jamais les verbes forgemaster)."""
     bundle = load_bundle("generic")
     allow = json.loads(bundle[".claude/facets/orchestrator/settings.local.json"])["permissions"]["allow"]
-    assert any("cockpit dispatch" in a for a in allow) and any("cockpit merge" in a for a in allow)
-    assert any("cockpit gate" in a for a in allow)
+    assert any("forgemaster dispatch" in a for a in allow) and any("forgemaster merge" in a for a in allow)
+    assert any("forgemaster gate" in a for a in allow)
     assert "Write" not in allow and "Edit" not in allow           # pilote, ne code pas
-    manifest = tomllib.loads(bundle[".cockpit/bundle.toml"])["bundle"]
+    manifest = tomllib.loads(bundle[".forgemaster/bundle.toml"])["bundle"]
     assert "orchestrator" not in manifest["facets"]               # rôle, pas facette worker déclarée
     human = json.loads(bundle[".claude/settings.json"])["permissions"]["allow"]
-    assert not any("cockpit dispatch" in a for a in human)        # terminal humain NON élargi
+    assert not any("forgemaster dispatch" in a for a in human)        # terminal humain NON élargi
 
 
 def test_generic_project_can_resolve_and_activate_code_facet(tmp_path: Path):
@@ -593,7 +594,7 @@ def test_bundle_seeds_per_directory_readmes(project_type: str, tmp_path: Path):
         assert (wt / rel).is_file(), f"{project_type} : README par-dossier absent de l'arbre semé : {rel}"
         body = (wt / rel).read_text(encoding="utf-8")
         assert body.strip(), f"{project_type} : {rel} vide"
-        assert "cockpit-" not in body and "demo" not in body.lower(), (
+        assert "forgemaster-" not in body and "demo" not in body.lower(), (
             f"{project_type} : {rel} porte un slug/exemple figé (le seed doit rester générique)")
 
 
@@ -625,7 +626,7 @@ def _write(p: Path, content: str) -> None:
 
 
 def test_resolve_facet_explicit_then_default_then_fallback(tmp_path: Path):
-    _write(tmp_path / ".cockpit" / "bundle.toml",
+    _write(tmp_path / ".forgemaster" / "bundle.toml",
            '[bundle]\nproject_type = "service-api"\nfacets = ["backend", "doc"]\ndefault_facet = "backend"\n')
     assert facet.resolve_facet(tmp_path, "frontend") == "frontend"   # feature.facet explicite l'emporte
     assert facet.resolve_facet(tmp_path, None) == "backend"          # sinon default_facet du bundle.toml
@@ -635,13 +636,13 @@ def test_resolve_facet_explicit_then_default_then_fallback(tmp_path: Path):
 def test_resolve_facet_model_reads_table_and_is_failsoft(tmp_path: Path):
     """`resolve_facet_model` lit `[bundle.facet_models]` (facette → modèle) ; fail-soft partout : facette
     non déclarée, table absente, manifeste absent ⇒ `None` (le worker garde le modèle par défaut)."""
-    _write(tmp_path / ".cockpit" / "bundle.toml",
+    _write(tmp_path / ".forgemaster" / "bundle.toml",
            '[bundle]\nproject_type = "site-vitrine"\nfacets = ["frontend", "content"]\n'
            'default_facet = "frontend"\n[bundle.facet_models]\ncontent = "sonnet"\n')
     assert facet.resolve_facet_model(tmp_path, "content") == "sonnet"   # facette tiérée
     assert facet.resolve_facet_model(tmp_path, "frontend") is None      # facette omise → défaut moteur
     # table absente / manifeste absent → None (fail-soft)
-    _write(tmp_path / "sans" / ".cockpit" / "bundle.toml",
+    _write(tmp_path / "sans" / ".forgemaster" / "bundle.toml",
            '[bundle]\nproject_type = "x"\nfacets = ["doc"]\ndefault_facet = "doc"\n')
     assert facet.resolve_facet_model(tmp_path / "sans", "doc") is None
     assert facet.resolve_facet_model(tmp_path / "vide", "content") is None
@@ -714,14 +715,14 @@ def test_non_service_type_seeds_no_run_config(project_type):
 @pytest.mark.parametrize("project_type", _SERVICE_TYPES)
 def test_seeded_compose_builds_from_repo_and_fails_loud_on_missing_port(project_type):
     """Le compose semé est un YAML valide qui BUILD depuis le repo (`build:`, pas `image:` en dur) et publie
-    le port INJECTÉ avec interpolation fail-loud `${COCKPIT_PORT:?...}` — jamais un port figé, jamais de
-    faux-vert si le cockpit n'injecte pas le port."""
+    le port INJECTÉ avec interpolation fail-loud `${FORGEMASTER_PORT:?...}` — jamais un port figé, jamais de
+    faux-vert si le forgemaster n'injecte pas le port."""
     compose_text = load_bundle(project_type)["compose.yaml"]
     doc = yaml.safe_load(compose_text)
     web = doc["services"]["web"]
     assert web["build"] == "."                               # build depuis l'arbre, Dockerfile canonique
     assert "image" not in web                                # jamais une image figée (≠ smoke P2)
-    assert "${COCKPIT_PORT:?" in compose_text                # interpolation fail-loud (doc compose 0103)
+    assert "${FORGEMASTER_PORT:?" in compose_text                # interpolation fail-loud (doc compose 0103)
     assert ":8000" in "".join(web["ports"])                  # port interne du contrat (stub écoute 8000)
 
 
@@ -744,5 +745,5 @@ def test_seeded_run_config_is_generic_no_hardcoded_slug(project_type):
     dur (le payload est réutilisable à l'identique pour tout projet du type)."""
     bundle = load_bundle(project_type)
     for f in ("compose.yaml", "Dockerfile", _APP_STUB[project_type]):
-        assert "cockpit-" not in bundle[f]                   # pas de compose-project/namespace figé
+        assert "forgemaster-" not in bundle[f]                   # pas de compose-project/namespace figé
         assert "demo" not in bundle[f].lower()               # aucun slug d'exemple figé

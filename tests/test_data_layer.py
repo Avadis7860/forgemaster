@@ -7,11 +7,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from cockpit.config import Settings
-from cockpit.core import run
-from cockpit.db import store
-from cockpit.projects import registry
-from cockpit.roadmap import model
+from forgemaster.config import Settings
+from forgemaster.core import run
+from forgemaster.db import store
+from forgemaster.projects import registry
+from forgemaster.roadmap import model
 
 _GIT_ENV = {"PATH": os.environ.get("PATH", ""),
             "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e.invalid",
@@ -103,7 +103,7 @@ def test_create_project_adopts_real_repo_content(ctx, tmp_path):
     assert p["source_url"] == str(up) and p["kind"] == "tool"
     assert registry.get_project(conn, "adopted")["source_url"] == str(up)
     sot = registry.sot_path_for(settings, "adopted")
-    # le SoT porte le VRAI historique cloné (≠ seed « root: cockpit seed »), dev+main présents
+    # le SoT porte le VRAI historique cloné (≠ seed « root: forgemaster seed »), dev+main présents
     names = run.run(["git", "-C", str(sot), "ls-tree", "-r", "--name-only", "dev"]).stdout.split()
     assert "src/app.py" in names and "README.md" in names
     assert "CLAUDE.md" not in names            # pas de toolkit semé — c'est un clone, pas un seed
@@ -145,7 +145,7 @@ def test_ensure_columns_migrates_projects_v2_to_v3_in_place(tmp_path: Path):
     les lignes existantes prennent le défaut littéral `kind='project'` (ALTER), owner NULL."""
     import sqlite3
 
-    from cockpit.db import schema
+    from forgemaster.db import schema
     conn = sqlite3.connect(tmp_path / "old.db")
     conn.row_factory = sqlite3.Row
     # table `projects` façon v2 (aucune colonne kind/owner)
@@ -170,7 +170,7 @@ def test_ensure_columns_migrates_features_v9_to_v10_in_place(tmp_path: Path):
     les lignes existantes prennent le défaut littéral `'[]'` (ALTER exige un défaut littéral, NOT NULL)."""
     import sqlite3
 
-    from cockpit.db import schema
+    from forgemaster.db import schema
     conn = sqlite3.connect(tmp_path / "old.db")
     conn.row_factory = sqlite3.Row
     # table `features` façon v9 (facet/blueprint présents, PAS de depends_on)
@@ -226,7 +226,7 @@ def test_ensure_columns_migrates_projects_v3_to_v4_in_place(tmp_path: Path):
     ajoute `credential_ref`, NULL pour l'existant (aucun défaut → pas de token lié rétroactivement)."""
     import sqlite3
 
-    from cockpit.db import schema
+    from forgemaster.db import schema
     conn = sqlite3.connect(tmp_path / "v3.db")
     conn.row_factory = sqlite3.Row
     conn.execute("CREATE TABLE projects (id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, name TEXT NOT "
@@ -368,7 +368,7 @@ def test_create_typed_project_seeds_overlay_and_persists_type(ctx):
     names = run.run(["git", "-C", str(sot), "ls-tree", "-r", "--name-only", "dev"]).stdout.split()
     # le SoT porte la couche base ET l'overlay du type (facette backend + bundle.toml typé)
     assert ".claude/facets/backend/PERSONA.md" in names
-    assert ".cockpit/bundle.toml" in names
+    assert ".forgemaster/bundle.toml" in names
     assert "CLAUDE.md" in names                                                  # base conservée
     # subtilité .gitignore RÉELLE : `.claude/*.local.json` ne traverse pas `/` → la SOURCE nichée de facette
     # est committée (seule la copie activée `.claude/settings.local.json` sera ignorée au dispatch).
@@ -378,7 +378,7 @@ def test_create_typed_project_seeds_overlay_and_persists_type(ctx):
 
 
 def test_create_project_stamps_provenance_in_sot(ctx):
-    """P3 : tout SoT semé porte un tampon `.cockpit/provenance.toml` = de quel `bundle@version` il DÉRIVE,
+    """P3 : tout SoT semé porte un tampon `.forgemaster/provenance.toml` = de quel `bundle@version` il DÉRIVE,
     et quand (SoT-and-derive → dérive détectable, re-sync opt-in). Un typé stampe son type ; le générique
     stampe `generic`. `created_at` cohérent avec la row DB (même horodatage)."""
     settings, conn = ctx
@@ -386,16 +386,16 @@ def test_create_project_stamps_provenance_in_sot(ctx):
     p = registry.create_project(conn, settings, slug="void-runner", project_type="browser-game")
     sot = registry.sot_path_for(settings, "void-runner")
     names = run.run(["git", "-C", str(sot), "ls-tree", "-r", "--name-only", "dev"]).stdout.split()
-    assert ".cockpit/provenance.toml" in names
+    assert ".forgemaster/provenance.toml" in names
     stamp = tomllib.loads(
-        run.run(["git", "-C", str(sot), "show", "dev:.cockpit/provenance.toml"]).stdout)["provenance"]
+        run.run(["git", "-C", str(sot), "show", "dev:.forgemaster/provenance.toml"]).stdout)["provenance"]
     assert stamp["bundle"] == "browser-game"
     assert stamp["version"] == "1"
     assert stamp["created_at"] == p["created_at"]                 # tampon SoT ≡ row DB (même horodatage)
     # le générique stampe aussi (bundle = generic) — la provenance est universelle, pas réservée aux typés
     registry.create_project(conn, settings, slug="plain")
     gen = run.run(["git", "-C", str(registry.sot_path_for(settings, "plain")),
-                   "show", "dev:.cockpit/provenance.toml"]).stdout
+                   "show", "dev:.forgemaster/provenance.toml"]).stdout
     assert tomllib.loads(gen)["provenance"]["bundle"] == "generic"
 
 
@@ -404,7 +404,7 @@ def test_create_project_does_not_re_derive_at_seed(ctx, monkeypatch):
     seed. On neutralise le générateur (derive_type/apply_derivation → boom) : la création d'un projet du type
     dérivé doit quand même réussir (elle ne lit que le manifeste, pas le moteur)."""
     settings, conn = ctx
-    from cockpit.provision import derive
+    from forgemaster.provision import derive
 
     def _boom(*a, **k):
         raise AssertionError("create_project ne doit PAS re-dériver au seed")
@@ -562,7 +562,7 @@ def test_ensure_columns_migrates_v5_to_v6_in_place(tmp_path: Path):
     littéral ALTER), facet/acceptance NULL (nullables, aucun défaut)."""
     import sqlite3
 
-    from cockpit.db import schema
+    from forgemaster.db import schema
     conn = sqlite3.connect(tmp_path / "v5.db")
     conn.row_factory = sqlite3.Row
     conn.execute("CREATE TABLE projects (id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, name TEXT NOT "
@@ -598,7 +598,7 @@ def test_migrate_v8_drops_project_type_check(tmp_path: Path):
     désormais accepté côté DB. Gardé (no-op sans CHECK) + idempotent au niveau du gate de migration."""
     import sqlite3
 
-    from cockpit.db import schema, store
+    from forgemaster.db import schema, store
     conn = store.connect(tmp_path / "v7.db")
     conn.executescript(
         "CREATE TABLE projects ("
@@ -639,7 +639,7 @@ def test_migrate_v15_adds_rate_limited_to_dispatch_status_check(tmp_path: Path):
     valable. SQLite ne sait pas ALTER un CHECK → rebuild (patron v8). Gardé + idempotent."""
     import sqlite3
 
-    from cockpit.db import schema, store
+    from forgemaster.db import schema, store
     conn = store.connect(tmp_path / "v14.db")
     conn.execute("PRAGMA foreign_keys = OFF")   # ce test cible le CHECK de `status`, pas la FK task_id
     conn.executescript(
@@ -683,7 +683,7 @@ def test_migrate_v16_adds_interrupted_to_dispatch_status_check(tmp_path: Path):
     `rate_limited` (v15) reste valable. SQLite n'ALTER pas un CHECK → rebuild (patron v8). Idempotent."""
     import sqlite3
 
-    from cockpit.db import schema, store
+    from forgemaster.db import schema, store
     conn = store.connect(tmp_path / "v15.db")
     conn.execute("PRAGMA foreign_keys = OFF")   # ce test cible le CHECK de `status`, pas la FK task_id
     conn.executescript(
@@ -727,7 +727,7 @@ def test_ensure_columns_migrates_v8_to_v9_in_place(tmp_path: Path):
     `blueprint` (nullable, aucun défaut → NULL pour l'existant). Additif, idempotent (2ᵉ appel no-op)."""
     import sqlite3
 
-    from cockpit.db import schema
+    from forgemaster.db import schema
     conn = sqlite3.connect(tmp_path / "v8.db")
     conn.row_factory = sqlite3.Row
     conn.execute("CREATE TABLE features (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, slug TEXT NOT "
@@ -752,7 +752,7 @@ def test_ensure_columns_migrates_v10_to_v11_in_place(tmp_path: Path):
     pour l'existant). Additif, idempotent (2ᵉ appel no-op)."""
     import sqlite3
 
-    from cockpit.db import schema
+    from forgemaster.db import schema
     conn = sqlite3.connect(tmp_path / "v10.db")
     conn.row_factory = sqlite3.Row
     conn.execute("CREATE TABLE dispatch_jobs (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, worktree_path "
@@ -776,7 +776,7 @@ def test_ensure_columns_migrates_v10_to_v11_in_place(tmp_path: Path):
 def test_migration_v10_to_v11_creates_trace_tables_in_place(tmp_path: Path):
     """Une base v10 (sans `non_runs`/`gate_verdicts`) migre en place : `store.migrate` (via `create_schema` +
     `CREATE IF NOT EXISTS`) crée les tables neuves et pose la `SCHEMA_VERSION` courante (sans colonnes)."""
-    from cockpit.db import schema
+    from forgemaster.db import schema
     conn = store.connect(tmp_path / "v10.db")
     conn.execute("CREATE TABLE projects (id TEXT PRIMARY KEY, slug TEXT NOT NULL UNIQUE, name TEXT NOT "
                  "NULL, sot_path TEXT NOT NULL, backend TEXT NOT NULL DEFAULT 'internal', "
@@ -798,7 +798,7 @@ def test_ensure_columns_migrates_v11_to_v12_adds_task_mode_in_place(tmp_path: Pa
     'headless' → les tasks existantes, toutes des runs headless, prennent 'headless'). Additif, idempotent."""
     import sqlite3
 
-    from cockpit.db import schema
+    from forgemaster.db import schema
     conn = sqlite3.connect(tmp_path / "v11.db")
     conn.row_factory = sqlite3.Row
     conn.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, feature_id TEXT NOT NULL, slug TEXT NOT NULL, "
@@ -824,7 +824,7 @@ def test_migrate_v16_to_v17_adds_alerts_table_in_place(tmp_path: Path):
     `ux_alerts_open` posé, migration idempotente."""
     import sqlite3
 
-    from cockpit.db import schema, store
+    from forgemaster.db import schema, store
     conn = store.connect(tmp_path / "v16.db")
     schema.create_schema(conn)                          # base à jour…
     conn.execute("DROP INDEX ux_alerts_open")
@@ -859,7 +859,7 @@ def test_migrate_v17_to_v18_adds_merge_outcomes_table_in_place(tmp_path: Path):
     `ux_merge_outcome` posé, migration idempotente."""
     import sqlite3
 
-    from cockpit.db import schema, store
+    from forgemaster.db import schema, store
     conn = store.connect(tmp_path / "v17.db")
     schema.create_schema(conn)                          # base à jour…
     conn.execute("DROP INDEX ux_merge_outcome")
@@ -895,7 +895,7 @@ def test_migrate_v18_to_v19_adds_review_findings_to_alerts_kind_check(tmp_path: 
     car `ux_alerts_open` est la cible de l'`ON CONFLICT` d'`emit_alert` (sans lui l'UPSERT casserait)."""
     import sqlite3
 
-    from cockpit.db import alerts, schema, store
+    from forgemaster.db import alerts, schema, store
     conn = store.connect(tmp_path / "v18.db")
     conn.executescript(
         "CREATE TABLE alerts ("

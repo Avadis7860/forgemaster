@@ -14,7 +14,7 @@ export function Landing() {
       <div className="mx-auto max-w-5xl p-8">
         <Card className="space-y-4 p-6">
           <div className="space-y-1">
-            <h2 className="text-lg font-semibold text-fg">Bienvenue dans ton cockpit</h2>
+            <h2 className="text-lg font-semibold text-fg">Bienvenue dans ton forgemaster</h2>
             <p className="text-sm text-muted">
               Ton instance est neuve. Configure-la en quelques étapes — coffre de secrets, premier projet,
               miroir GitHub optionnel — puis lance la forge : projet → roadmap → travail (dispatch → validation → merge).
@@ -32,7 +32,7 @@ export function Landing() {
   // sobre marque l'espace vide sans réintroduire le « Sélectionne un projet » retiré.
   return (
     <div className="flex h-full items-center justify-center p-8">
-      <p className="text-sm font-medium tracking-tight text-faint">cockpit</p>
+      <p className="text-sm font-medium tracking-tight text-faint">forgemaster</p>
     </div>
   )
 }

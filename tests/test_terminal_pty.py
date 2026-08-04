@@ -7,27 +7,27 @@ import asyncio
 import json
 import os
 
-from cockpit.terminal import pty
-from cockpit.terminal.registry import PtySessionRegistry
+from forgemaster.terminal import pty
+from forgemaster.terminal.registry import PtySessionRegistry
 
 
 def test_local_shell_argv_is_login_bash():
     assert pty.local_shell_argv() == ["/bin/bash", "-l"]
 
 
-def test_interview_argv_execs_cockpit_interview_in_login_shell():
-    """L'interview est une session PTY DÉDIÉE dont le process EST `cockpit interview` : un login shell qui
+def test_interview_argv_execs_forgemaster_interview_in_login_shell():
+    """L'interview est une session PTY DÉDIÉE dont le process EST `forgemaster interview` : un login shell qui
     `exec`-remplace vers la commande (PATH via `-l`, aucun prompt où une frappe se ré-router, EOF propre à la
     sortie). Le projet est shell-quoté (défense en profondeur, même si les slugs sont kebab-case)."""
-    assert pty.interview_argv("void-runner") == ["/bin/bash", "-lc", "exec cockpit interview void-runner"]
+    assert pty.interview_argv("void-runner") == ["/bin/bash", "-lc", "exec forgemaster interview void-runner"]
     # slug hypothétique à métacaractère → quoté, jamais d'injection shell
-    assert pty.interview_argv("a b;rm").count("exec cockpit interview 'a b;rm'") == 1
+    assert pty.interview_argv("a b;rm").count("exec forgemaster interview 'a b;rm'") == 1
 
 
 def test_shell_env_forces_a_color_terminal():
     """Un service systemd n'a pas de TERM → le PTY doit l'INJECTER, sinon bash/ls/git rendent monochrome.
     xterm.js est un terminal xterm-256color. Le PATH du login shell, lui, N'est PAS posé ici (bash -l le
-    ré-dérive via /etc/profile + /etc/profile.d/cockpit-path.sh installé par provision-ct.sh)."""
+    ré-dérive via /etc/profile + /etc/profile.d/forgemaster-path.sh installé par provision-ct.sh)."""
     env = pty.shell_env()
     assert env["TERM"] == "xterm-256color"
     assert env["COLORTERM"] == "truecolor"
@@ -43,10 +43,10 @@ def test_parse_control_resize_only():
 
 
 def test_classify_exit_maps_code_to_reason():
-    """`bash -lc 'exec cockpit …'` : exec échoué (`cockpit` introuvable/non exécutable) → 127/126 =
+    """`bash -lc 'exec forgemaster …'` : exec échoué (`forgemaster` introuvable/non exécutable) → 127/126 =
     démarrage manqué ; 0 = sortie propre ; tout autre code (ou None = tué sans code) = crash en cours."""
     assert pty.classify_exit(0) == "clean"
-    assert pty.classify_exit(127) == "failed_start"   # command not found (cockpit hors PATH de login)
+    assert pty.classify_exit(127) == "failed_start"   # command not found (forgemaster hors PATH de login)
     assert pty.classify_exit(126) == "failed_start"   # trouvé mais non exécutable
     assert pty.classify_exit(1) == "crash"
     assert pty.classify_exit(137) == "crash"          # SIGKILL (128+9)

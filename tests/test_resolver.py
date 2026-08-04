@@ -1,6 +1,6 @@
 """Tests du résolveur DAG — désormais un **adaptateur mince sur `taskmap.core`** (dé-fork P1). La surface
-publique (`classify`/`eff_prio`/`resolve_next`/`PRIO`) et le **contrat JSON cockpit** (états + blockers en
-vocab cockpit) sont préservés byte-identiques ; seul le moteur sous-jacent a changé. On vérifie la
+publique (`classify`/`eff_prio`/`resolve_next`/`PRIO`) et le **contrat JSON forgemaster** (états + blockers en
+vocab forgemaster) sont préservés byte-identiques ; seul le moteur sous-jacent a changé. On vérifie la
 classification, le cycle/dangling, `eff_prio` transitif, le NEXT, et la **re-traduction** des blockers
 (statut original conservé malgré la projection `in_progress`→`active` côté taskmap)."""
 from __future__ import annotations
@@ -8,10 +8,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from cockpit.config import Settings
-from cockpit.db import store
-from cockpit.projects import registry
-from cockpit.roadmap import model, resolver
+from forgemaster.config import Settings
+from forgemaster.db import store
+from forgemaster.projects import registry
+from forgemaster.roadmap import model, resolver
 
 
 def _t(slug: str, *, status: str = "todo", deps=(), prio: str = "P1", created: str = "2026-01-01") -> dict:
@@ -42,12 +42,13 @@ def test_classify_dangling_is_error_and_cycle_is_cycle():
 
 
 def test_blocker_preserves_original_status_for_in_progress_dep():
-    # Une dép `in_progress` → BLOCKED_DEPS ; le blocker porte le statut ORIGINAL cockpit (« in_progress »),
+    # Une dép `in_progress` → BLOCKED_DEPS ; le blocker porte le statut ORIGINAL forgemaster (« in_progress
+    # »),
     # PAS le vocab taskmap (« active ») vers lequel l'adaptateur projette pour la décision d'état.
     idx = _index(_t("a", status="in_progress"), _t("b", deps=["a"]))
     c = resolver.classify(idx)
     assert c["b"]["state"] == "BLOCKED_DEPS"
-    assert c["b"]["blockers"] == ["a (in_progress)"]   # re-traduction : contrat cockpit préservé
+    assert c["b"]["blockers"] == ["a (in_progress)"]   # re-traduction : contrat forgemaster préservé
 
 
 def test_classify_terminal_states_take_precedence():

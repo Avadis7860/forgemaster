@@ -6,7 +6,7 @@ export function wsUrl(path: string): string {
 }
 
 /** Flavor de session PTY d'un projet. `shell` = login `bash -l` (surface `claude login`) ; `interview` =
- *  session dédiée dont le process EST `cockpit interview` (routes serveur distinctes, clés de registre
+ *  session dédiée dont le process EST `forgemaster interview` (routes serveur distinctes, clés de registre
  *  distinctes → sessions indépendantes). */
 export type PtySession = 'shell' | 'interview'
 
@@ -18,10 +18,10 @@ export function ptyPath(project: string, session: PtySession): string {
 }
 
 /** Sigil du token dans `Sec-WebSocket-Protocol` (miroir de `daemon.wsguard.TOKEN_SUBPROTOCOL_PREFIX`). */
-export const TOKEN_SUBPROTOCOL_PREFIX = 'cockpit.token.'
+export const TOKEN_SUBPROTOCOL_PREFIX = 'forgemaster.token.'
 
 /** Sous-protocoles WS portant le token par-instance (garde CSWSH serveur) — PUR (testable sans DOM). Le
- *  navigateur envoie `Sec-WebSocket-Protocol: cockpit.token.<token>` ; le serveur le vérifie AVANT `accept`
+ *  navigateur envoie `Sec-WebSocket-Protocol: forgemaster.token.<token>` ; le serveur le vérifie AVANT `accept`
  *  et l'echo. `undefined` si le token n'est pas encore chargé → les consommateurs n'ouvrent PAS le WS tant
  *  qu'il manque (sinon le handshake serait refusé 1008). */
 export function tokenProtocols(token: string | undefined): string[] | undefined {

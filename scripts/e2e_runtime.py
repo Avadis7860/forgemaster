@@ -11,14 +11,17 @@ via la **vraie surface HTTP** du daemon (les routes que l'UI appelle) :
   Étage 3 — Non-pollution (rejeu e2e de P4) : le conteneur de A ne voit ni le **secret du daemon** ni le
             **fichier privé** de B ; le résolveur de secrets de A refuse le `credential_ref` de B (ACL).
   Étage 4 — Feature-verified (lié au SHA de HEAD) : l'onglet Runtime rend ses **marqueurs FR** dans le DOM
-            (issus d'un VRAI deploy, pas d'un seed) + **screenshot** ; verdict écrit, ancré au HEAD cockpit.
+            (issus d'un VRAI deploy, pas d'un seed) + **screenshot** ; verdict écrit, ancré au HEAD
+            forgemaster.
 
-**Rejouable** : `COCKPIT_HOME` jetable, teardown en `finally` (down des 4 déploiements + rm du home + arrêt du
+**Rejouable** : `FORGEMASTER_HOME` jetable, teardown en `finally` (down des 4 déploiements + rm du home +
+arrêt du
 daemon ; aucun conteneur/home résiduel). **Hors gate natif** (podman requis, lent) — comme les smokes P2-P5.
 
 Prérequis : lancer sous le venv du repo (`.venv/bin/python scripts/e2e_runtime.py`), `podman` (ou `docker`)
-rootless dispo, `web/dist` buildé (`cockpit setup` / `npm run build`), et `node` (nvm 22) dans le PATH pour le
-runner Playwright de l'étage 4. Le runner est celui du vault (override `COCKPIT_UI_RUNNER`).
+rootless dispo, `web/dist` buildé (`forgemaster setup` / `npm run build`), et `node` (nvm 22) dans le PATH
+pour le
+runner Playwright de l'étage 4. Le runner est celui du vault (override `FORGEMASTER_UI_RUNNER`).
 
 Usage : .venv/bin/python scripts/e2e_runtime.py [--serve-port 8788] [--fv-out DIR] [--keep]
 """
@@ -39,14 +42,14 @@ import uuid
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-VENV_COCKPIT = REPO / ".venv" / "bin" / "cockpit"
+VENV_FORGEMASTER = REPO / ".venv" / "bin" / "forgemaster"
 WEB_DIST = REPO / "web" / "dist"
 DEFAULT_RUNNER = Path(os.environ.get(
-    "COCKPIT_UI_RUNNER",
+    "FORGEMASTER_UI_RUNNER",
     "/home/avadis/Documents/Vault-V1/.claude/skills/playwright/render_check.js",
 ))
 # Moteur de conteneurs = 1er token de la CLI compose (podman|docker) — pour les asserts `ps`/`exec` DIRECTS.
-ENGINE = os.environ.get("COCKPIT_COMPOSE_CMD", "podman compose").split()[0]
+ENGINE = os.environ.get("FORGEMASTER_COMPOSE_CMD", "podman compose").split()[0]
 
 PROJ_A = "demo-a"                                          # slugs FICTIFS (jamais un vrai basename)
 PROJ_B = "demo-b"
@@ -158,7 +161,7 @@ def commit_private_file(projects_root: Path, slug: str) -> None:
     sot = projects_root / slug / "sot.git"
     if not sot.exists():                                  # layout alternatif éventuel
         sot = projects_root / slug / "sot"
-    ident = ["-c", "user.name=e2e", "-c", "user.email=e2e@cockpit.local"]
+    ident = ["-c", "user.name=e2e", "-c", "user.email=e2e@forgemaster.local"]
     wt = projects_root / slug / "_e2e_wt"
     r = _run(["git", "-C", str(sot), *ident, "worktree", "add", "-q", str(wt), "dev"])
     if r.returncode != 0:
@@ -176,7 +179,8 @@ def head_sha() -> str:
 
 def feature_verify(base_port: int, project: str, runner: Path, out_dir: Path) -> dict:
     """Runner Playwright goto-only sur `/{project}/runtime` → asserte les marqueurs FR rendus + screenshot ;
-    écrit un verdict **ancré au HEAD cockpit** (frais ssi `reviewed_sha == HEAD`). Limite honnête assumée :
+    écrit un verdict **ancré au HEAD forgemaster** (frais ssi `reviewed_sha == HEAD`). Limite honnête assumée
+    :
     la santé LIVE (RefreshButton → GET .../status) n'est pas cliquée (runner goto-only) ; le screenshot
     capture l'état **DB persisté** issu d'un VRAI deploy (donc genuine), et le reconcile live est couvert à
     part par l'étage 1 (l'API `status` renvoie `running` depuis un `ps` réel). Les 2 moitiés se couvrent."""
@@ -209,18 +213,19 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
 
     if not (WEB_DIST / "index.html").exists():
-        raise SystemExit(f"web/dist absent : {WEB_DIST}/index.html — build (cockpit setup / npm run build)")
+        raise SystemExit(f"web/dist absent : {WEB_DIST}/index.html — build (forgemaster setup / npm run "
+        f"build)")
     if not Path(a.runner).exists():
-        raise SystemExit(f"runner playwright introuvable : {a.runner} (override COCKPIT_UI_RUNNER)")
+        raise SystemExit(f"runner playwright introuvable : {a.runner} (override FORGEMASTER_UI_RUNNER)")
 
-    home = Path(tempfile.mkdtemp(prefix="cockpit-e2e-"))
-    fv_out = Path(a.fv_out) if a.fv_out else Path(tempfile.mkdtemp(prefix="cockpit-e2e-fv-"))
+    home = Path(tempfile.mkdtemp(prefix="forgemaster-e2e-"))
+    fv_out = Path(a.fv_out) if a.fv_out else Path(tempfile.mkdtemp(prefix="forgemaster-e2e-fv-"))
     projects_root = home / "projects"
     base = f"http://127.0.0.1:{a.serve_port}"
     # Env du daemon : porte le SECRET SENTINELLE (DOIT être filtré par l'allowlist P4 avant tout conteneur).
-    env = {**os.environ, "COCKPIT_HOME": str(home / "home"),
-           "COCKPIT_PROJECTS_ROOT": str(projects_root),
-           "COCKPIT_WEB_DIST": str(WEB_DIST), SENTINEL_ENV: SENTINEL_VAL}
+    env = {**os.environ, "FORGEMASTER_HOME": str(home / "home"),
+           "FORGEMASTER_PROJECTS_ROOT": str(projects_root),
+           "FORGEMASTER_WEB_DIST": str(WEB_DIST), SENTINEL_ENV: SENTINEL_VAL}
     deployed: list[tuple[str, str]] = []
     proc: subprocess.Popen | None = None
     home.mkdir(parents=True, exist_ok=True)
@@ -232,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         with daemon_log.open("w") as logf:
             proc = subprocess.Popen(
-                [str(VENV_COCKPIT), "serve", "--host", "127.0.0.1", "--port", str(a.serve_port)],
+                [str(VENV_FORGEMASTER), "serve", "--host", "127.0.0.1", "--port", str(a.serve_port)],
                 env=env, stdout=logf, stderr=subprocess.STDOUT, text=True)
         if not wait_health(a.serve_port):
             raise Fail(f"le daemon n'a pas démarré sur :{a.serve_port}\n{daemon_tail()}")
@@ -261,8 +266,9 @@ def main(argv: list[str] | None = None) -> int:
         a_main = get_json(f"{base}/api/projects/{PROJ_A}/deployments/main/status")["deployment"]
         a_dev = get_json(f"{base}/api/projects/{PROJ_A}/deployments/dev/status")["deployment"]
         check(a_main["port"] != a_dev["port"], f"2 ports distincts (main={a_main['port']} dev={a_dev['port']})")  # noqa: E501
-        check(len(containers("cockpit-demo-a-main")) == 1
-              and len(containers("cockpit-demo-a-dev")) == 1, "2 compose-projects isolés (1 conteneur/br)")
+        check(len(containers("forgemaster-demo-a-main")) == 1
+              and len(containers("forgemaster-demo-a-dev")) == 1, "2 compose-projects isolés (1 "
+              "conteneur/br)")
         logs = get_json(f"{base}/api/projects/{PROJ_A}/deployments/dev/logs?tail=100")["lines"]
         check(len(logs) >= 1, f"logs réels (dev) — {len(logs)} ligne(s) après trafic")
 
@@ -272,8 +278,8 @@ def main(argv: list[str] | None = None) -> int:
             dep = deploy_up(base, PROJ_B, branch)
             deployed.append((PROJ_B, branch))
             check(dep["status"] == "running", f"{PROJ_B}/{branch} deploy → running (pendant que {PROJ_A} tourne)")  # noqa: E501
-        names = [f"cockpit-{PROJ_A}-main", f"cockpit-{PROJ_A}-dev",
-                 f"cockpit-{PROJ_B}-main", f"cockpit-{PROJ_B}-dev"]
+        names = [f"forgemaster-{PROJ_A}-main", f"forgemaster-{PROJ_A}-dev",
+                 f"forgemaster-{PROJ_B}-main", f"forgemaster-{PROJ_B}-dev"]
         check(all(len(containers(n)) == 1 for n in names), "4 compose-projects vivants simultanément")
         ports = []
         for slug in (PROJ_A, PROJ_B):
@@ -286,8 +292,9 @@ def main(argv: list[str] | None = None) -> int:
 
         # ---- Étage 3 : non-pollution prouvée (rejeu e2e de P4) -------------------------------------------
         print("\n[Étage 3] non-pollution (rejeu e2e P4)", flush=True)
-        b_dev_cid = cid_of("cockpit-demo-b-dev")          # son 1er build a embarqué le fichier privé (supra)
-        a_dev_cid = cid_of("cockpit-demo-a-dev")
+        # son 1er build a embarqué le fichier privé (supra)
+        b_dev_cid = cid_of("forgemaster-demo-b-dev")
+        a_dev_cid = cid_of("forgemaster-demo-a-dev")
         r = exec_in(b_dev_cid, "cat", f"/app/{PRIVATE_B}")
         check(r.returncode == 0 and PRIVATE_B_BODY.strip() in r.stdout,
               f"le conteneur de B contient bien SON fichier privé (/app/{PRIVATE_B})")
@@ -298,10 +305,10 @@ def main(argv: list[str] | None = None) -> int:
               "le conteneur de A ne voit PAS le secret du daemon (allowlist d'env P4)")
         # ACL control-plane : le résolveur de secrets de A refuse le credential_ref de B (P4, in-process).
         sys.path.insert(0, str(REPO / "src"))
-        from cockpit.config import Settings
-        from cockpit.db import store
-        from cockpit.projects import registry
-        from cockpit.secrets import scoped_cred_resolver
+        from forgemaster.config import Settings
+        from forgemaster.db import store
+        from forgemaster.projects import registry
+        from forgemaster.secrets import scoped_cred_resolver
         settings = Settings.resolve(home=home / "home", projects_root=projects_root)
         conn = store.open_db(settings)
         try:

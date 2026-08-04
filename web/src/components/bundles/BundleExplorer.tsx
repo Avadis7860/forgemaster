@@ -117,7 +117,7 @@ function SectionCard({ children }: { children: React.ReactNode }) {
       />
       <p className="-mt-2 text-sm text-muted">
         Parcours l'intérieur de chaque bundle vendoré — l'arbre et le corps des fichiers, au-delà des
-        métadonnées. Pour juger ce que le cockpit embarque avant de le distribuer.
+        métadonnées. Pour juger ce que le forgemaster embarque avant de le distribuer.
       </p>
       {children}
     </Card>

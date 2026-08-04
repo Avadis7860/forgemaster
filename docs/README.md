@@ -1,10 +1,10 @@
-# docs/ — la spec du cockpit (à lire AVANT de coder)
+# docs/ — la spec du forgemaster (à lire AVANT de coder)
 
 | Fichier | Rôle |
 |---|---|
 | [`roadmap.md`](roadmap.md) | **Roadmap produit** : vision (cœur léger + extensions), chantiers V1 livrés, décisions de conception verrouillées, horizons ouverts. |
-| [`install.md`](install.md) | **Installer le cockpit** (self-hosted) : wheel packagé (aucun Node) ou sources, wizard 1er démarrage, service systemd, coffre de secrets. |
-| [`architecture.md`](architecture.md) | Les couches (config → core/db → git/projects/roadmap/dispatch/gate → daemon) + « ce que cockpit n'est PAS ». |
+| [`install.md`](install.md) | **Installer le forgemaster** (self-hosted) : wheel packagé (aucun Node) ou sources, wizard 1er démarrage, service systemd, coffre de secrets. |
+| [`architecture.md`](architecture.md) | Les couches (config → core/db → git/projects/roadmap/dispatch/gate → daemon) + « ce que forgemaster n'est PAS ». |
 | [`schema-contract.md`](schema-contract.md) | Les 3 schémas **figés** : SQLite, `roadmap.yaml` in-repo, API HTTP + politique de versionnage. |
 | [`weak-points.md`](weak-points.md) | Le **registre de refactor** : dettes du legacy refusées → refactor décidé (la spec du portage, `#N`). |
 | [`multi-os.md`](multi-os.md) | Portabilité WSL-first / Debian / macOS + checklist. |
@@ -17,11 +17,11 @@
 - `task-next-resolver-dag` — DAG `phases:`+`depends_on`, dérivé en un point, classification figée.
 - `sot-local-worker-vs-clone-split` — worktree attaché au SoT partagé ; flock sur le `.git`.
 - `feature-verified-gate` — gate déterministe fail-closed, ancré SHA, jamais blanchi, N/A-safe.
-- `forge-code-merge-sot-local` — cockpit EST la forge ; SoT local ; reset=respawn ; miroir best-effort.
+- `forge-code-merge-sot-local` — forgemaster EST la forge ; SoT local ; reset=respawn ; miroir best-effort.
 - `tier0-native-toolchain-gate` — Tier-0 natif (front `npm run gate` + back ruff/mypy/pytest), non-overridable.
 - `review-readiness-gate` — **quand** dispatcher le reviewer Tier-1 : readiness (feature finie) → dispatch fail-closed → verdict SHA-bound ; gate à la source (pas de filtre a posteriori), générique par type.
-- `web-cockpit-spa` — SPA embarquée (Vite/TanStack), servie Node-less depuis le wheel.
-- `runtime-compose-backend` — moteur de run compose ; namespace `cockpit-<slug>-<branch>` = isolation ; pool deploy 5250-5329.
+- `web-forgemaster-spa` — SPA embarquée (Vite/TanStack), servie Node-less depuis le wheel.
+- `runtime-compose-backend` — moteur de run compose ; namespace `forgemaster-<slug>-<branch>` = isolation ; pool deploy 5250-5329.
 - `runtime-seed-deploy-config` — config de run semée par type (compose+Dockerfile+stub) ; projet frais déployable sans édition ; non-service refusé.
 - `runtime-antipollution` — env compose en allowlist (0 secret daemon) ; ACL secrets par projet ; FS/réseau/ports isolés vérifiés.
 - `runtime-observability` — santé live (reconcile séparé du GET pur) ; logs tail bornés read-only ; liens health-gated ; onglet Runtime, aucun faux-vert.
@@ -30,4 +30,4 @@
 - `template-ui-application-lifecycle` — le dirigeant applique un template UI de référence (`inspire`) ; graine `docs/design/<slug>/` posée par la forge (feature `design-<slug>`, merge GO) ; le worker la relit (`_design_block`) et CUSTOMISE ; MCP différé (N=1/0-app).
 - `ws-origin-token-boundary` — frontière client WS = **Origin + token par-instance côté serveur** (avant `accept`), PAS le réseau ; ferme le CSWSH ; CORS≠garde-WS ; prérequis de distribution (`--host 0.0.0.0`).
 - `ogame-rogue-like-pve-bundle` — **(superseded 2026-07-24)** l'ex-split `browser-game` (générique) vs bundle-type ogame **hand-codé** a été **défait** : le spécialisé vit en **capital servi** (blueprint + templates, `mcp-catalogs-data`), énuméré comme **STYLE** par l'interview du générique ; le worker construit le jeu. Historique du pivot capital-jeton.
-- `site-vitrine-bundle` — **(P0 cadrage)** nouveau type générique `site-vitrine` (Astro SSG + Tailwind + îlots React + motion + MDX, i18n EN/FR/DE) pour un 2ᵉ E2E de création de bundle (vitrine du framework) : décisions verrouillées + QueryPlan tech (silos servis) + architecture bundle fichier-par-fichier + roadmap capital (bundle P1 → cockpit construit P2 → distille blueprint/templates P4). Déploiement VPS différé (P3).
+- `site-vitrine-bundle` — **(P0 cadrage)** nouveau type générique `site-vitrine` (Astro SSG + Tailwind + îlots React + motion + MDX, i18n EN/FR/DE) pour un 2ᵉ E2E de création de bundle (vitrine du framework) : décisions verrouillées + QueryPlan tech (silos servis) + architecture bundle fichier-par-fichier + roadmap capital (bundle P1 → forgemaster construit P2 → distille blueprint/templates P4). Déploiement VPS différé (P3).

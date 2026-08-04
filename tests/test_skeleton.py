@@ -10,15 +10,15 @@ from pathlib import Path
 
 import pytest
 
-import cockpit
-from cockpit.cli import build_parser
-from cockpit.config import ENV_HOME, ENV_PROJECTS_ROOT, Settings
-from cockpit.core import fs, ids, run
-from cockpit.db import schema, store
+import forgemaster
+from forgemaster.cli import build_parser
+from forgemaster.config import ENV_HOME, ENV_PROJECTS_ROOT, Settings
+from forgemaster.core import fs, ids, run
+from forgemaster.db import schema, store
 
 
 def test_package_version():
-    assert cockpit.__version__
+    assert forgemaster.__version__
 
 
 # --- socle config : 3 modes de résolution (explicite / env / défaut) ------------------------------
@@ -26,7 +26,7 @@ def test_config_resolve_explicit(tmp_path: Path):
     s = Settings.resolve(home=tmp_path / "h", projects_root=tmp_path / "p")
     assert s.home == (tmp_path / "h").resolve()
     assert s.projects_root == (tmp_path / "p").resolve()
-    assert s.db_path == (tmp_path / "h").resolve() / "cockpit.db"
+    assert s.db_path == (tmp_path / "h").resolve() / "forgemaster.db"
 
 
 def test_config_resolve_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -41,7 +41,7 @@ def test_config_resolve_default(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv(ENV_HOME, raising=False)
     monkeypatch.delenv(ENV_PROJECTS_ROOT, raising=False)
     s = Settings.resolve()
-    assert s.home == (Path("~/.cockpit").expanduser().resolve())
+    assert s.home == (Path("~/.forgemaster").expanduser().resolve())
     assert s.projects_root == (Path("~/projects").expanduser().resolve())
 
 
@@ -84,7 +84,7 @@ def test_core_fs_jsonl_roundtrip(tmp_path: Path):
 
 # --- socle db : le schéma se crée -----------------------------------------------------------------
 def test_db_schema_creates_all_tables(tmp_path: Path):
-    conn = store.connect(tmp_path / "cockpit.db")
+    conn = store.connect(tmp_path / "forgemaster.db")
     store.migrate(conn)
     names = sorted(r[0] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'"))
@@ -105,7 +105,12 @@ def test_cli_parser_wires_all_subcommands():
     parser = build_parser()
     sub = next(a for a in parser._actions if a.dest == "command")  # noqa: SLF001 (introspection de test)
     assert set(sub.choices) == {
-        "project", "tool", "tools", "bundle", "roadmap", "task", "dispatch", "cost", "reliability", "run",
+        # `tool` (outil ADOPTÉ du rail) vs `toolchain` (outillage HÔTE) : deux objets sans rapport, et
+        # deux verbes qui étaient à UNE lettre d'écart (`tool` / `tools`) — un `s` de trop exécutait
+        # l'autre commande sans erreur utile. Renommés le 2026-08-04, dans la fenêtre du renommage
+        # produit, pour ne casser la CLI qu'une fois.
+        "project", "tool", "toolchain", "bundle", "roadmap", "task", "dispatch", "cost", "reliability",
+        "run",
         "abort", "refix", "redrain", "scaffold", "interview", "inspire", "upload", "deploy", "gate", "merge",
         "onboard", "bootstrap", "serve", "setup", "install-service", "snapshot", "update", "doctor",
         "mcp",
@@ -170,16 +175,16 @@ def test_cli_reliability_show_and_mark_parse():
 
 
 def test_cli_help_runs():
-    r = run.run([sys.executable, "-m", "cockpit", "--help"])
+    r = run.run([sys.executable, "-m", "forgemaster", "--help"])
     assert r.ok
-    assert "cockpit" in r.stdout
+    assert "forgemaster" in r.stdout
 
 
 # --- imports paresseux : le daemon s'importe SANS fastapi -----------------------------------------
 def test_daemon_imports_without_fastapi():
     code = (
         "import sys; sys.modules['fastapi'] = None; sys.modules['uvicorn'] = None; "
-        "import cockpit.daemon.app as a; print(hasattr(a, 'build_app') and hasattr(a, 'serve'))"
+        "import forgemaster.daemon.app as a; print(hasattr(a, 'build_app') and hasattr(a, 'serve'))"
     )
     r = subprocess.run(  # noqa: S603
         [sys.executable, "-c", code], capture_output=True, text=True, env={**os.environ}

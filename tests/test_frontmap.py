@@ -17,11 +17,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cockpit.config import Settings
-from cockpit.core.run import RunResult, run
-from cockpit.daemon import app as app_mod
-from cockpit.frontmap import catalog as catalog_svc
-from cockpit.frontmap.index import (
+from forgemaster.config import Settings
+from forgemaster.core.run import RunResult, run
+from forgemaster.daemon import app as app_mod
+from forgemaster.frontmap import catalog as catalog_svc
+from forgemaster.frontmap.index import (
     _BUILT_MARKER,
     FrontmapError,
     IndexHandle,
@@ -29,7 +29,7 @@ from cockpit.frontmap.index import (
     frontmap_argv,
     index_dir_for,
 )
-from cockpit.git.internal import writeback_env
+from forgemaster.git.internal import writeback_env
 
 _ENV = writeback_env(("Test", "test@example.invalid"), base={"PATH": os.environ.get("PATH", "")})
 
@@ -109,7 +109,7 @@ def test_ensure_index_materializes_builds_then_caches(tmp_path: Path):
     h = ensure_index(settings, "p", sot, runner=fake)
     assert isinstance(h, IndexHandle) and h.ref == "dev" and h.sha
     assert (h.root / "web" / "src" / "index.css").is_file()    # arbre matérialisé
-    assert (h.root / _BUILT_MARKER).is_file()                  # marqueur PROPRE au cockpit (découplé)
+    assert (h.root / _BUILT_MARKER).is_file()                  # marqueur PROPRE au forgemaster (découplé)
     assert index_dir_for(settings, "p", h.sha, "frontmap-0.1.0") == h.root  # clé = (SHA, version normalisée)
     assert fake.builds == 1
     # 2e appel, même SHA + même version → cache hit : ni re-build ni re-matérialisation

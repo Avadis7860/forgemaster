@@ -1,14 +1,14 @@
 """E2E — la boucle de lancement autonome, fermée par l'interview de 1ʳᵉ session.
 
 Sur un projet neuf **browser-game** (seed réel), la boucle complète tient bout-à-bout :
-  1. `cockpit run` sur le socle nu → **surface** `needs_interview`, **zéro** headless spawné dessus,
+  1. `forgemaster run` sur le socle nu → **surface** `needs_interview`, **zéro** headless spawné dessus,
      la task interactive reste `todo` (jamais faux-`done`).
-  2. `cockpit interview` → lance `claude` **INTERACTIF** (argv sans `-p`) ; l'humain (launcher injecté)
+  2. `forgemaster interview` → lance `claude` **INTERACTIF** (argv sans `-p`) ; l'humain (launcher injecté)
      remplit `docs/design.md` et author ≥1 feature de travail → tout le socle passe `done` (verified).
-  3. `cockpit run` AVANT le merge du socle → la feature de travail est **TENUE** (`held_for_socle`), pas
+  3. `forgemaster run` AVANT le merge du socle → la feature de travail est **TENUE** (`held_for_socle`), pas
      drainée : elle branche depuis `dev` et a besoin du design du socle (gate socle 2026-07-18).
-  4. **GO humain** : `cockpit merge <socle> --go` → le design (docs-only) atterrit sur `dev`.
-  5. `cockpit run` de nouveau → la feature de travail **draine** en HEADLESS depuis un `dev` porteur du
+  4. **GO humain** : `forgemaster merge <socle> --go` → le design (docs-only) atterrit sur `dev`.
+  5. `forgemaster run` de nouveau → la feature de travail **draine** en HEADLESS depuis un `dev` porteur du
      design (le runner EST appelé).
 
 Launcher/runner injectés : aucun vrai `claude` lancé. Prouve le plumbing déterministe de la boucle ;
@@ -21,14 +21,14 @@ from pathlib import Path
 
 import pytest
 
-from cockpit import interview
-from cockpit.config import Settings
-from cockpit.core import run
-from cockpit.db import store
-from cockpit.dispatch import orchestrator
-from cockpit.git.internal import InternalGit
-from cockpit.projects import registry
-from cockpit.roadmap import model
+from forgemaster import interview
+from forgemaster.config import Settings
+from forgemaster.core import run
+from forgemaster.db import store
+from forgemaster.dispatch import orchestrator
+from forgemaster.git.internal import InternalGit
+from forgemaster.projects import registry
+from forgemaster.roadmap import model
 
 PROJECT = "voidgame"
 
@@ -75,14 +75,14 @@ def test_launch_loop_closes_via_first_session_interview(ctx):
     assert _socle(conn)["interview"] == ("todo", "interactive")
     assert _features(conn) == ["socle-design"]                       # roadmap figée au socle
 
-    # 1 — cockpit run sur le socle nu : surface needs_interview, AUCUN headless, jamais faux-done.
+    # 1 — forgemaster run sur le socle nu : surface needs_interview, AUCUN headless, jamais faux-done.
     r1 = _Runner()
     rep1 = orchestrator.run_project(conn, settings, project=PROJECT, git=InternalGit(), runner=r1)
     assert "socle-design" in rep1.get("needs_interview", [])
     assert r1.calls == []                                            # zéro headless sur le socle
     assert _socle(conn)["interview"][0] == "todo"
 
-    # 2 — cockpit interview : lance claude INTERACTIF ; l'humain remplit le design + author une feature.
+    # 2 — forgemaster interview : lance claude INTERACTIF ; l'humain remplit le design + author une feature.
     launched: list[list[str]] = []
 
     def human_launcher(argv, *, cwd, env=None):
@@ -110,7 +110,8 @@ def test_launch_loop_closes_via_first_session_interview(ctx):
     assert "backend-scaffold" in _features(conn)                    # ≥1 feature de travail authorée
     assert all(status == "done" for status, _ in _socle(conn).values())          # socle clôturé (verified)
 
-    # 3 — cockpit run AVANT le merge du socle : la feature de travail est TENUE (gate socle), pas de drain.
+    # 3 — forgemaster run AVANT le merge du socle : la feature de travail est TENUE (gate socle), pas de
+    # drain.
     r3 = _Runner()
     rep3 = orchestrator.run_project(conn, settings, project=PROJECT, git=InternalGit(), runner=r3)
     assert not rep3.get("needs_interview")                          # socle réconcilié, plus d'interview
@@ -118,12 +119,13 @@ def test_launch_loop_closes_via_first_session_interview(ctx):
     assert r3.calls == []                                           # aucun drain aval (dev sans design)
 
     # 4 — GO humain : merge le socle docs-only → le design atterrit sur dev (fail-closed levé délibérément).
-    from cockpit.gate import merge
+    from forgemaster.gate import merge
     done = merge.run_merge(conn, settings, feature_ref=f"{PROJECT}/socle-design", human_go=True,
                            git=InternalGit())
     assert done["merged"] is True                                   # design (docs-only) sur dev
 
-    # 5 — cockpit run de nouveau : socle mergé → la feature de travail draine en HEADLESS depuis dev+design.
+    # 5 — forgemaster run de nouveau : socle mergé → la feature de travail draine en HEADLESS depuis
+    # dev+design.
     r5 = _Runner()
     rep5 = orchestrator.run_project(conn, settings, project=PROJECT, git=InternalGit(), runner=r5)
     assert not rep5.get("needs_interview") and not rep5.get("held_for_socle")

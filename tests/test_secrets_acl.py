@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from cockpit.config import Settings
-from cockpit.db import store
-from cockpit.projects import registry
-from cockpit.secrets import build_store, cred_resolver, scoped_cred_resolver
+from forgemaster.config import Settings
+from forgemaster.db import store
+from forgemaster.projects import registry
+from forgemaster.secrets import build_store, cred_resolver, scoped_cred_resolver
 
 
 @pytest.fixture

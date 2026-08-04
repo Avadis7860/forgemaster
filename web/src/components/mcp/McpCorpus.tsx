@@ -25,12 +25,12 @@ export function McpCorpus({ mcp }: { mcp: McpState }) {
             corpus câblé
           </Badge>
           <span className="break-all text-fg">
-            {mcp.endpoint ?? 'aucun endpoint — câblage incomplet (`cockpit mcp wire --endpoint <url>`)'}
+            {mcp.endpoint ?? 'aucun endpoint — câblage incomplet (`forgemaster mcp wire --endpoint <url>`)'}
           </span>
         </div>
         <p className="text-xs text-faint">
           Chaque dispatch worker injecte un <code>.mcp.json</code> valide. Change de secret depuis la CLI
-          (<code>cockpit mcp wire</code>).
+          (<code>forgemaster mcp wire</code>).
         </p>
       </div>
     )
@@ -98,7 +98,7 @@ export function McpCorpus({ mcp }: { mcp: McpState }) {
       />
       {endpointRequired && (
         <p className="text-xs text-faint">
-          Aucune instance <code>forgemaster-catalogs</code> n'est configurée sur ce cockpit — il n'y en a pas par
+          Aucune instance <code>forgemaster-catalogs</code> n'est configurée sur ce forgemaster — il n'y en a pas par
           défaut. Indique l'URL de la tienne.
         </p>
       )}

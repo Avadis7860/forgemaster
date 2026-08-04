@@ -3,7 +3,28 @@
 Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **schéma** (SQLite / roadmap.yaml
 / API HTTP — cf. `docs/schema-contract.md`) est une entrée dédiée + un bump, jamais en douce.
 
+> **Le produit s'appelait `cockpit` jusqu'au 2026-08-04.** Les entrées antérieures gardent ce nom : elles
+> décrivent des faits qui ont eu lieu sous lui, et un changelog qu'on réécrit n'est plus un changelog.
+> Motif du renommage et périmètre : voir l'entrée du 2026-08-04 ci-dessous.
+
 ## [Unreleased]
+
+### Renommage produit — `cockpit` → `forgemaster`
+- **Le nom entier change** : distribution, package d'import, commande, unité systemd (`forgemaster.service`),
+  les 14 variables `FORGEMASTER_*`, l'état local (`~/.forgemaster/forgemaster.db`) et le répertoire de
+  contrat in-repo des projets semés (**`.cockpit/` → `.forgemaster/`**, cf. `docs/schema-contract.md §2`).
+- **AUCUN alias de compatibilité, et c'est assumé.** L'assise installée était mesurée nulle au moment de la
+  bascule. Un alias n'aurait ménagé personne et aurait laissé un chemin mort à retirer plus tard.
+- **Motif** : `cockpit-project.org` (sponsorisé Red Hat, LGPL-2.1+) est une console web d'administration de
+  serveurs Linux — **notre catégorie exacte**, pas une homonymie lointaine. Le nom est aussi pris sur PyPI.
+  `forgemaster` est déjà notre mot : la forge est l'axe 2 du produit, et le couple *master → workers* décrit
+  littéralement ce qu'il fait.
+- **`tools` → `toolchain`** (même fenêtre, pour ne casser la CLI qu'une fois) : `forgemaster toolchain
+  install|check` (outillage hôte) ne se confond plus avec `forgemaster tool sync` (outil adopté du rail) —
+  deux verbes à une lettre d'écart pour deux objets sans rapport.
+- **Ce qui n'a PAS bougé** : les 4 cartes (`code-map`, `docs-map`, `front-map`, `task-map`) gardent leurs
+  noms descriptifs, et les identifiants qui **pointent** (ids de missions, noms d'épics, slugs de décisions)
+  sont préservés — 45 occurrences sur 32 clés distinctes, épargnées et comptées.
 
 ### Le serveur co-installé porte désormais son offre de source AGPL §13
 - **`mcp.local.SERVER_REF` bumpé** `0d481d3` → `e216b12` : `GET /version` du serveur MCP porte un bloc

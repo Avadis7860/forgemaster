@@ -4,7 +4,7 @@ Stratégie de la phase structure : prouver que **la spine tient** pendant qu'on 
 
 - `test_skeleton.py` — import du package ; **socle fonctionnel** (config résout les 3 modes ; `core.run`
   exécute une commande locale ; `core.ids`/`core.fs` valident/bornent ; `db` crée les 4 tables) ; le parser
-  câble toutes les sous-commandes ; `cockpit --help` répond ; `daemon.app` s'importe **sans** fastapi
+  câble toutes les sous-commandes ; `forgemaster --help` répond ; `daemon.app` s'importe **sans** fastapi
   (imports paresseux).
 
 ## Conventions

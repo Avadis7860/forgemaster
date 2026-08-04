@@ -7,11 +7,11 @@ import argparse
 import json
 from pathlib import Path
 
-from cockpit import auth, onboarding
-from cockpit.config import Settings
-from cockpit.db import store
-from cockpit.dispatch import worker
-from cockpit.secrets.file_store import EncryptedFileStore
+from forgemaster import auth, onboarding
+from forgemaster.config import Settings
+from forgemaster.db import store
+from forgemaster.dispatch import worker
+from forgemaster.secrets.file_store import EncryptedFileStore
 
 # -- détection (sans jamais lire le secret) ---------------------------------------------------------
 

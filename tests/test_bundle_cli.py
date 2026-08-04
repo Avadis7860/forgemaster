@@ -1,4 +1,4 @@
-"""Tests de la surface de gestion des bundles — `cockpit bundle {list,validate,show,version}`.
+"""Tests de la surface de gestion des bundles — `forgemaster bundle {list,validate,show,version}`.
 
 On teste `provision.manage.cli_dispatch` en direct (via `argparse.Namespace` + `capsys`, pur et
 déterministe) sur le registre réel vendoré, puis sur un registre monkeypatché avec un bundle CASSÉ
@@ -10,7 +10,7 @@ import argparse
 
 import pytest
 
-from cockpit.provision import discover_types, manage
+from forgemaster.provision import discover_types, manage
 
 
 def _ns(action: str, **kw) -> argparse.Namespace:
@@ -19,8 +19,8 @@ def _ns(action: str, **kw) -> argparse.Namespace:
 
 def _seed_broken_registry(tmp_path, monkeypatch):
     """Un registre isolé : base `generic` valide + un overlay `broken` (default_facet ∉ facets)."""
-    import cockpit.provision as prov
-    meta = tmp_path / "bundles" / "base" / ".cockpit"
+    import forgemaster.provision as prov
+    meta = tmp_path / "bundles" / "base" / ".forgemaster"
     meta.mkdir(parents=True)
     (meta / "bundle.toml").write_text(
         '[bundle]\nversion = "1"\nproject_type = "generic"\nfacets = ["doc"]\ndefault_facet = "doc"\n',
@@ -28,7 +28,7 @@ def _seed_broken_registry(tmp_path, monkeypatch):
     doc = tmp_path / "bundles" / "base" / ".claude" / "facets" / "doc"
     doc.mkdir(parents=True)
     (doc / "PERSONA.md").write_text("x", encoding="utf-8")
-    broken = tmp_path / "bundles" / "types" / "broken" / ".cockpit"
+    broken = tmp_path / "bundles" / "types" / "broken" / ".forgemaster"
     broken.mkdir(parents=True)
     (broken / "bundle.toml").write_text(
         '[bundle]\nversion = "1"\nproject_type = "broken"\nfacets = ["doc"]\ndefault_facet = "nope"\n',
@@ -132,7 +132,7 @@ def test_version_unknown_type_fails(capsys):
 # -- câblage argparse -------------------------------------------------------------------------------
 
 def test_cli_wires_bundle_group():
-    from cockpit.cli import _HANDLERS, _h_bundle, build_parser
+    from forgemaster.cli import _HANDLERS, _h_bundle, build_parser
     assert _HANDLERS["bundle"] is _h_bundle
     ns = build_parser().parse_args(["bundle", "show", "browser-game"])
     assert ns.command == "bundle" and ns.action == "show" and ns.type == "browser-game"

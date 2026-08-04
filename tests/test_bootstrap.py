@@ -1,5 +1,5 @@
-"""Tests de l'amorçage (`cockpit bootstrap`) : manifeste d'outils → adoption idempotente via P1, sur une
-DB + projects_root + COCKPIT_HOME jetables. Upstreams = vrais bares locaux (zéro réseau)."""
+"""Tests de l'amorçage (`forgemaster bootstrap`) : manifeste d'outils → adoption idempotente via P1, sur une
+DB + projects_root + FORGEMASTER_HOME jetables. Upstreams = vrais bares locaux (zéro réseau)."""
 from __future__ import annotations
 
 import argparse
@@ -9,12 +9,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from cockpit import bootstrap
-from cockpit.config import Settings
-from cockpit.core import run
-from cockpit.db import store
-from cockpit.projects import registry
-from cockpit.secrets import build_store
+from forgemaster import bootstrap
+from forgemaster.config import Settings
+from forgemaster.core import run
+from forgemaster.db import store
+from forgemaster.projects import registry
+from forgemaster.secrets import build_store
 
 _GIT_ENV = {"PATH": os.environ.get("PATH", ""),
             "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e.invalid",
@@ -90,12 +90,12 @@ def test_run_bootstrap_is_idempotent(ctx, tmp_path):
 
 def test_run_bootstrap_skips_preexisting_slug(ctx, tmp_path):
     settings, conn = ctx
-    registry.create_project(conn, settings, slug="cockpit")   # déjà là (seed), pas ré-adopté
+    registry.create_project(conn, settings, slug="forgemaster")   # déjà là (seed), pas ré-adopté
     up = _make_upstream(tmp_path / "u")
-    _write_manifest(settings, [{"slug": "cockpit", "source_url": str(up)},
+    _write_manifest(settings, [{"slug": "forgemaster", "source_url": str(up)},
                                {"slug": "code-map", "source_url": str(up)}])
     report = bootstrap.run_bootstrap(conn, settings, manifest=bootstrap.load_manifest(settings))
-    assert report["skipped"] == ["cockpit"] and report["created"] == ["code-map"]
+    assert report["skipped"] == ["forgemaster"] and report["created"] == ["code-map"]
 
 
 # -- une entrée en échec n'avorte pas les autres (best-effort par entrée) ----------------------------
@@ -189,7 +189,7 @@ def test_cli_dispatch_token_file_stores_ref_not_plaintext(ctx, tmp_path):
 
 
 # -- l'édition maintainer livrée (deploy/bootstrap.yaml) reste chargeable par le vrai loader --------
-# Gate-protège la DONNÉE d'édition : la recette P3 dépose CE fichier tel quel sous COCKPIT_HOME ; s'il
+# Gate-protège la DONNÉE d'édition : la recette P3 dépose CE fichier tel quel sous FORGEMASTER_HOME ; s'il
 # dérivait vers un manifeste invalide, une install fraîche casserait. Le test le fait relire par le loader.
 
 def test_shipped_deploy_manifest_is_valid_five_tools(ctx):
@@ -201,7 +201,7 @@ def test_shipped_deploy_manifest_is_valid_five_tools(ctx):
     assert entries is not None
     slugs = {e["slug"] for e in entries}
     # les 5 frères (D1)
-    assert slugs == {"cockpit", "code-map", "front-map", "docs-map", "forgemaster-catalogs"}
+    assert slugs == {"forgemaster", "code-map", "front-map", "docs-map", "forgemaster-catalogs"}
     for e in entries:
         assert e["kind"] == "tool"                                   # → rail « Outils »
         assert e["source_url"].startswith("https://github.com/") and e["source_url"].endswith(".git")

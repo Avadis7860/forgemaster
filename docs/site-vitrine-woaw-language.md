@@ -1,7 +1,7 @@
 # Langage « woaw » — doctrine d'art-direction de l'archétype `site-vitrine`
 
 > Doctrine de conception de la vitrine : le **langage visuel contraignant** que le scaffold outille et que la gate
-> **woaw-critic** fait respecter. Symétrique de la doctrine UX du cockpit (agent `cockpit-ux-critic`), côté site
+> **woaw-critic** fait respecter. Symétrique de la doctrine UX du forgemaster (agent `cockpit-ux-critic`), côté site
 > présentational. **Le woaw est produit par les workers, forcé par le capital** — cette doctrine EST le capital.
 
 ## Le gap qu'elle ferme
@@ -80,7 +80,7 @@ défaut une vitrine reste sobre-correcte ; une vitrine **avec charte** (l'instan
 devient woaw. **Le scaffold ne brande rien — il outille et exige.**
 
 **Propagation** : la **discipline** (`.claude/facets/frontend/METHOD.md §9`) est `reseed_owned` → elle atteint les
-projets existants par `cockpit scaffold reseed`. Les **primitives** et **tokens** sont des ingrédients de seed (non
+projets existants par `forgemaster scaffold reseed`. Les **primitives** et **tokens** sont des ingrédients de seed (non
 owned : le worker possède et compose ses composants) ; sur un projet existant, le worker les re-dérive sous la
 METHOD durcie + la gate. Le levier universel = **METHOD (propagée) + gate (qui force)**, pas l'écrasement des
 composants du worker.

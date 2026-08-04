@@ -17,7 +17,7 @@ const DocView = lazy(() => import('@/components/docs/DocView').then((m) => ({ de
 type Search = { cap?: string; capcol?: string; capref?: string }
 
 /** Explorer READ-ONLY du **capital-token servi par le MCP** (l'autre moitié de « juger l'efficacité avant
- *  distribution » : pendant que BundleExplorer montre ce que le cockpit SÈME, celui-ci montre ce qu'il
+ *  distribution » : pendant que BundleExplorer montre ce que le forgemaster SÈME, celui-ci montre ce qu'il
  *  LOUE/POSSÈDE — `tech`/`blueprint`/`templates`). Navigation `type → collection → section → corps`, pilotée
  *  par l'URL (`?cap=&capcol=&capref=`) → deep-linkable, capturable at-rest par la boucle visuelle.
  *
@@ -49,7 +49,7 @@ export function CapitalExplorer() {
       <CapitalSectionCard>
         <EmptyState
           title="Capital-token non câblé"
-          description="Aucun secret MCP n'est configuré sur cette install : le corpus servi (tech / blueprint / templates) n'est pas atteignable. Câble-le via l'onboarding, ou en CLI : cockpit mcp wire --secret-ref <uuid>."
+          description="Aucun secret MCP n'est configuré sur cette install : le corpus servi (tech / blueprint / templates) n'est pas atteignable. Câble-le via l'onboarding, ou en CLI : forgemaster mcp wire --secret-ref <uuid>."
         />
       </CapitalSectionCard>
     )
@@ -130,7 +130,7 @@ function CapitalSectionCard({ children }: { children: React.ReactNode }) {
       />
       <p className="-mt-2 text-sm text-muted">
         Parcours le corpus servi par le MCP — la doc tierce louée (tech) et les patrons possédés (blueprint,
-        templates). Pour juger le capital sur lequel le cockpit ancre ses sessions avant de le distribuer.
+        templates). Pour juger le capital sur lequel le forgemaster ancre ses sessions avant de le distribuer.
       </p>
       {children}
     </Card>

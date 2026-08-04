@@ -1,4 +1,5 @@
-"""Tests de l'abort de run (`cockpit abort` / bouton UI « Arrêter le run »). L'arrêt cible chaque worker par
+"""Tests de l'abort de run (`forgemaster abort` / bouton UI « Arrêter le run »). L'arrêt cible chaque worker
+par
 son **pgid persisté** (handle explicite posé au spawn — fin du `pgrep`/`kill -0` fragile), le job passe
 `killed`, la task revient `todo` (re-runnable), et une **sentinelle** joue le signal cross-process que la
 boucle de drain lit pour s'arrêter. Killer **INJECTÉ** → aucun vrai process n'est tué."""
@@ -8,11 +9,11 @@ import signal
 
 import pytest
 
-from cockpit.config import Settings
-from cockpit.db import store
-from cockpit.dispatch import abort, jobs
-from cockpit.projects import registry
-from cockpit.roadmap import model
+from forgemaster.config import Settings
+from forgemaster.db import store
+from forgemaster.dispatch import abort, jobs
+from forgemaster.projects import registry
+from forgemaster.roadmap import model
 
 
 @pytest.fixture

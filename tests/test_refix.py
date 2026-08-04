@@ -13,12 +13,12 @@ from pathlib import Path
 
 import pytest
 
-from cockpit.config import Settings
-from cockpit.core import run
-from cockpit.db import store
-from cockpit.dispatch import jobs, refix, worker
-from cockpit.projects import registry
-from cockpit.roadmap import model
+from forgemaster.config import Settings
+from forgemaster.core import run
+from forgemaster.db import store
+from forgemaster.dispatch import jobs, refix, worker
+from forgemaster.projects import registry
+from forgemaster.roadmap import model
 
 
 @pytest.fixture

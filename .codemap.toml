@@ -1,14 +1,14 @@
-# .codemap.toml — configuration code-map du cockpit (src-layout).
+# .codemap.toml — configuration code-map du forgemaster (src-layout).
 #
-# Le cockpit est un src-layout : le paquet vit sous `src/cockpit/<sous-paquet>/`. Sans ce fichier, la
+# Le forgemaster est un src-layout : le paquet vit sous `src/forgemaster/<sous-paquet>/`. Sans ce fichier, la
 # stratégie top-segment par défaut effondre les 15 sous-paquets réels (dispatch, daemon, git, gate,
 # provision, roadmap, runtime, terminal…) sous un unique bloc « src » → `codemap subsystem dispatch`
 # répond « sous-système inconnu », cassant le protocole anti-archéologie de la constitution.
 #
-# `split = ["src/cockpit"]` éclate ce préfixe d'un niveau : chaque sous-paquet devient son propre
-# sous-système (`src/cockpit/<sous-paquet>`), tandis que `tests/`, `scripts/`, `.claude/` restent des
-# blocs top-segment propres et les modules top-level du paquet portent l'étiquette « src/cockpit ».
+# `split = ["src/forgemaster"]` éclate ce préfixe d'un niveau : chaque sous-paquet devient son propre
+# sous-système (`src/forgemaster/<sous-paquet>`), tandis que `tests/`, `scripts/`, `.claude/` restent des
+# blocs top-segment propres et les modules top-level du paquet portent l'étiquette « src/forgemaster ».
 
 [subsystem]
 strategy = "top-segment"
-split = ["src/cockpit"]
+split = ["src/forgemaster"]

@@ -12,9 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from cockpit.config import Settings
-from cockpit.db import schema, store
-from cockpit.dispatch import cost, jobs, worker
+from forgemaster.config import Settings
+from forgemaster.db import schema, store
+from forgemaster.dispatch import cost, jobs, worker
 
 _NOW = "2026-07-22T00:00:00Z"
 
@@ -217,7 +217,7 @@ def _write_transcript(home: Path, session_id: str, body: str) -> None:
 
 
 def test_record_interview_session_appends_and_dedups(conn):
-    from cockpit.projects import registry
+    from forgemaster.projects import registry
     conn.execute("INSERT INTO projects (id,slug,name,sot_path,created_at) VALUES ('p','atlas','A','/x',?)",
                  (_NOW,))
     conn.commit()
@@ -230,7 +230,7 @@ def test_record_interview_session_appends_and_dedups(conn):
 
 
 def test_interview_summed_tokens_only_and_folded_into_total(conn, tmp_path):
-    from cockpit.projects import registry
+    from forgemaster.projects import registry
     home = tmp_path / "claude_home"
     _seed_graph(conn)
     # un job de travail (le drain) : $ + tokens
@@ -266,7 +266,7 @@ def test_no_interview_is_none_and_total_unchanged(conn, tmp_path):
 
 
 def test_interview_session_persisted_but_transcript_missing_is_none(conn, tmp_path):
-    from cockpit.projects import registry
+    from forgemaster.projects import registry
     conn.execute("INSERT INTO projects (id,slug,name,sot_path,created_at) VALUES ('p','atlas','A','/x',?)",
                  (_NOW,))
     conn.commit()

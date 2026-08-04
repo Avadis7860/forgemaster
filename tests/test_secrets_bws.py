@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from cockpit.secrets.base import SecretNotFound, SecretStoreError, SecretUnsupported
-from cockpit.secrets.bws_store import BwsStore
+from forgemaster.secrets.base import SecretNotFound, SecretStoreError, SecretUnsupported
+from forgemaster.secrets.bws_store import BwsStore
 
 
 class _FakeResult:

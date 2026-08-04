@@ -8,7 +8,7 @@ module-global mutable (correctif #1, anti god-module `import server`). Les erreu
 **paresseux** : le module s'importe sans les deps serveur.
 
 ## build_app() — construit l'app FastAPI, injecte les deps, monte routers + SPA
-`src/cockpit/daemon/app.py:40` · appelé par serve() / les tests
+`src/forgemaster/daemon/app.py:40` · appelé par serve() / les tests
 DI explicite : `Deps(settings)` posé sur `app.state.deps` (l.113), puis les 19 `make_*_router()` inclus en
 boucle (l.138-148). Ajoute CORS pour le dev Vite (:5173, localhost-only, pas de credentials), la sonde
 `GET /health` (liveness, pas de gate), et les deux `exception_handler` globaux (`KeyError`→404,
@@ -16,7 +16,7 @@ boucle (l.138-148). Ajoute CORS pour le dev Vite (:5173, localhost-only, pas de 
 `lifespan` réconcilie au boot les jobs de dispatch orphelins (`running` zombie → killed, task→todo).
 
 ## Deps / get_deps() — le conteneur d'injection explicite (immuable, sur app.state)
-`src/cockpit/daemon/deps.py:26` (`Deps`) · `:43` (`get_deps`)
+`src/forgemaster/daemon/deps.py:26` (`Deps`) · `:43` (`get_deps`)
 `Deps` est un dataclass `frozen` qui tient `settings` et ouvre des connexions DB **à la demande**
 (`open_db()`, une par requête, refermée par le router — WAL autorise la concurrence CLI↔daemon) ; il expose
 aussi `secret_store()` (store de secrets résolu à l'usage). Construit une fois par `build_app`. `get_deps`
@@ -24,16 +24,16 @@ est la dépendance FastAPI qui rend le conteneur posé sur `app.state` (`request
 global. Ne tire que `starlette` (transitif de fastapi, pour typer la `Request`), jamais les couches serveur.
 
 ## serve() / _mount_spa() — lancement uvicorn + service du build SPA
-`src/cockpit/daemon/app.py:249` (`serve`) · `:175` (`_mount_spa`) · `:25` (`web_dist_dir`)
+`src/forgemaster/daemon/app.py:249` (`serve`) · `:175` (`_mount_spa`) · `:25` (`web_dist_dir`)
 `serve()` démarre uvicorn sur `build_app(settings)` (import uvicorn paresseux). `_mount_spa()` sert le build
 en statique **seulement s'il existe** : assets hashés en cache `immutable`, `index.html` en `no-cache`
 (anti-stale post-déploiement), et un catch-all `GET /{path:path}` qui fallback sur `index.html` (deep-link
 client-side) mais refuse `api/`/`ws/` (→ 404 JSON, jamais index à la place d'une API). `web_dist_dir()`
-résout la dist : override `COCKPIT_WEB_DIST` → dist empaquetée dans le wheel (`cockpit/_web_dist`, turnkey) →
+résout la dist : override `FORGEMASTER_WEB_DIST` → dist empaquetée dans le wheel (`forgemaster/_web_dist`, turnkey) →
 layout source (`<repo>/web/dist`). Dist absente → `_mount_missing_ui_placeholder` (fail-loud, cf. Zones).
 
 ## Le pattern `make_*_router()` — 19 routers minces
-`src/cockpit/daemon/routes/*.py` · montés par build_app()
+`src/forgemaster/daemon/routes/*.py` · montés par build_app()
 Forme commune (invariant **daemon = vue**) : une factory `make_<x>_router() -> APIRouter` qui déclare ses
 endpoints, lit `Deps` par `Depends(get_deps)`, ouvre/ferme une connexion DB par requête, et **délègue à la
 spine** (core/dispatch/gate/git/roadmap) — aucune logique métier dans le router. Request bodies typés en

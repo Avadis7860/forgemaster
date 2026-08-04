@@ -107,7 +107,7 @@ export function CredentialForm({ project, backend, linked, linkedRef, compact = 
       </div>
       <p className="text-xs text-faint">
         {isBws
-          ? 'BWS bring-your-own : crée le secret dans Bitwarden, colle son UUID. Aucune valeur stockée côté cockpit.'
+          ? 'BWS bring-your-own : crée le secret dans Bitwarden, colle son UUID. Aucune valeur stockée côté forgemaster.'
           : 'Le token est chiffré dans le coffre (clé-600) ; la DB ne garde qu’une référence opaque.'}
       </p>
     </form>

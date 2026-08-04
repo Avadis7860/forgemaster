@@ -28,7 +28,7 @@ handshake WS, et le **CORS non plus** (`app.py` `allow_origins` ne couvre que le
      (reverse-proxy à nom public différent). `Origin` **absent** (client non-navigateur : sonde, void-runner)
      → **toléré** (hors vecteur CSWSH), mais le token reste exigé.
    - **Token par-instance** (anti-client-non-navigateur + defense-in-depth) : exigé au handshake via le
-     sous-protocole `Sec-WebSocket-Protocol: cockpit.token.<valeur>` — **hors des access-logs** (choisi contre
+     sous-protocole `Sec-WebSocket-Protocol: forgemaster.token.<valeur>` — **hors des access-logs** (choisi contre
      query-param pour ne pas fuiter derrière un reverse-proxy loggant). Comparé en **temps constant**, **echo**
      du sous-protocole retenu à l'`accept` (obligation RFC 6455).
 3. **Token = secret d'instance, pas un `credential_ref`.** Minté une fois au 1er boot
@@ -45,7 +45,7 @@ handshake WS, et le **CORS non plus** (`app.py` `allow_origins` ne couvre que le
    Origin+token existe ; c'est un **prérequis de distribution** (le daemon tournera sur la machine principale
    de l'utilisateur). Un reverse-proxy à nom public → ajouter l'origine dans `ws_allowed_origins`.
 
-## Invariants de test (encodés dans cockpit)
+## Invariants de test (encodés dans forgemaster)
 
 - `origin_allowed` : `Origin` absent → toléré ; autorité `Origin` == `Host` → autorisé (zéro-config) ;
   cross-origin hors dev/allowlist → refusé ; dev Vite → autorisé ; `null` (iframe sandbox) → refusé.
@@ -54,5 +54,5 @@ handshake WS, et le **CORS non plus** (`app.py` `allow_origins` ne couvre que le
 - `ensure_ws_token` : minté une fois (600), idempotent, relit l'existant.
 - Route réelle : cross-origin **même avec token valide** → fermé avant `accept` ; sans/mauvais token → fermé ;
   same-origin + token → accepté. `GET /api/ws-token` rend le token d'`app.state`.
-- Front : `tokenProtocols(token)` → `['cockpit.token.<v>']` ; `tokenProtocols(undefined)` → `undefined`
+- Front : `tokenProtocols(token)` → `['forgemaster.token.<v>']` ; `tokenProtocols(undefined)` → `undefined`
   (le consommateur n'ouvre pas le WS).

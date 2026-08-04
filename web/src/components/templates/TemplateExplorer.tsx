@@ -14,7 +14,7 @@ type Search = { tpl?: string }
 const asset = (slug: string, rel: string) => `/templates/${encodeURIComponent(slug)}/${rel}`
 
 /** Vitrine des **templates de référence UI** — le capital-token *montrable* (le pendant visuel du blueprint) :
- *  des modèles d'UI que le dirigeant applique à un projet. Frère de `BundleExplorer` (ce que le cockpit sème)
+ *  des modèles d'UI que le dirigeant applique à un projet. Frère de `BundleExplorer` (ce que le forgemaster sème)
  *  et `CapitalExplorer` (ce que le MCP loue), avec **une action réelle** : « inspirer un projet de ce
  *  template » (POST /inspire) → crée la feature+task de customisation `design-<slug>` et sème la graine
  *  `docs/design/<slug>/`, qu'un worker de customisation relira comme cible visuelle.

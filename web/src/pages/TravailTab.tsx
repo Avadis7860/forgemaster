@@ -46,7 +46,7 @@ export function TravailTab() {
       <div className="mx-auto max-w-2xl p-8">
         <EmptyState
           title="Aucune feature à travailler"
-          description="Ajoute une feature et ses tasks (CLI cockpit ou API) : ici tu dispatches sa NEXT task puis valides et merges la branche produite."
+          description="Ajoute une feature et ses tasks (CLI forgemaster ou API) : ici tu dispatches sa NEXT task puis valides et merges la branche produite."
         />
       </div>
     )

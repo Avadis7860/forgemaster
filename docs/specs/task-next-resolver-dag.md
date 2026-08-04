@@ -30,11 +30,11 @@ la séquence de phases ne vivait qu'en **prose** (checklist/`next:`) jamais pars
   manifeste). Le socle = la feature portant une task `mode=interactive` (marqueur durable). Tant qu'il n'est
   pas **`merged`** dans `dev`, `run_project`/`run_feature` ne draine **aucune** feature de travail (elles
   branchent depuis `dev` `WORKTREE_BASE` et ont besoin du design du socle — sinon desync sur squelette). Le
-  socle reste dispatchable (sa task interactive est tenue pour `cockpit interview`). Fail-closed : le merge
+  socle reste dispatchable (sa task interactive est tenue pour `forgemaster interview`). Fail-closed : le merge
   du socle reste **GO humain, jamais auto** ; les features tenues sortent en `held_for_socle` (surfacé), pas
   en échec. Projet sans socle interactif (mûr / control-plane) → pas de gate.
 
-## Invariants de test (à encoder dans cockpit)
+## Invariants de test (à encoder dans forgemaster)
 
 - **Repro avant fix** : une phase tardive dont le prédécesseur n'est pas `done` sort **BLOCKED_DEPS**,
   exclue du `next` (le test bascule par enrichissement de données, sans toucher au classifieur).

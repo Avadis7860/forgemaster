@@ -144,7 +144,7 @@ export const api = {
   health: () => request('/health', HealthSchema),
 
   // Token WS par-instance (garde CSWSH) : lu une fois par le front same-origin, injecté au handshake WS via
-  // le sous-protocole `cockpit.token.<v>`. GET idempotent same-origin (une page tierce ne peut PAS le lire).
+  // le sous-protocole `forgemaster.token.<v>`. GET idempotent same-origin (une page tierce ne peut PAS le lire).
   wsToken: () => request('/api/ws-token', WsTokenSchema),
 
   // Registre des bundles : les types de projet OFFERTS à la création (filtrés par validation, fail-closed).

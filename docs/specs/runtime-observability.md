@@ -8,9 +8,9 @@
 ## Problème tranché
 
 P1-P4 ont livré le **run** (déployer, faire tourner, isoler) mais **aucune surface d'observation** : l'état de
-run n'était lisible qu'au CLI (`cockpit deploy status`), et le front deployments était greenfield. Sans
+run n'était lisible qu'au CLI (`forgemaster deploy status`), et le front deployments était greenfield. Sans
 santé+logs visibles, la vérif e2e P6 (« deux projets tournent, chacun visible ») ne peut pas s'ancrer. DoD :
-le cockpit **montre** l'état de chaque déploiement (santé teintée, jamais un faux-vert), ses **logs** (bornés),
+le forgemaster **montre** l'état de chaque déploiement (santé teintée, jamais un faux-vert), ses **logs** (bornés),
 et un **lien qui n'ouvre le service que s'il répond**.
 
 **Fork tranché (bosse) : logs = tail borné à la demande** (`compose logs --tail N`, GET read-only), PAS de
@@ -34,8 +34,8 @@ live-follow arrivera si un vrai besoin le réclame, ancré sur la même route.
    podman|docker), **allowlist d'env P4
    préservée** (aucun secret ne fuit), borné (**jamais** `--follow`). `tail` clampé (`engine._LOGS_TAIL_MAX =
    1000`) + borné par la route (`Query(ge=1,le=1000)`).
-3. **Toute sous-commande compose mutante reçoit `COCKPIT_PORT`.** Le compose est **re-parsé à chaque appel** et
-   son `ports:` est fail-loud (`${COCKPIT_PORT:?}`, semé P3) → `down`/`restart` (qui passent par la CLI compose)
+3. **Toute sous-commande compose mutante reçoit `FORGEMASTER_PORT`.** Le compose est **re-parsé à chaque appel** et
+   son `ports:` est fail-loud (`${FORGEMASTER_PORT:?}`, semé P3) → `down`/`restart` (qui passent par la CLI compose)
    injectent le port réservé (en DB), sinon podman/docker compose échoue au parse. `ps`/`logs` (direct moteur)
    n'en ont pas besoin. (Bug latent depuis P2, révélé par le premier smoke qui asserte le `status` live.)
 4. **Vide honnête partout.** Un déploiement jamais monté (`no_deploy` / pas de workdir) rend `lines: []` et

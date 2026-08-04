@@ -64,7 +64,7 @@ describe('LaunchCycle — légibilité du cycle de lancement', () => {
   it('après réconciliation → compte-rendu HUMAIN clair (sha du design, N tasks closes, prochaine étape)', () => {
     h.reconcileData = {
       status: 'reconciled', completed: true, feature: 'socle-design', design_sha: 'abcdef1234',
-      socle_tasks_closed: 2, issues: [], next_step: 'Drain des features de travail (`cockpit run`).',
+      socle_tasks_closed: 2, issues: [], next_step: 'Drain des features de travail (`forgemaster run`).',
     }
     render(<LaunchCycle project="atlas" roadmap={roadmap({ socleClosed: true })} />)
     const alertText = screen.getByText('Socle réconcilié').closest('[role="alert"]')?.textContent ?? ''

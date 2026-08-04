@@ -9,10 +9,10 @@
 
 ## Problème tranché
 
-L'onboarding first-session **demande l'identité de marque** (charte, schéma de référence), mais le cockpit
+L'onboarding first-session **demande l'identité de marque** (charte, schéma de référence), mais le forgemaster
 n'exposait **aucun canal** pour injecter un fichier dans un projet — ni à l'onboarding, ni en cours de route.
 Le seul recours était un `scp` manuel de l'assistant dans le worktree actif de l'interview : ni self-service,
-ni scalable, absent de tout cockpit distribué. Un projet orienté contenu (vitrine, docs, tout ce qui a besoin
+ni scalable, absent de tout forgemaster distribué. Un projet orienté contenu (vitrine, docs, tout ce qui a besoin
 d'assets de marque / de référence) ne pouvait pas recevoir son matériau par l'UI.
 
 Symétriquement : l'IA d'interview, à qui on demande de comprendre une identité, n'avait **aucun moyen de
@@ -23,7 +23,7 @@ lire** l'asset que le dirigeant voulait lui fournir *pendant* la session.
 Ne pas re-débattre.
 
 1. **Canal = déclenché-opérateur.** Le dirigeant ajoute un fichier à un projet (`POST /api/projects/{slug}/upload`
-   ou `cockpit upload`). Aucune ingestion automatique, aucun scan de source externe.
+   ou `forgemaster upload`). Aucune ingestion automatique, aucun scan de source externe.
 2. **Destination v1 = `docs/design/<slug>/`.** Réutilise le circuit design-brief : le fichier atterrit dans le
    dossier **déjà relu par `_design_block`** et lisible par le worker/interview dans son worktree. Pas de
    destination libre `docs/` ni de routage multi-intention en v1 (forward-feature rejeté : l'opérateur choisit
@@ -52,7 +52,7 @@ Ne pas re-débattre.
    canal. Le rejet est **explicite** (message clair), pas un filtrage silencieux.
 7. **Garde path-traversal.** `dest_rel` + `filename` sont **confinés** sous `docs/design/` du projet : rejet de
    `..`, des chemins absolus, des séparateurs suspects. Le chemin résolu doit rester dans l'arbre du projet.
-8. **Parité CLI/route.** `cockpit upload <project> <path> [--dest docs/design/<slug>]` et
+8. **Parité CLI/route.** `forgemaster upload <project> <path> [--dest docs/design/<slug>]` et
    `POST /api/projects/{slug}/upload` (multipart `UploadFile`) délèguent au **même** `ingest_upload` (spine =
    CLI + cœur déterministe ; daemon = vue).
 9. **Contrat API figé.** La route `/upload` s'ajoute au contrat : bump `docs/schema-contract.md` + `CHANGELOG.md`
@@ -62,7 +62,7 @@ Ne pas re-débattre.
 
 ```
 dirigeant (UI onboarding | action projet)
-        │  POST /api/projects/{slug}/upload   ·   cockpit upload
+        │  POST /api/projects/{slug}/upload   ·   forgemaster upload
         ▼
    ingest_upload  ── résout le worktree ──┐
         │                                  │
@@ -76,7 +76,7 @@ Le worker/interview relit l'asset depuis son worktree (`_design_block` l'injecte
 frère ; sinon il reste Read-able à la demande). La discipline forge est **identique** à `inspire` : rien ne
 devient project-wide sans un merge human-GO.
 
-## Invariants de test (encodés dans cockpit)
+## Invariants de test (encodés dans forgemaster)
 
 - `write_project_upload` écrit les bytes sous `<worktree>/docs/design/<slug>/<filename>` ; **data vide → no-op**
   (`None`, rien écrit) ; type hors allow-list → rejet ; taille > `_UPLOAD_MAX_BYTES` → **lève avec pointeur**
@@ -86,5 +86,5 @@ devient project-wide sans un merge human-GO.
   et le merge **exige un GO** (jamais mergé en autonomie) ; **jamais** de commit direct sur `dev`.
 - `commit_worktree` sous l'identité **worker** (`resolve_identity(project, branch, role="worker")`) ; tree clean
   (ré-upload identique) → no-op.
-- Parité CLI/route : `cockpit upload <project> <path>` et `POST /api/projects/{slug}/upload` délèguent au **même**
+- Parité CLI/route : `forgemaster upload <project> <path>` et `POST /api/projects/{slug}/upload` délèguent au **même**
   `ingest_upload` ; projet inconnu → `KeyError` ; source CLI absente → erreur claire.

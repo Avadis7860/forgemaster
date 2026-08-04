@@ -1,8 +1,8 @@
 ---
 name: roadmap-author
-description: Transformer une intention en langage naturel en une roadmap OPÉRATIONNELLE sur n'importe quel projet cockpit, en pilotant la vraie CLI. Émet une séquence exécutable add-feature/task add complète (priorité + deps + DoD + facette) qui se termine par `roadmap check` — le gate qui certifie la roadmap drainable par l'orchestrateur.
+description: Transformer une intention en langage naturel en une roadmap OPÉRATIONNELLE sur n'importe quel projet forgemaster, en pilotant la vraie CLI. Émet une séquence exécutable add-feature/task add complète (priorité + deps + DoD + facette) qui se termine par `roadmap check` — le gate qui certifie la roadmap drainable par l'orchestrateur.
 inputs: [projet cible, intention en langage naturel]
-outputs: [séquence cockpit exécutée, roadmap dont `roadmap check` retourne 0 issue]
+outputs: [séquence forgemaster exécutée, roadmap dont `roadmap check` retourne 0 issue]
 related_catalogs: []
 ---
 
@@ -10,10 +10,10 @@ related_catalogs: []
 
 ## Quand l'utiliser
 
-Depuis l'hôte cockpit, quand un humain décrit une intention (« je veux un service qui expose une API de
+Depuis l'hôte forgemaster, quand un humain décrit une intention (« je veux un service qui expose une API de
 scores avec auth ») et veut une **roadmap opérationnelle** (features + tasks) sur un projet existant, prête
-à être **drainée** par `cockpit run`. C'est un **assist opérateur** : tu pilotes la **vraie CLI** contre le
-projet cible — tu n'écris pas de fichier roadmap à la main, tu émets des commandes `cockpit`.
+à être **drainée** par `forgemaster run`. C'est un **assist opérateur** : tu pilotes la **vraie CLI** contre le
+projet cible — tu n'écris pas de fichier roadmap à la main, tu émets des commandes `forgemaster`.
 
 Distinct du skill semé `roadmap-decompose` (livré *dans* les projets, il enseigne le *quoi* : le modèle de
 décomposition à 3 niveaux). Ici on ajoute le *comment opérationnel* : commandes complètes, **priorité
@@ -22,7 +22,7 @@ drainable.
 
 ## Invariant : une roadmap n'est « faite » que si `roadmap check` est vert
 
-Le gate `cockpit roadmap check <projet>` (exit 1 dès une issue) est l'autorité de complétude. Une feature
+Le gate `forgemaster roadmap check <projet>` (exit 1 dès une issue) est l'autorité de complétude. Une feature
 sans facette, une task sans DoD, une dépendance dangling ou un cycle **bloquent**. Ta séquence n'est
 terminée que quand `check` retourne **0 issue**.
 
@@ -30,9 +30,9 @@ terminée que quand `check` retourne **0 issue**.
 
 ### 1. Cartographier le projet cible (ne rien inventer)
 ```bash
-cockpit project list                     # le projet existe-t-il ? (sinon : cockpit project create …)
-cockpit bundle show <type>               # les FACETTES disponibles pour ce type (le vocab de --facet)
-cockpit roadmap show <projet>            # l'état actuel (features/tasks déjà là — ne pas dupliquer)
+forgemaster project list                     # le projet existe-t-il ? (sinon : forgemaster project create …)
+forgemaster bundle show <type>               # les FACETTES disponibles pour ce type (le vocab de --facet)
+forgemaster roadmap show <projet>            # l'état actuel (features/tasks déjà là — ne pas dupliquer)
 ```
 La facette d'une feature **doit** appartenir aux facettes du bundle du projet (sinon `check` la rejette en
 `BAD_FACET`). Si aucune facette ne correspond à une étape (ex. « test », « infra »), c'est un **manque de
@@ -46,12 +46,12 @@ inter-features — celles-ci se résolvent par l'ordre de merge).
 ### 3. Émettre la séquence exécutable
 Une feature par facette, puis ses tasks ordonnées par `depends_on`, chacune avec **priorité** et **DoD** :
 ```bash
-cockpit roadmap add-feature <projet> <feature> --facet <facette> --title "<titre>"
+forgemaster roadmap add-feature <projet> <feature> --facet <facette> --title "<titre>"
 
-cockpit task add <projet>/<feature> <task> \
+forgemaster task add <projet>/<feature> <task> \
     --priority P0 \
     --acceptance "Critère BINAIRE et testé : ce qui prouve que la task est finie."
-cockpit task add <projet>/<feature> <task-2> \
+forgemaster task add <projet>/<feature> <task-2> \
     --depends-on <task> \
     --priority P1 \
     --acceptance "Critère binaire … (test inclus)."
@@ -65,14 +65,14 @@ Règles de fidélité :
 
 ### 4. Certifier (gate final — non négociable)
 ```bash
-cockpit roadmap check <projet>
+forgemaster roadmap check <projet>
 ```
-Vert (exit 0 + récap) → la roadmap est **opérationnelle**, drainable par `cockpit run <projet>`.
+Vert (exit 0 + récap) → la roadmap est **opérationnelle**, drainable par `forgemaster run <projet>`.
 Rouge → corrige la **cause** (ajoute la DoD/facette manquante, répare la dépendance) et **re-check**. Ne
 contourne jamais le gate.
 
 ## Sortie
 
-Une roadmap sur le projet cible dont **`cockpit roadmap check` retourne 0 issue** : chaque feature porte une
+Une roadmap sur le projet cible dont **`forgemaster roadmap check` retourne 0 issue** : chaque feature porte une
 facette connue du bundle, chaque task porte une DoD binaire et un DAG `depends_on` sain. Prête pour
-`cockpit run`.
+`forgemaster run`.

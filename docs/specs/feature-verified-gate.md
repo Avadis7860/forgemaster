@@ -30,7 +30,7 @@ Faux-vert récurrent, leçon jamais distillée en artefact exécutable.
 7. La promesse du gate est **prouvée live (dogfood sur sa propre PR)** ou ne vaut rien.
 8. **Preuve DEUX-TEMPS pour un jalon jouable** (`CONTRACT_VERSION = feature-verify-v2`) : « le résultat se
    **joue** » ≠ « du texte est rendu au chargement ». Quand le worker déclare un bloc `interaction`
-   (`clicks` read-only + `after_markers`) dans `.cockpit/verify-markers.json`, la porte capture l'état
+   (`clicks` read-only + `after_markers`) dans `.forgemaster/verify-markers.json`, la porte capture l'état
    **at-rest**, joue les gestes, puis exige que les `after_markers` soient **présents APRÈS le geste ET
    absents at-rest** (`pre_present` non vide ⇒ 🔴, + un clic déclaré en échec ⇒ 🔴). Un `after_marker` déjà
    rendu au chargement est un **label statique**, pas une transition — la preuve est *verified*, pas
@@ -44,7 +44,7 @@ Faux-vert récurrent, leçon jamais distillée en artefact exécutable.
 - **« Jamais blanchi »** : échec d'exécution (node absent, browser ko, timeout) → `{ok: False, error}`,
   **jamais vert**. **N/A-safe** : pas d'UI touchée → aucun blocker ajouté.
 
-## Invariants de test (à encoder dans cockpit)
+## Invariants de test (à encoder dans forgemaster)
 
 - UI touchée + marqueurs absents du DOM → gate **bloque** ; marqueurs présents → passe (screenshot non
   vide + texte attendu lu).

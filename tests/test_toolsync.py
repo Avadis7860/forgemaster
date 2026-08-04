@@ -1,4 +1,4 @@
-"""Tests de `cockpit.toolsync` (P6) : re-sync pull-only ff d'un outil adopté, sur DB + projects_root
+"""Tests de `forgemaster.toolsync` (P6) : re-sync pull-only ff d'un outil adopté, sur DB + projects_root
 jetables, upstreams = vrais repos locaux (zéro réseau). L'adoption passe par `registry.create_project`
 (clone bare, `origin` SANS refspec) → couvre le self-heal du refspec de bout en bout. Le pré-chauffage de
 l'index Flow est monkeypatché (on teste la GLUE, pas code-map — best-effort par contrat)."""
@@ -10,12 +10,12 @@ from pathlib import Path
 
 import pytest
 
-from cockpit import toolsync
-from cockpit.codemap.index import CodemapError, IndexHandle
-from cockpit.config import Settings
-from cockpit.core import run
-from cockpit.db import store
-from cockpit.projects import registry
+from forgemaster import toolsync
+from forgemaster.codemap.index import CodemapError, IndexHandle
+from forgemaster.config import Settings
+from forgemaster.core import run
+from forgemaster.db import store
+from forgemaster.projects import registry
 
 _GIT_ENV = {"PATH": os.environ.get("PATH", ""),
             "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e.invalid",
@@ -35,7 +35,7 @@ def _make_upstream(path: Path) -> Path:
 
 
 def _advance_upstream(path: Path, branch: str) -> str:
-    """Avance `branch` d'un commit sur l'upstream non-bare (simule un travail amont hors cockpit)."""
+    """Avance `branch` d'un commit sur l'upstream non-bare (simule un travail amont hors forgemaster)."""
     run.run(["git", "-C", str(path), "checkout", "-q", branch], env=_GIT_ENV)
     (path / f"{branch}-work.txt").write_text("upstream work\n", encoding="utf-8")
     run.run(["git", "-C", str(path), "add", "-A"], env=_GIT_ENV)

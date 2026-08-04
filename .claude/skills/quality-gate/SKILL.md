@@ -1,6 +1,6 @@
 ---
 name: quality-gate
-description: Gate qualité du cockpit (ruff + mypy + pytest + smoke réponse : CLI --help, daemon importable sans fastapi, socle résout, DB se crée) — à passer VERT avant tout commit. Un rouge = on ne commit pas.
+description: Gate qualité du forgemaster (ruff + mypy + pytest + smoke réponse : CLI --help, daemon importable sans fastapi, socle résout, DB se crée) — à passer VERT avant tout commit. Un rouge = on ne commit pas.
 inputs: []
 outputs: [rapport pass/fail par étage]
 related_catalogs: [ruff, mypy, pytest]
@@ -32,16 +32,16 @@ $VENV/pytest -q                 # 3. tests (socle + câblage)
 3. **Tests** (`pytest`) — tout vert. Un test qui n'existe pas pour une capacité livrée = capacité non livrée.
 4. **Smoke réponse** (la spine tient pendant qu'on porte les couches) :
    ```bash
-   $VENV/cockpit --help                                   # la CLI se construit (parser figé)
-   $VENV/python -c "import cockpit; import cockpit.config; import cockpit.db.schema"
-   $VENV/python -c "from cockpit.daemon import app"        # daemon importable SANS fastapi (import paresseux)
-   $VENV/python -c "from cockpit.config import Settings; from cockpit.db import store; \
+   $VENV/forgemaster --help                                   # la CLI se construit (parser figé)
+   $VENV/python -c "import forgemaster; import forgemaster.config; import forgemaster.db.schema"
+   $VENV/python -c "from forgemaster.daemon import app"        # daemon importable SANS fastapi (import paresseux)
+   $VENV/python -c "from forgemaster.config import Settings; from forgemaster.db import store; \
      import tempfile, pathlib; d=pathlib.Path(tempfile.mkdtemp()); \
      s=Settings.resolve(home=d); c=store.open_db(s); \
      print(sorted(r[0] for r in c.execute(\"select name from sqlite_master where type='table'\")))"
    # → ['dispatch_jobs','features','port_reservations','projects','tasks'] : le socle SQLite se crée
    ```
-   (Remplace le double-build byte-identique de `code-map` : le cockpit n'est pas un générateur
+   (Remplace le double-build byte-identique de `code-map` : le forgemaster n'est pas un générateur
    déterministe — il garantit que la **spine démarre et répond**, pas une sortie byte-identique. À mesure
    que les couches sont portées, ajouter un smoke qui prouve que le RÉSULTAT s'affiche, jamais juste un 200.)
 
@@ -58,7 +58,7 @@ python tools/front_conformance.py   # 4. design-system (R1-R5 : primitive/token/
 
 - **Design-system d'abord** : toute vue consomme les primitives (`components/ui/`) + les tokens
   (`@theme` dans `index.css`) ; `front_conformance.py` refuse bouton brut / z-index·couleur arbitraires /
-  teinte de statut inline (échappatoire `cockpit:allow` motivée). Exempte `components/ui/` et les tests.
+  teinte de statut inline (échappatoire `forgemaster:allow` motivée). Exempte `components/ui/` et les tests.
 - **Boucle visuelle AVANT de livrer** (mandat, pas optionnel) : `python tools/ui_shot.py <route> …` →
   **Read** le PNG → critique (hiérarchie, 1 action primaire, états vide/chargement, densité) → edit →
   re-shoot. C'est l'itération (aucun verdict) ; le gate SHA-bound feature-verified prouve avant merge.

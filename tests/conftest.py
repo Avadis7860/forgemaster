@@ -1,6 +1,7 @@
 """conftest partagé — fixtures transverses aux tests.
 
-`fake_tools` simule un hôte **provisionné** (`cockpit tools install` a tourné) : de faux exécutables pour
+`fake_tools` simule un hôte **provisionné** (`forgemaster toolchain install` a tourné) : de faux exécutables
+pour
 chaque binaire du framework sous `tools_bin(settings)`, afin que le **preflight de dispatch** (P1 : tout
 `allowedTools` de la facette doit résoudre sur le PATH du worker) passe dans les tests qui injectent un
 runner fake — aucun vrai outil n'est lancé, seule leur RÉSOLUTION (`shutil.which`) compte.
@@ -11,8 +12,8 @@ from collections.abc import Callable, Iterable
 
 import pytest
 
-from cockpit.config import Settings
-from cockpit.tools import _NODE_BINS, _VENV_BINS, tools_bin
+from forgemaster.config import Settings
+from forgemaster.tools import _NODE_BINS, _VENV_BINS, tools_bin
 
 
 @pytest.fixture

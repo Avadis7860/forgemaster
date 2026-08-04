@@ -9,14 +9,14 @@ from pathlib import Path
 
 import pytest
 
-from cockpit.config import Settings
-from cockpit.db import alerts, merge_outcomes, store
-from cockpit.dispatch import ports, worktree
-from cockpit.gate import merge, review, toolchain, verify
-from cockpit.git.identity import resolve_identity
-from cockpit.git.internal import GitOpError, InternalGit
-from cockpit.projects import registry
-from cockpit.roadmap import model
+from forgemaster.config import Settings
+from forgemaster.db import alerts, merge_outcomes, store
+from forgemaster.dispatch import ports, worktree
+from forgemaster.gate import merge, review, toolchain, verify
+from forgemaster.git.identity import resolve_identity
+from forgemaster.git.internal import GitOpError, InternalGit
+from forgemaster.projects import registry
+from forgemaster.roadmap import model
 
 
 @pytest.fixture
@@ -276,7 +276,7 @@ def test_verify_target_fails_closed_without_runner(ctx):
 
 
 def _write_markers(workdir: Path, raw: str) -> None:
-    (workdir / ".cockpit").mkdir(parents=True, exist_ok=True)
+    (workdir / ".forgemaster").mkdir(parents=True, exist_ok=True)
     (workdir / verify.MARKERS_FILE).write_text(raw, encoding="utf-8")
 
 
@@ -434,7 +434,7 @@ def test_verify_target_invokes_node_with_tools_path(ctx, monkeypatch):
     `tools/bin`). Le runner DOIT être lancé avec `tools_env` (PATH préfixé `tools/bin`) — sinon
     `subprocess.run(["node", …])` lève FileNotFoundError sur toute install réelle (runner mort-né). On prouve
     que l'env transmis au subprocess porte `tools/bin` en tête, comme le worker de dispatch et le gate."""
-    from cockpit import tools
+    from forgemaster import tools
     settings, _ = ctx
     _stub_runner(settings)
     captured: dict = {}
@@ -534,7 +534,7 @@ def test_run_merge_holds_without_go_then_merges_and_cleans_up(ctx):
 def test_run_merge_rebases_stale_sibling_then_ff(ctx):
     """Deux features siblings branchées du même `dev` (drain parallèle), mergées en batch : le 1er merge
     fait avancer `dev` → la 2ᵉ n'est plus ff (base périmée). `run_merge` la REBASE sur le `dev` à jour
-    AVANT le ff (préserve son commit worker) → les deux mergent. Régression cockpit-merge-batched-sibling-
+    AVANT le ff (préserve son commit worker) → les deux mergent. Régression forgemaster-merge-batched-sibling-
     stale-base (surfacé LIVE le 2026-07-20, E2E deploy-smoke)."""
     settings, conn = ctx
     git = InternalGit()
@@ -639,7 +639,7 @@ def test_toolchain_detect_groups_by_convention(tmp_path):
 
 def test_toolchain_applicable_triggers_from_diff():
     assert toolchain.applicable_triggers(["web/src/App.tsx"]) == ["front"]
-    assert toolchain.applicable_triggers(["src/cockpit/x.py"]) == ["backend"]
+    assert toolchain.applicable_triggers(["src/forgemaster/x.py"]) == ["backend"]
     assert toolchain.applicable_triggers(["web/vite.config.ts", "src/x.py"]) == ["front", "backend"]
     assert toolchain.applicable_triggers(["README.md", "docs/x.rst"]) == []
     # backend node (TS/JS hors web/, canonique server/) → nouveau trigger, distinct du front
@@ -736,15 +736,15 @@ def test_run_toolchain_declared_group_red_without_declaration_then_green(tmp_pat
     le bloc TOML) ; **avec** une déclaration montable → les steps du projet tournent, verbatim. C'est le cœur
     du renversement : le gate n'infère pas la stack (zéro hardcode `go`/`cargo`), il exige d'être renseigné.
     """
-    from cockpit.core.run import RunResult
+    from forgemaster.core.run import RunResult
     root = tmp_path / "wt"
     root.mkdir()
     red = toolchain.run_toolchain(root, ["main.go"], timeout_s=5)
     assert len(red) == 1 and red[0]["ok"] is False and red[0]["group"] == "declared"
     assert "[bundle.gate]" in red[0]["error"]              # ACTIONNABLE, pas seulement constatant
     assert toolchain.build_verdict(red, sha="s", ts="t")["ok"] is False     # jamais de vert par vacuité
-    (root / ".cockpit").mkdir()
-    (root / ".cockpit" / "bundle.toml").write_text(
+    (root / ".forgemaster").mkdir()
+    (root / ".forgemaster" / "bundle.toml").write_text(
         '[bundle.gate]\nsteps = [\n'
         '  { name = "vet",  argv = ["go", "vet", "./..."] },\n'
         '  { name = "test", argv = ["go", "test", "./..."], cwd = "sub" },\n]\n', encoding="utf-8")
@@ -774,8 +774,8 @@ def test_declared_steps_malformed_is_absent_never_green(tmp_path, body: str):
     """**Déclaration malformée = déclaration absente** (fail-CLOSED, règle 3 de la spec). Un `bundle.toml`
     mal tapé ne dégrade JAMAIS vers le vert — sinon il rouvrirait exactement le trou qu'on referme."""
     root = tmp_path / "wt"
-    (root / ".cockpit").mkdir(parents=True)
-    (root / ".cockpit" / "bundle.toml").write_text(f"[bundle.gate]\n{body}\n", encoding="utf-8")
+    (root / ".forgemaster").mkdir(parents=True)
+    (root / ".forgemaster" / "bundle.toml").write_text(f"[bundle.gate]\n{body}\n", encoding="utf-8")
     assert toolchain._declared_steps(root) is None
     res = toolchain.run_toolchain(root, ["main.go"], timeout_s=5)
     assert len(res) == 1 and res[0]["ok"] is False and res[0]["group"] == "declared"
@@ -785,12 +785,12 @@ def test_run_toolchain_dedupes_identical_steps_across_groups(tmp_path, monkeypat
     """Un projet dont le `[bundle.gate]` déclare sa commande de gate conventionnelle ne la paie pas DEUX fois
     quand le diff déclenche aussi sa route connue : deux steps identiques (name+cmd+cwd) sont joués une seule
     fois. C'est le cas de nos 5 bundles typés (leur déclaration duplique leur route)."""
-    from cockpit.core.run import RunResult
+    from forgemaster.core.run import RunResult
     root = tmp_path / "wt"
-    (root / ".cockpit").mkdir(parents=True)
+    (root / ".forgemaster").mkdir(parents=True)
     (root / "package.json").write_text('{"scripts": {"gate": "x"}}', encoding="utf-8")
     (root / "node_modules").mkdir()
-    (root / ".cockpit" / "bundle.toml").write_text(
+    (root / ".forgemaster" / "bundle.toml").write_text(
         '[bundle.gate]\nsteps = [{ name = "npm-run-gate", argv = ["npm", "run", "gate"] }]\n',
         encoding="utf-8")
     calls: list = []
@@ -816,7 +816,7 @@ def test_toolchain_status_applicable_on_unknown_language(ctx):
 def test_run_toolchain_runs_node_backend_gate_when_present(tmp_path, monkeypatch):
     """`server/package.json` avec un script `gate` → `run_toolchain` lance `npm run gate` DANS server/ (couvre
     le backend node TS, ex. void-runner). Le subprocess est monkeypatché (pas de vrai npm en test)."""
-    from cockpit.core.run import RunResult
+    from forgemaster.core.run import RunResult
     root = tmp_path / "wt"
     (root / "server").mkdir(parents=True)
     (root / "server" / "package.json").write_text('{"scripts": {"gate": "x"}}', encoding="utf-8")
@@ -836,7 +836,7 @@ def test_run_toolchain_runs_node_backend_gate_when_present(tmp_path, monkeypatch
 def test_run_toolchain_root_unified_gate_covers_server(tmp_path, monkeypatch):
     """`package.json` RACINE avec un script `gate` → un diff `server/` lance `npm run gate` à la RACINE
     (univers TS unifié / workspaces) — réconcilie la convention web/-centrée avec le layout unifié."""
-    from cockpit.core.run import RunResult
+    from forgemaster.core.run import RunResult
     root = tmp_path / "wt"
     root.mkdir()
     (root / "package.json").write_text('{"scripts": {"gate": "x"}}', encoding="utf-8")
@@ -858,7 +858,8 @@ def test_run_toolchain_fails_closed_on_missing_binary(tmp_path, monkeypatch):
     (root / "src").mkdir(parents=True)
     (root / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
     monkeypatch.setattr(toolchain, "_steps_for",
-                        lambda group, wt: [{"name": "ruff", "argv": ["cockpit-no-such-bin-xyz"], "cwd": wt}])
+                        lambda group, wt: [
+                            {"name": "ruff", "argv": ["forgemaster-no-such-bin-xyz"], "cwd": wt}])
     results = toolchain.run_toolchain(root, ["x.py"], timeout_s=5)
     assert len(results) == 1 and results[0]["ok"] is False and results[0].get("error")
 
@@ -866,7 +867,7 @@ def test_run_toolchain_fails_closed_on_missing_binary(tmp_path, monkeypatch):
 def test_run_toolchain_forwards_env_to_steps(tmp_path, monkeypatch):
     """`env` (optionnel) est REMPLACÉ dans le subprocess des steps → l'appelant y préfixe `tools/bin`
     (ruff/mypy/npm présents sur un hôte frais). `None` = héritage passif (non-régression, testé ailleurs)."""
-    from cockpit.core.run import RunResult
+    from forgemaster.core.run import RunResult
     root = tmp_path / "wt"
     (root / "src").mkdir(parents=True)
     (root / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
@@ -916,7 +917,7 @@ def test_run_merge_front_change_blocked_without_toolchain_verdict(ctx):
 # -- alertes (v17, no-silent-block) : gate rouge au merge → alerte ; merge réussi → résolution -----
 
 def test_run_merge_red_gate_emits_gate_red_alert(ctx):
-    """Un `cockpit merge` refusé sur gate ROUGE (🔴 reviewer frais) persiste une alerte `gate_red`
+    """Un `forgemaster merge` refusé sur gate ROUGE (🔴 reviewer frais) persiste une alerte `gate_red`
     actionnable (findings = les blockers, tier de contexte) — aucun blocage silencieux. Rien n'est muté."""
     settings, conn = ctx
     git = InternalGit()

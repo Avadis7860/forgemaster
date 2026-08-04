@@ -4,7 +4,7 @@
 Scanne `web/src` et refuse les entorses qui recréent la dette : bouton brut au lieu de la primitive,
 z-index / couleur arbitraires au lieu des tokens, teinte de statut inline au lieu de la source unique.
 Exempte les primitives (`components/ui/`), les tests et statusTone (la source légitime). Échappatoire par
-commentaire `cockpit:allow` sur la ligne. Retourne un code non nul s'il reste une violation.
+commentaire `forgemaster:allow` sur la ligne. Retourne un code non nul s'il reste une violation.
 
 Usage : python web/tools/front_conformance.py   (depuis la racine du repo ou n'importe où)
 """
@@ -17,7 +17,7 @@ from pathlib import Path
 SRC = Path(__file__).resolve().parents[1] / "src"
 EXEMPT_DIRS = ("components/ui/",)
 EXEMPT_FILES = ("lib/statusTone.ts",)
-ALLOW = "cockpit:allow"
+ALLOW = "forgemaster:allow"
 
 # (id, regex, message) — chaque règle cible une entorse précise à la doctrine.
 RULES: list[tuple[str, re.Pattern[str], str]] = [
@@ -76,7 +76,7 @@ def main() -> int:
         return 0
     violations = scan()
     if violations:
-        print("[front-conformance] entorses au design-system (ajoute `cockpit:allow` si justifié) :")
+        print("[front-conformance] entorses au design-system (ajoute `forgemaster:allow` si justifié) :")
         for v in violations:
             print("  " + v)
         return 1

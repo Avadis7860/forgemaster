@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from cockpit.config import Settings
-from cockpit.db import store
-from cockpit.gate import history, review
+from forgemaster.config import Settings
+from forgemaster.db import store
+from forgemaster.gate import history, review
 
 
 def _db(tmp_path: Path):

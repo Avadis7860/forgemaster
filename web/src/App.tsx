@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui'
 import { useOnboarding } from '@/lib/queries'
 
 /** Shell global (IA option A) : header + bandeau onboarding non bloquant + rail de projets + espace de
- *  travail (Outlet). Sous `md` le rail devient un tiroir off-canvas (axe 8, cockpit nomade) : le contenu
+ *  travail (Outlet). Sous `md` le rail devient un tiroir off-canvas (axe 8, forgemaster nomade) : le contenu
  *  reprend 100 % de la largeur, le tiroir s'ouvre par le hamburger et se ferme au scrim / à la navigation. */
 export function AppShell() {
   const project = useParams({ strict: false }).project
@@ -39,7 +39,7 @@ export function AppShell() {
             <span aria-hidden>☰</span>
           </button>
           <Link to="/" className="shrink-0 text-sm font-semibold tracking-tight text-fg">
-            cockpit
+            forgemaster
           </Link>
           {project && (
             <span className="truncate text-sm text-muted">

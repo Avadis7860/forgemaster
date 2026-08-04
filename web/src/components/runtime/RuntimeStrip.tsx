@@ -88,7 +88,7 @@ function DeploymentRow({ project, dep }: { project: string; dep: Deployment }) {
 
       {/* Ligne 2 : méta discrète — port · sha · lien health-gated (jamais un faux-vert vers un service arrêté).
           Le lien se compose VIEWER-RELATIF (hostname courant + port), pas depuis `dep.url` loopback : le
-          produit est joignable par le host qui a servi le cockpit, pas par le 127.0.0.1 du viewer (cf. deployUrl). */}
+          produit est joignable par le host qui a servi le forgemaster, pas par le 127.0.0.1 du viewer (cf. deployUrl). */}
       <div className="flex flex-wrap items-center gap-2 text-xs text-faint">
         {dep.port != null && <code className="font-mono">:{dep.port}</code>}
         {dep.last_deploy_sha && (

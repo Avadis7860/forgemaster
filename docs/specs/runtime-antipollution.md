@@ -19,8 +19,8 @@ construire d'injection secret→conteneur (aucun service consommateur aujourd'hu
 1. **L'env passé à la CLI compose est une allowlist stricte.** `_compose` ne fait plus `{**os.environ}` : il
    part de `_COMPOSE_ENV_ALLOW` (le strict nécessaire pour que podman/docker compose tourne — `PATH`, `HOME`,
    `XDG_RUNTIME_DIR`, locale, chemins de config containers/docker s'ils sont posés) ⊕ l'overlay explicite de
-   l'engine (`COCKPIT_PORT`, `COMPOSE_PROJECT_NAME`). **Aucun secret du daemon** (`BWS_ACCESS_TOKEN`,
-   `COCKPIT_*`, `GITHUB_TOKEN`…) n'atteint le build/run d'un service, même présent dans l'environnement du
+   l'engine (`FORGEMASTER_PORT`, `COMPOSE_PROJECT_NAME`). **Aucun secret du daemon** (`BWS_ACCESS_TOKEN`,
+   `FORGEMASTER_*`, `GITHUB_TOKEN`…) n'atteint le build/run d'un service, même présent dans l'environnement du
    daemon. L'env de run est scopé **par construction**, jamais hérité en bloc.
 2. **Résolution de secrets scopée au projet (ACL, opt-in).** `scoped_cred_resolver(settings, conn, slug)` ne
    résout QUE le `credential_ref` **lié à `slug`** (`projects.credential_ref`) ; un ref d'un autre projet (ou
@@ -42,7 +42,7 @@ construire d'injection secret→conteneur (aucun service consommateur aujourd'hu
 
 ## Invariants de test (`tests/test_runtime.py`, `tests/test_provision.py`, `tests/test_secrets_acl.py`)
 
-- **Env scellé** : avec `BWS_ACCESS_TOKEN`/`COCKPIT_ADMIN_TOKEN`/`GITHUB_TOKEN` posés dans l'env du daemon,
+- **Env scellé** : avec `BWS_ACCESS_TOKEN`/`FORGEMASTER_ADMIN_TOKEN`/`GITHUB_TOKEN` posés dans l'env du daemon,
   l'env passé au runner compose n'en contient **aucun** (ni clé, ni valeur) ; `set(env) ⊆ allowlist ∪ overlay`.
 - **ACL** : `scoped_cred_resolver(slug="alpha")` résout le ref d'alpha, refuse (`''`) le ref de beta — alors
   que `cred_resolver` global, lui, le résout (contraste). Projet inconnu / ref vide / projet sans ref lié → `''`.

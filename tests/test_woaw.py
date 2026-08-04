@@ -8,14 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from cockpit.config import Settings
-from cockpit.core import run
-from cockpit.db import store
-from cockpit.dispatch import woaw as woaw_dispatch
-from cockpit.dispatch import worker
-from cockpit.gate import merge, verify, woaw
-from cockpit.projects import registry
-from cockpit.roadmap import model
+from forgemaster.config import Settings
+from forgemaster.core import run
+from forgemaster.db import store
+from forgemaster.dispatch import woaw as woaw_dispatch
+from forgemaster.dispatch import worker
+from forgemaster.gate import merge, verify, woaw
+from forgemaster.projects import registry
+from forgemaster.roadmap import model
 
 # -- store de verdict (PUR + I/O fichier) -----------------------------------------------------------
 

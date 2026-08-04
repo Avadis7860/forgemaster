@@ -20,7 +20,7 @@ un rendu à l'aveugle, sans identité ancrée.
 Ne pas re-débattre.
 
 1. **Application = déclenchée-opérateur, jamais auto-seed.** C'est le **dirigeant** qui dit « inspire-toi
-   de ce template pour mon projet » (route `POST /api/projects/{slug}/inspire` ou `cockpit inspire`). Pas
+   de ce template pour mon projet » (route `POST /api/projects/{slug}/inspire` ou `forgemaster inspire`). Pas
    d'auto-application au seed du bundle `derive/` (rejeté : trop rigide — l'opérateur choisit son moment
    et sa cible ; utility-user, pas convention).
 2. **Le worker CUSTOMISE, jamais ne copie.** La graine est une **cible visuelle**, pas un artefact final :
@@ -45,7 +45,7 @@ Ne pas re-débattre.
 7. **Idempotence.** Re-`inspire` du même template sur le même projet : feature/task déjà là → réutilise ;
    graine identique → `commit_worktree` no-op sur tree clean. Deux templates distincts → deux
    `docs/design/<slug>/` coexistent (le worker les reçoit toutes, budget-bornées).
-8. **MCP différé (maison = vendored/cockpit).** Données terrain : N=1 template, 0 application réelle →
+8. **MCP différé (maison = vendored/forgemaster).** Données terrain : N=1 template, 0 application réelle →
    bâtir un genre/index MCP `ui-kit` maintenant serait un forward-feature. On livre le **mécanisme
    d'application** ; le MCP gradue plus tard, sur réutilisation cross-projet **prouvée** (>1 template,
    usage réel). Voir la décision verrouillée [roadmap](../roadmap.md#décisions-de-conception-verrouillées).
@@ -64,7 +64,7 @@ Une customisation réussie **re-gradue** en template du lab (le capital visuel g
 pas par accumulation de brut au centre — doctrine capital-jeton). La boucle est **ouverte** : on la
 retendra vers un genre/index MCP le jour où les données (réutilisation cross-projet) le justifient.
 
-## Invariants de test (encodés dans cockpit)
+## Invariants de test (encodés dans forgemaster)
 
 - `docs/design/<slug>/` présent + `brief.md` non vide → le bloc « Cible visuelle du projet » est injecté
   dans le prompt worker **et** fix ; absent → chaîne vide, aucun câblage (N/A-safe, fail-soft).
@@ -75,5 +75,5 @@ retendra vers un genre/index MCP le jour où les données (réutilisation cross-
 - `apply_template` crée la feature `design-<slug>` **et** la task `customize-ui` (idempotent : ré-exécution
   réutilise) ; commit par la forge sous l'identité worker ; template inconnu → `ValueError` ;
   projet inconnu → `KeyError`.
-- Parité CLI/route : `cockpit inspire <project> <template>` et `POST /inspire` délèguent au **même**
+- Parité CLI/route : `forgemaster inspire <project> <template>` et `POST /inspire` délèguent au **même**
   `apply_template` (spine = CLI + cœur déterministe ; daemon = vue).

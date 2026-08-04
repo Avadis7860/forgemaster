@@ -12,13 +12,13 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cockpit.config import Settings
-from cockpit.core import run
-from cockpit.daemon import app as app_mod
-from cockpit.db import store
-from cockpit.git.internal import InternalGit
-from cockpit.projects import registry
-from cockpit.provision import load_bundle, read_reseed_owned, reseed
+from forgemaster.config import Settings
+from forgemaster.core import run
+from forgemaster.daemon import app as app_mod
+from forgemaster.db import store
+from forgemaster.git.internal import InternalGit
+from forgemaster.projects import registry
+from forgemaster.provision import load_bundle, read_reseed_owned, reseed
 
 _ID = ("t", "t@e.invalid")
 # Contrat de RUN (infra scaffold) + de QUALITÉ (discipline des facettes, jamais éditée par le worker). Les

@@ -18,7 +18,7 @@ Séquencement destructif au merge : `git branch -D` sur une branche encore *chec
   jamais mono-chemin (`worktree.release` est appelé par les deux).
 - Un **audit d'orphelins** existe et doit rester vert (`worktree.audit`).
 
-## Invariants de test (à encoder dans cockpit)
+## Invariants de test (à encoder dans forgemaster)
 
 - Merge d'une feature dont la branche est sortie en worktree → l'ordre remove-then-delete réussit ;
   **inverser** l'ordre doit reproduire « checked out at » (test de non-régression).

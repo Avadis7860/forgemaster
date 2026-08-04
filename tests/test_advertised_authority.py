@@ -3,7 +3,7 @@ atteinte. Repro-driven — le cas racine (nginx `absolute_redirect on` fuit le p
 test : la dimension l'aurait attrapé en 🔴 AVANT le fix, verte APRÈS (`off` → Location relatif)."""
 from __future__ import annotations
 
-from cockpit.gate import advertised_authority as aa
+from forgemaster.gate import advertised_authority as aa
 
 # -- authority() : normalisation PUR ---------------------------------------------------------------
 

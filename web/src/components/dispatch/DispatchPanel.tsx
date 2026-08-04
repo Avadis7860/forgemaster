@@ -162,7 +162,7 @@ export function DispatchPanel({ project, feature }: { project: string; feature: 
         </Alert>
       )}
       {/* Socle interactif : une interview ne se mène pas en `claude -p` → l'action primaire (en-tête) ouvre
-          l'onglet Ops en auto-lançant `cockpit interview <projet>` (search param `run=interview` → TerminalPane).
+          l'onglet Ops en auto-lançant `forgemaster interview <projet>` (search param `run=interview` → TerminalPane).
           Ce bloc explicite POURQUOI le bouton diffère — le point d'entrée UI que le dispatch muet n'offrait pas. */}
       {interactiveNext && (
         <Alert tone="info" title="Interview de 1ʳᵉ session requise">

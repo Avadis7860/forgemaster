@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from cockpit.provision import derive
+from forgemaster.provision import derive
 
 
 def test_fill_jetons_fills_archetype_leaves_project_rejects_unknown():

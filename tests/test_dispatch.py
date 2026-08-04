@@ -9,15 +9,15 @@ from pathlib import Path
 
 import pytest
 
-from cockpit.config import Settings
-from cockpit.core import run
-from cockpit.db import schema, store
-from cockpit.dispatch import jobs, ports, worker, worktree
-from cockpit.git.identity import resolve_identity
-from cockpit.git.internal import GitOpError, InternalGit
-from cockpit.projects import registry
-from cockpit.provision import load_bundle
-from cockpit.roadmap import model, prompt
+from forgemaster.config import Settings
+from forgemaster.core import run
+from forgemaster.db import schema, store
+from forgemaster.dispatch import jobs, ports, worker, worktree
+from forgemaster.git.identity import resolve_identity
+from forgemaster.git.internal import GitOpError, InternalGit
+from forgemaster.projects import registry
+from forgemaster.provision import load_bundle
+from forgemaster.roadmap import model, prompt
 
 
 @pytest.fixture
@@ -334,7 +334,7 @@ def test_dispatch_happy_path_records_job_and_worktree(ctx):
     job = jobs.get_job(conn, report["job_id"])
     assert job["status"] == "done" and job["num_turns"] == 2 and job["session_id"]
     assert job["port"] and Path(job["worktree_path"]).is_dir()
-    # sur succès, le primitive clôt la task `done` (fix 2026-07-30 : `cockpit dispatch` seul complète sa
+    # sur succès, le primitive clôt la task `done` (fix 2026-07-30 : `forgemaster dispatch` seul complète sa
     # task, plus d'impasse `in_progress`) → un 2e dispatch est refusé (plus de task READY).
     task = conn.execute("SELECT status FROM tasks WHERE slug='schema'").fetchone()
     assert task["status"] == "done"
@@ -369,7 +369,7 @@ def test_run_worker_human_abort_marks_killed_not_interrupted(ctx):
     """D2 (désambiguïsation) : un abort humain tue le worker par SIGTERM → même marqueur/rc qu'un interrupt
     externe. Le seul discriminant est la SENTINELLE (posée AVANT le kill). Sentinelle présente ⇒ le job
     est finalisé `killed` + "aborted by human" (sémantique d'abort préservée), PAS `interrupted`."""
-    from cockpit.dispatch import abort
+    from forgemaster.dispatch import abort
     settings, conn = ctx
     _seed_project(conn, settings)
     abort.request_abort(settings, project="proj")   # pose la sentinelle (0 worker en vol → juste le signal)
@@ -379,9 +379,9 @@ def test_run_worker_human_abort_marks_killed_not_interrupted(ctx):
 
 
 def test_dispatch_injects_tools_bin_on_worker_path(ctx):
-    """Le worker est spawné avec un `env` explicite dont le PATH commence par `$COCKPIT_HOME/tools/bin` —
+    """Le worker est spawné avec un `env` explicite dont le PATH commence par `$FORGEMASTER_HOME/tools/bin` —
     fin du `env=None` passif : il RÉSOUT codemap/docsmap/frontmap/node/… que sa facette déclare."""
-    from cockpit.tools import tools_bin
+    from forgemaster.tools import tools_bin
     settings, conn = ctx
     _seed_project(conn, settings)
     captured: dict = {}
@@ -400,7 +400,7 @@ def test_dispatch_injects_tools_bin_on_worker_path(ctx):
 def test_dispatch_marks_workspace_trusted(ctx):
     """Avant le spawn, le dispatch marque le SoT du projet trusted dans `$HOME/.claude.json` — sinon
     `claude -p` headless ignorerait les `allowedTools` de la facette (workspace non-trusted)."""
-    from cockpit.projects.registry import sot_path_for
+    from forgemaster.projects.registry import sot_path_for
     settings, conn = ctx
     _seed_project(conn, settings)
     worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=_ok_runner)
@@ -412,7 +412,7 @@ def test_dispatch_marks_workspace_trusted(ctx):
 def test_dispatch_fail_loud_when_claude_absent(ctx, monkeypatch):
     """`claude` (moteur du worker) absent du PATH → dispatch FAIL-LOUD avant le spawn (runner jamais appelé,
     task re-dispatchable), au lieu d'un worker mort-né silencieux (le zombie observé en E2E)."""
-    from cockpit.tools import tools_bin
+    from forgemaster.tools import tools_bin
     settings, conn = ctx
     _seed_project(conn, settings)
     (tools_bin(settings) / "claude").unlink()              # hôte sans Claude Code
@@ -445,7 +445,7 @@ def _running_job_on_task(conn, settings, *, task_slug="schema"):
 def test_reconcile_orphans_kills_running_and_reverts_task_and_is_idempotent(ctx):
     """Un `dispatch_jobs.status='running'` au boot est orphelin par construction → `killed`, sa task
     `in_progress`→`todo` (re-dispatchable). Idempotent : un 2ᵉ appel ne trouve plus rien."""
-    from cockpit.dispatch import reconcile
+    from forgemaster.dispatch import reconcile
     settings, conn = ctx
     _seed_project(conn, settings)
     job_id, _ = _running_job_on_task(conn, settings)
@@ -457,13 +457,14 @@ def test_reconcile_orphans_kills_running_and_reverts_task_and_is_idempotent(ctx)
 
 
 def test_reconcile_preserves_running_job_with_live_pid(ctx):
-    """Fix 2026-07-30 : un `cockpit dispatch` CLI VIVANT (process séparé) survit un restart du daemon → son
+    """Fix 2026-07-30 : un `forgemaster dispatch` CLI VIVANT (process séparé) survit un restart du daemon →
+    son
     job `running` porte un `pid` vivant → `reconcile_orphans` le PRÉSERVE (pas un orphelin). Sans ça il
     serait réapé `killed`, sa task retomberait `todo`, et son `record_finish` deviendrait un no-op silencieux
     → coût/tours/tokens perdus. Sonde `os.getpid()` (le process de test) = vivant."""
     import os
 
-    from cockpit.dispatch import reconcile
+    from forgemaster.dispatch import reconcile
     settings, conn = ctx
     _seed_project(conn, settings)
     job_id, _ = _running_job_on_task(conn, settings)
@@ -476,7 +477,7 @@ def test_reconcile_preserves_running_job_with_live_pid(ctx):
 def test_reconcile_leaves_finished_job_and_its_task_untouched(ctx):
     """La réconciliation ne touche QUE les `running` (WHERE-guard) : un job `done` et la task `done` qu'il a
     légitimement close restent intacts."""
-    from cockpit.dispatch import reconcile
+    from forgemaster.dispatch import reconcile
     settings, conn = ctx
     _seed_project(conn, settings)
     report = worker.dispatch_next(conn, settings, feature_ref="proj/feat", runner=_ok_runner)
@@ -532,7 +533,7 @@ def test_reconcile_finalizes_done_from_terminal_result(ctx):
     mort/redémarré) ne doit PAS être écrasé `killed`/NULL. La réconciliation le finalise `done` + métriques
     réelles DEPUIS son transcript — la trace ne ment jamais sur un succès (sinon poison de l'instrumentation
     d'outcome aval)."""
-    from cockpit.dispatch import reconcile
+    from forgemaster.dispatch import reconcile
     settings, conn = ctx
     _seed_project(conn, settings)
     job_id, _ = _running_job_with_log(conn, settings, _DRAIN_SUCCESS_LOG)
@@ -548,7 +549,7 @@ def test_reconcile_finalizes_done_from_terminal_result(ctx):
 def test_reconcile_finalizes_failed_from_error_result(ctx):
     """Symétrie honnête : si le transcript porte un `result` d'ÉCHEC réel (`is_error:true`), la réconciliation
     finalise `failed` + `error` (pas `killed`) — l'échec du run est journalisé, jamais travesti en kill."""
-    from cockpit.dispatch import reconcile
+    from forgemaster.dispatch import reconcile
     settings, conn = ctx
     _seed_project(conn, settings)
     log = ('{"type":"result","is_error":true,"subtype":"error_max_turns","session_id":"s",'
@@ -563,7 +564,7 @@ def test_reconcile_finalizes_failed_from_error_result(ctx):
 def test_reconcile_kills_job_without_terminal_result(ctx):
     """Symétrie : un log qui s'ARRÊTE avant le verdict (worker réellement tué en cours — aucun event `result`)
     reste `killed` + task→`todo`. On ne fabrique jamais un succès à partir d'un transcript coupé."""
-    from cockpit.dispatch import reconcile
+    from forgemaster.dispatch import reconcile
     settings, conn = ctx
     _seed_project(conn, settings)
     partial = ('{"type":"system","subtype":"init"}\n'
@@ -578,7 +579,7 @@ def test_reconcile_finalizes_rate_limited_from_terminal_result(ctx):
     """D1×D3 : un orphelin dont le transcript porte un rejet rate-limit est finalisé `rate_limited` (pas
     `killed`, pas `failed`) — la classification survit à la réconciliation d'orphelin (composition des deux
     fixes drain). La task revient `todo` (re-dispatchable après reset)."""
-    from cockpit.dispatch import reconcile
+    from forgemaster.dispatch import reconcile
     settings, conn = ctx
     _seed_project(conn, settings)
     job_id, _ = _running_job_with_log(conn, settings, _DRAIN_RATE_LIMIT_LOG)
@@ -592,7 +593,7 @@ def test_reconcile_finalizes_interrupted_from_terminal_result(ctx):
     `killed`, pas `failed`). La classification survit à la réconciliation d'orphelin ET elle est clé sur le
     MARQUEUR — le transcript est relu SANS rc (returncode=0 par défaut), seul un signal lisible dans le texte
     passe. La task revient `todo` (re-dispatchable)."""
-    from cockpit.dispatch import reconcile
+    from forgemaster.dispatch import reconcile
     settings, conn = ctx
     _seed_project(conn, settings)
     job_id, _ = _running_job_with_log(conn, settings, _DRAIN_INTERRUPT_LOG)
@@ -1021,9 +1022,9 @@ def _facet_root(tmp_path: Path, facet: str, *, persona: str, method: str, settin
     (fdir / "PERSONA.md").write_text(persona, encoding="utf-8")
     (fdir / "METHOD.md").write_text(method, encoding="utf-8")
     (fdir / "settings.local.json").write_text(settings, encoding="utf-8")
-    cockpit = root / ".cockpit"
-    cockpit.mkdir()
-    (cockpit / "bundle.toml").write_text(
+    forgemaster = root / ".forgemaster"
+    forgemaster.mkdir()
+    (forgemaster / "bundle.toml").write_text(
         f'[bundle]\nproject_type = "x"\nfacets = ["{facet}"]\ndefault_facet = "{facet}"\n', encoding="utf-8")
     return root
 

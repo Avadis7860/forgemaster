@@ -1,4 +1,5 @@
-"""test_interview — la commande `cockpit interview` : résolution de la task interactive du socle, lancement
+"""test_interview — la commande `forgemaster interview` : résolution de la task interactive du socle,
+lancement
 `claude` INTERACTIF (launcher injecté — jamais un vrai `claude`), et clôture VÉRIFIÉE du socle à la sortie."""
 from __future__ import annotations
 
@@ -7,13 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from cockpit import interview
-from cockpit.config import Settings
-from cockpit.db import store
-from cockpit.git.internal import InternalGit
-from cockpit.projects import registry
-from cockpit.roadmap import model
-from cockpit.tools import tools_bin
+from forgemaster import interview
+from forgemaster.config import Settings
+from forgemaster.db import store
+from forgemaster.git.internal import InternalGit
+from forgemaster.projects import registry
+from forgemaster.roadmap import model
+from forgemaster.tools import tools_bin
 
 # Acceptance d'une feature de travail qui COUVRE les axes de l'archétype `doc` (structure / completeness /
 # examples / maintenance) — le type par défaut d'un projet de test est `generic` → archétype `doc`. Depuis
@@ -76,9 +77,10 @@ def test_interview_wires_mcp_in_worktree_before_launch(ctx, monkeypatch):
     comme le worker headless. Miroir de l'injection du dispatch."""
     settings, conn = ctx
     _socle_project(conn, settings)
-    monkeypatch.setenv("COCKPIT_MCP_JWT_SECRET_REF", "ref")           # MCP câblé = une ref DE SECRET…
-    monkeypatch.setenv("COCKPIT_MCP_ENDPOINT", "http://mcp.example/mcp")   # …ET une cible (plus de défaut)
-    monkeypatch.setattr("cockpit.provision.mcp.cred_resolver", lambda s: (lambda r: "k" * 40))
+    monkeypatch.setenv("FORGEMASTER_MCP_JWT_SECRET_REF", "ref")           # MCP câblé = une ref DE SECRET…
+    # …ET une cible (plus de défaut)
+    monkeypatch.setenv("FORGEMASTER_MCP_ENDPOINT", "http://mcp.example/mcp")
+    monkeypatch.setattr("forgemaster.provision.mcp.cred_resolver", lambda s: (lambda r: "k" * 40))
     seen: dict = {}
 
     def launcher(argv, *, cwd, env=None):
@@ -93,7 +95,7 @@ def test_interview_mcp_injection_is_honest_noop_when_not_wired(ctx, monkeypatch)
     """MCP non câblé → aucun `.mcp.json` dans le worktree ; l'interview se lance normalement (no-op)."""
     settings, conn = ctx
     _socle_project(conn, settings)
-    monkeypatch.delenv("COCKPIT_MCP_JWT_SECRET_REF", raising=False)   # MCP non câblé
+    monkeypatch.delenv("FORGEMASTER_MCP_JWT_SECRET_REF", raising=False)   # MCP non câblé
     seen: dict = {}
 
     def launcher(argv, *, cwd, env=None):
@@ -107,7 +109,7 @@ def test_interview_mcp_injection_is_honest_noop_when_not_wired(ctx, monkeypatch)
 def test_interview_reconcile_only_after_interruption(ctx):
     """Interview interrompue AVANT sa clôture (PTY tué : SIGHUP navigation d'onglet, Ctrl-C, crash) : le
     travail EST produit (feature authorée) mais `verify_and_complete` ne tourne jamais → socle resté ouvert.
-    Un 2ᵉ `cockpit interview` RÉCONCILIE sans relancer claude : socle `done`, `reason=reconcile-only`, le
+    Un 2ᵉ `forgemaster interview` RÉCONCILIE sans relancer claude : socle `done`, `reason=reconcile-only`, le
     launcher n'est JAMAIS rappelé. Régression du bug live 2026-07-18."""
     settings, conn = ctx
     _socle_project(conn, settings)
@@ -147,7 +149,7 @@ def test_reconcile_socle_report_reconciles_and_reports(ctx):
     """`reconcile_socle_report` (action UI « Valider l'interview & clôturer le socle ») : socle travaillé
     (feature de travail authorée + design.md rempli) → clôt le socle et RAPPORTE en clair (status reconciled,
     N tasks closes, sha du design committé, prochaine étape = drain)."""
-    from cockpit.dispatch import worktree
+    from forgemaster.dispatch import worktree
     settings, conn = ctx
     git = InternalGit()
     _socle_project(conn, settings)
@@ -160,7 +162,7 @@ def test_reconcile_socle_report_reconciles_and_reports(ctx):
     assert rep["status"] == "reconciled" and rep["completed"] is True
     assert rep["socle_tasks_closed"] == 1                 # la task `cadrage` transitionnée → done
     assert rep["design_sha"] is not None                 # design.md committé (sha remonté)
-    assert "cockpit run" in rep["next_step"]
+    assert "forgemaster run" in rep["next_step"]
     assert conn.execute("SELECT status FROM tasks WHERE slug='cadrage'").fetchone()["status"] == "done"
 
 
@@ -237,10 +239,12 @@ def test_interview_incomplete_leaves_socle_open(ctx):
     assert status == "todo"                                                       # jamais faux-done
 
 
-def test_interview_env_exposes_cockpit_and_tools_on_path(ctx):
-    """La session interview reçoit un env dont le PATH porte `cockpit` (bin du venv courant → authoring de la
-    roadmap dans la DB via `cockpit roadmap add-feature`) ET l'outillage (`tools/bin`). Régression du bug live
-    2026-07-18 : `env=None` → PATH fragile sans `cockpit`/`node` → session incapable d'authorer."""
+def test_interview_env_exposes_forgemaster_and_tools_on_path(ctx):
+    """La session interview reçoit un env dont le PATH porte `forgemaster` (bin du venv courant → authoring de
+    la
+    roadmap dans la DB via `forgemaster roadmap add-feature`) ET l'outillage (`tools/bin`). Régression du bug
+    live
+    2026-07-18 : `env=None` → PATH fragile sans `forgemaster`/`node` → session incapable d'authorer."""
     settings, conn = ctx
     _socle_project(conn, settings)
     seen: dict = {}
@@ -251,7 +255,7 @@ def test_interview_env_exposes_cockpit_and_tools_on_path(ctx):
 
     interview.run_interview(conn, settings, project="proj", git=InternalGit(), launcher=capture_launcher)
     path = (seen["env"] or {}).get("PATH", "")
-    assert str(Path(sys.executable).parent) in path          # `cockpit` résout dans la session
+    assert str(Path(sys.executable).parent) in path          # `forgemaster` résout dans la session
     assert str(tools_bin(settings)) in path                  # maps + node résolvent aussi
 
 
@@ -295,7 +299,7 @@ def test_interview_shallow_roadmap_does_not_close_socle(ctx):
 
 def test_interview_deferred_axes_in_worktree_close_socle(ctx):
     """PR B2 — la déférence EXPLICITE est une sortie légitime du gate : les axes de l'archétype tracés dans
-    `.cockpit/deferred-axes.yaml` (`{axe: raison}`) DANS le worktree d'interview (édition non commitée)
+    `.forgemaster/deferred-axes.yaml` (`{axe: raison}`) DANS le worktree d'interview (édition non commitée)
     satisfont la profondeur → le socle se clôt. Prouve que `verify_and_complete` lit les déférals du worktree
     réservé (`res["path"]`), pas seulement le SoT commité."""
     settings, conn = ctx
@@ -304,9 +308,9 @@ def test_interview_deferred_axes_in_worktree_close_socle(ctx):
     def deferring_launcher(argv, *, cwd, env=None):
         model.add_feature(conn, project_slug="proj", slug="build", facet="code")
         model.add_task(conn, feature_ref="proj/build", slug="impl", acceptance="Code posé et testé.")
-        cockpit_dir = Path(cwd) / ".cockpit"
-        cockpit_dir.mkdir(parents=True, exist_ok=True)
-        (cockpit_dir / "deferred-axes.yaml").write_text(          # les 4 axes `doc` différés avec raison
+        forgemaster_dir = Path(cwd) / ".forgemaster"
+        forgemaster_dir.mkdir(parents=True, exist_ok=True)
+        (forgemaster_dir / "deferred-axes.yaml").write_text(          # les 4 axes `doc` différés avec raison
             "structure: MVP — plan de structure différé\ncompleteness: MVP\n"
             "examples: MVP — exemples après la boucle nominale\nmaintenance: MVP\n", encoding="utf-8")
         return 0
@@ -326,6 +330,6 @@ def test_build_interview_prompt_points_skill_and_renders_acceptance(ctx):
     task = {"slug": "cadrage", "acceptance": "docs/design.md § Concept renseigné."}
     prompt = interview.build_interview_prompt(project, feature, task)
     assert "first-session-interview" in prompt                                    # pointe le skill
-    assert "roadmap-decompose" in prompt and "cockpit roadmap add-feature proj" in prompt
+    assert "roadmap-decompose" in prompt and "forgemaster roadmap add-feature proj" in prompt
     assert "docs/design.md § Concept renseigné." in prompt                        # acceptance verbatim
     assert "INTERACTIVE" in prompt

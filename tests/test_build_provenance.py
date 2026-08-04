@@ -7,13 +7,13 @@ import json
 import os
 from pathlib import Path
 
-from cockpit import __version__
-from cockpit import build_provenance as bp
-from cockpit.core import run
-from cockpit.git.internal import writeback_env
+from forgemaster import __version__
+from forgemaster import build_provenance as bp
+from forgemaster.core import run
+from forgemaster.git.internal import writeback_env
 
 _ENV = writeback_env(("Test", "test@example.invalid"), base={"PATH": os.environ.get("PATH", "")})
-_TYPES = "src/cockpit/provision/bundles/types"
+_TYPES = "src/forgemaster/provision/bundles/types"
 
 
 def _run(*args: str, cwd: Path) -> None:
@@ -29,22 +29,23 @@ def _rev(ref: str, cwd: Path) -> str:
 
 def _seed_mirror(tmp: Path) -> tuple[Path, str, str]:
     """Bare avec 2 commits : commit1 pose le type `cli-tool`, commit2 ajoute `site-vitrine`. Retourne
-    `(sot_bare, sha_commit1, sha_head)`. Simule un cockpit bâti au commit1 (sans site-vitrine) alors que le
+    `(sot_bare, sha_commit1, sha_head)`. Simule un forgemaster bâti au commit1 (sans site-vitrine) alors que
+    le
     miroir a avancé au commit2 (avec)."""
     seed = tmp / "seed"
     seed.mkdir()
     _run("init", "-q", "-b", "main", cwd=seed)
     (seed / _TYPES / "cli-tool").mkdir(parents=True)
-    (seed / _TYPES / "cli-tool" / ".cockpit").write_text("", encoding="utf-8")
+    (seed / _TYPES / "cli-tool" / ".forgemaster").write_text("", encoding="utf-8")
     _run("add", "-A", cwd=seed)
     _run("commit", "-q", "-m", "commit1 cli-tool", cwd=seed)
     sha1 = _rev("HEAD", cwd=seed)
     (seed / _TYPES / "site-vitrine").mkdir(parents=True)
-    (seed / _TYPES / "site-vitrine" / ".cockpit").write_text("", encoding="utf-8")
+    (seed / _TYPES / "site-vitrine" / ".forgemaster").write_text("", encoding="utf-8")
     _run("add", "-A", cwd=seed)
     _run("commit", "-q", "-m", "commit2 site-vitrine", cwd=seed)
     head = _rev("HEAD", cwd=seed)
-    sot = tmp / "cockpit" / "sot.git"
+    sot = tmp / "forgemaster" / "sot.git"
     sot.parent.mkdir(parents=True)
     r = run.run(["git", "clone", "--bare", "-q", str(seed), str(sot)], env=_ENV)
     assert r.ok, r.stderr
@@ -98,7 +99,8 @@ def test_read_stamp_present(tmp_path: Path):
 
 def test_provenance_stale_against_advanced_mirror(tmp_path: Path):
     sot, sha1, head = _seed_mirror(tmp_path)
-    stamp = _stamp_file(tmp_path, sha1)                          # cockpit bâti au commit1 (sans site-vitrine)
+    # forgemaster bâti au commit1 (sans site-vitrine)
+    stamp = _stamp_file(tmp_path, sha1)
     p = bp.provenance(None, installed_types=("generic", "cli-tool"),
                       stamp=stamp, mirror_git_dir=sot)
     assert p["version"] == __version__ and p["sha"] == sha1

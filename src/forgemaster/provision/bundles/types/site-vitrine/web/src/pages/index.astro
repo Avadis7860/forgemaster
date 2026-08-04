@@ -1,0 +1,28 @@
+---
+// Page d'accueil EN (locale par défaut, non préfixée). Compose les sections de la locale depuis la
+// content-collection typée, triées par `order`. Le contenu vient des collections, jamais codé en dur.
+import { getCollection, render } from 'astro:content';
+import BaseLayout from '../layouts/BaseLayout.astro';
+
+// Brouillons (`draft: true`) filtrés en PROD, visibles en dev — le contenu inachevé ne se publie jamais.
+const entries = (
+  await getCollection(
+    'sections',
+    ({ data }) => data.locale === 'en' && (import.meta.env.PROD ? !data.draft : true),
+  )
+).sort((a, b) => a.data.order - b.data.order);
+const rendered = await Promise.all(
+  entries.map(async (entry) => ({ entry, Content: (await render(entry)).Content })),
+);
+---
+
+<BaseLayout title="Site vitrine" description="A placeholder site vitrine seeded by the forgemaster.">
+  {
+    rendered.map(({ entry, Content }, i) => (
+      <section>
+        {i === 0 ? <h1>{entry.data.title}</h1> : <h2>{entry.data.title}</h2>}
+        <Content />
+      </section>
+    ))
+  }
+</BaseLayout>

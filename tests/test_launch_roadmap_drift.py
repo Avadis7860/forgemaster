@@ -1,4 +1,5 @@
-"""Garde SoT-and-derive de la roadmap de lancement : la graine bundle `.cockpit/launch-roadmap.yaml` ne doit
+"""Garde SoT-and-derive de la roadmap de lancement : la graine bundle `.forgemaster/launch-roadmap.yaml` ne
+doit
 jamais diverger du template SoT central vendoré (`provision/launch_templates/`). Drift-check léger
 (Option C) qui tient la doctrine capital-jeton sans étendre `derive.py` — cf. décision vault
 `corpus/decision/meta/2026-07-21--launch-roadmap-sot-and-derive-lifecycle.md`."""
@@ -8,8 +9,8 @@ from pathlib import Path
 
 import yaml
 
-import cockpit.provision as provision
-from cockpit.provision import (
+import forgemaster.provision as provision
+from forgemaster.provision import (
     check_launch_roadmap_drift,
     discover_types,
     load_launch_roadmap,

@@ -7,8 +7,8 @@ import sqlite3
 
 import pytest
 
-from cockpit.core import ids
-from cockpit.db import alerts, merge_outcomes, schema
+from forgemaster.core import ids
+from forgemaster.db import alerts, merge_outcomes, schema
 
 
 class _BoomConn:

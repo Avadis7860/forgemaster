@@ -13,10 +13,10 @@ from pathlib import Path
 
 import pytest
 
-from cockpit import snapshot
-from cockpit.config import Settings
-from cockpit.db import schema, store
-from cockpit.secrets.file_store import EncryptedFileStore
+from forgemaster import snapshot
+from forgemaster.config import Settings
+from forgemaster.db import schema, store
+from forgemaster.secrets.file_store import EncryptedFileStore
 
 
 def _settings(tmp: Path) -> Settings:
@@ -38,7 +38,7 @@ def live(tmp_path: Path) -> Settings:
     _seed_projet(conn, "atelier-fictif")
     conn.commit()
     conn.close()
-    (settings.home / "cockpit.env").write_text("COCKPIT_SECRET_STORE=file\n", encoding="utf-8")
+    (settings.home / "forgemaster.env").write_text("FORGEMASTER_SECRET_STORE=file\n", encoding="utf-8")
     EncryptedFileStore(settings.secrets_dir).put("jeton-fictif", label="forge")
     settings.logs_dir.mkdir(parents=True, exist_ok=True)
     (settings.logs_dir / "job-1.log").write_text("x" * 4096, encoding="utf-8")
@@ -51,7 +51,8 @@ def test_le_perimetre_pris_est_celui_declare(live: Settings):
     dest = snapshot.create(live)
     manifest = json.loads((dest / snapshot.MANIFEST).read_text(encoding="utf-8"))
 
-    assert [e["name"] for e in manifest["entries"]] == ["cockpit.db", "cockpit.env", "secrets/store.enc"]
+    assert [e["name"] for e in manifest["entries"]] == [
+        "forgemaster.db", "forgemaster.env", "secrets/store.enc"]
     assert manifest["absent"] == []
     for entry in manifest["entries"]:
         copied = dest / entry["name"]
@@ -85,15 +86,15 @@ def test_logs_et_snapshots_restent_dehors_et_sont_dits(live: Settings):
 
 def test_une_entree_absente_nest_ni_prise_ni_exclue(tmp_path: Path):
     """Trois états distincts : prise, absente à la prise, hors périmètre. Une instance neuve n'a ni
-    `cockpit.env` ni coffre — le manifeste doit le DIRE, pas le laisser deviner par un manque."""
+    `forgemaster.env` ni coffre — le manifeste doit le DIRE, pas le laisser deviner par un manque."""
     settings = _settings(tmp_path)
     store.open_db(settings).close()
 
     manifest = json.loads(
         (snapshot.create(settings) / snapshot.MANIFEST).read_text(encoding="utf-8"))
 
-    assert [e["name"] for e in manifest["entries"]] == ["cockpit.db"]
-    assert manifest["absent"] == ["cockpit.env", "secrets/store.enc"]
+    assert [e["name"] for e in manifest["entries"]] == ["forgemaster.db"]
+    assert manifest["absent"] == ["forgemaster.env", "secrets/store.enc"]
 
 
 # --- cohérence de la base ---------------------------------------------------------------------------
@@ -101,7 +102,7 @@ def test_une_entree_absente_nest_ni_prise_ni_exclue(tmp_path: Path):
 def test_la_base_copiee_est_lisible_et_de_meme_version(live: Settings):
     dest = snapshot.create(live)
 
-    copie = sqlite3.connect(str(dest / "cockpit.db"))
+    copie = sqlite3.connect(str(dest / "forgemaster.db"))
     assert schema.schema_version(copie) == schema.SCHEMA_VERSION
     assert [r[0] for r in copie.execute("SELECT slug FROM projects")] == ["atelier-fictif"]
     copie.close()
@@ -118,7 +119,8 @@ def test_prise_a_chaud_emporte_le_valide_qui_vit_encore_dans_le_wal(live: Settin
     _seed_projet(vivant, "validé-non-checkpointé")
     vivant.commit()                                                 # validé → dans le -wal, pas dans le .db
     _seed_projet(vivant, "jamais-validé")                           # transaction ouverte, JAMAIS commit
-    assert live.db_path.with_name("cockpit.db-wal").exists()        # la prémisse du test, pas une supposition
+    # la prémisse du test, pas une supposition
+    assert live.db_path.with_name("forgemaster.db-wal").exists()
     principal_seul = sqlite3.connect(f"file:{live.db_path}?immutable=1", uri=True)
     assert "validé-non-checkpointé" not in [
         r[0] for r in principal_seul.execute("SELECT slug FROM projects")]   # un `cp` l'aurait perdu
@@ -128,8 +130,8 @@ def test_prise_a_chaud_emporte_le_valide_qui_vit_encore_dans_le_wal(live: Settin
     vivant.rollback()
     vivant.close()
 
-    assert not list(dest.glob("cockpit.db-wal")) and not list(dest.glob("cockpit.db-shm"))
-    copie = sqlite3.connect(str(dest / "cockpit.db"))
+    assert not list(dest.glob("forgemaster.db-wal")) and not list(dest.glob("forgemaster.db-shm"))
+    copie = sqlite3.connect(str(dest / "forgemaster.db"))
     slugs = sorted(r[0] for r in copie.execute("SELECT slug FROM projects"))
     copie.close()
     assert slugs == ["atelier-fictif", "validé-non-checkpointé"]
@@ -148,7 +150,7 @@ def test_une_prise_qui_echoue_ne_pose_pas_de_manifeste(live: Settings, monkeypat
 
     (lu,) = snapshot.list_snapshots(live)
     assert lu["valid"] is False
-    assert (Path(lu["path"]) / "cockpit.db").exists()               # la prise avait bien commencé
+    assert (Path(lu["path"]) / "forgemaster.db").exists()               # la prise avait bien commencé
 
 
 def test_le_coffre_reste_dechiffrable_apres_restauration_du_blob(live: Settings, tmp_path: Path):
@@ -195,7 +197,7 @@ def test_la_retention_garde_les_plus_recents_et_purge_le_reste(live: Settings):
 def test_une_prise_interrompue_se_nettoie_a_la_suivante(live: Settings):
     orphelin = snapshot.snapshots_dir(live) / "2026-01-01T00-00-00Z"
     orphelin.mkdir(parents=True)
-    (orphelin / "cockpit.db").write_bytes(b"moitie-ecrit")
+    (orphelin / "forgemaster.db").write_bytes(b"moitie-ecrit")
 
     snapshot.create(live)
 
@@ -210,7 +212,7 @@ def test_purge_refuse_de_tout_supprimer(live: Settings):
 # --- CLI --------------------------------------------------------------------------------------------
 
 def test_cli_create_puis_list(live: Settings, capsys):
-    from cockpit.cli import main
+    from forgemaster.cli import main
 
     racines = ["--home", str(live.home), "--projects-root", str(live.projects_root)]
 
@@ -220,4 +222,4 @@ def test_cli_create_puis_list(live: Settings, capsys):
     assert "hors périmètre" in sortie and "master.key" in sortie   # l'exclusion est DITE à la prise
 
     assert main(["snapshot", "list", *racines]) == 0
-    assert "cockpit.db" in capsys.readouterr().out
+    assert "forgemaster.db" in capsys.readouterr().out

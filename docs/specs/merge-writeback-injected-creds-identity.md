@@ -22,7 +22,7 @@ transport-fake, cette frontière de credential est **invisible aux tests à I/O 
   commit de clôture authoré par l'identité injectée. Un reviewer headless ne streame rien → « rien de
   visible » est normal.
 
-## Invariants de test (à encoder dans cockpit)
+## Invariants de test (à encoder dans forgemaster)
 
 - Un test **transport-fake ne suffit jamais** à cocher la DoD d'un writeback → exiger une preuve live e2e
   (invariant de process, gate de release).

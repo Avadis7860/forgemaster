@@ -7,10 +7,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cockpit.config import Settings
-from cockpit.daemon import app as app_mod
-from cockpit.db import schema, store
-from cockpit.projects import deployments, registry
+from forgemaster.config import Settings
+from forgemaster.daemon import app as app_mod
+from forgemaster.db import schema, store
+from forgemaster.projects import deployments, registry
 
 
 @pytest.fixture

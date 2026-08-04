@@ -1,6 +1,6 @@
 ---
 name: port-tool
-description: Réimplémente une couche du cockpit depuis sa source legacy (aggregator) dans son slot de package, en appliquant le correctif de dette documenté + un test sur fixture. LE workflow récurrent de portage propre.
+description: Réimplémente une couche du forgemaster depuis sa source legacy (aggregator) dans son slot de package, en appliquant le correctif de dette documenté + un test sur fixture. LE workflow récurrent de portage propre.
 inputs: [couche-cible]
 outputs: [couche portée, test, PORTING.md à jour]
 related_catalogs: []
@@ -16,7 +16,7 @@ discipline, sources différentes : ici le legacy `services/aggregator/` du vault
 
 ## Procédure
 
-1. **Cible.** Ouvre la couche à porter (ex. `src/cockpit/gate/merge.py`). Lis son docstring et sa constante
+1. **Cible.** Ouvre la couche à porter (ex. `src/forgemaster/gate/merge.py`). Lis son docstring et sa constante
    `_PORT = "port: <fichier source> — #N"` : elle nomme la **source** legacy (`orchestrator.py`,
    `lib/worker_merge_gate.py`, `loops/review_state.py`, `terminal.py`, …) et le **correctif** du registre.
 2. **Lis la source + le correctif.** Ouvre le fichier source legacy nommé ET la ligne `#N` de

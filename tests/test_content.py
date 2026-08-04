@@ -14,17 +14,17 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cockpit.cli import _h_upload, build_parser
-from cockpit.config import Settings
-from cockpit.content import ingest, upload
-from cockpit.content.upload import _UPLOAD_MAX_BYTES
-from cockpit.daemon import app as app_mod
-from cockpit.db import store
-from cockpit.dispatch import worktree
-from cockpit.git.internal import InternalGit
-from cockpit.projects import registry
-from cockpit.projects.registry import sot_path_for
-from cockpit.roadmap import model
+from forgemaster.cli import _h_upload, build_parser
+from forgemaster.config import Settings
+from forgemaster.content import ingest, upload
+from forgemaster.content.upload import _UPLOAD_MAX_BYTES
+from forgemaster.daemon import app as app_mod
+from forgemaster.db import store
+from forgemaster.dispatch import worktree
+from forgemaster.git.internal import InternalGit
+from forgemaster.projects import registry
+from forgemaster.projects.registry import sot_path_for
+from forgemaster.roadmap import model
 
 
 @pytest.fixture
@@ -269,10 +269,11 @@ def test_route_upload_unknown_project_maps_to_404(env):
     assert r.status_code == 404, r.text
 
 
-# -- parité CLI : cockpit upload <projet> <chemin> --------------------------------------------------
+# -- parité CLI : forgemaster upload <projet> <chemin> --------------------------------------------------
 
 def test_cli_upload_delegates_to_same_core(env, tmp_path: Path):
-    """`cockpit upload` lit le fichier local et délègue au **même** cœur que la route (même destination)."""
+    """`forgemaster upload` lit le fichier local et délègue au **même** cœur que la route (même
+    destination)."""
     settings, conn = env
     registry.create_project(conn, settings, slug="vr")
     src = tmp_path / "logo.png"

@@ -1,4 +1,4 @@
-# PORTING.md — journal de réimplémentation du cockpit
+# PORTING.md — journal de réimplémentation du forgemaster
 
 Réimplémentation propre de l'orchestrateur legacy (`services/aggregator/`), couche par couche via le skill
 `port-tool`. **Pendant vivant** de `docs/weak-points.md` (weak-points = *quoi corriger* ; ici = *où on en
@@ -10,7 +10,7 @@ est*). On importe les décisions distillées comme specs (`docs/specs/`) — auc
 
 | Module | Rôle | Statut |
 |---|---|---|
-| `config.py` | résolveur générique des racines (COCKPIT_HOME / PROJECTS_ROOT) | ✅ |
+| `config.py` | résolveur générique des racines (FORGEMASTER_HOME / PROJECTS_ROOT) | ✅ |
 | `core/run.py` | exécution locale subprocess (seam transport réécrit, #2) | ✅ |
 | `core/ids.py` | slugs kebab validés + uuid | ✅ |
 | `core/fs.py` | `safe_path` borné (#4) + JSONL | ✅ |
@@ -42,7 +42,7 @@ est*). On importe les décisions distillées comme specs (`docs/specs/`) — auc
 | `daemon/routes/*` | `routers/*` | #3 | ✅ (projects/roadmap/dispatch/gate/terminal) |
 | `terminal/pty.py` | `terminal.py` (pty_bridge) | #2 / #4 | ✅ |
 
-## Definition of Done (repo cockpit)
+## Definition of Done (repo forgemaster)
 
 - [x] Boucle CLI end-to-end : `project create → roadmap add-feature → task add → (dispatch) → worktree
       isolé → gate review → merge --go → cleanup worktree` (dispatch réel = spawn `claude -p`, prouvé par
@@ -65,7 +65,7 @@ est*). On importe les décisions distillées comme specs (`docs/specs/`) — auc
 
 ## Phase 5 — SPA web (`web/`, vue par-dessus le cœur)
 
-Spec figée : `docs/specs/web-cockpit-spa.md`. Stack : Vite + React 19 + Tailwind v4 (`@theme`) + TanStack
+Spec figée : `docs/specs/web-forgemaster-spa.md`. Stack : Vite + React 19 + Tailwind v4 (`@theme`) + TanStack
 Query/Router + Zod. Ordre verrouillé `tokens → layout → primitives → écrans → raffinement`. IA = workspace
 projet + onglets (option A). Boucle visuelle : `web/tools/ui_shot.py`.
 
@@ -129,12 +129,12 @@ Python via `compose_merge_decision`) ; le GET est idempotent (aucun POST pour la
 `gate/toolchain.py` (miroir de `gate/verify.py`) : runner qui lance la toolchain **auto-détectée par
 convention** (`web/package.json` script `gate` → `npm run gate` ; `pyproject.toml` → ruff→mypy→pytest),
 **applicabilité dérivée du diff** (front↔`web/`, backend↔`*.py`), **verdict SHA-bound caché** — `evaluate_gate`
-le **LIT** seulement (jamais de run dans le GET poll-é ; exécution via `cockpit gate toolchain` /
+le **LIT** seulement (jamais de run dans le GET poll-é ; exécution via `forgemaster gate toolchain` /
 `POST …/toolchain`). **Fail-CLOSED** non-overridable : applicable + absent/périmé/rouge → merge bloqué ; N/A si
 rien de déclenché. `compose_merge_decision` **inchangé** (on lui fournit le natif peuplé). Vérif : `pytest`
 **85** (purs détection/applicabilité/verdict/status + fail-closed binaire-absent + intégration compose +
 run_merge front bloqué-sans-verdict-puis-mergé + daemon HTTP), ruff+mypy propres, front gate (eslint+vitest
-20+build) vert. **Dogfood live** : `run_toolchain` sur le vrai `web/` du cockpit → **vert** quand le front
+20+build) vert. **Dogfood live** : `run_toolchain` sur le vrai `web/` du forgemaster → **vert** quand le front
 passe, **rouge** (`failed_step=npm-run-gate`, exit 1) quand un vitest casse ; backend live (ruff+mypy+pytest)
 vert — le RÉSULTAT prouvé, pas la plomberie. Zéro changement front (le natif remonte via `decision.reasons`/
 `blockers` déjà rendus). Spec : `docs/specs/tier0-native-toolchain-gate.md`.

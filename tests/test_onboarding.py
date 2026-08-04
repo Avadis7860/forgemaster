@@ -7,13 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from cockpit import onboarding
-from cockpit.config import Settings
-from cockpit.db import store
-from cockpit.projects import registry
-from cockpit.provision import mcp
-from cockpit.secrets import SecretNotFound, SecretUnsupported
-from cockpit.secrets.file_store import EncryptedFileStore
+from forgemaster import onboarding
+from forgemaster.config import Settings
+from forgemaster.db import store
+from forgemaster.projects import registry
+from forgemaster.provision import mcp
+from forgemaster.secrets import SecretNotFound, SecretUnsupported
+from forgemaster.secrets.file_store import EncryptedFileStore
 
 _MIRROR = "https://github.com/x/y.git"
 
@@ -31,7 +31,7 @@ def mcp_env(monkeypatch):
     """Isole l'env MCP vivant (départ « non câblé »). monkeypatch **POSSÈDE** les clés via `setenv` → même si
     `wire()` les écrit en dur (`live_env`), le teardown les supprime → zéro fuite vers les tests voisins (ex.
     `doctor`). NB : `delenv` sur une clé absente n'enregistre RIEN, d'où la fuite qu'on évite ici."""
-    for key in (mcp.ENV_MCP_JWT_SECRET_REF, "COCKPIT_MCP_ENDPOINT"):
+    for key in (mcp.ENV_MCP_JWT_SECRET_REF, "FORGEMASTER_MCP_ENDPOINT"):
         monkeypatch.setenv(key, "")     # "" → wire_state lit `wired=False` ; teardown supprime la clé
     return monkeypatch
 
@@ -103,7 +103,7 @@ def test_status_carries_build_block_via_injection(ctx):
 def test_status_build_incomparable_without_local_mirror(ctx):
     settings, conn = ctx
     fs = EncryptedFileStore(settings.secrets_dir)
-    st = onboarding.status(conn, fs, settings=settings)            # projects_root/cockpit/sot.git absent
+    st = onboarding.status(conn, fs, settings=settings)            # projects_root/forgemaster/sot.git absent
     assert st["build"]["comparable"] is False                     # honnête, aucun faux-vert, aucune levée
     assert "version" in st["build"]                               # provenance seule exposée tout de même
 
@@ -166,7 +166,7 @@ def test_status_reports_mcp_wire_state_default_unwired_and_injected(ctx, mcp_env
 
 
 def test_cli_status_surfaces_mcp_line_unwired_then_wired(ctx, mcp_env, capsys):
-    """DoD 3a : `cockpit onboard status` **imprime** l'état MCP (déjà dans le dict, jamais surfacé avant).
+    """DoD 3a : `forgemaster onboard status` **imprime** l'état MCP (déjà dans le dict, jamais surfacé avant).
     Non câblé → ligne `ℹ️ … à connecter` (visible et compréhensible, jamais un vide muet) ; câblé → `✅ …
     câblé (<endpoint>)`. MCP optionnel : la ligne n'est jamais 🔴."""
     import argparse
@@ -177,7 +177,7 @@ def test_cli_status_surfaces_mcp_line_unwired_then_wired(ctx, mcp_env, capsys):
     assert "corpus capital (MCP)" in out and "à connecter" in out
     assert "🔴 corpus capital" not in out                                     # optionnel → jamais bloquant
     mcp_env.setenv(mcp.ENV_MCP_JWT_SECRET_REF, "ref-xyz")                      # câblé (env vivant)
-    mcp_env.setenv("COCKPIT_MCP_ENDPOINT", "http://ep/mcp")
+    mcp_env.setenv("FORGEMASTER_MCP_ENDPOINT", "http://ep/mcp")
     onboarding.cli_dispatch(settings, args)
     out2 = capsys.readouterr().out
     assert "corpus capital (MCP) — câblé" in out2 and "http://ep/mcp" in out2
@@ -190,10 +190,10 @@ def test_wire_mcp_value_stores_ref_persists_and_reflects_live_env(ctx, mcp_env):
     ref = res["credential_ref"]
     assert res["wired"] is True and ref and secret not in ref                  # ref opaque, jamais la valeur
     assert EncryptedFileStore(settings.secrets_dir).get(ref) == secret         # la valeur vit dans le store
-    # live_env : le daemon voit ref + endpoint SANS restart, et c'est aussi persisté dans cockpit.env
+    # live_env : le daemon voit ref + endpoint SANS restart, et c'est aussi persisté dans forgemaster.env
     assert os.environ[mcp.ENV_MCP_JWT_SECRET_REF] == ref
-    assert os.environ["COCKPIT_MCP_ENDPOINT"] == "http://ep/mcp"
-    assert ref in (settings.home / "cockpit.env").read_text(encoding="utf-8")
+    assert os.environ["FORGEMASTER_MCP_ENDPOINT"] == "http://ep/mcp"
+    assert ref in (settings.home / "forgemaster.env").read_text(encoding="utf-8")
     with pytest.raises(ValueError):                                            # <32c → refusé (HS256)
         onboarding.wire_mcp(settings, secret="short")
 
@@ -221,7 +221,7 @@ def test_wire_mcp_without_endpoint_is_a_400(ctx, mcp_env):
     """Depuis le 2026-08-03 le produit n'a plus de cible MCP en dur : le wizard qui câble sans endpoint reçoit
     un 400 explicite (message humain réutilisé tel quel), pas un câblage silencieux vers notre CT."""
     settings, _ = ctx
-    mcp_env.delenv("COCKPIT_MCP_ENDPOINT", raising=False)
+    mcp_env.delenv("FORGEMASTER_MCP_ENDPOINT", raising=False)
     with pytest.raises(ValueError, match="aucun endpoint MCP"):
         onboarding.wire_mcp(settings, secret="x" * 40)
-    assert not (settings.home / "cockpit.env").exists()                         # aucun effet de bord
+    assert not (settings.home / "forgemaster.env").exists()                         # aucun effet de bord

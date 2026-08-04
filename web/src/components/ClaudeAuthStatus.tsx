@@ -17,7 +17,7 @@ function sourceLabel(source: string | null): string {
 
 /** Instruction actionnable UNIQUE (miroir du `AUTH_HINT` backend) — la voie officielle, dans LE terminal. */
 export const CLAUDE_LOGIN_HINT =
-  'Lance `claude login` dans le terminal de cette machine pour authentifier ton compte. Le cockpit utilise ' +
+  'Lance `claude login` dans le terminal de cette machine pour authentifier ton compte. Le forgemaster utilise ' +
   "l'auth officielle du CLI `claude` — jamais un token partagé ni embarqué."
 
 /** Indicateur d'auth Claude de l'HÔTE — rend visible ce qui était silencieux : cette machine peut-elle
@@ -42,7 +42,7 @@ export function ClaudeAuthBlock({ auth }: { auth: ClaudeAuth }) {
         </div>
         <p className="text-sm text-muted">
           Cette machine est authentifiée : les workers <code>claude</code> tournent sous <strong>ton</strong>{' '}
-          compte. Le cockpit n'embarque, ne partage ni n'injecte aucun credential — chaque hôte s'authentifie
+          compte. Le forgemaster n'embarque, ne partage ni n'injecte aucun credential — chaque hôte s'authentifie
           lui-même.
         </p>
       </div>

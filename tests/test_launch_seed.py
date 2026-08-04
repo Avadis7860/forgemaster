@@ -8,11 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from cockpit.config import Settings
-from cockpit.core import run
-from cockpit.db import store
-from cockpit.projects import registry
-from cockpit.roadmap import model, seed
+from forgemaster.config import Settings
+from forgemaster.core import run
+from forgemaster.db import store
+from forgemaster.projects import registry
+from forgemaster.roadmap import model, seed
 
 _GIT_ENV = {"PATH": os.environ.get("PATH", ""),
             "GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e.invalid",

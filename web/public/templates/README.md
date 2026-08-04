@@ -1,11 +1,11 @@
 # Templates de référence UI
 
-Des **cibles visuelles concrètes** pour les projets que le cockpit sème. Une session Claude qui
+Des **cibles visuelles concrètes** pour les projets que le forgemaster sème. Une session Claude qui
 attaque l'UI d'un projet regarde le template de son type d'outil pour savoir « à quoi ça doit
 ressembler » — au lieu de coder en aveugle et de re-dériver une identité à chaque fois.
 
 Ce sont du **capital-token léger et montrable** : contrairement au corpus servi par le MCP
-(blueprint/tech, privé), ces templates sont **shippés avec le cockpit** (ils voyagent dans `web/dist`,
+(blueprint/tech, privé), ces templates sont **shippés avec le forgemaster** (ils voyagent dans `web/dist`,
 donc dans le wheel) et servis à `/templates/<slug>/` — un « petit plus » de la distribution.
 
 ## Anatomie d'un template

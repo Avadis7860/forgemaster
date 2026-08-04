@@ -19,7 +19,7 @@ export function OnboardingBanner() {
     return (
       <div className="flex items-center justify-between gap-3 border-b border-border bg-surface-raised px-4 py-2">
         <p className="text-sm text-fg">
-          <span className="font-medium">Bienvenue</span> — configure ton cockpit en quelques étapes.
+          <span className="font-medium">Bienvenue</span> — configure ton forgemaster en quelques étapes.
         </p>
         <Button size="sm" variant="primary" onClick={() => navigate({ to: '/setup' })}>
           Démarrer

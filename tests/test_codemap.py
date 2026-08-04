@@ -13,8 +13,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cockpit.codemap import flow as flow_svc
-from cockpit.codemap.index import (
+from forgemaster.codemap import flow as flow_svc
+from forgemaster.codemap.index import (
     _BUILT_MARKER,
     CodemapError,
     IndexHandle,
@@ -22,10 +22,10 @@ from cockpit.codemap.index import (
     ensure_index,
     index_dir_for,
 )
-from cockpit.config import Settings
-from cockpit.core.run import RunResult, run
-from cockpit.daemon import app as app_mod
-from cockpit.git.internal import GitOpError, InternalGit, writeback_env
+from forgemaster.config import Settings
+from forgemaster.core.run import RunResult, run
+from forgemaster.daemon import app as app_mod
+from forgemaster.git.internal import GitOpError, InternalGit, writeback_env
 
 _ENV = writeback_env(("Test", "test@example.invalid"), base={"PATH": os.environ.get("PATH", "")})
 
@@ -90,7 +90,7 @@ class _FakeRunner:
             return RunResult(argv=list(argv), returncode=0, stdout=self.schema + "\n", stderr="")
         if "build" in argv:
             if self.build_ok and cwd is not None:
-                # simule l'écriture de l'index par code-map (nom interne) — le cockpit ne le lit PLUS pour
+                # simule l'écriture de l'index par code-map (nom interne) — le forgemaster ne le lit PLUS pour
                 # décider du cache-hit (il écrit son propre marqueur), mais un vrai build le produirait.
                 marker = Path(cwd) / ".codemap" / "calls.manifest.json"
                 marker.parent.mkdir(parents=True, exist_ok=True)
@@ -136,7 +136,7 @@ def test_ensure_index_materializes_builds_then_caches(tmp_path: Path):
     h = ensure_index(settings, "p", sot, runner=fake)
     assert isinstance(h, IndexHandle) and h.ref == "dev" and h.sha
     assert (h.root / "app.py").is_file()                       # arbre matérialisé
-    assert (h.root / _BUILT_MARKER).is_file()                  # marqueur PROPRE au cockpit (découplé)
+    assert (h.root / _BUILT_MARKER).is_file()                  # marqueur PROPRE au forgemaster (découplé)
     assert index_dir_for(settings, "p", h.sha, "1.3.0") == h.root   # clé = (SHA, schema)
     assert fake.builds == 1
     # 2e appel, même SHA + même schema → cache hit : ni re-build ni re-matérialisation

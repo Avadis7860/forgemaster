@@ -22,8 +22,8 @@ describe('ptyPath', () => {
 })
 
 describe('tokenProtocols', () => {
-  it('token présent → sous-protocole `cockpit.token.<v>` (injecté au handshake WS)', () => {
-    expect(tokenProtocols('abc123')).toEqual(['cockpit.token.abc123'])
+  it('token présent → sous-protocole `forgemaster.token.<v>` (injecté au handshake WS)', () => {
+    expect(tokenProtocols('abc123')).toEqual(['forgemaster.token.abc123'])
   })
   it('token absent (pas encore chargé) → undefined : le consommateur n’ouvre PAS le WS', () => {
     expect(tokenProtocols(undefined)).toBeUndefined()

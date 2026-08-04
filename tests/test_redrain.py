@@ -10,14 +10,14 @@ from pathlib import Path
 
 import pytest
 
-from cockpit.config import Settings
-from cockpit.db import alerts, store
-from cockpit.dispatch import redrain
-from cockpit.dispatch import worktree as worktree_mod
-from cockpit.git.internal import InternalGit
-from cockpit.projects import registry
-from cockpit.projects.registry import sot_path_for
-from cockpit.roadmap import model
+from forgemaster.config import Settings
+from forgemaster.db import alerts, store
+from forgemaster.dispatch import redrain
+from forgemaster.dispatch import worktree as worktree_mod
+from forgemaster.git.internal import InternalGit
+from forgemaster.projects import registry
+from forgemaster.projects.registry import sot_path_for
+from forgemaster.roadmap import model
 
 
 @pytest.fixture

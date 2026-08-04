@@ -1,7 +1,8 @@
 """Tests de `restore` — remettre un instantané, et prouver que ça remet VRAIMENT.
 
 Le piège de cette capacité n'est pas de planter : c'est de **réussir sans rien restaurer**. Écraser le seul
-`cockpit.db` en laissant son `-wal` fait rejouer le journal de l'ancienne base par-dessus le fichier remis —
+`forgemaster.db` en laissant son `-wal` fait rejouer le journal de l'ancienne base par-dessus le fichier remis
+—
 la donnée qu'on voulait défaire revient, sans une seule erreur. Le premier test ci-dessous est celui qui
 tient tout le module ; les autres gardent les propriétés qui rendent le geste praticable : on vérifie avant
 d'écrire, on met de côté au lieu de détruire, on refuse honnêtement ce qu'on ne comprend pas.
@@ -19,10 +20,10 @@ from pathlib import Path
 
 import pytest
 
-from cockpit import restore, snapshot
-from cockpit.config import Settings
-from cockpit.db import schema, store
-from cockpit.secrets.file_store import EncryptedFileStore
+from forgemaster import restore, snapshot
+from forgemaster.config import Settings
+from forgemaster.db import schema, store
+from forgemaster.secrets.file_store import EncryptedFileStore
 
 _INSERT = ("INSERT INTO projects (id, slug, name, sot_path, created_at) VALUES (?, ?, ?, ?, ?)")
 
@@ -47,7 +48,7 @@ def live(tmp_path: Path) -> Settings:
     _seed_projet(conn, "atelier-fictif")
     conn.commit()
     conn.close()
-    (settings.home / "cockpit.env").write_text("COCKPIT_SECRET_STORE=file\n", encoding="utf-8")
+    (settings.home / "forgemaster.env").write_text("FORGEMASTER_SECRET_STORE=file\n", encoding="utf-8")
     EncryptedFileStore(settings.secrets_dir).put("jeton-fictif", label="forge")
     return settings
 
@@ -86,8 +87,8 @@ def test_le_journal_de_lancienne_base_ne_ressuscite_pas_ce_quon_defait(live: Set
     restore.restore(dest)
 
     assert _slugs(live.db_path) == ["atelier-fictif"]           # ← rouge si le `-wal` reste en place
-    assert not live.db_path.with_name("cockpit.db-wal").exists()
-    assert not live.db_path.with_name("cockpit.db-shm").exists()
+    assert not live.db_path.with_name("forgemaster.db-wal").exists()
+    assert not live.db_path.with_name("forgemaster.db-shm").exists()
 
 
 # --- refuser avant d'écrire -------------------------------------------------------------------------
@@ -96,7 +97,7 @@ def test_une_empreinte_qui_ne_correspond_pas_arrete_tout_avant_decrire(live: Set
     """Un instantané abîmé doit faire échouer la restauration **sans avoir touché** à l'instance : à
     moitié restauré est le seul état dont personne ne sait sortir."""
     dest = snapshot.create(live)
-    abime = dest / "cockpit.db"
+    abime = dest / "forgemaster.db"
     abime.write_bytes(abime.read_bytes()[:-16] + b"X" * 16)
     _seed_projet(conn := store.connect(live.db_path), "ecrit-depuis")
     conn.commit()
@@ -140,8 +141,8 @@ def test_letat_remplace_est_mis_de_cote_pas_detruit(live: Settings):
     restore.restore(dest)
 
     (aside,) = live.home.glob(f"{restore.ASIDE_PREFIX}*")
-    assert "travail-du-jour" in _slugs(aside / "cockpit.db")     # l'état d'avant est récupérable
-    assert (aside / "cockpit.env").is_file()
+    assert "travail-du-jour" in _slugs(aside / "forgemaster.db")     # l'état d'avant est récupérable
+    assert (aside / "forgemaster.env").is_file()
     assert (aside / "secrets" / "store.enc").is_file()
 
 
@@ -150,7 +151,7 @@ def test_une_entree_absente_a_la_prise_est_retiree_de_linstance(tmp_path: Path):
     Laisser le fichier créé depuis, c'est restaurer à moitié en silence."""
     settings = Settings.resolve(home=tmp_path / "home", projects_root=tmp_path / "p")
     store.open_db(settings).close()
-    dest = snapshot.create(settings)                             # ni cockpit.env ni store.enc à ce moment
+    dest = snapshot.create(settings)                             # ni forgemaster.env ni store.enc à ce moment
     EncryptedFileStore(settings.secrets_dir).put("apparu-apres", label="forge")
 
     restore.restore(dest)
@@ -162,11 +163,12 @@ def test_une_entree_absente_a_la_prise_est_retiree_de_linstance(tmp_path: Path):
 
 def test_les_modes_declares_sont_reposes(live: Settings):
     dest = snapshot.create(live)
-    (live.home / "cockpit.env").chmod(0o666)                     # dégât : le réglage devient world-readable
+    # dégât : le réglage devient world-readable
+    (live.home / "forgemaster.env").chmod(0o666)
 
     restore.restore(dest)
 
-    assert oct((live.home / "cockpit.env").stat().st_mode & 0o777) == "0o600"
+    assert oct((live.home / "forgemaster.env").stat().st_mode & 0o777) == "0o600"
     assert oct((live.secrets_dir / "store.enc").stat().st_mode & 0o777) == "0o600"
 
 
@@ -177,7 +179,7 @@ def test_dry_run_dit_tout_et_necrit_rien(live: Settings, capsys):
     restore.restore(dest, dry_run=True)
 
     sortie = capsys.readouterr().out
-    assert "cockpit.db" in sortie and "cockpit.db-wal" in sortie
+    assert "forgemaster.db" in sortie and "forgemaster.db-wal" in sortie
     assert "encore-la-apres" in _slugs(live.db_path)              # rien n'a bougé
     assert not list(live.home.glob(f"{restore.ASIDE_PREFIX}*"))
 
@@ -197,7 +199,7 @@ def test_le_script_voyage_dans_linstantane_et_a_un_chemin_stable(live: Settings)
         (dest / snapshot.MANIFEST).read_text(encoding="utf-8"))["excluded"]   # outillage, pas de l'état
 
 
-def test_le_script_ne_depend_de_rien_du_cockpit():
+def test_le_script_ne_depend_de_rien_du_forgemaster():
     """La contrainte qui rend les deux copies utiles : il tourne avec le `python3` du système sur une
     instance dont le venv est cassé — soit exactement la situation où on restaure."""
     modules: set[str] = set()
@@ -208,13 +210,13 @@ def test_le_script_ne_depend_de_rien_du_cockpit():
             assert node.level == 0, "import relatif : le script ne tournerait plus hors du paquet"
             modules.add((node.module or "").split(".")[0])
 
-    assert "cockpit" not in modules
+    assert "forgemaster" not in modules
     assert modules <= set(sys.stdlib_module_names), modules - set(sys.stdlib_module_names)
 
 
 def test_la_copie_figee_se_restaure_seule_sans_argument(live: Settings):
     """La ceinture : `python3 restore.py` depuis l'instantané, sans rien savoir d'autre. Lancé sans le
-    `src/` du dépôt sur le chemin — s'il importait `cockpit`, il échouerait ici."""
+    `src/` du dépôt sur le chemin — s'il importait `forgemaster`, il échouerait ici."""
     dest = snapshot.create(live)
     _ecrit_puis_meurt(live.db_path, "apres-linstantane")
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
@@ -229,7 +231,7 @@ def test_la_copie_figee_se_restaure_seule_sans_argument(live: Settings):
 def test_sans_instantane_designe_le_script_liste_et_sarrete(live: Settings):
     """Choisir « le plus récent » pour rendre service écraserait un état vivant sur une supposition."""
     dest = snapshot.create(live)
-    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"} | {"COCKPIT_HOME": str(live.home)}
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"} | {"FORGEMASTER_HOME": str(live.home)}
 
     proc = subprocess.run([sys.executable, str(live.home / snapshot.RESTORE)],  # noqa: S603
                           env=env, capture_output=True, text=True)
@@ -240,9 +242,9 @@ def test_sans_instantane_designe_le_script_liste_et_sarrete(live: Settings):
 
 
 def test_cli_restore_delegue_au_script_fige(live: Settings, capsys):
-    """`cockpit snapshot restore` est un lanceur. Le prouver en cassant la copie figée : si la CLI
+    """`forgemaster snapshot restore` est un lanceur. Le prouver en cassant la copie figée : si la CLI
     réimplémentait la restauration, la casse passerait inaperçue."""
-    from cockpit.cli import main
+    from forgemaster.cli import main
 
     dest = snapshot.create(live)
     racines = ["--home", str(live.home), "--projects-root", str(live.projects_root)]
@@ -256,7 +258,7 @@ def test_cli_restore_delegue_au_script_fige(live: Settings, capsys):
 
 
 def test_cli_restore_refuse_un_instantane_inconnu(live: Settings, capsys):
-    from cockpit.cli import main
+    from forgemaster.cli import main
 
     assert main(["snapshot", "restore", "2020-01-01T00-00-00Z",
                  "--home", str(live.home), "--projects-root", str(live.projects_root)]) == 1
@@ -274,7 +276,7 @@ def test_apres_restauration_par_le_script_linstance_est_fonctionnellement_identi
     dest = snapshot.create(live)
 
     EncryptedFileStore(live.secrets_dir).delete(ref)              # dégât 1 : le credential disparaît
-    (live.home / "cockpit.env").write_text("COCKPIT_SECRET_STORE=bws\n", encoding="utf-8")  # dégât 2
+    (live.home / "forgemaster.env").write_text("FORGEMASTER_SECRET_STORE=bws\n", encoding="utf-8")  # dégât 2
     _ecrit_puis_meurt(live.db_path, "ecrit-apres-la-maj")         # dégât 3, encore dans le journal
 
     proc = subprocess.run([sys.executable, str(live.home / snapshot.RESTORE),  # noqa: S603
@@ -285,5 +287,5 @@ def test_apres_restauration_par_le_script_linstance_est_fonctionnellement_identi
     assert schema.schema_version(conn) == schema.SCHEMA_VERSION
     assert sorted(r[0] for r in conn.execute("SELECT slug FROM projects")) == ["atelier-fictif"]
     conn.close()
-    assert (live.home / "cockpit.env").read_text(encoding="utf-8") == "COCKPIT_SECRET_STORE=file\n"
+    assert (live.home / "forgemaster.env").read_text(encoding="utf-8") == "FORGEMASTER_SECRET_STORE=file\n"
     assert EncryptedFileStore(live.secrets_dir).get(ref) == "jeton-fictif"

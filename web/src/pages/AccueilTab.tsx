@@ -59,7 +59,7 @@ export function AccueilTab() {
         ) : !docs.data?.found ? (
           <p className="text-sm text-muted">
             Ce dépôt n'a pas de <code className="text-xs">docs/tool-card.md</code> (ni de{' '}
-            <code className="text-xs">README.md</code>). Ajoute-la dans le repo — le cockpit la relira.
+            <code className="text-xs">README.md</code>). Ajoute-la dans le repo — le forgemaster la relira.
           </p>
         ) : (
           <>

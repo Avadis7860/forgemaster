@@ -25,10 +25,10 @@ from pathlib import Path
 
 import pytest
 
-from cockpit import apply_update, service, snapshot, update
-from cockpit.config import Settings
-from cockpit.db import store
-from cockpit.update import UpdateRefused
+from forgemaster import apply_update, service, snapshot, update
+from forgemaster.config import Settings
+from forgemaster.db import store
+from forgemaster.update import UpdateRefused
 
 _INSERT = "INSERT INTO projects (id, slug, name, sot_path, created_at) VALUES (?, ?, ?, ?, ?)"
 
@@ -43,10 +43,10 @@ def live(tmp_path: Path) -> Settings:
     conn.execute(_INSERT, ("id-a", "atelier-fictif", "atelier-fictif", "/x.git", "2026-08-02T00:00:00Z"))
     conn.commit()
     conn.close()
-    (settings.home / "cockpit.env").write_text("COCKPIT_SECRET_STORE=file\n", encoding="utf-8")
+    (settings.home / "forgemaster.env").write_text("FORGEMASTER_SECRET_STORE=file\n", encoding="utf-8")
     venv = tmp_path / "venvs" / "avant"
     (venv / "bin").mkdir(parents=True)
-    (venv / "bin" / "cockpit").write_text("#!/bin/sh\nexit 0\n")
+    (venv / "bin" / "forgemaster").write_text("#!/bin/sh\nexit 0\n")
     os.symlink(venv, settings.home / "current")
     return settings
 
@@ -99,7 +99,7 @@ def test_le_vivant_qui_ne_sert_pas_fait_rebasculer_le_lien_ET_restaurer_linstant
     (neuf / "bin").mkdir(parents=True)
 
     dest = snapshot.create(live)                 # l'instantané que la MAJ prendrait à froid
-    monkeypatch.setattr(apply_update, "build_blue", lambda *a, **k: neuf / "bin" / "cockpit")
+    monkeypatch.setattr(apply_update, "build_blue", lambda *a, **k: neuf / "bin" / "forgemaster")
     monkeypatch.setattr(apply_update, "probe_isolated", lambda *a, **k: {"version": "9.9", "sha": "beef"})
     monkeypatch.setattr(apply_update, "take_snapshot", lambda *a, **k: dest)
 
@@ -128,7 +128,7 @@ def test_le_retour_arriere_qui_ne_ramene_pas_le_service_le_DIT(live: Settings, t
     conclure au vert parce qu'il a « fait ce qu'il pouvait »."""
     shim, _trace_path = _systemctl_shim(tmp_path)
     dest = snapshot.create(live)
-    monkeypatch.setattr(apply_update, "build_blue", lambda *a, **k: tmp_path / "x" / "bin" / "cockpit")
+    monkeypatch.setattr(apply_update, "build_blue", lambda *a, **k: tmp_path / "x" / "bin" / "forgemaster")
     monkeypatch.setattr(apply_update, "probe_isolated", lambda *a, **k: {"version": "9.9", "sha": "beef"})
     monkeypatch.setattr(apply_update, "take_snapshot", lambda *a, **k: dest)
     monkeypatch.setattr(apply_update, "_verify_live", lambda *a, **k: (False, "muet"))
@@ -147,7 +147,7 @@ def test_un_wheel_qui_ne_sert_pas_en_isolation_narrete_meme_pas_le_service(
     vivant n'a rien subi. Aucun `systemctl`, aucun lien déplacé — au pire, il ne s'est rien passé."""
     shim, trace = _systemctl_shim(tmp_path)
     avant = (live.home / "current").resolve()
-    monkeypatch.setattr(apply_update, "build_blue", lambda *a, **k: tmp_path / "x" / "bin" / "cockpit")
+    monkeypatch.setattr(apply_update, "build_blue", lambda *a, **k: tmp_path / "x" / "bin" / "forgemaster")
 
     def _ne_sert_pas(*_a, **_k):
         raise apply_update.UpdateFailed("la nouvelle version ne sert pas en isolation.")
@@ -163,12 +163,12 @@ def test_un_wheel_qui_ne_sert_pas_en_isolation_narrete_meme_pas_le_service(
 
 def test_sans_instantane_on_ne_bascule_pas_et_on_relance_le_service_tel_quel(
         live: Settings, tmp_path: Path, monkeypatch):
-    """Un ancien cockpit qui ne sait pas prendre d'instantané fait échouer la MAJ ICI, service arrêté mais
+    """Un ancien forgemaster qui ne sait pas prendre d'instantané fait échouer la MAJ ICI, service arrêté mais
     intact — jamais après la bascule. Basculer sans instantané, c'est rendre la MAJ irréversible (la base
     monte en forward-only), donc c'est le seul point où l'on refuse même si tout le reste était vert."""
     shim, trace = _systemctl_shim(tmp_path)
     avant = (live.home / "current").resolve()
-    monkeypatch.setattr(apply_update, "build_blue", lambda *a, **k: tmp_path / "x" / "bin" / "cockpit")
+    monkeypatch.setattr(apply_update, "build_blue", lambda *a, **k: tmp_path / "x" / "bin" / "forgemaster")
     monkeypatch.setattr(apply_update, "probe_isolated", lambda *a, **k: {"version": "9.9", "sha": "beef"})
 
     def _pas_de_verbe(*_a, **_k):
@@ -212,7 +212,7 @@ def test_refus_dune_unite_qui_lance_un_venv_en_dur(live: Settings, tmp_path: Pat
     la commande unique qui la migre — sinon on laisse quelqu'un devant un « impossible » nu."""
     whl = tmp_path / "c.whl"
     whl.write_bytes(b"")
-    unit = _unit(tmp_path / "cockpit.service", "/opt/venv-fige/bin/cockpit")
+    unit = _unit(tmp_path / "forgemaster.service", "/opt/venv-fige/bin/forgemaster")
     with pytest.raises(UpdateRefused) as exc:
         update.preflight(live, wheel=str(whl), unit=str(unit), scope="user")
     assert "EN DUR" in str(exc.value) and "install-service" in str(exc.value)
@@ -223,7 +223,7 @@ def test_refus_sans_lien_stable(live: Settings, tmp_path: Path):
     (live.home / "current").unlink()
     whl = tmp_path / "c.whl"
     whl.write_bytes(b"")
-    unit = _unit(tmp_path / "cockpit.service", str(live.home / "current" / "bin" / "cockpit"))
+    unit = _unit(tmp_path / "forgemaster.service", str(live.home / "current" / "bin" / "forgemaster"))
     with pytest.raises(UpdateRefused, match="lien stable"):
         update.preflight(live, wheel=str(whl), unit=str(unit), scope="user")
 
@@ -238,7 +238,7 @@ def test_refus_portee_systeme_sans_root(live: Settings, tmp_path: Path, monkeypa
 
 
 def test_refus_dun_fichier_qui_nest_pas_un_wheel(live: Settings, tmp_path: Path):
-    pas_un_wheel = tmp_path / "cockpit.tar.gz"
+    pas_un_wheel = tmp_path / "forgemaster.tar.gz"
     pas_un_wheel.write_bytes(b"")
     with pytest.raises(UpdateRefused, match="wheel"):
         update.preflight(live, wheel=str(pas_un_wheel), unit=None, scope="user")
@@ -251,8 +251,8 @@ def test_une_unite_sans_port_est_refusee_car_aucune_verification_ne_serait_possi
     livrerait une MAJ qui bascule et ne vérifie rien : exactement ce qu'on cherche à supprimer."""
     whl = tmp_path / "c.whl"
     whl.write_bytes(b"")
-    unit = tmp_path / "cockpit.service"
-    unit.write_text(f"[Service]\nExecStart={live.home}/current/bin/cockpit serve\n", encoding="utf-8")
+    unit = tmp_path / "forgemaster.service"
+    unit.write_text(f"[Service]\nExecStart={live.home}/current/bin/forgemaster serve\n", encoding="utf-8")
     with pytest.raises(UpdateRefused, match="port"):
         update.preflight(live, wheel=str(whl), unit=str(unit), scope="user")
 
@@ -262,7 +262,7 @@ def test_le_plan_sonde_la_boucle_locale_meme_quand_le_service_ecoute_partout(liv
     certaines piles et ferait conclure à tort à une MAJ ratée — donc on sonde la boucle locale."""
     whl = tmp_path / "c.whl"
     whl.write_bytes(b"")
-    unit = _unit(tmp_path / "cockpit.service", str(live.home / "current" / "bin" / "cockpit"),
+    unit = _unit(tmp_path / "forgemaster.service", str(live.home / "current" / "bin" / "forgemaster"),
                  host="0.0.0.0", port=8712)
     plan = update.preflight(live, wheel=str(whl), unit=str(unit), scope="user")
     assert plan["base_url"] == "http://127.0.0.1:8712"
@@ -272,8 +272,8 @@ def test_le_plan_sonde_la_boucle_locale_meme_quand_le_service_ecoute_partout(liv
 def test_parse_exec_start_prend_la_derniere_ligne_et_ignore_les_prefixes_systemd():
     """systemd autorise `ExecStart=-/chemin` (échec toléré) et plusieurs lignes, la dernière gagnant."""
     binaire, host, port = update.parse_exec_start(
-        "ExecStart=\nExecStart=-/o/current/bin/cockpit serve --host 0.0.0.0 --port 9001\n")
-    assert (binaire, host, port) == ("/o/current/bin/cockpit", "0.0.0.0", 9001)
+        "ExecStart=\nExecStart=-/o/current/bin/forgemaster serve --host 0.0.0.0 --port 9001\n")
+    assert (binaire, host, port) == ("/o/current/bin/forgemaster", "0.0.0.0", 9001)
     with pytest.raises(UpdateRefused, match="ExecStart"):
         update.parse_exec_start("[Service]\nType=simple\n")
 
@@ -298,27 +298,29 @@ def test_le_vivant_qui_sert_un_autre_build_est_un_echec():
     assert not ok and "0.1.0" in why
 
 
-# --- la prise, déléguée au cockpit ANCIEN --------------------------------------------------------------
+# --- la prise, déléguée au forgemaster ANCIEN --------------------------------------------------------------
 
-def test_la_prise_passe_par_la_VRAIE_ligne_de_commande_du_cockpit_installe(live: Settings, tmp_path: Path):
-    """Test de contact, pas de forme : on lance la vraie commande `cockpit` du venv courant et on exige un
+def test_la_prise_passe_par_la_VRAIE_ligne_de_commande_du_forgemaster_installe(
+        live: Settings, tmp_path: Path):
+    """Test de contact, pas de forme : on lance la vraie commande `forgemaster` du venv courant et on exige un
     instantané réel. La première version passait `--home` AVANT la sous-commande — argparse le porte sur la
     SOUS-commande, donc la MAJ mourait à l'étape de l'instantané. Aucune relecture ne l'avait vu ; seul un
     appel réel le montre, et c'est le genre de bug qu'un `monkeypatch` de `subprocess.run` cache pour de
     bon."""
-    console = Path(sys.executable).with_name("cockpit")
+    console = Path(sys.executable).with_name("forgemaster")
     if not console.is_file():
-        pytest.skip(f"pas de commande `cockpit` à côté de {sys.executable} — rien à mettre en contact")
+        pytest.skip(f"pas de commande `forgemaster` à côté de {sys.executable} — rien à mettre en contact")
     dest = apply_update.take_snapshot(console, live.home, lambda _m: None)
     assert (dest / snapshot.MANIFEST).is_file()
     assert dest.parent == live.home / "snapshots"
 
 
-def test_un_ancien_cockpit_qui_ignore_le_verbe_snapshot_fait_echouer_la_MAJ(live: Settings, tmp_path: Path):
+def test_un_ancien_forgemaster_qui_ignore_le_verbe_snapshot_fait_echouer_la_MAJ(
+        live: Settings, tmp_path: Path):
     """On ne bascule jamais sur une version dont on ne saurait pas revenir : si la prise échoue, la MAJ
     s'arrête là, et le message dit avec QUEL binaire elle a échoué."""
-    vieux = tmp_path / "vieux-cockpit"
-    vieux.write_text("#!/bin/sh\necho 'usage: cockpit' >&2\nexit 2\n", encoding="utf-8")
+    vieux = tmp_path / "vieux-forgemaster"
+    vieux.write_text("#!/bin/sh\necho 'usage: forgemaster' >&2\nexit 2\n", encoding="utf-8")
     vieux.chmod(0o755)
     with pytest.raises(apply_update.UpdateFailed, match="MAJ annulée"):
         apply_update.take_snapshot(vieux, live.home, lambda _m: None)
@@ -326,9 +328,10 @@ def test_un_ancien_cockpit_qui_ignore_le_verbe_snapshot_fait_echouer_la_MAJ(live
 
 # --- le script autonome ------------------------------------------------------------------------------
 
-def test_apply_ne_depend_de_rien_du_cockpit():
+def test_apply_ne_depend_de_rien_du_forgemaster():
     """Même exigence que `restore.py`, pour la même raison : ce script tourne pendant qu'on remplace le venv
-    du cockpit, sous le `python3` du système. Vérifié par AST — une régression d'import ne se voit pas à la
+    du forgemaster, sous le `python3` du système. Vérifié par AST — une régression d'import ne se voit pas à
+    la
     relecture six mois plus tard."""
     modules: set[str] = set()
     for node in ast.walk(ast.parse(Path(apply_update.__file__).read_text(encoding="utf-8"))):
@@ -337,7 +340,7 @@ def test_apply_ne_depend_de_rien_du_cockpit():
         elif isinstance(node, ast.ImportFrom):
             assert node.level == 0, "import relatif : le script ne tournerait plus hors du paquet"
             modules.add((node.module or "").split(".")[0])
-    assert "cockpit" not in modules
+    assert "forgemaster" not in modules
     assert modules <= set(sys.stdlib_module_names), modules - set(sys.stdlib_module_names)
 
 
@@ -352,7 +355,7 @@ def test_le_verbe_copie_le_script_au_lieu_de_le_lancer_depuis_le_paquet(live: Se
             "base_url": "http://127.0.0.1:8700", "scope": "user",
             "unit": tmp_path / "u", "venv": Path("/x")}
     monkeypatch.setattr(update, "follow", lambda run_dir, **_k: 0)
-    assert update.launch(live, plan, systemctl="systemctl", service="cockpit", detach=False) == 0
+    assert update.launch(live, plan, systemctl="systemctl", service="forgemaster", detach=False) == 0
 
     script = Path(lances[0][1])
     assert script.name == "apply.py" and script.parent.parent == live.home / "updates"
@@ -387,7 +390,7 @@ def test_install_service_pose_le_lien_et_fait_pointer_lunite_dessus(tmp_path: Pa
     unit, _env, _hint = service.install_service(settings, host="127.0.0.1", port=8700, scope="user")
     link = service.stable_link(settings)
     assert link.is_symlink() and link.resolve() == Path(sys.prefix).resolve()
-    assert f"ExecStart={link}/bin/cockpit serve" in unit.read_text(encoding="utf-8")
+    assert f"ExecStart={link}/bin/forgemaster serve" in unit.read_text(encoding="utf-8")
 
 
 def test_le_venv_et_le_lien_sont_dits_hors_perimetre_de_linstantane(live: Settings):

@@ -1,0 +1,11 @@
+# compose.yaml — config de run semée par le forgemaster (P3). Un service `web` buildé depuis le Dockerfile de ce
+# repo (build statique Astro → nginx) et publié sur le port que le forgemaster injecte. Le NOM de compose-project
+# (= namespace d'isolation inter-projets) vient de l'orchestrateur (`-p` / COMPOSE_PROJECT_NAME) — ne le fige
+# PAS ici.
+services:
+  web:
+    build: .
+    # Le forgemaster injecte FORGEMASTER_PORT à l'`up`. `:?` = échec bruyant si absent (jamais de faux-vert).
+    ports:
+      - "${FORGEMASTER_PORT:?FORGEMASTER_PORT doit être injecté par le forgemaster}:8000"
+    restart: unless-stopped

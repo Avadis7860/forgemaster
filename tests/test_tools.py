@@ -1,4 +1,4 @@
-"""Tests de `cockpit.tools` — provisionnement hôte-niveau de l'outillage déclaré par les bundles.
+"""Tests de `forgemaster.tools` — provisionnement hôte-niveau de l'outillage déclaré par les bundles.
 
 Seams PURS (chemins/PATH/plan) testés sans subprocess ; `install_tools` avec un runner INJECTÉ qui
 matérialise les binaires attendus, pour prouver symlinks, idempotence, fail-loud et clone anonyme —
@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from cockpit import tools
-from cockpit.config import Settings
-from cockpit.core.run import RunResult
+from forgemaster import tools
+from forgemaster.config import Settings
+from forgemaster.core.run import RunResult
 
 
 @pytest.fixture
@@ -23,7 +23,7 @@ def settings(tmp_path: Path) -> Settings:
 
 # -- seams PURS -------------------------------------------------------------------------------------
 
-def test_path_layout_under_cockpit_home(settings):
+def test_path_layout_under_forgemaster_home(settings):
     assert tools.tools_root(settings) == settings.home / "tools"
     assert tools.tools_venv(settings) == settings.home / "tools" / "venv"
     assert tools.nodeenv_prefix(settings) == settings.home / "tools" / "nodeenv"
@@ -61,7 +61,7 @@ def test_install_plan_covers_maps_quality_and_node(settings):
 def test_install_plan_forces_the_maps_past_the_pip_git_sha_trap(settings):
     """Le verrou du no-op silencieux. `pip install --upgrade git+<url>@main` résout le bon commit puis SAUTE
     l'install à version égale — et les cartes sont figées à `0.1.0`, donc la version ne discrimine jamais.
-    Vu en vrai le 2026-08-03 : `cockpit tools install` répondait 🟢 sans avoir bougé une ligne.
+    Vu en vrai le 2026-08-03 : `forgemaster toolchain install` répondait 🟢 sans avoir bougé une ligne.
 
     La 2ᵈᵉ passe force le CODE des cartes sans retoucher aux deps (que la 1ʳᵉ a résolues). Retirer
     `--force-reinstall`, `--no-deps`, ou l'étape entière, rétablit le faux-vert."""
@@ -179,7 +179,7 @@ def test_install_tools_adds_nothing_but_the_prompt_guard(settings):
 
     Garde de non-régression du chemin d'install. L'assertion porte sur le **delta** avec l'ambiant, pas sur
     l'absence de tout token dans l'env : ce que git lit du `.gitconfig` de l'utilisateur reste à lui. Ce qui
-    est interdit, c'est que le cockpit compose un `insteadOf` — tant que c'était possible, chaque E2E
+    est interdit, c'est que le forgemaster compose un `insteadOf` — tant que c'était possible, chaque E2E
     tournait sous une configuration qu'aucun utilisateur n'aura jamais."""
     envs: dict = {}
     tools.install_tools(settings, runner=_materializing_runner(settings, captured_envs=envs))
@@ -228,7 +228,7 @@ def _vcs(sha: str, ref: str = "main") -> dict:
 
 def test_maps_provenance_reads_the_served_commit(settings):
     """Le cas réel : pip a posé `direct_url.json` à l'install, on LIT le `commit_id` résolu. Aucun tampon
-    n'est écrit par le cockpit — la provenance existait déjà sur la machine."""
+    n'est écrit par le forgemaster — la provenance existait déjà sur la machine."""
     _seed_dist(settings, "code-map", _vcs(_SHA_A))
     entry = next(m for m in tools.maps_provenance(settings) if m["name"] == "code-map")
     assert entry["sha"] == _SHA_A
@@ -245,7 +245,7 @@ def test_maps_provenance_covers_the_three_host_maps_in_order(settings):
 
 
 def test_maps_provenance_without_a_tools_venv_is_a_valid_state(settings):
-    """Un cockpit en checkout dev n'a pas de `tools/venv` : ce n'est PAS une erreur. On rend les 3 entrées
+    """Un forgemaster en checkout dev n'a pas de `tools/venv` : ce n'est PAS une erreur. On rend les 3 entrées
     avec leur raison, plutôt que de lever et de faire tomber `/api/version`."""
     entries = tools.maps_provenance(settings)
     assert len(entries) == 3

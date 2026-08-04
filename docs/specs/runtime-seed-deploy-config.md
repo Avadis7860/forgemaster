@@ -23,8 +23,8 @@ aucune édition** : `create --type <t>` sème la config de run complète dans le
    (la base ne les a pas → zéro collision). Le seed reste déterministe (lecture triée, `|` déterministe).
 3. **Le compose BUILD depuis le repo, jamais une image figée.** `build: .` (contexte = racine de l'arbre
    archivé, `Dockerfile` canonique). Pas d'`image:` en dur → l'app du projet est ce qui tourne.
-4. **Port publié = port injecté, fail-loud.** `ports: ["${COCKPIT_PORT:?…}:8000"]` — interpolation
-   `${VAR:?err}` (échec bruyant si le cockpit n'injecte pas le port). Jamais un port en dur, jamais de
+4. **Port publié = port injecté, fail-loud.** `ports: ["${FORGEMASTER_PORT:?…}:8000"]` — interpolation
+   `${VAR:?err}` (échec bruyant si le forgemaster n'injecte pas le port). Jamais un port en dur, jamais de
    faux-vert. Le stub écoute `0.0.0.0:8000` (contrat interne uniforme).
 5. **Namespace non figé dans le fichier.** Le nom de compose-project (frontière d'isolation P2) vient de
    l'orchestrateur (`-p` / `COMPOSE_PROJECT_NAME`), **jamais** du `compose.yaml` semé → l'isolation reste
@@ -43,9 +43,9 @@ aucune édition** : `create --type <t>` sème la config de run complète dans le
 
 - `load_bundle("service-api"|"front-ts")` contient `compose.yaml`, `Dockerfile`, le stub (`app.py`/`server.mjs`),
   `.dockerignore` — non vides ; `load_bundle("generic"|"cli-tool")` **n'a ni** compose **ni** Dockerfile.
-- Le `compose.yaml` semé parse en YAML, porte `build: "."` (pas d'`image`), interpole `${COCKPIT_PORT:?` et
+- Le `compose.yaml` semé parse en YAML, porte `build: "."` (pas d'`image`), interpole `${FORGEMASTER_PORT:?` et
   publie `:8000`.
-- Config **générique** : ni `cockpit-…` (namespace) ni slug d'exemple en dur dans compose/Dockerfile/stub.
+- Config **générique** : ni `forgemaster-…` (namespace) ni slug d'exemple en dur dans compose/Dockerfile/stub.
 - `engine.deploy` sur un arbre **sans** compose → `ValueError` + `unhealthy`, backend **jamais** appelé.
 - Route `POST …/dev/up` sur un projet `service-api` (SoT réellement semé, `git.archive` réel) → `running`.
 
@@ -54,6 +54,6 @@ aucune édition** : `create --type <t>` sème la config de run complète dans le
 `create --type service-api` puis `create --type front-ts` (aucune édition) → le SoT porte `compose.yaml`,
 `Dockerfile`, le stub à la racine. `deploy up` **build depuis le Dockerfile semé** → `running` sur ports
 distincts du pool deploy (5250/5251), **HTTP 200/200** (service-api rend son JSON d'amorçage, front-ts son
-HTML), namespaces `cockpit-demo-svc-dev_*` ≠ `cockpit-demo-front-dev_*`. Cas **négatif** : `create --type
+HTML), namespaces `forgemaster-demo-svc-dev_*` ≠ `forgemaster-demo-front-dev_*`. Cas **négatif** : `create --type
 cli-tool` → `deploy up` **refusé proprement** (`erreur : … n'expose pas de service déployable`, rc=1, aucun
 conteneur créé).

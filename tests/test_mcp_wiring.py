@@ -10,16 +10,16 @@ from pathlib import Path
 
 import pytest
 
-from cockpit.config import Settings
-from cockpit.core import run
-from cockpit.db import store
-from cockpit.dispatch import worker, worktree
-from cockpit.git.internal import InternalGit
-from cockpit.projects import registry
-from cockpit.provision import mcp
-from cockpit.roadmap import model
-from cockpit.secrets import build_store
-from cockpit.secrets.jwt import mint_hs256, verify_hs256
+from forgemaster.config import Settings
+from forgemaster.core import run
+from forgemaster.db import store
+from forgemaster.dispatch import worker, worktree
+from forgemaster.git.internal import InternalGit
+from forgemaster.projects import registry
+from forgemaster.provision import mcp
+from forgemaster.roadmap import model
+from forgemaster.secrets import build_store
+from forgemaster.secrets.jwt import mint_hs256, verify_hs256
 
 _SECRET = "k" * 40  # ≥32c : exigence HS256
 _ENDPOINT = "http://mcp.example:8080/mcp"   # hôte FICTIF : il n'y a plus d'endpoint par défaut à hériter
@@ -48,11 +48,11 @@ def _seed_project(conn, settings, *, project="proj", feature="feat", task="t") -
 # -- mint JWT stdlib --------------------------------------------------------------------------------
 
 def test_mint_and_verify_roundtrip():
-    tok = mint_hs256("cockpit:void-runner", _SECRET, audience="vault-catalogs", issuer="vault-mcp",
+    tok = mint_hs256("forgemaster:void-runner", _SECRET, audience="vault-catalogs", issuer="vault-mcp",
                      ttl_seconds=60)
     claims = verify_hs256(tok, _SECRET, audience="vault-catalogs", issuer="vault-mcp")
     assert claims is not None
-    assert claims["sub"] == "cockpit:void-runner"
+    assert claims["sub"] == "forgemaster:void-runner"
     assert claims["aud"] == "vault-catalogs" and claims["iss"] == "vault-mcp"
     # mauvais secret / mauvaise audience → refusé (contrôle du contrat serveur)
     assert verify_hs256(tok, "x" * 40, audience="vault-catalogs") is None
@@ -67,7 +67,7 @@ def test_mint_rejects_short_secret():
 # -- P4 : cycle de vie du token (token_exp / worktree_token / check_lifecycle) ----------------------
 
 def test_token_exp_reads_exp_and_none_on_malformed():
-    tok = mint_hs256("cockpit:x", _SECRET, audience="vault-catalogs", ttl_seconds=3600)
+    tok = mint_hs256("forgemaster:x", _SECRET, audience="vault-catalogs", ttl_seconds=3600)
     exp = mcp.token_exp(tok)
     assert exp is not None and exp > int(time.time())
     assert mcp.token_exp("pas-un-jwt") is None and mcp.token_exp("a.b") is None    # malformé → None
@@ -111,7 +111,7 @@ def test_check_lifecycle_flags_expired_worktree_token(tmp_path: Path, wired_endp
     """Le faux-négatif void-runner : un worktree porte un `.mcp.json` dont le token expire avant la fin d'un
     run → `stale`, `healthy=False` (doctor rougirait)."""
     settings = _settings(tmp_path)
-    tok = mint_hs256("cockpit:proj", _SECRET, audience="vault-catalogs", ttl_seconds=3600)
+    tok = mint_hs256("forgemaster:proj", _SECRET, audience="vault-catalogs", ttl_seconds=3600)
     wt = settings.projects_root / "proj" / "worktrees" / "feat"
     wt.mkdir(parents=True)
     (wt / ".mcp.json").write_text(json.dumps(mcp.render_mcp_config(tok, endpoint=wired_endpoint)),
@@ -142,7 +142,7 @@ def test_endpoint_resolved_live_not_frozen_at_import(monkeypatch: pytest.MonkeyP
 
 
 def test_no_endpoint_configured_is_none_not_our_ct(monkeypatch: pytest.MonkeyPatch):
-    """Fix 2026-08-03 (prérequis de publication) : sans `COCKPIT_MCP_ENDPOINT`, l'endpoint est **`None`**.
+    """Fix 2026-08-03 (prérequis de publication) : sans `FORGEMASTER_MCP_ENDPOINT`, l'endpoint est **`None`**.
     Le module portait un défaut en dur vers NOTRE CT — un défaut de produit qui ne survivait que parce que
     personne d'autre que nous ne l'exécutait. `render_mcp_config` refuse alors d'écrire une config muette."""
     monkeypatch.delenv(mcp.ENV_MCP_ENDPOINT, raising=False)
@@ -153,7 +153,8 @@ def test_no_endpoint_configured_is_none_not_our_ct(monkeypatch: pytest.MonkeyPat
 
 
 def test_empty_endpoint_is_treated_as_unconfigured(monkeypatch: pytest.MonkeyPatch):
-    """`COCKPIT_MCP_ENDPOINT=` (posé mais vide — un `cockpit.env` à moitié rempli) vaut NON configuré, pas
+    """`FORGEMASTER_MCP_ENDPOINT=` (posé mais vide — un `forgemaster.env` à moitié rempli) vaut NON configuré,
+    pas
     une URL vide qu'on servirait au worker."""
     monkeypatch.setenv(mcp.ENV_MCP_ENDPOINT, "")
     assert mcp.current_endpoint() is None
@@ -170,7 +171,7 @@ def test_inject_writes_config_chmod600_with_scoped_bearer(tmp_path: Path, wired_
     assert oct(p.stat().st_mode)[-3:] == "600"              # porte le Bearer → 600
     tok = json.loads(p.read_text())["mcpServers"]["vault-catalogs"]["headers"]["Authorization"]
     claims = verify_hs256(tok.removeprefix("Bearer "), _SECRET, audience="vault-catalogs")
-    assert claims is not None and claims["sub"] == "cockpit:void-runner"   # scopé au projet
+    assert claims is not None and claims["sub"] == "forgemaster:void-runner"   # scopé au projet
 
 
 def test_inject_is_honest_noop_without_ref_or_secret(tmp_path: Path, wired_endpoint: str):
@@ -260,31 +261,31 @@ def test_dispatch_injects_mcp_and_worker_sees_it(tmp_path: Path, monkeypatch: py
         conn.close()
 
 
-# -- upsert cockpit.env (set_env_keys) --------------------------------------------------------------
+# -- upsert forgemaster.env (set_env_keys) --------------------------------------------------------------
 
 def test_set_env_keys_adds_updates_and_preserves(tmp_path: Path):
-    from cockpit.service import set_env_keys
-    env = tmp_path / "cockpit.env"
-    env.write_text("# en-tête\nCOCKPIT_HOME=/x\n# COCKPIT_SECRET_STORE=bws\n", encoding="utf-8")
-    set_env_keys(env, {"COCKPIT_MCP_ENDPOINT": "http://h/mcp"})     # clé neuve → en fin
-    set_env_keys(env, {"COCKPIT_HOME": "/y"})                       # clé existante → écrasée sur place
+    from forgemaster.service import set_env_keys
+    env = tmp_path / "forgemaster.env"
+    env.write_text("# en-tête\nFORGEMASTER_HOME=/x\n# FORGEMASTER_SECRET_STORE=bws\n", encoding="utf-8")
+    set_env_keys(env, {"FORGEMASTER_MCP_ENDPOINT": "http://h/mcp"})     # clé neuve → en fin
+    set_env_keys(env, {"FORGEMASTER_HOME": "/y"})                       # clé existante → écrasée sur place
     text = env.read_text(encoding="utf-8")
     lines = text.splitlines()
-    assert "COCKPIT_HOME=/y" in lines and "COCKPIT_HOME=/x" not in lines   # pas de doublon
-    assert text.count("COCKPIT_HOME=") == 1
-    assert "COCKPIT_MCP_ENDPOINT=http://h/mcp" in lines
-    assert "# en-tête" in lines and "# COCKPIT_SECRET_STORE=bws" in lines  # commentaires préservés
+    assert "FORGEMASTER_HOME=/y" in lines and "FORGEMASTER_HOME=/x" not in lines   # pas de doublon
+    assert text.count("FORGEMASTER_HOME=") == 1
+    assert "FORGEMASTER_MCP_ENDPOINT=http://h/mcp" in lines
+    assert "# en-tête" in lines and "# FORGEMASTER_SECRET_STORE=bws" in lines  # commentaires préservés
     assert (env.stat().st_mode & 0o777) == 0o600
 
 
 def test_set_env_keys_creates_file_when_absent(tmp_path: Path):
-    from cockpit.service import set_env_keys
-    env = tmp_path / "sub" / "cockpit.env"
-    set_env_keys(env, {"COCKPIT_MCP_JWT_SECRET_REF": "ref-abc"})
-    assert env.read_text(encoding="utf-8").splitlines() == ["COCKPIT_MCP_JWT_SECRET_REF=ref-abc"]
+    from forgemaster.service import set_env_keys
+    env = tmp_path / "sub" / "forgemaster.env"
+    set_env_keys(env, {"FORGEMASTER_MCP_JWT_SECRET_REF": "ref-abc"})
+    assert env.read_text(encoding="utf-8").splitlines() == ["FORGEMASTER_MCP_JWT_SECRET_REF=ref-abc"]
 
 
-# -- cockpit mcp wire -------------------------------------------------------------------------------
+# -- forgemaster mcp wire -------------------------------------------------------------------------------
 
 def test_mcp_wire_file_path_persists_ref_never_plaintext(tmp_path: Path):
     import argparse
@@ -295,12 +296,12 @@ def test_mcp_wire_file_path_persists_ref_never_plaintext(tmp_path: Path):
     rc = mcp.cli_dispatch(settings, argparse.Namespace(
         action="wire", secret_file=str(secret_file), secret_ref=None, endpoint=_ENDPOINT))
     assert rc == 0
-    env_text = (settings.home / "cockpit.env").read_text(encoding="utf-8")
+    env_text = (settings.home / "forgemaster.env").read_text(encoding="utf-8")
     assert _SECRET not in env_text                                  # le secret n'est JAMAIS en clair
-    assert f"COCKPIT_MCP_ENDPOINT={_ENDPOINT}" in env_text
+    assert f"FORGEMASTER_MCP_ENDPOINT={_ENDPOINT}" in env_text
     # la ref posée résout vers le secret dans le coffre
     ref = next(line.split("=", 1)[1] for line in env_text.splitlines()
-               if line.startswith("COCKPIT_MCP_JWT_SECRET_REF="))
+               if line.startswith("FORGEMASTER_MCP_JWT_SECRET_REF="))
     assert build_store(settings).get(ref) == _SECRET
 
 
@@ -321,13 +322,13 @@ def test_mcp_wire_ref_path_missing_ref_fails_and_writes_nothing(tmp_path: Path):
     rc = mcp.cli_dispatch(settings, argparse.Namespace(          # endpoint FOURNI : le fail testé ici est
         action="wire", secret_file=None, secret_ref="00000000-inexistant", endpoint=_ENDPOINT))
     assert rc == 1                                                  # ref introuvable → fail-loud
-    assert not (settings.home / "cockpit.env").exists()             # rien posé
+    assert not (settings.home / "forgemaster.env").exists()             # rien posé
 
 
 def test_mcp_wire_without_endpoint_refuses_and_writes_nothing(tmp_path: Path,
                                                               monkeypatch: pytest.MonkeyPatch):
     """Câbler un secret sans dire vers QUOI produirait un câblage à moitié fait, silencieux au dispatch →
-    refus **avant tout effet de bord** (rien dans le coffre, rien dans `cockpit.env`)."""
+    refus **avant tout effet de bord** (rien dans le coffre, rien dans `forgemaster.env`)."""
     import argparse
     monkeypatch.delenv(mcp.ENV_MCP_ENDPOINT, raising=False)
     settings = _settings(tmp_path)
@@ -337,4 +338,4 @@ def test_mcp_wire_without_endpoint_refuses_and_writes_nothing(tmp_path: Path,
     rc = mcp.cli_dispatch(settings, argparse.Namespace(
         action="wire", secret_file=str(secret_file), secret_ref=None, endpoint=None))
     assert rc == 1
-    assert not (settings.home / "cockpit.env").exists()             # aucun effet de bord
+    assert not (settings.home / "forgemaster.env").exists()             # aucun effet de bord

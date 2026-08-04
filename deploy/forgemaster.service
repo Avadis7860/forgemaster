@@ -1,0 +1,36 @@
+# forgemaster.service — unité systemd de référence pour `forgemaster serve` (self-hosted).
+#
+# Le plus simple : `forgemaster install-service` (service utilisateur, sans root) ou
+# `forgemaster install-service --system --host 0.0.0.0` (service système). Ce fichier est un GABARIT manuel :
+# remplace @HOME@ / @FORGEMASTER_HOME@ / @USER@ et copie-le au bon endroit
+# (~/.config/systemd/user/ en user, /etc/systemd/system/ en système).
+#
+# ExecStart passe par @FORGEMASTER_HOME@/current — un LIEN symbolique vers le venv actif, posé par
+# `install-service`. Ce n'est pas de la cosmétique : `forgemaster update apply` pose la nouvelle version dans un
+# venv voisin et bascule ce lien, donc revenir en arrière coûte le même geste dans l'autre sens. Une unité
+# qui lance un venv EN DUR n'est pas cassée — elle est *non migrée*, et `update apply` la refuse
+# explicitement (relance `forgemaster install-service` puis `systemctl daemon-reload`).
+#
+# Environment=HOME est OBLIGATOIRE : sans lui, git ne lit pas le helper de credentials → fetch/push non
+# authentifiés en silence. L'EnvironmentFile porte FORGEMASTER_HOME / le backend de coffre (aucun secret).
+
+[Unit]
+Description=forgemaster — forge/orchestrateur local (daemon FastAPI + web)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# --- portée système uniquement (décommente) ---
+# User=@USER@
+# Group=@USER@
+Environment=HOME=@HOME@
+Environment=FORGEMASTER_HOME=@FORGEMASTER_HOME@
+EnvironmentFile=-@FORGEMASTER_HOME@/forgemaster.env
+ExecStart=@FORGEMASTER_HOME@/current/bin/forgemaster serve --host 127.0.0.1 --port 8700
+Restart=on-failure
+RestartSec=3
+
+[Install]
+# user : default.target — système : multi-user.target
+WantedBy=default.target

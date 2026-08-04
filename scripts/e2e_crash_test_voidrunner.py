@@ -7,19 +7,21 @@ Prouve le **critère binaire de l'épic** : `void-runner` (clone OGame — le pr
 n'atterrissant JAMAIS dans l'historique.
 
 Étapes (via la VRAIE CLI, pas de seed) :
-  1. `cockpit project create void-runner --type browser-game` → SoT semé (bundle + provenance stampée).
+  1. `forgemaster project create void-runner --type browser-game` → SoT semé (bundle + provenance stampée).
   2. feature + task minimale (facette `doc`, DoD trivial — le critère est « sans crash outils »).
-  3. `cockpit dispatch void-runner/crash-check` → **vrai `claude -p`** ; l'injection `.mcp.json` se déclenche.
+  3. `forgemaster dispatch void-runner/crash-check` → **vrai `claude -p`** ; l'injection `.mcp.json` se
+  déclenche.
   4. Asserts : dispatch sans crash ; `.mcp.json` **injecté** + **gitignoré** ; worktree **propre** (la forge
      a tout committé) ; le `.mcp.json` **n'est dans AUCUN commit** (Bearer hors historique).
 
-**Rejouable** : `COCKPIT_HOME` jetable, teardown en `finally`. **Hors gate natif** (vrai `claude`, lent, non
+**Rejouable** : `FORGEMASTER_HOME` jetable, teardown en `finally`. **Hors gate natif** (vrai `claude`, lent,
+non
 déterministe — comme `e2e_runtime.py`, règle 6 de la spec e2e). Le câblage MCP exige que le coffre résolve
 le secret HMAC partagé — sinon l'injection no-op (dégradation honnête) et l'assert `.mcp.json` échoue :
 
 Prérequis env (le MCP réellement câblé) — passer avant le lancement :
-    COCKPIT_SECRET_STORE=bws
-    COCKPIT_MCP_JWT_SECRET_REF=<uuid du secret MCP_JWT_SECRET dans le coffre>
+    FORGEMASTER_SECRET_STORE=bws
+    FORGEMASTER_MCP_JWT_SECRET_REF=<uuid du secret MCP_JWT_SECRET dans le coffre>
     BWS_ACCESS_TOKEN=<token machine-account>   BWS_API_URL / BWS_IDENTITY_URL   (région du coffre)
 Et `claude` authentifié sur la machine (le dispatch spawn un vrai worker).
 
@@ -37,7 +39,7 @@ import tempfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-VENV_COCKPIT = REPO / ".venv" / "bin" / "cockpit"
+VENV_FORGEMASTER = REPO / ".venv" / "bin" / "forgemaster"
 
 SLUG = "void-runner"              # le projet d'origine du crash (clone OGame browser-game)
 FEATURE = "crash-check"
@@ -67,7 +69,7 @@ def _run(argv: list[str], *, env: dict | None = None, timeout: float | None = No
 
 
 def cli(env: dict, *args: str, timeout: float | None = None) -> subprocess.CompletedProcess:
-    return _run([str(VENV_COCKPIT), *args], env=env, timeout=timeout)
+    return _run([str(VENV_FORGEMASTER), *args], env=env, timeout=timeout)
 
 
 def git(sot: Path, *args: str) -> subprocess.CompletedProcess:
@@ -91,19 +93,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--keep", action="store_true", help="ne pas supprimer le home jetable (debug)")
     a = ap.parse_args(argv)
 
-    if not VENV_COCKPIT.exists():
-        raise SystemExit(f"cockpit introuvable : {VENV_COCKPIT} (venv du repo non installé ?)")
+    if not VENV_FORGEMASTER.exists():
+        raise SystemExit(f"forgemaster introuvable : {VENV_FORGEMASTER} (venv du repo non installé ?)")
 
-    home = Path(tempfile.mkdtemp(prefix="cockpit-crashtest-"))
+    home = Path(tempfile.mkdtemp(prefix="forgemaster-crashtest-"))
     projects_root = home / "projects"
     # `.venv/bin/python scripts/…` n'ACTIVE pas le venv → `.venv/bin` (console-scripts du framework :
     # docsmap/codemap/ruff…) n'est PAS sur le PATH, et le worker échouerait au préflight d'outils
-    # (`Bash(docsmap:*)` de la facette doc introuvable). Le home jetable n'a pas de `tools/bin` (`cockpit
+    # (`Bash(docsmap:*)` de la facette doc introuvable). Le home jetable n'a pas de `tools/bin` (`forgemaster
     # tools install` — clone GitHub + Node, hors-sujet — jamais lancé). On préfixe donc le bin de
     # l'interpréteur courant au PATH transmis : l'invocation documentée marche sans activation manuelle.
-    venv_bin = str(VENV_COCKPIT.parent)
-    env = {**os.environ, "COCKPIT_HOME": str(home / "home"),
-           "COCKPIT_PROJECTS_ROOT": str(projects_root),
+    venv_bin = str(VENV_FORGEMASTER.parent)
+    env = {**os.environ, "FORGEMASTER_HOME": str(home / "home"),
+           "FORGEMASTER_PROJECTS_ROOT": str(projects_root),
            "PATH": f"{venv_bin}{os.pathsep}{os.environ.get('PATH', '')}"}
     sot = projects_root / SLUG / "sot.git"
     try:
@@ -112,9 +114,9 @@ def main(argv: list[str] | None = None) -> int:
         r = cli(env, "project", "create", SLUG, "--type", "browser-game")
         check(r.returncode == 0, f"projet {SLUG} créé (browser-game) [{r.returncode}] {r.stderr[:200]}")
         check(sot.exists(), f"SoT bare semé : {sot}")
-        prov = git(sot, "show", "dev:.cockpit/provenance.toml").stdout
+        prov = git(sot, "show", "dev:.forgemaster/provenance.toml").stdout
         check("browser-game" in prov, "provenance stampée browser-game (bon bundle semé dans le SoT)")
-        bundle = git(sot, "show", "dev:.cockpit/bundle.toml").stdout
+        bundle = git(sot, "show", "dev:.forgemaster/bundle.toml").stdout
         check("game-design" in bundle, "bundle browser-game présent (4 facettes dont game-design)")
 
         # ---- 2. feature + task minimale -----------------------------------------------------------

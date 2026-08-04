@@ -1,4 +1,4 @@
-"""Tests de `cockpit.mcp.local` — le serveur forgemaster-catalogs co-installé, et la topologie déclarée.
+"""Tests de `forgemaster.mcp.local` — le serveur forgemaster-catalogs co-installé, et la topologie déclarée.
 
 Deux moitiés, comme le module : les **seams purs** (chemins, URL, argv, rendu de fichiers) testés sans
 subprocess, et `install` avec un **runner injecté** qui matérialise ce que pip aurait posé — jamais un vrai
@@ -17,11 +17,11 @@ from pathlib import Path
 
 import pytest
 
-from cockpit import build_provenance
-from cockpit.config import Settings
-from cockpit.core.run import RunResult
-from cockpit.mcp import local
-from cockpit.provision import mcp as wiring
+from forgemaster import build_provenance
+from forgemaster.config import Settings
+from forgemaster.core.run import RunResult
+from forgemaster.mcp import local
+from forgemaster.provision import mcp as wiring
 
 _SHA = "0d481d3c2795a35549515b67acb3abd6b314e31b"
 _REMOTE = "http://192.168.0.153:8080/mcp"       # un endpoint d'ailleurs : la topologie `remote`
@@ -40,7 +40,7 @@ def _isolated_wiring_env():
     **Restauration à la main, et pas `monkeypatch.delenv`** — piège vérifié : `delenv(raising=False)` sur une
     clé ABSENTE n'enregistre rien à restaurer, si bien que ce que le code de production écrit ensuite
     (`wire(live_env=True)` pose les deux clés dans `os.environ`) SURVIT au test. Le symptôme était à distance
-    et muet : `test_tooling_preflight` tombait en rouge parce que `cockpit doctor` voyait un câblage MCP
+    et muet : `test_tooling_preflight` tombait en rouge parce que `forgemaster doctor` voyait un câblage MCP
     laissé par ce module-ci. On restaure donc l'instantané, y compris en RETIRANT les clés qu'un test a
     fait naître."""
     keys = (wiring.ENV_MCP_ENDPOINT, wiring.ENV_MCP_JWT_SECRET_REF)
@@ -72,8 +72,9 @@ def _seed_server_dist(settings: Settings, *, sha: str | None = _SHA) -> Path:
 # -- seams PURS ---------------------------------------------------------------------------------------
 
 def test_three_venvs_never_collide(settings):
-    """Le serveur a SON venv, distinct de celui du cockpit et de celui des outils : trois cycles de vie."""
-    from cockpit import tools
+    """Le serveur a SON venv, distinct de celui du forgemaster et de celui des outils : trois cycles de
+    vie."""
+    from forgemaster import tools
     assert local.mcp_root(settings) == settings.home / "mcp"
     assert local.mcp_venv(settings) == settings.home / "mcp" / "venv"
     assert local.mcp_venv(settings) != tools.tools_venv(settings)
@@ -107,7 +108,8 @@ def test_install_plan_forces_the_server_past_the_pip_git_sha_trap(settings):
 
 def test_install_plan_pins_a_full_sha_not_a_moving_ref(settings):
     """§3 de la décision d'édition : la pièce co-installée monte AVEC l'édition. Une réf mobile (`main`)
-    la ferait dériver seule — c'est exactement ce qui a rendu `cockpit tools check` nécessaire côté cartes."""
+    la ferait dériver seule — c'est exactement ce qui a rendu `forgemaster toolchain check` nécessaire côté
+    cartes."""
     assert len(local.SERVER_REF) == 40 and all(c in "0123456789abcdef" for c in local.SERVER_REF)
     assert local.SERVER_REF in str(local.install_plan(settings)[0]["argv"])
 
@@ -123,7 +125,7 @@ def test_rendered_env_binds_loopback_and_names_the_data_root(tmp_path):
 
 def test_rendered_env_reuses_the_wiring_jwt_contract(tmp_path):
     """iss/aud viennent de `provision.mcp`, pas d'une copie : deux constantes jumelles qui dériveraient
-    produiraient un serveur refusant les jetons de son propre cockpit, avec un 401 muet sur la cause."""
+    produiraient un serveur refusant les jetons de son propre forgemaster, avec un 401 muet sur la cause."""
     env = local.render_env(port=8080, data_root=tmp_path, secret="s" * 40)
     assert f"VAULT_MCP_JWT_ISSUER={wiring.MCP_ISSUER}" in env
     assert f"VAULT_MCP_JWT_AUDIENCE={wiring.MCP_AUDIENCE}" in env
@@ -210,7 +212,7 @@ def test_api_version_carries_the_topology(settings, monkeypatch):
 
 
 def test_api_version_degrades_honestly_when_the_probe_dies(settings, monkeypatch):
-    import cockpit.mcp.local as mod
+    import forgemaster.mcp.local as mod
     monkeypatch.setattr(mod, "topology", lambda s: (_ for _ in ()).throw(RuntimeError("boom")))
     assert build_provenance.provenance(settings)["mcp"]["topology"] == "unknown"
 
@@ -244,7 +246,7 @@ def test_install_refuses_without_an_existing_data_root(settings, tmp_path):
     assert not local.unit_path("user").exists()                 # rien de posé sur un refus
 
 
-def test_install_writes_unit_env_and_wires_the_cockpit(settings, tmp_path, monkeypatch):
+def test_install_writes_unit_env_and_wires_the_forgemaster(settings, tmp_path, monkeypatch):
     corpus = tmp_path / "corpus"
     corpus.mkdir()
     monkeypatch.setattr(local, "unit_path", lambda scope="user": tmp_path / "units" / "fmc.service")
@@ -253,7 +255,7 @@ def test_install_writes_unit_env_and_wires_the_cockpit(settings, tmp_path, monke
     assert report["ok"] and report["endpoint"] == "http://127.0.0.1:8099/mcp"
     assert report["sha"] == _SHA                                # lu du disque, pas déclaré
     assert Path(report["unit"]).exists() and Path(report["env_file"]).exists()
-    # le cockpit se câble sur SON serveur, sans restart (live_env) — et la topologie bascule au vert
+    # le forgemaster se câble sur SON serveur, sans restart (live_env) — et la topologie bascule au vert
     assert os.environ[wiring.ENV_MCP_ENDPOINT] == "http://127.0.0.1:8099/mcp"
     assert local.topology(settings)["topology"] == "co-installed"
 

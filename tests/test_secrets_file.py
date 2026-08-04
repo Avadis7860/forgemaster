@@ -6,15 +6,15 @@ import stat
 
 import pytest
 
-from cockpit.secrets.base import SecretNotFound, SecretStoreError
-from cockpit.secrets.file_store import EncryptedFileStore
+from forgemaster.secrets.base import SecretNotFound, SecretStoreError
+from forgemaster.secrets.file_store import EncryptedFileStore
 
 SECRET = "ghp_th1s-1s-a-github-pat-value"
 
 
 def test_put_get_roundtrip(tmp_path):
     store = EncryptedFileStore(tmp_path / "secrets")
-    ref = store.put(SECRET, label="github:cockpit")
+    ref = store.put(SECRET, label="github:forgemaster")
     assert ref and ref != SECRET  # référence opaque, pas la valeur
     assert store.get(ref) == SECRET
 
@@ -48,10 +48,10 @@ def test_delete_is_idempotent(tmp_path):
 
 def test_list_entries_exposes_labels_not_values(tmp_path):
     store = EncryptedFileStore(tmp_path / "secrets")
-    store.put(SECRET, label="github:cockpit")
+    store.put(SECRET, label="github:forgemaster")
     entries = store.list_entries()
     assert len(entries) == 1
-    assert entries[0]["label"] == "github:cockpit"
+    assert entries[0]["label"] == "github:forgemaster"
     assert "value" not in entries[0]
     assert SECRET not in str(entries)
 
@@ -59,7 +59,7 @@ def test_list_entries_exposes_labels_not_values(tmp_path):
 def test_no_plaintext_on_disk(tmp_path):
     """Invariant central : la valeur n'apparaît NULLE PART en clair (blob chiffré)."""
     root = tmp_path / "secrets"
-    EncryptedFileStore(root).put(SECRET, label="github:cockpit")
+    EncryptedFileStore(root).put(SECRET, label="github:forgemaster")
     blob = (root / "store.enc").read_bytes()
     assert SECRET.encode() not in blob
     # ni dans la clé, ni ailleurs dans le dossier

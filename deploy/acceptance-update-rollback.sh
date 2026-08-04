@@ -4,7 +4,7 @@
 # Les tests unitaires gardent les décisions (quoi refuser, dans quel ordre arrêter/relancer) en simulant les
 # étapes coûteuses. Ici, rien n'est simulé du produit : de VRAIS wheels bâtis depuis ce checkout, de VRAIS
 # venvs créés par `python3 -m venv`, un VRAI daemon qui sert, une VRAIE base peuplée par l'API, et le VRAI
-# verbe `cockpit update apply` lancé depuis le cockpit INSTALLÉ (pas depuis le repo).
+# verbe `forgemaster update apply` lancé depuis le forgemaster INSTALLÉ (pas depuis le repo).
 #
 # Deux actes, parce que « ça revient en arrière » ne vaut que si « ça passe » vaut aussi :
 #   • acte 1 — un wheel sain est posé : le lien bascule, le daemon relancé sert le NOUVEAU build (comparaison
@@ -26,8 +26,8 @@ py="${PYTHON:-$root/.venv/bin/python}"
 
 tmp="$(mktemp -d)"
 trap 'set +e; [ -f "$tmp/shim.pid" ] && kill "$(cat "$tmp/shim.pid")" 2>/dev/null; rm -rf "$tmp"' EXIT
-export COCKPIT_HOME="$tmp/home" COCKPIT_PROJECTS_ROOT="$tmp/projects"
-export SHIM_UNIT="$tmp/fakehome/.config/systemd/user/cockpit.service" \
+export FORGEMASTER_HOME="$tmp/home" FORGEMASTER_PROJECTS_ROOT="$tmp/projects"
+export SHIM_UNIT="$tmp/fakehome/.config/systemd/user/forgemaster.service" \
        SHIM_PIDFILE="$tmp/shim.pid" SHIM_LOG="$tmp/serve.log"
 
 echo "→ [1/8] trois wheels RÉELS depuis ce checkout (aucun npm : l'UI n'est pas ce qu'on juge ici)"
@@ -36,17 +36,17 @@ echo "→ [1/8] trois wheels RÉELS depuis ce checkout (aucun npm : l'UI n'est p
 mkdir -p "$root/build/vendor"
 for pkg in codemap taskmap; do
   src="$root/../${pkg/codemap/code-map}"; src="${src/taskmap/task-map}"
-  [ -d "$src/src/$pkg" ] || { echo "✗ sibling $src absent — clone-le à côté du cockpit" >&2; exit 1; }
+  [ -d "$src/src/$pkg" ] || { echo "✗ sibling $src absent — clone-le à côté du forgemaster" >&2; exit 1; }
   rm -rf "$root/build/vendor/$pkg"; cp -a "$src/src/$pkg" "$root/build/vendor/$pkg"
 done
 build_one() {   # $1 = sha de build tamponné, $2 = dossier de sortie
-  printf '{"sha": "%s", "committed_at": "2026-08-02T00:00:00+00:00"}\n' "$1" > "$root/src/cockpit/_build.json"
+  printf '{"sha": "%s", "committed_at": "2026-08-02T00:00:00+00:00"}\n' "$1" > "$root/src/forgemaster/_build.json"
   "$py" -m pip wheel --no-deps --quiet "$root" -w "$2"
-  ls "$2"/cockpit-*.whl | head -1
+  ls "$2"/forgemaster-*.whl | head -1
 }
 whl_a="$(build_one "$(printf 'a%.0s' {1..40})" "$tmp/wa")"
 whl_c="$(build_one "$(printf 'c%.0s' {1..40})" "$tmp/wc")"
-rm -f "$root/src/cockpit/_build.json"          # artefact par-build, jamais laissé dans le checkout
+rm -f "$root/src/forgemaster/_build.json"          # artefact par-build, jamais laissé dans le checkout
 echo "   sain (avant) : $(basename "$whl_a") · sain (après) : $(basename "$whl_c")"
 
 "$py" - "$whl_c" "$tmp/wb" <<'PY'
@@ -60,7 +60,7 @@ dst = out / src.name
 # il écrit son dégât AVANT de mourir : c'est ce qui rend l'instantané indispensable au retour arrière.
 POISON = '''
 import os as _os, pathlib as _pl, sqlite3 as _sq
-_db = _pl.Path(_os.environ.get("COCKPIT_HOME", "/nulle-part")) / "cockpit.db"
+_db = _pl.Path(_os.environ.get("FORGEMASTER_HOME", "/nulle-part")) / "forgemaster.db"
 if _db.exists():
     _c = _sq.connect(str(_db))
     if _c.execute("SELECT count(*) FROM projects").fetchone()[0]:
@@ -70,7 +70,7 @@ if _db.exists():
         raise RuntimeError("migration cassee : cette version ne sait pas monter une base peuplee")
     _c.close()
 '''
-cible = "cockpit/daemon/app.py"
+cible = "forgemaster/daemon/app.py"
 # Injecté APRÈS le `from __future__` : en tête de fichier ce serait une SyntaxError, donc un wheel qui
 # échoue DÈS la sonde en isolation — un autre chemin (correct, mais déjà couvert). Ce qu'on veut ici est le
 # cas dur : une version qui passe en isolation et ne casse QUE sur la vraie base.
@@ -88,16 +88,16 @@ with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
 zin.close()
 print(f"   empoisonné : {dst.name} (migration qui casse sur base peuplée)")
 PY
-whl_b="$(ls "$tmp/wb"/cockpit-*.whl | head -1)"
+whl_b="$(ls "$tmp/wb"/forgemaster-*.whl | head -1)"
 
 echo "→ [2/8] installation RÉELLE du wheel « avant » + \`install-service\` (pose le lien stable)"
 "$py" -m venv "$tmp/v1"
 "$tmp/v1/bin/pip" install --quiet "$whl_a"
 port="$("$py" -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
-HOME="$tmp/fakehome" "$tmp/v1/bin/cockpit" install-service --port "$port" | sed 's/^/   /'
-grep -q "ExecStart=$COCKPIT_HOME/current/bin/cockpit" "$SHIM_UNIT" \
+HOME="$tmp/fakehome" "$tmp/v1/bin/forgemaster" install-service --port "$port" | sed 's/^/   /'
+grep -q "ExecStart=$FORGEMASTER_HOME/current/bin/forgemaster" "$SHIM_UNIT" \
   || { echo "✗ l'unité ne passe pas par le lien stable — la bascule n'aurait aucun effet" >&2; exit 1; }
-[ -L "$COCKPIT_HOME/current" ] || { echo "✗ lien stable non posé" >&2; exit 1; }
+[ -L "$FORGEMASTER_HOME/current" ] || { echo "✗ lien stable non posé" >&2; exit 1; }
 
 # Le shim `systemctl` : il LIT l'unité réelle et démarre/arrête vraiment le processus qu'elle déclare.
 cat > "$tmp/systemctl" <<'PY'
@@ -141,7 +141,7 @@ PY
 chmod +x "$tmp/systemctl"
 
 echo "→ [3/8] le service tourne, et un projet est créé PAR L'API (c'est le daemon qui écrit)"
-"$tmp/systemctl" --user start cockpit
+"$tmp/systemctl" --user start forgemaster
 if ! "$py" - "$port" "$tmp" <<'PY'
 import json, sys, time, urllib.error, urllib.request
 from pathlib import Path
@@ -173,16 +173,16 @@ print(f"   ✓ sert le build {sha[:12]} et porte 1 projet")
 PY
 then tail -n 20 "$SHIM_LOG" >&2; exit 1; fi
 
-echo "→ [4/8] ACTE 1 — \`cockpit update apply\` avec un wheel SAIN : ça doit passer"
+echo "→ [4/8] ACTE 1 — \`forgemaster update apply\` avec un wheel SAIN : ça doit passer"
 set +e
-COCKPIT_HOME="$COCKPIT_HOME" "$tmp/v1/bin/cockpit" update apply --wheel "$whl_c" \
+FORGEMASTER_HOME="$FORGEMASTER_HOME" "$tmp/v1/bin/forgemaster" update apply --wheel "$whl_c" \
   --unit "$SHIM_UNIT" --systemctl "$tmp/systemctl" 2>&1 | sed 's/^/   /'
 rc="${PIPESTATUS[0]}"
 set -e
 [ "$rc" = 0 ] || { echo "✗ une MAJ saine a échoué (rc=$rc)" >&2; tail -n 20 "$SHIM_LOG" >&2; exit 1; }
 
 echo "→ [5/8] le vivant sert le NOUVEAU build, et les données ont traversé"
-"$py" - "$port" "$COCKPIT_HOME" <<'PY'
+"$py" - "$port" "$FORGEMASTER_HOME" <<'PY'
 import json, sys, urllib.request
 from pathlib import Path
 base, home = f"http://127.0.0.1:{sys.argv[1]}", Path(sys.argv[2])
@@ -200,11 +200,11 @@ assert projets == ["atelier-fictif"], f"✗ données perdues par une MAJ SAINE :
 assert (home / "current").resolve().name != "v1", "✗ le lien n'a pas bougé"
 print(f"   ✓ build {sha[:12]} servi, projet conservé, lien → {(home / 'current').resolve().name}")
 PY
-apres_acte1="$(readlink -f "$COCKPIT_HOME/current")"
+apres_acte1="$(readlink -f "$FORGEMASTER_HOME/current")"
 
 echo "→ [6/8] ACTE 2 — wheel dont la MIGRATION casse sur une base peuplée : la MAJ doit échouer"
 set +e
-COCKPIT_HOME="$COCKPIT_HOME" "$tmp/v1/bin/cockpit" update apply --wheel "$whl_b" \
+FORGEMASTER_HOME="$FORGEMASTER_HOME" "$tmp/v1/bin/forgemaster" update apply --wheel "$whl_b" \
   --unit "$SHIM_UNIT" --systemctl "$tmp/systemctl" 2>&1 | tee "$tmp/acte2.log" | sed 's/^/   /'
 rc="${PIPESTATUS[0]}"
 set -e
@@ -213,7 +213,7 @@ grep -q "revenue à l'état d'avant" "$tmp/acte2.log" \
   || { echo "✗ le verdict ne dit pas que l'instance est revenue en arrière" >&2; exit 1; }
 
 echo "→ [7/8] retour arrière CONSTATÉ : le lien, le binaire servi ET la base"
-[ "$(readlink -f "$COCKPIT_HOME/current")" = "$apres_acte1" ] \
+[ "$(readlink -f "$FORGEMASTER_HOME/current")" = "$apres_acte1" ] \
   || { echo "✗ le lien n'est pas revenu sur $apres_acte1" >&2; exit 1; }
 "$py" - "$port" <<'PY'
 import json, sys, urllib.request

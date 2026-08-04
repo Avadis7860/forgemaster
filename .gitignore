@@ -22,13 +22,13 @@ dist/
 *.log
 # tampon de provenance de build (écrit par deploy/build-wheel.sh, embarqué au wheel via force_include) —
 # artefact PAR-BUILD, jamais committé. Ancré (`/`) : ne matche que le fichier de tête, pas ailleurs.
-/src/cockpit/_build.json
+/src/forgemaster/_build.json
 
 # ============================================================
 # État local / données runtime (NE PAS versionner)
 # ============================================================
 # NB : patterns ANCRÉS à la racine (`/`) — un `projects/` nu matcherait AUSSI le package source
-# `src/cockpit/projects/` (footgun gitignore : motif non ancré = match à toute profondeur).
+# `src/forgemaster/projects/` (footgun gitignore : motif non ancré = match à toute profondeur).
 *.sqlite3
 *.sqlite3-journal
 /data/

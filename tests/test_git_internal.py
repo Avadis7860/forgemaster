@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from cockpit.core import run
-from cockpit.git.backend import GitBackend
-from cockpit.git.internal import (
+from forgemaster.core import run
+from forgemaster.git.backend import GitBackend
+from forgemaster.git.internal import (
     BlobTooLargeError,
     GitOpError,
     InternalGit,
@@ -340,7 +340,8 @@ def test_remote_divergence_all_synced(tmp_path: Path):
 
 
 def test_remote_divergence_remote_ahead(tmp_path: Path):
-    """GitHub prend de l'avance sur `dev` (cas vécu : travail hors cockpit) → `dev` `remote_ahead` (behind>0,
+    """GitHub prend de l'avance sur `dev` (cas vécu : travail hors forgemaster) → `dev` `remote_ahead`
+    (behind>0,
     ahead=0), `main` `synced`, rollup `remote_ahead`."""
     upstream, sot, git = _sot_with_mirror(tmp_path)
     _advance(upstream, "dev", tmp_path / "u1")
@@ -677,7 +678,7 @@ def test_list_paths_flat_recursive_with_signaled_cap(tmp_path: Path, monkeypatch
     assert set(result["paths"]) == {"README.md", "data.bin", "src/app.py"}   # plate + récursive
     assert result["truncated"] is False
     # cap SIGNALÉ : au-delà du seuil, on tronque ET on le dit (jamais silencieux)
-    from cockpit.git import internal
+    from forgemaster.git import internal
     monkeypatch.setattr(internal, "_MAX_TREE_PATHS", 2)
     capped = git.list_paths(sot, "dev")
     assert len(capped["paths"]) == 2 and capped["truncated"] is True
@@ -720,7 +721,7 @@ def test_blame_refuses_binary_too_large_and_bad_path(tmp_path: Path, monkeypatch
         git.blame(sot, "dev", "data.bin")
     with pytest.raises(GitOpError):                            # dossier / chemin absent
         git.blame(sot, "dev", "src")
-    from cockpit.git import internal
+    from forgemaster.git import internal
     monkeypatch.setattr(internal, "_MAX_BLOB_READ", 4)         # README > 4 → refus 413 signalé
     with pytest.raises(BlobTooLargeError):
         git.blame(sot, "dev", "README.md")
@@ -770,7 +771,7 @@ def test_read_blob_on_dir_raises(tmp_path: Path):
 
 
 def test_read_blob_display_truncation(tmp_path: Path, monkeypatch):
-    from cockpit.git import internal
+    from forgemaster.git import internal
     monkeypatch.setattr(internal, "_MAX_BLOB_DISPLAY", 5)
     git = InternalGit()
     sot = _seed_bare_rich(tmp_path)
@@ -779,7 +780,7 @@ def test_read_blob_display_truncation(tmp_path: Path, monkeypatch):
 
 
 def test_read_blob_too_large_reads_nothing(tmp_path: Path, monkeypatch):
-    from cockpit.git import internal
+    from forgemaster.git import internal
     monkeypatch.setattr(internal, "_MAX_BLOB_READ", 4)   # README fait 17 octets > 4
     git = InternalGit()
     sot = _seed_bare_rich(tmp_path)
@@ -805,7 +806,7 @@ def test_read_blob_raw_bad_ref_or_dir_raises(tmp_path: Path):
 
 
 def test_read_blob_raw_too_large_raises_signaled(tmp_path: Path, monkeypatch):
-    from cockpit.git import internal
+    from forgemaster.git import internal
     monkeypatch.setattr(internal, "_MAX_BLOB_READ", 4)   # README fait 17 octets > 4
     git = InternalGit()
     sot = _seed_bare_rich(tmp_path)
