@@ -9,10 +9,10 @@ même convention forge : seams **purs** testables sans subprocess + exécution i
 en argv.
 
 ## tools.preflight_tools() / install_tools() — gate de présence + provisionnement hôte-niveau
-`src/forgemaster/tools.py:151` (`preflight_tools`) · `src/forgemaster/tools.py:401` (`install_tools`) · appelés par le
+`src/forgemaster/tools.py:154` (`preflight_tools`) · `src/forgemaster/tools.py:406` (`install_tools`) · appelés par le
 gate de dispatch (preflight avant spawn) et `forgemaster toolchain install` (cli_dispatch).
 `preflight_tools` vérifie que tout binaire déclaré par la facette active (`<worktree>/.claude/settings.local.json`)
-résout sur le PATH worker (`tools_env`) et lève `ToolPreflightError` (`:43`) AVANT le spawn — ne gate QUE
+résout sur le PATH worker (`tools_env`) et lève `ToolPreflightError` (`:44`) AVANT le spawn — ne gate QUE
 `declared & HOST_TOOLS` (outils hôte-provisionnés). `install_tools` est idempotent/fail-loud : crée le venv
 d'outils, installe les **3** cartes (`task-map` est vendoré au wheel, pas une carte hôte) + qualité py + Node
 via nodeenv (`install_plan`), symlinke chaque exécutable dans `tools/bin` ; une étape rouge abandonne (jamais
@@ -25,7 +25,7 @@ sur la VM 9311 le 2026-08-03, attrapé par `check_tools` restée rouge après le
 `GIT_TERMINAL_PROMPT=0`, sans quoi un dépôt injoignable ferait *pendre* pip 900 s sur un prompt.
 
 ## tools.missing_bins() — quels binaires ne résolvent pas
-`src/forgemaster/tools.py:145` · appelé par `preflight_tools`, `doctor.scan`.
+`src/forgemaster/tools.py:148` · appelé par `preflight_tools`, `doctor.scan`.
 Seam **pur** : sous-ensemble trié de `bins` que `shutil.which` ne trouve pas via `env["PATH"]`. C'est la vérité
 unique partagée entre le gate de dispatch et la sonde `doctor` — aucune duplication de logique de présence.
 
@@ -38,7 +38,7 @@ ici. Fetch+ff via `InternalGit.sync_tracking` sur `TRACKED_BRANCHES=("dev","main
 jamais bloquant → `index_refreshed=False` honnête).
 
 ## webbuild.build_front() / ensure_codemap() — build SPA + garantie code-map
-`src/forgemaster/webbuild.py:35` (`build_front`) · `src/forgemaster/webbuild.py:113` (`ensure_codemap`) · appelés par
+`src/forgemaster/webbuild.py:35` (`build_front`) · `src/forgemaster/webbuild.py:114` (`ensure_codemap`) · appelés par
 `forgemaster setup` (chemin from-clone) et le hook de packaging (`hatch_build.py`).
 `build_front` build la SPA Vite dans `web_dir` (→ `web_dir/dist`), `npm ci` si lockfile sinon `npm install`, et
 lève `FrontBuildError` (`:19`, message actionnable) si Node/npm absent ou npm échoue. `ensure_codemap` garantit
@@ -47,7 +47,7 @@ depuis un sibling `../code-map` en from-clone — **jamais fatal** (Flow est une
 stdlib-pur, s'importe sans le serveur.
 
 ## webbuild.served_from() / ensure_map() — une carte installée n'est pas une carte à jour
-`src/forgemaster/webbuild.py:71` (`served_from`) · `:87` (`_install_from_sibling`) · `:154` (`ensure_map`) ·
+`src/forgemaster/webbuild.py:72` (`served_from`) · `:88` (`_install_from_sibling`) · `:160` (`ensure_map`) ·
 `:174` (`ensure_maps`, les 4 cartes).
 
 **L'ordre est load-bearing** : on cherche le sibling **avant** de se satisfaire d'un module importable. L'inverse
@@ -69,8 +69,8 @@ n'y vérifie qu'une **présence**, jamais une version. Ce que cette instance ser
 désormais par `maps_provenance` / `check_tools` (section suivante).
 
 ## tools.maps_provenance() — quelles cartes cette instance sert-elle
-`src/forgemaster/tools.py:270` (`maps_provenance`) · `src/forgemaster/tools.py:223` (`dist_provenance`) ·
-`src/forgemaster/tools.py:191` (`venv_site_packages`) · consommé par `build_provenance.provenance` →
+`src/forgemaster/tools.py:274` (`maps_provenance`) · `src/forgemaster/tools.py:227` (`dist_provenance`) ·
+`src/forgemaster/tools.py:194` (`venv_site_packages`) · consommé par `build_provenance.provenance` →
 `GET /api/version`. `dist_provenance` s'appelait `map_provenance` : elle ne lit pourtant rien de spécifique
 aux cartes (juste PEP 610 dans un `.dist-info`), et le serveur MCP co-installé (`mcp.local.server_provenance`)
 l'appelle **telle quelle** plutôt que d'entretenir une seconde lecture du même format.
@@ -90,9 +90,9 @@ Mesure du 2026-08-03 (VM 9311) : instance provisionnée à 00:34, les 3 cartes d
 04:19. Le figeage n'attend pas des semaines — il commence à la première heure.
 
 ## tools.check_tools() — les cartes servies ont-elles dérivé de leur amont
-`src/forgemaster/tools.py:470` (`check_tools`) · `src/forgemaster/tools.py:313` (`compare`, PUR) ·
+`src/forgemaster/tools.py:475` (`check_tools`) · `src/forgemaster/tools.py:313` (`compare`, PUR) ·
 `src/forgemaster/tools.py:295` (`check_plan`, PUR) · `src/forgemaster/tools.py:337` (`overall_state`, PUR) ·
-`src/forgemaster/tools.py:522` (`_cli_check`) · appelé par `forgemaster toolchain check`.
+`src/forgemaster/tools.py:527` (`_cli_check`) · appelé par `forgemaster toolchain check`.
 
 Un `git ls-remote <url> <MAP_REF>` par carte (aucun objet transféré), sous `anonymous_env` — la sonde tape les
 mêmes dépôts publics que l'install et n'a donc **pas le droit** d'y ajouter un credential (un test l'asserte).
@@ -122,7 +122,7 @@ rapatrier l'historique — la sonde dit *lesquelles* ont bougé, jamais *de comb
 (idempotent, `--upgrade @main`) : une re-sync automatique remplacerait un binaire sous un worker en vol.
 
 ## service.install_service() / render_unit() — unité systemd du daemon
-`src/forgemaster/service.py:154` (`install_service`) · `src/forgemaster/service.py:98` (`render_unit`) · appelés par
+`src/forgemaster/service.py:158` (`install_service`) · `src/forgemaster/service.py:102` (`render_unit`) · appelés par
 `forgemaster service install` (cli_dispatch).
 `render_unit` est **pur** : rend l'unité systemd pour `forgemaster serve`, deux portées `user` (défaut, sans root) /
 `system` (root, épingle `User=`/`Group=`). `Environment=HOME` est **obligatoire** (sans lui git ne lit pas le
@@ -131,7 +131,7 @@ gabarit (jamais écrasé s'il existe) et retourne `(unit_path, env_path, systemc
 hint, on n'exécute PAS systemctl (pas de footgun privilège).
 
 ## mcp.local.install() — co-installer le serveur de corpus SUR cet hôte
-`src/forgemaster/mcp/local.py:245` (`install`) · `src/forgemaster/mcp/local.py:120` (`install_plan`, pur) · appelés par
+`src/forgemaster/mcp/local.py:248` (`install`) · `src/forgemaster/mcp/local.py:120` (`install_plan`, pur) · appelés par
 `forgemaster mcp install` et l'étape `[8/9]` de `deploy/provision-ct.sh` (`--with-mcp`).
 Pose un venv **dédié** (`$FORGEMASTER_HOME/mcp/venv` — ni celui du forgemaster, ni celui des outils : trois cycles de
 vie distincts), installe `forgemaster-catalogs` au **SHA épinglé** (`SERVER_REF`, pas une réf mobile — §3 de la
@@ -149,7 +149,7 @@ tourne, à chaque appel d'une commande annoncée idempotente. Clone **anonyme** 
 figée à `0.1.0`, donc `--upgrade` seul saute l'install en rendant rc 0.
 
 ## mcp.local.topology() — laquelle des deux topologies cette instance est-elle
-`src/forgemaster/mcp/local.py:199` · consommé par `build_provenance.provenance` → `GET /api/version` (clé `mcp`).
+`src/forgemaster/mcp/local.py:201` · consommé par `build_provenance.provenance` → `GET /api/version` (clé `mcp`).
 Répond à l'exigence du §4 de la décision d'édition : deux topologies déclarées, et l'instance **dit** laquelle.
 Retourne `{topology, sha, endpoint, reason}`, lecture **locale, zéro réseau, qui ne lève jamais**.
 **Déduit du disque, jamais déclaré** — une clé d'env `…_TOPOLOGY` serait un champ qui peut mentir, que rien ne
@@ -179,7 +179,7 @@ env-api-key / env-oauth / None). Auth **par machine**, pas par projet. `trust_wo
 ça `claude -p` headless IGNORE les `allowedTools` d'un workspace non-trusted (worker inerte).
 
 ## onboarding.status() / link_credential() / unlink_credential() — liaison des credentials par projet
-`src/forgemaster/onboarding.py:30` (`status`) · `:89` (`link_credential`) · `:118` (`unlink_credential`) · appelés par
+`src/forgemaster/onboarding.py:30` (`status`) · `:90` (`link_credential`) · `:119` (`unlink_credential`) · appelés par
 `forgemaster onboard <action>` (cli_dispatch).
 `status` compose **cinq axes**, sans jamais révéler un secret : le **store** (backend actif + racine de confiance
 joignable) ; les **requirements** par projet (un projet à miroir a besoin d'un token pour pousser → satisfait ssi

@@ -10,7 +10,7 @@ humain**. Chaque tier écrit un **verdict lié au SHA** de la branche de feature
 jamais au mtime ; et `run_merge` ne mute **rien** sans `human_go is True` (le LLM ne merge jamais seul).
 
 ## toolchain.run_toolchain() — Tier-0 déterministe
-`src/forgemaster/gate/toolchain.py:281` · appelé par `toolchain.cli_dispatch` (`forgemaster gate toolchain <feature>`)
+`src/forgemaster/gate/toolchain.py:284` · appelé par `toolchain.cli_dispatch` (`forgemaster gate toolchain <feature>`)
 Lance, dans le worktree, les steps des groupes à la fois **présents** ET **déclenchés** par le diff, dans l'ordre,
 en s'arrêtant au 1ᵉʳ rouge. Ne lève **jamais** (timeout/binaire absent → step rouge). Un trigger déclenché mais
 **non couvert** par une unité de gate → **step rouge synthétique** (« toolchain non montable »), jamais un drop
@@ -22,7 +22,7 @@ l'appelant préfixe `tools/bin` au PATH pour résoudre ruff/mypy/pytest/npm sur 
 passif, conservé pour les tests).
 
 ## toolchain.detect_groups() — Tier-0 déterministe
-`src/forgemaster/gate/toolchain.py:112`
+`src/forgemaster/gate/toolchain.py:113`
 Quatre groupes **présents (couvrables)** dans le worktree. Trois par **convention** : `front` (`web/` ou racine
 portant un script npm `gate`), `backend-node` (`server/` ou racine unifié), `backend` (`pyproject.toml` racine).
 Le quatrième, `declared`, quand le projet **déclare** sa toolchain (`[bundle.gate]` du `.forgemaster/bundle.toml`) —
@@ -31,7 +31,7 @@ l'autorité du RUN reste `_steps_for` (qui porte le fail-closed sur trigger non 
 racine avec script `gate` couvre `web/` ET `server/` (workspaces).
 
 ## toolchain.applicable_triggers() — Tier-0 déterministe
-`src/forgemaster/gate/toolchain.py:165` · appelé par `run_toolchain`, `status`, `cli_dispatch`
+`src/forgemaster/gate/toolchain.py:167` · appelé par `run_toolchain`, `status`, `cli_dispatch`
 Groupes **déclenchés par le diff seul** (sans worktree — le `GET /api/gate` poll-é n'a que le diff sous la main),
 dans l'ordre `front → backend-node → backend → declared` : `web/` touché → `front` ; un fichier node (`.ts/.js…`)
 **hors `web/`** → `backend-node` ; un `*.py` → `backend`. C'est la source d'autorité de l'**applicabilité** côté
@@ -81,7 +81,7 @@ contenu** : les fichiers de STYLE et les dossiers RENDUS (`pages/`, `components/
 = **N/A** (non bloquant).
 
 ## verify.verify_target() — Tier-1.5 feature-verified
-`src/forgemaster/gate/verify.py:253` · appelé par `verify.cli_dispatch` (`forgemaster gate verify <feature>`)
+`src/forgemaster/gate/verify.py:255` · appelé par `verify.cli_dispatch` (`forgemaster gate verify <feature>`)
 Prouve **une** cible via le runner Node (Playwright, résolu par `FORGEMASTER_VERIFY_RUNNER` ou
 `<home>/runners/render_check.js`) : charge l'URL, vérifie les marqueurs attendus dans le DOM. Ne lève **JAMAIS** —
 runner absent / node ko / browser ko / timeout / sortie non-JSON → `{ok: False, error: …}` (**fail-closed** : un
@@ -95,7 +95,7 @@ canvas** — si `canvas` est déclaré, l'élément doit avoir *peint* (pixels n
 distingue une transition prouvée d'un marqueur qui était déjà là.
 
 ## verify.build_verdict() — Tier-1.5 feature-verified
-`src/forgemaster/gate/verify.py:303` · appelé par `verify.write_verdict`
+`src/forgemaster/gate/verify.py:305` · appelé par `verify.write_verdict`
 PUR. Assemble le verdict `feature-verify-v2` (`CONTRACT_VERSION`, preuve deux-temps) : `ok=True` ssi **≥1 cible
 ET toutes ok** (jamais blanchi par 0 cible — pas de vert par absence de preuve). Expose `n_targets`/`n_failed`.
 Une cible « jalon jouable » n'est ok que si son `after_marker` apparaît **après** le geste et était **absent**

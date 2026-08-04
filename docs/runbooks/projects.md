@@ -3,27 +3,27 @@
 Le registre `projects` est le SoT des entités pilotées par la forge : chaque projet porte une identité durable (`slug`, `sot_path` bare local, `mirror_remote` best-effort, `backend`, `kind`, `project_type`). Le SoT-local (roadmap/décisions du projet) vit dans un dépôt bare co-localisé sous `settings.projects_root` ; le miroir GitHub n'est qu'une copie best-effort. Le credential se stocke **par référence** (`credential_ref` opaque) — jamais le token en clair : la valeur vit dans le store de secrets, résolue à l'usage. Les déploiements (`deployments.py`) attachent à chaque projet 2 lignes de run par branche (`main` prod, `dev` preview).
 
 ## create_project() — crée la row + initialise le SoT bare (seed ou adoption)
-`src/forgemaster/projects/registry.py:65` · appelé par `cli_dispatch` (action `create`) et le router `services/aggregator/routers/projects.py`
+`src/forgemaster/projects/registry.py:66` · appelé par `cli_dispatch` (action `create`) et le router `services/aggregator/routers/projects.py`
 Deux chemins mutuellement exclusifs. **SEED** (`source_url=None`) : le SoT est semé du bundle `base ⊕ overlay(project_type)` via `git.init_sot`, l'INSERT précédant le seed (compat historique). **ADOPTION** (`source_url` fourni) : le SoT est un **clone bare** du repo distant, fait **avant** l'INSERT pour ne pas laisser de row orpheline si le clone échoue ; auth optionnelle via `credential_ref` + `cred_resolver` (token résolu à l'usage, injecté transitoirement par `credential_env`). Valide slug + `kind` + `project_type` (fail-closed) avant tout effet ; sème un tampon de provenance et la roadmap de lancement en chemin SEED ; appelle `ensure_deployments` en fin. Lève `ValueError` (slug/kind invalide, doublon, clone échoué). Une nuance anti-cap-silencieux sur le refus de type : un type « inconnu » peut être un type ajouté **après** le build de ce forgemaster — quand le miroir SoT local le connaît, le `BundleError` est enrichi (`build_provenance.stale_type_hint` nomme le type, le retard, et dit de réinjecter) au lieu du sec « type inconnu ». L'ordre fail-closed est intact : on relève toujours avant le moindre effet.
 
 ## sot_path_for() — chemin déterministe du SoT bare
-`src/forgemaster/projects/registry.py:56` · appelé par `create_project`
+`src/forgemaster/projects/registry.py:57` · appelé par `create_project`
 Renvoie `<projects_root>/<slug>/sot.git`. Déterministe, entièrement sous config (`settings.projects_root`) — aucun chemin d'hôte en dur (Refactor #4).
 
 ## set_credential_ref() — lie/délie la référence de token (jamais le secret)
-`src/forgemaster/projects/registry.py:160` · appelé par le router (affordance « token par repo » de l'onboarding)
+`src/forgemaster/projects/registry.py:162` · appelé par le router (affordance « token par repo » de l'onboarding)
 `UPDATE` de la seule colonne `credential_ref` (opaque) ; `None` délie. La DB ne porte que la **référence** — la valeur du token vit dans le store de secrets. Lève `KeyError` si le projet n'existe pas ; retourne le projet relu via `get_project`.
 
 ## set_mirror_remote() — configure/retire le miroir GitHub + matérialise dans git
-`src/forgemaster/projects/registry.py:171` · appelé par le router (affordance « rendre GitHub-backed »)
+`src/forgemaster/projects/registry.py:173` · appelé par le router (affordance « rendre GitHub-backed »)
 Normalise (`""`→`None`), `UPDATE` la colonne `mirror_remote`, puis matérialise dans git : `git.set_remote(sot, "mirror", …)` si configuré, sinon `git.remove_remote`. Un miroir configuré rend un token de push *requis* (best-effort : le SoT local reste la vérité). Lève `KeyError` si absent ; retourne le projet relu.
 
 ## list_projects() — tous les projets triés par slug
-`src/forgemaster/projects/registry.py:210` · appelé par `cli_dispatch` (action `list`)
+`src/forgemaster/projects/registry.py:212` · appelé par `cli_dispatch` (action `list`)
 `SELECT *` trié par `slug`, mappé en `list[dict]`. Lecture pure.
 
 ## get_project() — un projet par slug
-`src/forgemaster/projects/registry.py:215` · appelé par `set_credential_ref`, `set_mirror_remote`, `cli_dispatch` (action `get`)
+`src/forgemaster/projects/registry.py:217` · appelé par `set_credential_ref`, `set_mirror_remote`, `cli_dispatch` (action `get`)
 `SELECT` par slug ou `KeyError` s'il n'existe pas. Point de relecture partagé après les mutations.
 
 ## ensure_deployments() — garantit (idempotent) les 2 lignes main/dev en no_deploy
@@ -43,9 +43,9 @@ Normalise (`""`→`None`), `UPDATE` la colonne `mirror_remote`, puis matérialis
 Upsert **partiel** : seuls les champs non-`None` (`status`, `port`, `url`, `last_deploy_sha`, `compose_ref`) sont écrits (`None` = inchangé), `updated_at` toujours bumpé. Colonnes littérales dans le SQL (jamais d'input utilisateur). Lève `ValueError` si `branch` hors `{main,dev}`, `KeyError` si le déploiement n'existe pas ; retourne la row relue via `get_deployment`.
 
 ## Zones non détaillées
-- `_now()` (`registry.py:32`, `deployments.py:21`) — horodatage ISO-8601 UTC ; dans `create_project`, calculé une fois et partagé par la row DB et le tampon de provenance (accord).
-- `_render_provenance()` (`registry.py:36`) — rend le TOML `.forgemaster/provenance.toml` (`bundle@version` + `created_at`) semé dans le SoT à l'instanciation (socle SoT-and-derive) ; chemin SEED uniquement.
-- `_slug_exists()` (`registry.py:61`) — pré-check d'unicité avant un clone d'adoption (évite un clone gâché avant le heurt d'unicité).
+- `_now()` (`registry.py:33`, `deployments.py:21`) — horodatage ISO-8601 UTC ; dans `create_project`, calculé une fois et partagé par la row DB et le tampon de provenance (accord).
+- `_render_provenance()` (`registry.py:37`) — rend le TOML `.forgemaster/provenance.toml` (`bundle@version` + `created_at`) semé dans le SoT à l'instanciation (socle SoT-and-derive) ; chemin SEED uniquement.
+- `_slug_exists()` (`registry.py:62`) — pré-check d'unicité avant un clone d'adoption (évite un clone gâché avant le heurt d'unicité).
 - `record_interview_session()` (`registry.py`) — trace la session d'interview d'un projet (la task `interactive` menée au terminal, cf. `dispatch-worker`), pour qu'un cadrage mené à la main laisse une trace comme un run headless.
-- `_seed_launch_roadmap()` (`registry.py:146`) — sème la roadmap de lancement du bundle (chemin SEED), **fail-soft** (warning, jamais bloquant) ; import paresseux de `roadmap.seed` pour casser le cycle `registry ↔ roadmap.model`.
-- `cli_dispatch()` (`registry.py:223`) — route `forgemaster project <create|list|get>`, ouvre/ferme la connexion, mappe `ValueError`/`KeyError` en code de sortie 1.
+- `_seed_launch_roadmap()` (`registry.py:148`) — sème la roadmap de lancement du bundle (chemin SEED), **fail-soft** (warning, jamais bloquant) ; import paresseux de `roadmap.seed` pour casser le cycle `registry ↔ roadmap.model`.
+- `cli_dispatch()` (`registry.py:225`) — route `forgemaster project <create|list|get>`, ouvre/ferme la connexion, mappe `ValueError`/`KeyError` en code de sortie 1.

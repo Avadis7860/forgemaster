@@ -15,7 +15,7 @@ Split `"<projet>/<feature>"` (sans `/` → `ValueError`), résout le projet via 
 REMPLACE les `depends_on` d'une feature déjà créée (là où `add_feature` reste souple pour le forward-ref au build en lot, l'édition valide l'arête ciblée). Write-validate-rollback en une transaction : `UPDATE … WHERE id=?` (scopé par la clé résolue → tue le footgun `ambiguous column name: slug`) **sans commit**, puis rejoue l'autorité `resolver.classify_features` sur la conn (voit l'écriture non-commitée) — `state` du nœud cible `ERROR` → `ValueError` (dep pendante), `CYCLE` → `ValueError` (cycle/self-dep) + `rollback` ; sinon `commit`. Zéro 2ᵉ détecteur de cycle (réutilise l'unique autorité). Row rendu `depends_on` décodé. `KeyError` si feature inconnue. Import paresseux de `resolver` (cycle `model↔resolver`).
 
 ## model.set_task_deps() — édite le DAG intra-task d'une task existante
-`src/forgemaster/roadmap/model.py:150` · appelé par `resolver.cli_dispatch` (`task set-deps`)
+`src/forgemaster/roadmap/model.py:151` · appelé par `resolver.cli_dispatch` (`task set-deps`)
 Symétrique de `set_feature_deps` pour les tasks : `UPDATE tasks … WHERE feature_id=? AND slug=?` (scopé par feature_id), validé via `resolver.classify` sur l'index re-lu. Vérifie l'existence de la task (`KeyError` sinon) après `resolve_feature` (`KeyError` si feature absente). `ERROR`/`CYCLE` → `ValueError` + `rollback`.
 
 ## model.add_task() — insère une task (priorité + DoD)
@@ -23,35 +23,35 @@ Symétrique de `set_feature_deps` pour les tasks : `UPDATE tasks … WHERE featu
 Task `todo` sous une feature résolue. `priority` bornée à `P0..P3` (sinon `ValueError`). `depends_on` = slugs de tasks **de la même feature** (JSON). `acceptance` = TEXT libre injecté comme DoD dans le prompt worker au dispatch. `mode` (v12, `headless` par défaut | `interactive`, borné à `TASK_MODES` sinon `ValueError`) = **identité de dispatch** : une task `interactive` n'est pas routée vers un worker `claude -p` mais vers un terminal (`forgemaster interview`) — un headless n'interviewe personne, et c'est `worker.dispatch_next` qui refuse le spawn en le voyant. `IntegrityError` → `ValueError` (doublon). NB : la validation « acceptance non vide » vit côté CLI (`resolver.cli_dispatch`), pas ici — `model` reste souple.
 
 ## model.list_features() — features d'un projet
-`src/forgemaster/roadmap/model.py:178` · appelé par `check_roadmap`, `resolver.classify_features`, `cli_dispatch` (`show`)
+`src/forgemaster/roadmap/model.py:179` · appelé par `check_roadmap`, `resolver.classify_features`, `cli_dispatch` (`show`)
 SELECT `WHERE project_id ORDER BY slug`, `depends_on` re-décodé par row (v10). Ne joint pas les tasks (l'appelant les attache via `list_tasks`).
 
 ## model.list_tasks() — tasks d'une feature
-`src/forgemaster/roadmap/model.py:188` · appelé par `check_roadmap`, `resolver.index_for_feature`, `cli_dispatch` (`show`)
+`src/forgemaster/roadmap/model.py:189` · appelé par `check_roadmap`, `resolver.index_for_feature`, `cli_dispatch` (`show`)
 SELECT `WHERE feature_id ORDER BY slug`, `depends_on` re-décodé par row. C'est la source des index passés au resolver.
 
 ## model.to_yaml() — sérialise la roadmap au contrat figé
-`src/forgemaster/roadmap/model.py:220` · appelé par `cli_dispatch` (`roadmap show`)
+`src/forgemaster/roadmap/model.py:221` · appelé par `cli_dispatch` (`roadmap show`)
 PUR. Émet `{version, project, features:[…]}` via `_feature_doc` (helper ligne 139) : `facet`/`blueprint`/`depends_on`/`acceptance` sortis **seulement si présents** (contrat rétro-compatible, une roadmap v1 reste byte-identique). `sort_keys=False, allow_unicode=True`.
 
 ## resolver.classify() — état + blockers en vocab forgemaster
-`src/forgemaster/roadmap/resolver.py:65` · appelé par `check_roadmap`, `cli_dispatch` (branche « aucune READY »)
+`src/forgemaster/roadmap/resolver.py:69` · appelé par `check_roadmap`, `cli_dispatch` (branche « aucune READY »)
 Adaptateur mince : `_classify_tm` délègue l'**état** au moteur `taskmap.classify` (via `_to_records`, `root`/`today=None`), puis re-projette `{**row, state, blockers}` byte-identique au contrat forgemaster — `_blockers` re-traduit depuis l'index **original** (ERROR → dep inconnue, BLOCKED_DEPS → dep non-done + son statut). Le graphe reste la seule autorité ; zéro copie du moteur.
 
 ## resolver.eff_prio() — priorité effective transitive (déléguée au cœur)
-`src/forgemaster/roadmap/resolver.py:76` · appelé par (surface interne ; le ranking passe par `_core_rank_ready`)
+`src/forgemaster/roadmap/resolver.py:80` · appelé par (surface interne ; le ranking passe par `_core_rank_ready`)
 Délègue à `taskmap.core.graph.eff_prio(_to_records(index), PRIO)`. Historiquement forkée, `eff_prio` a **gradué dans le cœur taskmap** au dé-fork (distillation-vers-le-centre). Dict keyé par slug (`id ≡ slug`).
 
 ## resolver.resolve_next() — la prochaine task dispatchable
-`src/forgemaster/roadmap/resolver.py:81` · appelé par `cli_dispatch` (`task next`)
+`src/forgemaster/roadmap/resolver.py:85` · appelé par `cli_dispatch` (`task next`)
 Range les READY par `taskmap.core.graph.rank_ready(_classify_tm(index), PRIO)` (rang canonique = `eff_prio` transitive + tiebreaks), prend `ranked[0]`, re-traduit `{**row, state:"READY", blockers:[]}`. Aucune READY → `None`.
 
 ## resolver.classify_features() — DAG **inter-feature** d'un projet (v10)
-`src/forgemaster/roadmap/resolver.py:128` · appelé par `check_roadmap`
+`src/forgemaster/roadmap/resolver.py:133` · appelé par `check_roadmap`
 Même autorité taskmap, une couche au-dessus des tasks. Une feature est READY quand toutes ses prérequises sont `merged` (`_FEATURE_STATUS_TO_TM = {"merged":"done"}`, ligne 103) ; BLOCKED_DEPS sinon ; ERROR/CYCLE comme le DAG des tasks. `_feature_blockers` re-traduit en vocab forgemaster. Index feature projet-global, **jamais** threadé dans l'index task (invariant « 1 index taskmap = 1 feature »).
 
 ## resolver.index_for_feature() — {slug: task} d'une feature depuis la DB
-`src/forgemaster/roadmap/resolver.py:91` · appelé par `cli_dispatch` (`task next`), tests
+`src/forgemaster/roadmap/resolver.py:96` · appelé par `cli_dispatch` (`task next`), tests
 Résout la feature (`model.resolve_feature`) puis mappe `model.list_tasks` en `{slug: row}` — la forme d'index consommée par `classify`/`resolve_next`.
 
 ## prompt.build_worker_prompt() — synthétise le prompt du worker `claude -p`
@@ -59,7 +59,7 @@ Résout la feature (`model.resolve_feature`) puis mappe `model.list_tasks` en `{
 Déterministe (zéro LLM, seul un `read_text` des docs du worktree). Compose : header (task/feature/facette/branche) + `_facet_block(…, "PERSONA.md")` + `_mandate()` (mandat worker autonome : implémente la task, `docsmap where`, NE touche PAS au cycle git, termine par `## Décisions prises`) + `_facet_block(…, "METHOD.md")` + `_acceptance_block(task)` (DoD verbatim) + `_context_block(root)` (aperçus bornés `≤1200c` de `docs/design.md`|`roadmap.yaml`|`architecture.md`) + `_design_block(root)` (la **cible visuelle** : le template UI appliqué, à customiser et non à copier) + `_decisions_block(root)` (le **capital distillé d'un run passé** — c'est le cliquet de compounding projet-local : ce qu'un worker précédent a tranché revient dans le prompt du suivant). Blocs vides filtrés. Facette résolue via `facet_mod.resolve_facet`. Le prompt part sur le **stdin** de `claude -p` (parade E2BIG). Écarte délibérément les injections mémoire du vault (blueprints/stacks/catalogs) — inadaptées à une forge générique.
 
 ## check.check_roadmap() — gate de complétude (drainable ssi liste vide)
-`src/forgemaster/roadmap/check.py:41` · appelé par `cli_dispatch` (`roadmap check`, exit 1 dès une issue)
+`src/forgemaster/roadmap/check.py:43` · appelé par `cli_dispatch` (`roadmap check`, exit 1 dès une issue)
 Read-only, déterministe, unique autorité de complétude (partagée CLI + API). Réutilise `resolver.classify` (dangling → `DANGLING_DEP`, cycle → `CYCLE`) et le vocab `model._project_facets` — zéro réécriture du DAG. Émet des `Issue` (dataclass frozen, ligne 22) : `EMPTY` (0 feature / feature sans task), `MISSING_FACET`/`BAD_FACET` (facette absente / hors bundle), `MISSING_ACCEPTANCE` (task sans DoD). Puis le DAG inter-feature via `resolver.classify_features` : `DANGLING_FEATURE_DEP`/`FEATURE_CYCLE` + `DEAD_FEATURE_DEP` (dépend d'une feature `cancelled`, jamais débloquable). Une feature BLOCKED_DEPS **normale** (prérequis pas encore mergé) n'est PAS une issue.
 
 ## seed.seed_launch_roadmap() — sème la roadmap de lancement d'un bundle

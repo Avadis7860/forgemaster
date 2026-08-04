@@ -8,7 +8,7 @@ module-global mutable (correctif #1, anti god-module `import server`). Les erreu
 **paresseux** : le module s'importe sans les deps serveur.
 
 ## build_app() — construit l'app FastAPI, injecte les deps, monte routers + SPA
-`src/forgemaster/daemon/app.py:40` · appelé par serve() / les tests
+`src/forgemaster/daemon/app.py:41` · appelé par serve() / les tests
 DI explicite : `Deps(settings)` posé sur `app.state.deps` (l.113), puis les 19 `make_*_router()` inclus en
 boucle (l.138-148). Ajoute CORS pour le dev Vite (:5173, localhost-only, pas de credentials), la sonde
 `GET /health` (liveness, pas de gate), et les deux `exception_handler` globaux (`KeyError`→404,
@@ -24,7 +24,7 @@ est la dépendance FastAPI qui rend le conteneur posé sur `app.state` (`request
 global. Ne tire que `starlette` (transitif de fastapi, pour typer la `Request`), jamais les couches serveur.
 
 ## serve() / _mount_spa() — lancement uvicorn + service du build SPA
-`src/forgemaster/daemon/app.py:249` (`serve`) · `:175` (`_mount_spa`) · `:25` (`web_dist_dir`)
+`src/forgemaster/daemon/app.py:251` (`serve`) · `:177` (`_mount_spa`) · `:25` (`web_dist_dir`)
 `serve()` démarre uvicorn sur `build_app(settings)` (import uvicorn paresseux). `_mount_spa()` sert le build
 en statique **seulement s'il existe** : assets hashés en cache `immutable`, `index.html` en `no-cache`
 (anti-stale post-déploiement), et un catch-all `GET /{path:path}` qui fallback sur `index.html` (deep-link
@@ -40,15 +40,15 @@ spine** (core/dispatch/gate/git/roadmap) — aucune logique métier dans le rout
 Pydantic `BaseModel` ; erreurs remontées en `KeyError`/`ValueError` (mappées globalement) ou `HTTPException`
 explicite (fail-closed, ex. 422 gate / 403 auth). Spawns longs (`claude -p`) passés en `run_in_threadpool`.
 
-- `make_projects_router` (`routes/projects.py:38`) — registre des projets : CRUD (create/list/get/patch), délègue à `projects.registry`.
+- `make_projects_router` (`routes/projects.py:39`) — registre des projets : CRUD (create/list/get/patch), délègue à `projects.registry`.
 - `make_roadmap_router` (`routes/roadmap.py:32`) — roadmap : features + tasks + NEXT.
 - `make_dispatch_router` (`routes/dispatch.py:21`) — dispatch : spawn worker + suivi de job (GET jobs, `WS /ws/dispatch/{job}`).
 - `make_gate_router` (`routes/gate.py:43`) — gate : verdict Tier-1 review, statut composé (preview GO=false), merge sous GO humain.
 - `make_git_router` (`routes/git.py:39`) — git : visibilité read-only sur le SoT bare (branches…).
 - `make_codemap_router` (`routes/codemap.py:21`) — flow : flot d'exécution inter-fonctions d'une opération.
-- `make_docs_router` (`routes/docs.py:23`) — docs : carte d'un projet/outil lue depuis son repo (SoT bare).
+- `make_docs_router` (`routes/docs.py:24`) — docs : carte d'un projet/outil lue depuis son repo (SoT bare).
 - `make_onboarding_router` (`routes/onboarding.py:28`) — onboarding self-hosted : état de config-requise au 1er lancement.
-- `make_bootstrap_router` (`routes/bootstrap.py:20`) — amorçage des outils du framework (GET aperçu idempotent).
+- `make_bootstrap_router` (`routes/bootstrap.py:21`) — amorçage des outils du framework (GET aperçu idempotent).
 - `make_terminal_router` (`routes/terminal.py:56`) — terminal web : WebSocket → PTY local (workdir borné).
 - `make_tool_router` (`routes/tool.py:19`) — outils adoptés (`kind=tool`) : mutation gatée.
 - `make_deployments_router` (`routes/deployments.py:22`) — deployments : visibilité read-only des déploiements.
@@ -56,5 +56,5 @@ explicite (fail-closed, ex. 422 gate / 403 auth). Spawns longs (`claude -p`) pas
 
 ## Zones non détaillées
 - Les corps individuels des 19 routers (forme identique — factory + endpoints + délégation spine) : voir chaque `routes/<x>.py`.
-- `_mount_missing_ui_placeholder` (`app.py:228`) : dist absente → warning + page d'aide fail-loud à `/`, l'API reste valable.
+- `_mount_missing_ui_placeholder` (`app.py:230`) : dist absente → warning + page d'aide fail-loud à `/`, l'API reste valable.
 - Les Pydantic request models — `ProjectCreate`/`ProjectPatch`, `ReviewBody`/`MergeBody`, `BootstrapRequest`, `CredentialLink`, `McpWire`, `InspireRequest`, `FeatureCreate`, `TaskCreate`, … : DTO locaux d'un router, validés par FastAPI → 400/422. Ce sont des **formes**, pas des mécanismes : nommés ici pour que leur silence soit déclaré, pas subi.
