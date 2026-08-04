@@ -192,7 +192,7 @@ install_login_path() {
 
 # Prérequis OS de l'install ELLE-MÊME (avant le venv) : une image cloud MINIMALE (Ubuntu/Debian genericcloud)
 # n'inclut PAS python3-venv → `python3 -m venv` échoue (« ensurepip is not available »), NI git (bootstrap clone
-# les 5 outils + tools install fait des pip git+https), NI forcément curl (install de Claude). Idempotent (skip
+# les 5 outils + toolchain install fait des pip git+https), NI forcément curl (install de Claude). Idempotent (skip
 # si tout présent), fail-loud. apt exige root → `sudo` sinon. Ne PAS supposer un hôte pré-outillé (un vrai user
 # part d'une image nue). cf. install.md (prérequis) + fix-shipped-product (le CT dev-base masquait ce trou).
 ensure_base_deps() {
@@ -228,7 +228,7 @@ if [ "$with_claude" = "yes" ]; then install_claude; fi
 # cette étape ne reçoit AUCUN credential, même si un --token-file a été passé pour l'amorçage [7/9].
 # Node via nodeenv (rootless), sans sudo.
 echo "→ [4/9] outillage hôte-niveau (maps + Node + qualité py → $home/tools/bin) — sans credential"
-"$forgemaster" tools install
+"$forgemaster" toolchain install
 echo "   runtime conteneur (podman) pour \`forgemaster deploy\` (P2)"
 install_podman
 echo "   moteur compose (podman-compose standalone — podman 4.3.1 de Debian 12 n'a pas \`podman compose\`)"

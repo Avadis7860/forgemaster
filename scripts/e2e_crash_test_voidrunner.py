@@ -101,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
     # `.venv/bin/python scripts/…` n'ACTIVE pas le venv → `.venv/bin` (console-scripts du framework :
     # docsmap/codemap/ruff…) n'est PAS sur le PATH, et le worker échouerait au préflight d'outils
     # (`Bash(docsmap:*)` de la facette doc introuvable). Le home jetable n'a pas de `tools/bin` (`forgemaster
-    # tools install` — clone GitHub + Node, hors-sujet — jamais lancé). On préfixe donc le bin de
+    # toolchain install` — clone GitHub + Node, hors-sujet — jamais lancé). On préfixe donc le bin de
     # l'interpréteur courant au PATH transmis : l'invocation documentée marche sans activation manuelle.
     venv_bin = str(VENV_FORGEMASTER.parent)
     env = {**os.environ, "FORGEMASTER_HOME": str(home / "home"),

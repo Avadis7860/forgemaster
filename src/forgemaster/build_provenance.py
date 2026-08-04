@@ -20,9 +20,9 @@ dans un post-mortem (corrigé PR #1298) : **un invariant cité fait autorité**,
 La sonde porte TROIS volets, étiquetés séparément : le **wheel** (ce module), les **cartes hôte** servies par
 `tools/venv` (`maps`, lues par `tools.maps_provenance`) et le **serveur MCP de corpus** (`mcp`, lu par
 `mcp.local.topology`). Les trois bougent indépendamment — le wheel à la réinjection, les cartes à `forgemaster
-tools install`, le serveur à l'édition — donc un verdict unique serait faux dès que l'un bouge seul. Tous se
-lisent LOCALEMENT ; les comparaisons à l'amont restent explicites (`forgemaster toolchain check` pour les
-cartes,
+toolchain install`, le serveur à l'édition — donc un verdict unique serait faux dès que l'un bouge seul.
+Tous se lisent LOCALEMENT ; les comparaisons à l'amont restent explicites
+(`forgemaster toolchain check` pour les cartes,
 `GET /version` du serveur pour un MCP distant), jamais dans un chemin chaud.
 
 Trois états honnêtes, jamais un faux-vert :
