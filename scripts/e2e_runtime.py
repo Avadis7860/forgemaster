@@ -21,7 +21,8 @@ daemon ; aucun conteneur/home résiduel). **Hors gate natif** (podman requis, le
 Prérequis : lancer sous le venv du repo (`.venv/bin/python scripts/e2e_runtime.py`), `podman` (ou `docker`)
 rootless dispo, `web/dist` buildé (`forgemaster setup` / `npm run build`), et `node` (nvm 22) dans le PATH
 pour le
-runner Playwright de l'étage 4. Le runner est celui du vault (override `FORGEMASTER_UI_RUNNER`).
+runner Playwright de l'étage 4 — résolu par `$FORGEMASTER_UI_RUNNER`, sinon `web/tools/render_check.js`
+(emplacement gitignoré ; contrat d'E/S documenté en tête de `web/tools/ui_shot.py`).
 
 Usage : .venv/bin/python scripts/e2e_runtime.py [--serve-port 8788] [--fv-out DIR] [--keep]
 """
@@ -44,10 +45,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 VENV_FORGEMASTER = REPO / ".venv" / "bin" / "forgemaster"
 WEB_DIST = REPO / "web" / "dist"
-DEFAULT_RUNNER = Path(os.environ.get(
-    "FORGEMASTER_UI_RUNNER",
-    "/home/avadis/Documents/Vault-V1/.claude/skills/playwright/render_check.js",
-))
+# Même emplacement conventionnel (gitignoré) que `web/tools/ui_shot.py`, qui documente le contrat d'E/S du
+# runner. Aucun chemin ABSOLU par défaut : il ne résoudrait que sur la machine de son auteur.
+RUNNER_SLOT = REPO / "web" / "tools" / "render_check.js"
+DEFAULT_RUNNER = Path(os.environ.get("FORGEMASTER_UI_RUNNER", str(RUNNER_SLOT)))
 # Moteur de conteneurs = 1er token de la CLI compose (podman|docker) — pour les asserts `ps`/`exec` DIRECTS.
 ENGINE = os.environ.get("FORGEMASTER_COMPOSE_CMD", "podman compose").split()[0]
 
@@ -216,7 +217,9 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"web/dist absent : {WEB_DIST}/index.html — build (forgemaster setup / npm run "
         f"build)")
     if not Path(a.runner).exists():
-        raise SystemExit(f"runner playwright introuvable : {a.runner} (override FORGEMASTER_UI_RUNNER)")
+        raise SystemExit(f"runner playwright introuvable : {a.runner}\n"
+                         f"  → dépose (ou symlinke) un runner à cet emplacement, ou pose "
+                         f"FORGEMASTER_UI_RUNNER / --runner (contrat d'E/S : web/tools/ui_shot.py).")
 
     home = Path(tempfile.mkdtemp(prefix="forgemaster-e2e-"))
     fv_out = Path(a.fv_out) if a.fv_out else Path(tempfile.mkdtemp(prefix="forgemaster-e2e-fv-"))

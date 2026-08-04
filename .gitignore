@@ -26,6 +26,11 @@ web/dist/
 dist/
 .vite/
 *.log
+# Emplacement conventionnel du runner Playwright (goto+screenshot) consommé par `web/tools/ui_shot.py` et
+# `scripts/e2e_runtime.py`. Son SoT vit hors de ce dépôt : ici c'est un SLOT à remplir (fichier ou symlink),
+# jamais un fichier versionné. Sans slash final, donc un SYMLINK est bien couvert (cf. le motif `.venv`
+# plus haut). Ancré (`/`) : ne matche que ce chemin.
+/web/tools/render_check.js
 # tampon de provenance de build (écrit par deploy/build-wheel.sh, embarqué au wheel via force_include) —
 # artefact PAR-BUILD, jamais committé. Ancré (`/`) : ne matche que le fichier de tête, pas ailleurs.
 /src/forgemaster/_build.json

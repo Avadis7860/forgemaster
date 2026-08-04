@@ -1,31 +1,30 @@
-# Contribuer
+# Contributing
 
-## Ce qui est bienvenu
+## What is welcome
 
-- **Issues** : bugs, comportements inattendus, documentation fausse ou trompeuse.
-- **Retours d'usage** : ce que l'outil ne fait pas et devrait faire, ce qu'il fait mal.
+- **Issues**: bugs, surprising behaviour, documentation that is wrong or misleading.
+- **Usage feedback**: what the tool does not do and should, and what it does badly.
 
-Un rapport reproductible vaut mieux qu'un correctif : dites ce que vous avez lancé, ce que vous
-attendiez, ce que vous avez obtenu.
+A reproducible report is worth more than a patch: say what you ran, what you expected, and what you got.
 
-## Ce qui n'est pas accepté pour l'instant
+## What is not accepted for now
 
-Les **pull requests de code** ne sont pas acceptées.
+**Code pull requests are not accepted.**
 
-Ce n'est pas un jugement sur leur qualité. AvAgency détient l'intégralité du copyright de ce dépôt,
-ce qui permet d'en concéder une licence commerciale à côté de la licence publique. Accepter une
-contribution externe sans accord écrit préalable supprimerait cette possibilité — et de façon
-**définitive**, puisqu'un droit déjà concédé ne se retire pas.
+This is not a judgement on their quality. AvAgency holds the entire copyright of this repository, which is
+what makes it possible to grant a commercial license alongside the public one. Accepting an outside
+contribution without a prior written agreement would remove that possibility — and remove it
+**permanently**, since a right once granted cannot be taken back.
 
-Une PR ouverte sans accord préalable sera fermée avec un renvoi vers cette page, pour que personne
-ne travaille pour rien.
+A pull request opened without prior agreement will be closed with a pointer to this page, so that nobody
+works for nothing.
 
-## Vous voulez contribuer du code
+## If you want to contribute code
 
-Écrivez d'abord : **contact@avagency.pro**. Un accord de contribution (CLA) accordant à AvAgency un
-droit sous-licenciable sera à signer avant toute revue — c'est la seule façon de faire cohabiter des
-contributions externes et une licence commerciale.
+Write first: **contact@avagency.pro**. A contributor agreement (CLA) granting AvAgency a sublicensable
+right has to be signed before any review — that is the only way outside contributions and a commercial
+license can coexist.
 
-## Licence
+## License
 
-Voir [`LICENSE`](./LICENSE) à la racine de ce dépôt.
+See [`LICENSE`](./LICENSE) at the root of this repository.

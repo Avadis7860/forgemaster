@@ -9,6 +9,22 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### La surface publique s'adresse à un inconnu — README + CONTRIBUTING en US, et un chemin perso retiré
+- **`README.md` réécrit en anglais**, pas traduit : un lecteur extérieur a besoin de savoir ce que l'outil
+  **n'est pas** (pas un SaaS, pas un modèle, pas un CI, pas un gestionnaire d'infra, pas une forge hébergée,
+  pas autonome) autant que ce qu'il est. La section vient des **frontières délibérées** déjà écrites dans
+  `docs/architecture.md` — elle les expose, elle ne les invente pas.
+- **Le « Statut : privé » disparaît.** Il devenait faux à la seconde de la bascule de visibilité.
+- **La liste des dépôts du framework ne nomme plus `Vault-V1` ni `mcp-catalogs-data`** : ces deux-là ne
+  seront jamais publics, donc les lister annonçait notre structure privée et posait deux liens morts.
+- **`CONTRIBUTING.md` en US** — même politique (issues bienvenues, PR de code sur CLA préalable), même mots.
+- **Le runner Playwright n'a plus de chemin ABSOLU par défaut.** `web/tools/ui_shot.py` et
+  `scripts/e2e_runtime.py` le résolvent par `$FORGEMASTER_UI_RUNNER`, sinon par l'emplacement conventionnel
+  **`web/tools/render_check.js`** (gitignoré : un slot à remplir par un fichier ou un symlink). L'ancien
+  défaut nommait un répertoire personnel et un dépôt privé — il ne pouvait résoudre que chez son auteur, et
+  l'annonçait à tout lecteur. Le contrat d'E/S du runner est désormais écrit en tête de `ui_shot.py`, pour
+  que quelqu'un d'autre puisse en fournir un.
+
 ### Renommage produit — `cockpit` → `forgemaster`
 - **Le nom entier change** : distribution, package d'import, commande, unité systemd (`forgemaster.service`),
   les 14 variables `FORGEMASTER_*`, l'état local (`~/.forgemaster/forgemaster.db`) et le répertoire de

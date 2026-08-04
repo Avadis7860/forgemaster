@@ -10,7 +10,18 @@ deep-link `/slug` s'ouvre côté serveur — pas de `#`).
 Mécanique : build (optionnel) → home forgemaster JETABLE seedé de projets démo → `forgemaster serve` sert la
 dist
 → pour chaque route, le runner Playwright `render_check.js` fait goto+screenshot → PNG. Teardown par PID
-(jamais `pkill`). Le runner est celui du vault (playwright-core vendoré) ; override par FORGEMASTER_UI_RUNNER.
+(jamais `pkill`).
+
+Le runner n'est PAS versionné ici (il sert aussi ailleurs, et son SoT est hors de ce dépôt). Résolution :
+`$FORGEMASTER_UI_RUNNER`, sinon l'emplacement conventionnel `web/tools/render_check.js` — gitignoré, à
+remplir par un fichier ou un symlink. Son contrat d'E/S, si tu écris le tien :
+
+    argv[2] = JSON {url, markers:[str], screenshot?:path, timeout_ms?:int,
+                    viewport?:{width,height}, full_page?:bool, wait_for_text?:str, clicks?:[{text,nth?}]}
+    stdout  = JSON {url, ok, found:[], missing:[], title, screenshot, error?}
+
+`ok` vaut vrai ssi la page a chargé et tous les `markers` sont présents. Un runner conforme n'a besoin que
+de `playwright-core` et d'un Chromium.
 
 Usage :
   python web/tools/ui_shot.py /                       # accueil (rail projets)
@@ -35,12 +46,10 @@ REPO = Path(__file__).resolve().parents[2]             # web/tools/ui_shot.py �
 WEB = REPO / "web"
 DIST = WEB / "dist"
 VENV_FORGEMASTER = REPO / ".venv" / "bin" / "forgemaster"
-DEFAULT_RUNNER = Path(
-    os.environ.get(
-        "FORGEMASTER_UI_RUNNER",
-        "/home/avadis/Documents/Vault-V1/.claude/skills/playwright/render_check.js",
-    )
-)
+# Emplacement conventionnel, gitignoré : aucun chemin ABSOLU par défaut. Le précédent nommait une machine
+# et un dépôt privé — il ne pouvait donc résoudre que chez son auteur, et l'annonçait à tout lecteur.
+RUNNER_SLOT = WEB / "tools" / "render_check.js"
+DEFAULT_RUNNER = Path(os.environ.get("FORGEMASTER_UI_RUNNER", str(RUNNER_SLOT)))
 DEMO_PROJECTS = ["atlas-demo", "nebula-demo"]           # slugs FICTIFS (jamais un vrai basename)
 # Type de bundle par projet démo : atlas-demo typé → rend le badge de bundle VOYANT sur l'entête ;
 # nebula-demo reste `generic` (défaut) → PAS de badge (état vide honnête). Le contraste des deux montre la
@@ -542,7 +551,10 @@ def main(argv: list[str] | None = None) -> int:
     if not (DIST / "index.html").exists():
         raise SystemExit(f"build absent : {DIST}/index.html — lance avec --build ou `npm run build`")
     if not Path(a.runner).exists():
-        raise SystemExit(f"runner playwright introuvable : {a.runner} (override FORGEMASTER_UI_RUNNER)")
+        raise SystemExit(f"runner playwright introuvable : {a.runner}\n"
+                         f"  → dépose (ou symlinke) un runner en {RUNNER_SLOT}, ou pose "
+                         f"FORGEMASTER_UI_RUNNER / --runner.\n"
+                         f"  → son contrat d'E/S est en tête de ce fichier.")
 
     results = shoot(a.routes, port=a.port, viewport=_parse_viewport(a.viewport),
                     full_page=a.full_page, out_dir=Path(a.out), runner=Path(a.runner),
