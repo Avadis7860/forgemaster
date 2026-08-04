@@ -133,7 +133,10 @@ def test_load_manifest_invalid_raises(ctx, blob):
 def test_bootstrap_never_persists_plaintext_token(ctx, tmp_path):
     settings, conn = ctx
     up = _make_upstream(tmp_path / "u")
-    token = "ghp_SUPERSECRET_read_token_value"
+    # FIXTURE — valeur inventée ici même, jamais un vrai PAT. Le préfixe `ghp_` est délibéré : c'est ce que
+    # le test cherche à NE PAS retrouver en base. Signalée par la porte de publication au niveau « format non
+    # conforme » (pas de credential réel) — statué le 2026-08-04 : fixture.
+    token = "ghp_SUPERSECRET_read_token_value"      # noqa: S105
     ref = build_store(settings).put(token, label="test")   # store = seul dépositaire de la valeur
     _write_manifest(settings, [{"slug": "priv-tool", "source_url": str(up), "credential_ref": ref}])
     bootstrap.run_bootstrap(conn, settings, manifest=bootstrap.load_manifest(settings))
@@ -182,6 +185,8 @@ def test_cli_dispatch_token_file_stores_ref_not_plaintext(ctx, tmp_path):
     up = _make_upstream(tmp_path / "u")
     _write_manifest(settings, [{"slug": "priv-tool", "source_url": str(up)}])
     tok = tmp_path / "tok.txt"
+    # FIXTURE — même statut que ci-dessus : valeur inventée, écrite dans un fichier que le test crée, et
+    # dont l'assertion suivante vérifie l'ABSENCE de la référence stockée.
     tok.write_text("ghp_via_token_file\n", encoding="utf-8")
     assert bootstrap.cli_dispatch(settings, _args(token_file=str(tok))) == 0
     row = registry.get_project(conn, "priv-tool")
