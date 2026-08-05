@@ -31,7 +31,9 @@ Univers **TypeScript unique** :
 - **Front** : React 19 + Vite + TypeScript + Tailwind (UI web, rendu CSR) → `web/`.
 - **Back** : Hono (état serveur-autoritatif ; état **en mémoire à l'amorçage** — persistance **Drizzle + SQLite** câblée plus tard, SQLite→Postgres ensuite) → `server/`.
 - **Liant** : schémas **Zod** partagés client/serveur. **Tests** : Vitest. Gate : `eslint` → `tsc` → `vitest`.
-  Depuis TypeScript 6, les `@types/*` ne sont **plus inclus globalement d'office** : `tsconfig.json` déclare
+  À partir de TypeScript 6, sous une résolution moderne (`bundler`, `node16`, `nodenext` — seul le legacy
+  `node10` conserve l'ancien comportement), les `@types/*` ne sont **plus inclus globalement d'office** :
+  `tsconfig.json` déclare
   `"types": ["node"]` (sans quoi `process` est introuvable côté `server/`). Ajoute-y explicitement tout paquet
   dont tu veux les **globales** (`vitest/globals`, `@testing-library/jest-dom`…) ; les types tirés par un
   `import` continuent de se résoudre seuls, la liste ne les concerne pas.

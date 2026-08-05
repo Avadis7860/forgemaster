@@ -20,8 +20,15 @@
 
 ## 3. Stack technique et environnement
 
-- **Langages** : **TypeScript 5**, **React 18** (versions exactes dans `package.json`).
-- **Toolchain / gate** : **eslint** (lint) → **tsc** (types) → **vitest** (tests). Build **Vite**.
+- **Langages** : **TypeScript 6**, **React 18** (versions exactes dans `package.json`).
+- **Toolchain / gate** : le script `gate` semé est **`tsc --noEmit`**, rien de plus — un gate modeste et
+  honnête vaut mieux qu'un gate annoncé et absent. **eslint** et **vitest** sont la suite attendue : ajoute-les
+  au `gate` en même temps que leurs dépendances, pas avant. Build **Vite**.
+- **Globales et `types`** : à partir de TypeScript 6, sous une résolution moderne (`bundler`, `node16`,
+  `nodenext` — celle du `tsconfig.json` semé), les paquets `@types/*` ne sont **plus inclus globalement
+  d'office** (seul le legacy `node10` conserve l'ancien comportement). Si tu ajoutes `@types/node` pour un
+  script de build, déclare `"types": ["node"]` dans `tsconfig.json`, sinon `process` reste introuvable. Les
+  types tirés par un `import` se résolvent toujours seuls — la liste ne les concerne pas.
 - **Architecture** : **design-system** (tokens + primitives) réutilisable ; API consommée **documentée** dans
   `docs/`. UI indexée par `frontmap` (tokens/primitives/routes), logique par `codemap` (tree-sitter TS).
 
