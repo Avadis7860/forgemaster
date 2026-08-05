@@ -9,7 +9,9 @@ est un bug (jamais de cap silencieux).
 Base unique sous `settings.db_path` (`$FORGEMASTER_HOME/forgemaster.db`). Modèle **feature-groupe-des-tasks**.
 
 - **`projects`** — `id` (uuid), `slug` (kebab, unique), `name`, `sot_path` (repo bare LOCAL co-localisé),
-  `mirror_remote` (miroir GitHub best-effort, nullable), `backend` (`internal`|`github`), `kind`
+  `mirror_remote` (**destination de push** — miroir GitHub best-effort, nullable ; à ne pas confondre avec
+  `source_url`, la **provenance** : un outil adopté a une provenance et **aucune** destination, cf. v20),
+  `backend` (`internal`|`github`), `kind`
   (`project`|`tool`, v3 — classification : entité travaillée vs outil générique du framework ; une seule
   table plutôt que deux), `owner` (nullable, v3 — compat multi-utilisateur), `credential_ref` (nullable, v4
   — **référence opaque** vers le token du store de secrets ; jamais le secret en clair en DB, résolu à

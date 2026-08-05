@@ -82,10 +82,17 @@ def run_bootstrap(conn: sqlite3.Connection, settings: Settings, *,
                   manifest: list[dict[str, Any]], shared_ref: str | None = None) -> dict:
     """Adopte chaque outil du manifeste — IDEMPOTENT (slug déjà présent → `skipped`). Credential résolu
     **par entrée** : `credential_ref` de l'entrée (un token par repo, D6), sinon le `shared_ref` fourni
-    (token de lecture partagé du wizard/`--token-file`), sinon anonyme (repo public, D7). Câble
-    `mirror_remote=source_url` (miroir gratuit, réactivable en écriture plus tard). Une erreur
+    (token de lecture partagé du wizard/`--token-file`), sinon anonyme (repo public, D7). Une erreur
     opérationnelle sur une entrée → `failed`, la boucle continue. Retourne
-    `{created:[slug], skipped:[slug], failed:[{slug, error}]}`."""
+    `{created:[slug], skipped:[slug], failed:[{slug, error}]}`.
+
+    **Une adoption pose une PROVENANCE, jamais une destination de push** (2026-08-05). `source_url` dit
+    d'où l'outil vient — c'est l'`origin` du clone bare, et c'est ce que `toolsync` re-fetch. `mirror_remote`
+    dit où CETTE instance pousse : `onboarding.status()` en déduit qu'un token est *requis*. Recopier l'un
+    dans l'autre réclamait, dès le premier écran d'un inconnu, un token de push vers les dépôts du
+    MAINTENEUR — jamais fournissable, donc `complete:false` à vie (mesuré le 2026-08-04 sur une install
+    vierge : 4 exigences insatisfiables). L'outil adopté n'a **aucune** destination de push ; celui qui veut
+    la sienne la pose explicitement (`PATCH /api/projects/<slug>` → `set_mirror_remote`)."""
     report: dict[str, list[Any]] = {"created": [], "skipped": [], "failed": []}
     existing = {p["slug"] for p in registry.list_projects(conn)}
     resolve = cred_resolver(settings)
@@ -98,7 +105,7 @@ def run_bootstrap(conn: sqlite3.Connection, settings: Settings, *,
         try:
             registry.create_project(
                 conn, settings, slug=slug, kind=entry.get("kind", "tool"),
-                source_url=entry["source_url"], mirror_remote=entry["source_url"],
+                source_url=entry["source_url"],   # provenance seule — pas de `mirror_remote` (cf. chapô)
                 credential_ref=ref, cred_resolver=resolve)
             report["created"].append(slug)
             existing.add(slug)

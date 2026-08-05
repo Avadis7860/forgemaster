@@ -9,6 +9,26 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Une install fraîche ne réclame plus les tokens du mainteneur — schéma **v19 → v20**
+- **Le défaut, mesuré sur une install vierge** (2026-08-04, VM neuve) : `GET /api/onboarding` rendait
+  `complete: false` avec **quatre** exigences insatisfiables — un token de **push** vers
+  `github.com/Avadis7860/{code-map,docs-map,front-map,forgemaster-catalogs}`. Un inconnu ne peut pas les
+  fournir : la bannière ne s'éteignait jamais.
+- **La cause tient en une ligne** : `bootstrap` adoptait avec `mirror_remote=source_url`. Or les deux
+  colonnes disent des choses différentes — `source_url` est la **provenance** (l'`origin` du clone, ce que
+  `toolsync` re-fetch en pull-only), `mirror_remote` la **destination de push**, dont `onboarding.status()`
+  déduit qu'un token est *requis*. Le modèle portait déjà la distinction ; une recopie l'a annulée.
+- **Correctif** : une adoption pose une **provenance seule**. Qui veut pousser un outil pose son miroir
+  explicitement (`PATCH /api/projects/<slug>` → `set_mirror_remote`), ce qui matérialise le remote au
+  passage.
+- **Migration v20** (données, aucune forme de table ne change) : `mirror_remote → NULL` sur les seules
+  lignes `kind='tool'` **et** `mirror_remote = source_url`. Un miroir posé par l'utilisateur porte une
+  valeur différente de la provenance → **épargné**, sa bannière continue d'avoir raison. Idempotente.
+  Rien à défaire côté git : sur le chemin d'adoption le remote `mirror` n'était **jamais** posé (cette
+  pose vit dans la branche SEED de `create_project`) — la colonne ne matérialisait rien, elle n'était que
+  l'exigence.
+- **La bannière n'est pas neutralisée** : elle reste juste pour un projet que l'instance pousse vraiment.
+
 ### La surface publique s'adresse à un inconnu — README + CONTRIBUTING en US, et un chemin perso retiré
 - **`README.md` réécrit en anglais**, pas traduit : un lecteur extérieur a besoin de savoir ce que l'outil
   **n'est pas** (pas un SaaS, pas un modèle, pas un CI, pas un gestionnaire d'infra, pas une forge hébergée,

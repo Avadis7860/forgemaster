@@ -41,7 +41,11 @@ def status(conn: sqlite3.Connection, secret_store: SecretStore,
       secret). **Optionnel** : une install publique sans corpus privé reste valide (n'entre pas dans
       `complete`). `mcp_state` injectable (tests) ; défaut = état vu par le daemon (`mcp.wire_state`) ;
     - `requirements` : un item par projet ; un projet avec `mirror_remote` a **besoin** d'un token pour
-      pousser le miroir → `satisfied` ssi il porte un `credential_ref` (ou n'a pas de miroir) ;
+      pousser le miroir → `satisfied` ssi il porte un `credential_ref` (ou n'a pas de miroir). Ce qui
+      déclenche l'exigence est la **destination de push** (`mirror_remote`), JAMAIS la provenance
+      (`source_url`, l'`origin` d'un clone adopté — lecture seule, `toolsync`) : confondre les deux réclame
+      à un inconnu un token de push vers le dépôt d'où il a cloné, qu'il n'obtiendra jamais (défaut vécu,
+      corrigé le 2026-08-05 — cf. `bootstrap.run_bootstrap` et la migration v20) ;
     - `complete` : racine du store prête ET toutes les exigences satisfaites (pas de faux-vert) ;
     - `first_run` : aucun projet encore créé — l'instance est **neuve**, le wizard doit guider (« crée ton
       1er projet ») plutôt que d'annoncer « complet ». Distingue *rien-à-faire-car-réglé* (complete sans

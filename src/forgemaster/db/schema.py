@@ -98,12 +98,18 @@ jaune ne doit pas mourir dans la preview éphémère du gate). SQLite ne sait pa
 (`_migrate_v19_...`, patron v8/v15/v16), gardé + idempotent. Résolue au changement de SHA / verdict redevenu
 propre (`resolve_alerts`) ; hors `_WORKER_ALERT_KINDS` (portée par la review, pas le drain). Lockstep front :
 `web/src/lib/schemas.ts` (zod `AlertSchema.kind`) + `NotificationCenter.tsx` (`KIND_LABEL`).
+v20 (provenance ≠ destination de push) = migration de **données**, aucune forme de table ne change. Les
+outils adoptés au 1er démarrage portaient `mirror_remote = source_url` (recopié par `bootstrap`), ce dont
+`onboarding.status()` déduisait qu'un token de PUSH était requis — vers les dépôts du mainteneur, donc
+jamais fournissable chez un tiers (`complete:false` à vie). `_migrate_v20_...` efface cette copie sur les
+seules lignes où elle est reconnaissable (`kind='tool'` ET `mirror_remote = source_url`) : un miroir posé
+par l'utilisateur (valeur ≠ provenance) est **épargné**, et la bannière continue d'avoir raison pour lui.
 """
 from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 # Ordre = ordre de création (les FK pointent vers des tables déjà créées). Chaque table porte les
 # invariants durs en contraintes SQL (NOT NULL, UNIQUE, FK, CHECK sur les enums de statut).
@@ -361,6 +367,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
     _migrate_v15_dispatch_status_rate_limited(conn)
     _migrate_v16_dispatch_status_interrupted(conn)
     _migrate_v19_alerts_kind_review_findings(conn)
+    _migrate_v20_adopted_tool_mirror_is_not_push_destination(conn)
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     conn.commit()
 
@@ -570,6 +577,37 @@ def _migrate_v19_alerts_kind_review_findings(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS ix_alerts_status ON alerts(status);\n"
         "COMMIT;\n"
     )
+
+
+def _migrate_v20_adopted_tool_mirror_is_not_push_destination(conn: sqlite3.Connection) -> None:
+    """v19→v20 : efface l'exigence de token **morte** posée par les adoptions d'avant le correctif.
+
+    `bootstrap` recopiait `mirror_remote = source_url` à l'adoption. Or les deux colonnes ne disent pas la
+    même chose — `source_url` est la **provenance** (l'`origin` du clone, ce que `toolsync` re-fetch),
+    `mirror_remote` la **destination de push** dont `onboarding.status()` déduit qu'un token est *requis*.
+    Chez un tiers, la destination pointait sur les dépôts du mainteneur : exigence insatisfiable, bannière
+    éternelle, `complete:false` à vie.
+
+    **Discriminant** : `kind='tool'` ET `mirror_remote = source_url`. Un miroir posé par l'utilisateur
+    (`set_mirror_remote`) porte une valeur **différente** de la provenance — il est épargné, et la bannière
+    continue d'avoir raison pour lui. Aucune forme de table ne change ; l'UPDATE est **idempotent** (au
+    second passage plus aucune ligne ne matche).
+
+    **Rien à défaire côté git** : sur le chemin d'adoption (`source_url` fourni), `create_project` ne pose
+    jamais le remote `mirror` — cette pose vit dans la branche SEED (`registry.py`, `if not source_url:`).
+    La colonne ne matérialisait donc rien ; elle n'était **que** l'exigence. Une instance qui veut vraiment
+    pousser un outil ré-arme explicitement (`set_mirror_remote`), ce qui pose le remote au passage.
+
+    **Garde de précondition** : `source_url` n'existe qu'à partir de la v5 et `kind` de la v3. Une base plus
+    ancienne (ou une table `projects` minimale) n'a jamais pu adopter quoi que ce soit — donc rien à
+    effacer. On no-ope explicitement au lieu de casser sur `no such column` (vu en gate le 2026-08-05 sur
+    les tests de migration v6→v7 et v10→v11, qui montent une `projects` réduite)."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(projects)")}
+    if not {"mirror_remote", "source_url", "kind"} <= cols:
+        return                              # base pré-adoption : aucune ligne ne peut porter la copie
+    conn.execute(
+        "UPDATE projects SET mirror_remote = NULL "
+        "WHERE kind = 'tool' AND mirror_remote IS NOT NULL AND mirror_remote = source_url")
 
 
 def schema_version(conn: sqlite3.Connection) -> int:

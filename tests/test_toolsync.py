@@ -56,9 +56,10 @@ def ctx(tmp_path: Path):
 
 
 def _adopt_tool(conn, settings, slug: str, upstream: Path) -> Path:
-    """Adopte `upstream` comme outil (`kind=tool`) via P1 → SoT bare cloné (origin sans refspec)."""
-    registry.create_project(conn, settings, slug=slug, kind="tool",
-                            source_url=str(upstream), mirror_remote=str(upstream))
+    """Adopte `upstream` comme outil (`kind=tool`) via P1 → SoT bare cloné (origin sans refspec).
+    **Provenance seule** : pas de `mirror_remote` — c'est `origin` que `sync_tool` re-fetch, et un outil
+    adopté n'a aucune destination de push (cf. `bootstrap.run_bootstrap`, schéma v20)."""
+    registry.create_project(conn, settings, slug=slug, kind="tool", source_url=str(upstream))
     return registry.sot_path_for(settings, slug)
 
 

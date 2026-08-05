@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from forgemaster import bootstrap
+from forgemaster import bootstrap, onboarding
 from forgemaster.config import Settings
 from forgemaster.core import run
 from forgemaster.db import store
@@ -69,11 +69,16 @@ def test_run_bootstrap_adopts_tools_as_kind_tool(ctx, tmp_path):
     # partitionnés « Outils » : les deux portent kind=tool (rail section Outils)
     tools = [p for p in registry.list_projects(conn) if p["kind"] == "tool"]
     assert {p["slug"] for p in tools} == {"code-map", "docs-map"}
-    # VRAI contenu cloné (≠ seed), miroir câblé sur la source (D7)
+    # VRAI contenu cloné (≠ seed)
     sot = registry.sot_path_for(settings, "code-map")
     names = run.run(["git", "-C", str(sot), "ls-tree", "-r", "--name-only", "dev"]).stdout.split()
     assert "README.md" in names and "CLAUDE.md" not in names
-    assert registry.get_project(conn, "code-map")["mirror_remote"] == str(up1)
+    # PROVENANCE seule : d'où ça vient (= l'`origin` du clone), et AUCUNE destination de push
+    adopted = registry.get_project(conn, "code-map")
+    assert adopted["source_url"] == str(up1)
+    assert adopted["mirror_remote"] is None
+    origin = run.run(["git", "-C", str(sot), "remote", "get-url", "origin"]).stdout.strip()
+    assert origin == str(up1)                      # `toolsync` re-fetch ICI, en pull-only
 
 
 def test_run_bootstrap_is_idempotent(ctx, tmp_path):
@@ -191,6 +196,33 @@ def test_cli_dispatch_token_file_stores_ref_not_plaintext(ctx, tmp_path):
     assert bootstrap.cli_dispatch(settings, _args(token_file=str(tok))) == 0
     row = registry.get_project(conn, "priv-tool")
     assert row["credential_ref"] and "ghp_via_token_file" not in str(row["credential_ref"])
+
+
+# -- une install fraîche est COMPLÈTE sans un seul token, et un vrai miroir en réclame un ------------
+# Le défaut vécu (2026-08-04, VM vierge) : les 4 outils adoptés portaient `mirror_remote = source_url`,
+# donc `onboarding` réclamait 4 tokens de PUSH vers les dépôts du mainteneur — jamais fournissables chez un
+# tiers, `complete:false` à vie. Ce test tient les DEUX moitiés : l'exigence disparaît là où elle était
+# absurde, et reste là où elle a raison. Neutraliser la bannière globalement passerait la 1ʳᵉ, pas la 2ᵈᵉ.
+
+def test_fresh_adoption_completes_without_token_but_a_real_mirror_still_claims_one(ctx, tmp_path):
+    settings, conn = ctx
+    up = _make_upstream(tmp_path / "u-codemap")
+    _write_manifest(settings, [{"slug": "code-map", "source_url": str(up)}])
+    bootstrap.run_bootstrap(conn, settings, manifest=bootstrap.load_manifest(settings))
+
+    st = onboarding.status(conn, build_store(settings))
+    assert st["complete"] is True                                   # l'inconnu n'a rien à fournir
+    assert [r for r in st["requirements"] if not r["satisfied"]] == []
+    assert st["requirements"][0]["needs_credential"] is False       # la provenance n'exige rien
+
+    # … puis un miroir RÉEL, posé par l'utilisateur : l'exigence réapparaît pour ce projet-là seul
+    registry.create_project(conn, settings, slug="mien",
+                            mirror_remote="https://github.com/moi/mien.git")
+    st = onboarding.status(conn, build_store(settings))
+    reqs = {r["project"]: r for r in st["requirements"]}
+    assert reqs["mien"]["needs_credential"] is True and reqs["mien"]["satisfied"] is False
+    assert reqs["code-map"]["satisfied"] is True                    # l'outil adopté n'est pas contaminé
+    assert st["complete"] is False
 
 
 # -- l'édition maintainer livrée (deploy/bootstrap.yaml) reste chargeable par le vrai loader --------

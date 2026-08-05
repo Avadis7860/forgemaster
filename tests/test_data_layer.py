@@ -165,6 +165,48 @@ def test_ensure_columns_migrates_projects_v2_to_v3_in_place(tmp_path: Path):
     conn.close()
 
 
+def test_migrate_v20_clears_only_the_copied_mirror_of_adopted_tools(tmp_path: Path):
+    """v19→v20 : l'exigence de token MORTE des outils adoptés (`mirror_remote` recopié depuis `source_url`)
+    est effacée — et RIEN d'autre. Les trois lignes épargnées sont le cœur du test : neutraliser la
+    bannière globalement les casserait toutes les trois."""
+    import sqlite3
+
+    from forgemaster.db import schema, store
+    conn = sqlite3.connect(tmp_path / "v19.db")
+    conn.row_factory = sqlite3.Row
+    schema.create_schema(conn)
+    conn.execute("PRAGMA user_version = 19")               # base « d'avant », schéma par ailleurs à jour
+    rows = [
+        # (slug, kind, mirror_remote, source_url) — attendu après migration
+        ("code-map", "tool", "https://github.com/Avadis7860/code-map.git",
+         "https://github.com/Avadis7860/code-map.git"),                       # copie → effacée
+        ("mon-fork", "tool", "https://github.com/moi/fork.git",
+         "https://github.com/Avadis7860/code-map.git"),                       # miroir RÉEL → épargné
+        ("adopte-sans-miroir", "tool", None,
+         "https://github.com/Avadis7860/docs-map.git"),                       # déjà propre → inchangé
+        ("mon-projet", "project", "https://github.com/moi/proj.git",
+         "https://github.com/moi/proj.git"),                                  # kind=project → épargné
+    ]
+    for i, (slug, kind, mirror, src) in enumerate(rows):
+        conn.execute(
+            "INSERT INTO projects (id, slug, name, sot_path, mirror_remote, backend, kind, "
+            "project_type, source_url, created_at) VALUES (?, ?, ?, '/x', ?, 'internal', ?, 'generic', "
+            "?, '2026-08-05')", (f"i{i}", slug, slug, mirror, kind, src))
+    conn.commit()
+
+    assert store.migrate(conn) == schema.SCHEMA_VERSION
+    got = {r["slug"]: r["mirror_remote"] for r in conn.execute("SELECT slug, mirror_remote FROM projects")}
+    assert got["code-map"] is None                                    # l'exigence morte tombe
+    assert got["mon-fork"] == "https://github.com/moi/fork.git"       # un vrai miroir survit
+    assert got["adopte-sans-miroir"] is None
+    assert got["mon-projet"] == "https://github.com/moi/proj.git"     # un projet n'est pas concerné
+
+    schema.create_schema(conn)                                        # idempotence : rejouer ne casse rien
+    again = {r["slug"]: r["mirror_remote"] for r in conn.execute("SELECT slug, mirror_remote FROM projects")}
+    assert again == got
+    conn.close()
+
+
 def test_ensure_columns_migrates_features_v9_to_v10_in_place(tmp_path: Path):
     """Une base pré-v10 (features sans depends_on) migre en place : `ensure_columns` ajoute la colonne,
     les lignes existantes prennent le défaut littéral `'[]'` (ALTER exige un défaut littéral, NOT NULL)."""
