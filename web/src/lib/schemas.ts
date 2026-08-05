@@ -323,7 +323,7 @@ const FeatureFinalizationSchema = z.object({
   feature: z.string(),
   merge_ready: z.boolean(),
   blockers: z.array(z.string()),
-  review: z.record(z.unknown()).nullish(),
+  review: z.record(z.string(), z.unknown()).nullish(),
 })
 // Comptes PAR DISPOSITION (report-counts-clarity) : chaque feature dans UN bucket, sans double-compte —
 // la source lisible du résumé (« 1 drainée, 1 tenue interview, 2 bloquées ») vs l'agrégat trompeur `dispatched`.
@@ -366,7 +366,7 @@ export type AbortResult = z.infer<typeof AbortResultSchema>
 export const RoadmapCheckSchema = z.object({
   project: z.string(),
   ok: z.boolean(),
-  issues: z.array(z.record(z.unknown())),
+  issues: z.array(z.record(z.string(), z.unknown())),
 })
 export type RoadmapCheck = z.infer<typeof RoadmapCheckSchema>
 
@@ -445,7 +445,7 @@ export const GateCountsSchema = z.object({ red: z.number(), yellow: z.number(), 
 export const ReviewerDispatchReportSchema = z.object({
   reviewed: z.boolean(),
   reason: z.string(),
-  verdict: z.record(z.unknown()).nullish(),
+  verdict: z.record(z.string(), z.unknown()).nullish(),
   counts: GateCountsSchema.nullish(),
 })
 export type ReviewerDispatchReport = z.infer<typeof ReviewerDispatchReportSchema>
