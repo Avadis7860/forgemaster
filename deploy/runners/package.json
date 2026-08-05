@@ -5,6 +5,6 @@
   "description": "Runner Playwright du gate Tier-1.5 (forgemaster gate verify) — semé sous $FORGEMASTER_HOME/runners par provision-ct.sh. playwright-core seul (pas @playwright/test) ; le browser Chromium est installé à part par la CLI playwright-core.",
   "dependencies": {
     "pngjs": "^7.0.0",
-    "playwright-core": "1.61.0-alpha-1781023400000"
+    "playwright-core": "1.62.1"
   }
 }
