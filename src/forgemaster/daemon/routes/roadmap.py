@@ -6,7 +6,7 @@ import dataclasses
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from taskmap.context import _blueprint_verdict
+from taskmap import blueprint_verdict
 
 from forgemaster.daemon.deps import Deps, get_deps
 from forgemaster.mcp import blueprint_resolver
@@ -49,9 +49,11 @@ def make_roadmap_router() -> APIRouter:
                 nxt = resolver.resolve_next(index) if index else None
                 f["next"] = nxt["slug"] if nxt else None
                 # ref STAMP brute (v9) → verdict résolu via MCP (down → resolved:false, dégradation honnête).
-                # `_blueprint_verdict` = logique canonique du seam taskmap (réutilisée, jamais dupliquée).
+                # `blueprint_verdict` = logique canonique du seam taskmap (réutilisée, jamais dupliquée) ;
+                # publique depuis que task-map l'expose détachée, pour ce cas précis : notre ref vient de la
+                # DB, pas d'un frontmatter, donc il n'y a pas de task à faire assembler.
                 f["blueprint"] = (
-                    _blueprint_verdict({"id": f["blueprint"], "posture": None}, resolve_bp)
+                    blueprint_verdict({"id": f["blueprint"], "posture": None}, resolve_bp)
                     if f.get("blueprint") else None
                 )
             return {"project": project, "features": features}

@@ -35,23 +35,23 @@ SELECT `WHERE feature_id ORDER BY slug`, `depends_on` re-décodé par row. C'est
 PUR. Émet `{version, project, features:[…]}` via `_feature_doc` (helper ligne 139) : `facet`/`blueprint`/`depends_on`/`acceptance` sortis **seulement si présents** (contrat rétro-compatible, une roadmap v1 reste byte-identique). `sort_keys=False, allow_unicode=True`.
 
 ## resolver.classify() — état + blockers en vocab forgemaster
-`src/forgemaster/roadmap/resolver.py:69` · appelé par `check_roadmap`, `cli_dispatch` (branche « aucune READY »)
+`src/forgemaster/roadmap/resolver.py:71` · appelé par `check_roadmap`, `cli_dispatch` (branche « aucune READY »)
 Adaptateur mince : `_classify_tm` délègue l'**état** au moteur `taskmap.classify` (via `_to_records`, `root`/`today=None`), puis re-projette `{**row, state, blockers}` byte-identique au contrat forgemaster — `_blockers` re-traduit depuis l'index **original** (ERROR → dep inconnue, BLOCKED_DEPS → dep non-done + son statut). Le graphe reste la seule autorité ; zéro copie du moteur.
 
 ## resolver.eff_prio() — priorité effective transitive (déléguée au cœur)
-`src/forgemaster/roadmap/resolver.py:80` · appelé par (surface interne ; le ranking passe par `_core_rank_ready`)
-Délègue à `taskmap.core.graph.eff_prio(_to_records(index), PRIO)`. Historiquement forkée, `eff_prio` a **gradué dans le cœur taskmap** au dé-fork (distillation-vers-le-centre). Dict keyé par slug (`id ≡ slug`).
+`src/forgemaster/roadmap/resolver.py:82` · appelé par (surface interne ; le ranking passe par `_tm_rank_ready`)
+Délègue à `taskmap.graph.eff_prio(_to_records(index), PRIO)`. Historiquement forkée, `eff_prio` a **gradué dans le cœur taskmap** au dé-fork (distillation-vers-le-centre). Dict keyé par slug (`id ≡ slug`).
 
 ## resolver.resolve_next() — la prochaine task dispatchable
-`src/forgemaster/roadmap/resolver.py:85` · appelé par `cli_dispatch` (`task next`)
-Range les READY par `taskmap.core.graph.rank_ready(_classify_tm(index), PRIO)` (rang canonique = `eff_prio` transitive + tiebreaks), prend `ranked[0]`, re-traduit `{**row, state:"READY", blockers:[]}`. Aucune READY → `None`.
+`src/forgemaster/roadmap/resolver.py:87` · appelé par `cli_dispatch` (`task next`)
+Range les READY par `taskmap.graph.rank_ready(_classify_tm(index), PRIO)` (rang canonique = `eff_prio` transitive + tiebreaks), prend `ranked[0]`, re-traduit `{**row, state:"READY", blockers:[]}`. Aucune READY → `None`.
 
 ## resolver.classify_features() — DAG **inter-feature** d'un projet (v10)
-`src/forgemaster/roadmap/resolver.py:133` · appelé par `check_roadmap`
+`src/forgemaster/roadmap/resolver.py:135` · appelé par `check_roadmap`
 Même autorité taskmap, une couche au-dessus des tasks. Une feature est READY quand toutes ses prérequises sont `merged` (`_FEATURE_STATUS_TO_TM = {"merged":"done"}`, ligne 103) ; BLOCKED_DEPS sinon ; ERROR/CYCLE comme le DAG des tasks. `_feature_blockers` re-traduit en vocab forgemaster. Index feature projet-global, **jamais** threadé dans l'index task (invariant « 1 index taskmap = 1 feature »).
 
 ## resolver.index_for_feature() — {slug: task} d'une feature depuis la DB
-`src/forgemaster/roadmap/resolver.py:96` · appelé par `cli_dispatch` (`task next`), tests
+`src/forgemaster/roadmap/resolver.py:98` · appelé par `cli_dispatch` (`task next`), tests
 Résout la feature (`model.resolve_feature`) puis mappe `model.list_tasks` en `{slug: row}` — la forme d'index consommée par `classify`/`resolve_next`.
 
 ## prompt.build_worker_prompt() — synthétise le prompt du worker `claude -p`

@@ -1,7 +1,9 @@
 """resolver — adaptateur mince sur le moteur générique `taskmap` (SoT unique du séquencement).
 
-Le DAG des tasks est classé et rangé par `taskmap.core.graph` (`detect_cycles`, `eff_prio`, rang canonique)
-+ `taskmap.classify` (décision d'état), dé-forkés du vault. Ce module ne fait QUE l'adaptation à la forme
+Le DAG des tasks est classé et rangé par `taskmap.graph` (`detect_cycles`, `eff_prio`, rang canonique)
++ `taskmap.classify` (décision d'état), dé-forkés du vault. `taskmap.graph` est l'**adresse publique** du
+moteur — `taskmap.core.*` en est l'implémentation interne, et un consommateur n'y descend pas : c'est le
+socle, il doit rester libre de bouger. Ce module ne fait QUE l'adaptation à la forme
 forgemaster : il projette les rows SQLite (`slug`/`created_at`/`status` forgemaster) vers la forme de record
 du cœur
 (`id`/`created`/`status` taskmap), délègue, puis **re-traduit** au contrat JSON forgemaster (état + blockers
@@ -18,8 +20,8 @@ from __future__ import annotations
 import argparse
 
 from taskmap.classify import classify as _tm_classify
-from taskmap.core.graph import eff_prio as _core_eff_prio
-from taskmap.core.graph import rank_ready as _core_rank_ready
+from taskmap.graph import eff_prio as _tm_eff_prio
+from taskmap.graph import rank_ready as _tm_rank_ready
 
 from forgemaster.config import Settings
 from forgemaster.db import store
@@ -79,14 +81,14 @@ def classify(index: dict[str, dict]) -> dict[str, dict]:
 
 def eff_prio(index: dict[str, dict]) -> dict[str, int]:
     """Priorité effective transitive (déléguée au cœur taskmap). Dict keyé par slug (record `id`≡slug)."""
-    return _core_eff_prio(_to_records(index), PRIO)
+    return _tm_eff_prio(_to_records(index), PRIO)
 
 
 def resolve_next(index: dict[str, dict]) -> dict | None:
     """La prochaine task dispatchable (READY de plus haut rang canonique), re-traduite au contrat forgemaster
     ;
     None si aucune READY. Rang délégué au cœur (`rank_ready` : `eff_prio` transitive + tiebreaks)."""
-    ranked = _core_rank_ready(_classify_tm(index), PRIO)
+    ranked = _tm_rank_ready(_classify_tm(index), PRIO)
     if not ranked:
         return None
     row = index[ranked[0]["id"]]              # ranked[0]["id"] ≡ slug

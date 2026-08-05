@@ -89,7 +89,7 @@ def test_symlink_sources_split_venv_and_node(settings):
 
 
 def test_taskmap_not_host_provisioned():
-    """task-map = moteur central (`taskmap.core`, importé en-process, vendoré au wheel), PAS une carte de
+    """task-map = moteur central (`taskmap.graph`, importé en-process, vendoré au wheel), PAS une carte de
     contenu par-projet → jamais provisionné en host-tool. Verrou anti-régression du retire : ni pip-installé
     (`MAP_REPOS`) ni exposé/gaté (`_VENV_BINS`/`HOST_TOOLS`). La LIB, elle, reste importable par ailleurs."""
     assert "task-map" not in tools.MAP_REPOS

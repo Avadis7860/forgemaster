@@ -23,10 +23,12 @@ dependencies = [
   # dans secrets/file_store.py — le socle reste stdlib-pur, la dép n'est tirée qu'à l'usage du store fichier.
   "cryptography>=42",
   # moteur de séquencement des tasks (DAG, classification, eff_prio) : `roadmap/resolver.py` importe
-  # `taskmap.core`. VENDORÉ dans le wheel (comme `codemap`) par deploy/build-wheel.sh depuis le sibling
-  # ../task-map (SoT épinglé au SHA 85bd32e) → wheel AUTO-CONTENU, plus de dép git privée à cloner au
-  # pip-install sur un hôte frais. Volontairement PAS dans project.dependencies (embarqué au build) ; en
-  # dev : `pip install -e ../task-map`.
+  # `taskmap.graph` + `taskmap.classify` — l'adresse PUBLIQUE du moteur ; `taskmap.core.*` est son socle
+  # interne, on n'y descend pas. VENDORÉ dans le wheel (comme `codemap`) par deploy/build-wheel.sh depuis le
+  # sibling ../task-map → wheel AUTO-CONTENU, plus de dép git privée à cloner au pip-install sur un hôte
+  # frais. Le SoT embarqué n'est pas épinglé ici : le build copie le sibling vivant et écrit son SHA réel
+  # dans `taskmap/_vendored_from.txt` (un SHA recopié dans ce commentaire dérive en silence, celui-là non).
+  # Volontairement PAS dans project.dependencies (embarqué au build) ; en dev : `pip install -e ../task-map`.
   # client MCP runtime (`mcp/client.py`) : résout un `blueprint:` en direct via `forgemaster-catalogs`. Même plancher
   # que le serveur (≥3.2.0 pour CVE-2026-32871). Import PARESSEUX (tiré à l'appel, socle non alourdi).
   "fastmcp>=3.3.1",

@@ -8,7 +8,7 @@ que *clonées* (jamais pip-installées), Node n'est provisionné nulle part, et 
 (PATH systemd minimal, hérité passif) — même présents, il ne les verrait pas.
 
 `taskmap` n'est PAS provisionné ici : ce n'est pas une carte de contenu par-projet (comme codemap/docsmap/
-frontmap) mais le **moteur d'ordonnancement central** (`taskmap.core`), importé en-process par
+frontmap) mais le **moteur d'ordonnancement central** (`taskmap.graph`), importé en-process par
 `roadmap/resolver.py`. La lib est fournie autrement (vendorée au wheel par `deploy/build-wheel.sh` ; editable
 en dev via `webbuild.ensure_maps`) ; aucun projet n'a de task-graph local à mapper → pas de CLI host exposé.
 

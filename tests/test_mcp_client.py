@@ -4,7 +4,7 @@ Prouve la **dégradation honnête** (secret absent/court, MCP down transport, r�
 **hit** (dict rendu tel quel) ; côté `capital_browser`, prouve aussi la **propagation typée** d'une erreur
 d'outil serveur (état (c) — `CapitalServerError`, détail réel), non avalée en None. Un dernier test branche
 le resolver au seam réel
-`taskmap.context._blueprint_verdict` (le contrat que consommera le board P3) : `resolved:true`+fusion sur hit,
+`taskmap.blueprint_verdict` (le contrat que consommera le board P3) : `resolved:true`+fusion sur hit,
 `resolved:false`+liaison morte sur down — le mint HS256 réel est exercé (secret factice ≥32).
 """
 from __future__ import annotations
@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from taskmap.context import _blueprint_verdict
+from taskmap import blueprint_verdict
 
 from forgemaster.config import Settings
 from forgemaster.mcp import CapitalServerError, blueprint_resolver, capital_browser
@@ -124,7 +124,7 @@ def test_plugs_into_taskmap_seam_hit(settings):
     body = {"id": "some-gate", "title": "Le gate", "status": "current"}
     resolve = blueprint_resolver(settings, secret_ref=_FAKE_REF, resolver=_ok_secret,
                                  caller=lambda *a, **k: body)
-    v = _blueprint_verdict({"id": "some-gate", "posture": "applies"}, resolve)
+    v = blueprint_verdict({"id": "some-gate", "posture": "applies"}, resolve)
     assert v is not None
     assert v["resolved"] is True and v["title"] == "Le gate"     # champs fusionnés
     assert v["id"] == "some-gate" and v["posture"] == "applies"  # clés protégées préservées
@@ -135,7 +135,7 @@ def test_plugs_into_taskmap_seam_down(settings):
         raise TimeoutError("MCP timeout")
 
     resolve = blueprint_resolver(settings, secret_ref=_FAKE_REF, resolver=_ok_secret, caller=caller)
-    v = _blueprint_verdict({"id": "some-gate", "posture": None}, resolve)
+    v = blueprint_verdict({"id": "some-gate", "posture": None}, resolve)
     assert v is not None
     assert v["resolved"] is False and v["reason"]                # liaison morte signalée, jamais inventé
 

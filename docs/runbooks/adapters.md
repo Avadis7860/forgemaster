@@ -28,7 +28,7 @@ Retourne `home/codemap/<projet>/<sha>/<schema>`. Invalidation double : un nouvea
 
 ## mcp.client.blueprint_resolver() — résolveur blueprint injecté dans taskmap
 `src/forgemaster/mcp/client.py:94` · injecté au seam `taskmap.context.build_context`/`doctor` (`BlueprintResolver = id -> dict|None`) ; le board (P3) s'en sert pour `resolved:true` sur un `features.blueprint`.
-Ferme sur `settings` et rend `resolve(bp_id)`. **Invariant de dégradation honnête** : secret non câblé (`FORGEMASTER_MCP_JWT_SECRET_REF` absent) → `None` ; secret `< 32` octets → `None` ; toute exception (mint/réseau/MCP pendu) capturée → `None` ; réponse non-dict ou vide → `None`. **Jamais inventé, jamais propagé** — exactement le contrat qu'attend `taskmap.context._blueprint_verdict` (`None`/`{}` = liaison morte signalée). `secret_ref`/`endpoint`/`resolver`/`caller`/`timeout` sont des seams (défaut réseau réel = `_read_blueprint`, timeout 5 s).
+Ferme sur `settings` et rend `resolve(bp_id)`. **Invariant de dégradation honnête** : secret non câblé (`FORGEMASTER_MCP_JWT_SECRET_REF` absent) → `None` ; secret `< 32` octets → `None` ; toute exception (mint/réseau/MCP pendu) capturée → `None` ; réponse non-dict ou vide → `None`. **Jamais inventé, jamais propagé** — exactement le contrat qu'attend `taskmap.blueprint_verdict` (`None`/`{}` = liaison morte signalée). `secret_ref`/`endpoint`/`resolver`/`caller`/`timeout` sont des seams (défaut réseau réel = `_read_blueprint`, timeout 5 s).
 
 ## mcp.client._read_blueprint() — coquille réseau réelle (fastmcp)
 `src/forgemaster/mcp/client.py:87` · seam `caller` par défaut de `blueprint_resolver`.
