@@ -103,9 +103,13 @@ updates:
       include: "scope"
 
   # -- bundle template SEMÉ : site-vitrine (preuve : `forgemaster bundle verify site-vitrine`) ----------
-  # Seul manifeste des cinq SANS `package-lock.json` : ses montées se lisent sur des plages, et un projet
-  # semé résout son arbre au moment du semis. La preuve le dit (« SANS VERROU ») au lieu de replier en
-  # silence sur `npm install` ; poser un verrou est un geste à part, à faire avec la migration `astro`.
+  # RECALÉ le 2026-08-05 : ce commentaire disait « seul manifeste des cinq SANS `package-lock.json` ».
+  # Ce n'est plus vrai — le verrou a été posé par `786dd0b` avec la migration `astro 5→7`, exactement le
+  # geste que la phrase annonçait comme restant à faire. Les CINQ manifestes ont désormais un verrou,
+  # donc `npm ci` partout et un arbre identique dans chaque projet semé. Le verdict de la preuve l'a dit
+  # tout seul en basculant de « SANS VERROU / install » (36 s) à « verrou / ci » (24 s) : c'est LUI la
+  # source, pas ce commentaire. Laissé comme correction datée plutôt que supprimé — une phase qui périme
+  # sa propre documentation doit le dire, sinon la prochaine lecture croit l'ancien état.
   - package-ecosystem: "npm"
     directory: "/src/forgemaster/provision/bundles/types/site-vitrine/web"
     schedule:
