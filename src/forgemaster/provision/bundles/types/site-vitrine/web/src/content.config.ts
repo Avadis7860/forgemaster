@@ -1,6 +1,9 @@
 // content.config.ts — schémas typés des content-collections. Le contenu de la vitrine vit ici (MDX),
 // découplé de la présentation et validé au build (`astro check`). Parité i18n : chaque entrée porte sa `locale`.
-import { defineCollection, z } from 'astro:content';
+import { defineCollection } from 'astro:content';
+// `z` vient de `astro/zod` depuis Astro 6 : l'export `z` de `astro:content` (et l'alias `astro:schema`)
+// y sont dépréciés au profit d'un point d'import unique.
+import { z } from 'astro/zod';
 import { glob } from 'astro/loaders';
 
 // `sections` : les blocs de contenu d'une page vitrine (hero, features, preuve, CTA…). Génériques : le TEXTE
