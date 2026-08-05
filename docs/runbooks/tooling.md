@@ -179,7 +179,7 @@ env-api-key / env-oauth / None). Auth **par machine**, pas par projet. `trust_wo
 ça `claude -p` headless IGNORE les `allowedTools` d'un workspace non-trusted (worker inerte).
 
 ## onboarding.status() / link_credential() / unlink_credential() — liaison des credentials par projet
-`src/forgemaster/onboarding.py:30` (`status`) · `:90` (`link_credential`) · `:119` (`unlink_credential`) · appelés par
+`src/forgemaster/onboarding.py:30` (`status`) · `:94` (`link_credential`) · `:123` (`unlink_credential`) · appelés par
 `forgemaster onboard <action>` (cli_dispatch).
 `status` compose **cinq axes**, sans jamais révéler un secret : le **store** (backend actif + racine de confiance
 joignable) ; les **requirements** par projet (un projet à miroir a besoin d'un token pour pousser → satisfait ssi

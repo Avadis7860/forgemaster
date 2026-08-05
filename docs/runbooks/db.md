@@ -26,7 +26,7 @@ Compose `connect(settings.db_path)` puis `migrate(conn)` et rend la connexion pr
 haut-niveau reçoit cette connexion en argument — jamais un module-global (correctif anti god-module).
 
 ## create_schema() — crée tables + index, migre les colonnes, scelle la version
-`src/forgemaster/db/schema.py:350` · appelé par `migrate()`
+`src/forgemaster/db/schema.py:356` · appelé par `migrate()`
 Exécute tout le `DDL` (7 tables, `IF NOT EXISTS`) puis les `INDEXES`, appelle `ensure_columns()` pour le chemin
 ALTER, joue les **migrations de table** dans l'ordre — `_migrate_v8_drop_project_type_check`,
 `_migrate_v15_dispatch_status_rate_limited`, `_migrate_v16_dispatch_status_interrupted`,
@@ -36,7 +36,7 @@ Correct pour une base neuve (tout par DDL) comme pour une base d'une version ant
 lui qu'on lit, pas ce runbook, pour savoir où en est le contrat.
 
 ## ensure_columns() — chemin ALTER additif idempotent
-`src/forgemaster/db/schema.py:368` · appelé par `create_schema()`
+`src/forgemaster/db/schema.py:375` · appelé par `create_schema()`
 Pour chaque table de `_ADDED_COLUMNS`, lit `PRAGMA table_info` et `ALTER TABLE ADD COLUMN` uniquement les colonnes
 absentes. Sans effet sur une base neuve (les colonnes sont déjà dans le DDL) ; table absente → skip (le DDL la
 créera). **Invariant migration additive** : un `ALTER` SQLite exige un défaut *littéral* pour une colonne NOT NULL
@@ -44,12 +44,12 @@ créera). **Invariant migration additive** : un `ALTER` SQLite exige un défaut 
 application (`registry.create_project`, `provision.validate_bundle`).
 
 ## schema_version() — version posée sur la base (0 si vierge)
-`src/forgemaster/db/schema.py:575` · appelé par `migrate()`
+`src/forgemaster/db/schema.py:613` · appelé par `migrate()`
 Lit `PRAGMA user_version` ; retourne 0 si la base n'a jamais été initialisée. C'est le curseur qui rend `migrate()`
 idempotent et strictement croissant.
 
 ## _migrate_v8_drop_project_type_check() — l'unique rebuild de table (retrait de CHECK)
-`src/forgemaster/db/schema.py:380` · appelé par `create_schema()`
+`src/forgemaster/db/schema.py:387` · appelé par `create_schema()`
 Cas particulier de la contrainte « SQLite ne sait pas ALTER un CHECK ». Pour retirer le `CHECK` figé sur
 `projects.project_type` (enum devenu registre-driven en v8), rebuild `projects` : `foreign_keys=OFF`, crée
 `projects_new` sans le CHECK, `INSERT … SELECT` (ids préservés), `DROP`/`RENAME`, restaure les FK. **No-op idempotent**
