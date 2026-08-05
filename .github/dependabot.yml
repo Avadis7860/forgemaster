@@ -1,0 +1,44 @@
+# Dependabot — déclaration des manifestes npm de ce dépôt.
+#
+# CE QUE CE FICHIER FAIT, ET CE QU'IL NE PEUT PAS FAIRE.
+# Il pilote les *version updates* : quels manifestes sont suivis, à quelle cadence, et regroupés comment.
+# Il ne pilote PAS les *security updates* — celles-ci sont dirigées par les alertes et tournent SANS
+# aucun fichier de configuration.
+#
+# D'où l'absence délibérée de `target-branch:`. La doc GitHub est explicite : pour que Dependabot utilise
+# cette configuration pour les mises à jour de sécurité, « you should not specify a `target-branch` ».
+# Le poser aurait déplacé les montées de routine vers `dev` et laissé sur `main` exactement les PR qui
+# portent les avis — l'option promettait une moitié de ce qu'elle annonçait. Les PR visent donc `main`,
+# assumé : on les applique par le flux normal (cherry-pick sur `dev`, gate, promotion ff) puis on ferme
+# la PR avec le SHA et la raison. Arbitrage du 2026-08-05, vault :
+# `corpus/decision/projects/2026-08-05--dependabot-config-without-target-branch.md`.
+#
+# LES CINQ RÉPERTOIRES SONT MESURÉS, PAS SUPPOSÉS (`git ls-files | grep package.json`). Trois d'entre eux
+# n'avaient jamais été regardés : le second manifeste de bundle template s'est révélé le 2026-08-05 en
+# ouvrant deux PR 66 secondes après un push, sans que personne sache qu'il existait. Un manifeste non
+# déclaré n'est pas un manifeste tranquille — c'est un manifeste dont on ignore l'état.
+#
+# Les trois derniers sont du CAPITAL SEMÉ : chaque projet créé par le forgemaster hérite de leurs
+# dépendances. Une vulnérabilité y est distribuée, pas seulement hébergée.
+version: 2
+
+updates:
+  - package-ecosystem: "npm"
+    directories:
+      - "/web"                                                    # SPA du forgemaster
+      - "/deploy/runners"                                         # runner de déploiement
+      - "/src/forgemaster/provision/bundles/types/browser-game"    # bundle template (semé)
+      - "/src/forgemaster/provision/bundles/types/front-ts"        # bundle template (semé)
+      - "/src/forgemaster/provision/bundles/types/site-vitrine/web" # bundle template (semé)
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      # Un groupe attrape-tout par répertoire : une PR hebdomadaire au lieu d'une par avis. Le bruit
+      # était le vrai coût — 4 PR en 2 jours pour 10 lignes de lockfile.
+      npm:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
