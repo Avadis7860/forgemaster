@@ -25,6 +25,10 @@ node_modules/
 web/dist/
 dist/
 .vite/
+# Cache de types généré par Astro (`astro sync`/`astro build`). Il n'apparaît que si on joue le gate d'un
+# bundle DANS son dossier template plutôt que dans le bac à sable de `bundle verify` — ce qui arrive dès
+# qu'on falsifie une toolchain à la main. Non ancré : Astro le pose à la racine de chaque projet.
+.astro/
 *.log
 # Emplacement conventionnel du runner Playwright (goto+screenshot) consommé par `web/tools/ui_shot.py` et
 # `scripts/e2e_runtime.py`. Son SoT vit hors de ce dépôt : ici c'est un SLOT à remplir (fichier ou symlink),

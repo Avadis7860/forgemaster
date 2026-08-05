@@ -22,6 +22,9 @@ venv/
 dist/
 build/
 node_modules/
+# Cache de types généré par Astro (`astro sync`/`astro build`) — présent dès le premier build d'un projet
+# vitrine. Sans cette ligne, le `git add -A` que la forge fait au dispatch le committerait.
+.astro/
 
 # Éditeurs / OS
 .DS_Store
