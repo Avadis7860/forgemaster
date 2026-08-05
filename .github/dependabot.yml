@@ -19,26 +19,103 @@
 # déclaré n'est pas un manifeste tranquille — c'est un manifeste dont on ignore l'état.
 #
 # Les trois derniers sont du CAPITAL SEMÉ : chaque projet créé par le forgemaster hérite de leurs
-# dépendances. Une vulnérabilité y est distribuée, pas seulement hébergée.
+# dépendances. Une vulnérabilité y est distribuée, pas seulement hébergée. Leur preuve d'installabilité
+# est `forgemaster bundle verify <type>` (semis jetable → `npm ci|install` → script `gate` du template) :
+# une PR qui touche l'un d'eux se juge par elle, jamais par la taille de son diff.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────────────
+# POURQUOI CINQ ENTRÉES ET NON UNE SEULE À `directories:` — MESURÉ, PAS SUPPOSÉ (2026-08-05).
+# La première version de ce fichier portait UNE entrée `directories:` (5 chemins) + un groupe attrape-tout,
+# et son commentaire annonçait « un groupe attrape-tout PAR RÉPERTOIRE ». Faux : trois heures après sa
+# pose, Dependabot a ouvert la PR #14 — 1 PR, 5 répertoires, 32 updates, 8 fichiers, +3146/−2265, mêlant
+# la SPA du forgemaster, le runner de déploiement et les trois bundle templates, majeures comprises
+# (`typescript 5→7`, `vite 5→8`, `vitest 2→4`, `astro 5→7`, `zod 3→4`, `eslint 9→10`…). Un groupe couvre
+# TOUTES les `directories:` de son entrée : le bruit était bien réduit, mais la PR était devenue
+# inapplicable — on ne peut pas y prendre le correctif `vitest` sans prendre aussi `eslint 10`.
+# D'où : une entrée par répertoire (→ une PR par manifeste, jugeable par sa propre preuve), et le groupe
+# limité à `minor`+`patch` (→ une majeure arrive SEULE, dans sa propre PR, parce qu'une majeure sur du
+# capital semé est une migration, pas un bump — elle casse le premier projet créé après, pas ce dépôt).
+#
+# CAP ASSUMÉ, PAS SILENCIEUX : `open-pull-requests-limit: 5` par répertoire. Au-delà, Dependabot attend le
+# cycle suivant. Le compte de PR ouvertes n'est donc PAS une mesure de ce qui reste — l'autorité est
+# `scanner_alerts.py` (alertes ouvertes lues par l'API), jamais un compteur de PR.
 version: 2
 
 updates:
+  # -- SPA du forgemaster ------------------------------------------------------------------------------
   - package-ecosystem: "npm"
-    directories:
-      - "/web"                                                    # SPA du forgemaster
-      - "/deploy/runners"                                         # runner de déploiement
-      - "/src/forgemaster/provision/bundles/types/browser-game"    # bundle template (semé)
-      - "/src/forgemaster/provision/bundles/types/front-ts"        # bundle template (semé)
-      - "/src/forgemaster/provision/bundles/types/site-vitrine/web" # bundle template (semé)
+    directory: "/web"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
     groups:
-      # Un groupe attrape-tout par répertoire : une PR hebdomadaire au lieu d'une par avis. Le bruit
-      # était le vrai coût — 4 PR en 2 jours pour 10 lignes de lockfile.
-      npm:
-        patterns:
-          - "*"
+      routine:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
     commit-message:
-      prefix: "chore(deps)"
+      prefix: "chore"          # `include: scope` ajoute lui-même `(deps)` / `(deps-dev)`
+      include: "scope"
+
+  # -- runner Playwright du gate Tier-1.5 --------------------------------------------------------------
+  - package-ecosystem: "npm"
+    directory: "/deploy/runners"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      routine:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  # -- bundle template SEMÉ : browser-game (preuve : `forgemaster bundle verify browser-game`) ----------
+  - package-ecosystem: "npm"
+    directory: "/src/forgemaster/provision/bundles/types/browser-game"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      routine:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  # -- bundle template SEMÉ : front-ts (preuve : `forgemaster bundle verify front-ts`) ------------------
+  - package-ecosystem: "npm"
+    directory: "/src/forgemaster/provision/bundles/types/front-ts"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      routine:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  # -- bundle template SEMÉ : site-vitrine (preuve : `forgemaster bundle verify site-vitrine`) ----------
+  # Seul manifeste des cinq SANS `package-lock.json` : ses montées se lisent sur des plages, et un projet
+  # semé résout son arbre au moment du semis. La preuve le dit (« SANS VERROU ») au lieu de replier en
+  # silence sur `npm install` ; poser un verrou est un geste à part, à faire avec la migration `astro`.
+  - package-ecosystem: "npm"
+    directory: "/src/forgemaster/provision/bundles/types/site-vitrine/web"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      routine:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "chore"
       include: "scope"

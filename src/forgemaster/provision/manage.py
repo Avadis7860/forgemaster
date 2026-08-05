@@ -141,7 +141,44 @@ def _derive(args: argparse.Namespace) -> int:
     return rc
 
 
-_ACTIONS = {"list": _list, "validate": _validate, "show": _show, "version": _version, "derive": _derive}
+def _verify(args: argparse.Namespace) -> int:
+    """Sème le type dans un dossier jetable, installe ses dépendances npm et lance son script `gate`.
+    La **preuve** qu'un bundle template — capital semé dans de vrais projets — s'installe et tourne.
+    Import paresseux : `bundle list` n'a pas à charger le vérificateur.
+
+    Trois sorties distinctes, et c'est le point : `0` vert · `1` rouge (la preuve a tourné, elle refuse) ·
+    `2` la preuve n'a rien pu prouver (npm absent, type hors registre, aucune unité npm). Un `2` ne se lit
+    jamais comme un vert."""
+    from forgemaster.provision import verify as bundle_verify
+    try:
+        verdict = bundle_verify.verify_bundle(args.type, keep=args.keep)
+    except BundleError as exc:
+        print(f"✗ {args.type} : {exc}")
+        return 2
+    if args.json:
+        import json
+        print(json.dumps(verdict.as_dict(), ensure_ascii=False, indent=2))
+        return verdict.exit_code
+    icon = {"vert": "✅", "rouge": "🔴"}.get(verdict.state, "⚠")
+    print(f"{icon} {verdict.project_type} — {verdict.state}"
+          + (f" · {verdict.seconds:.0f}s" if verdict.units else ""))
+    if verdict.reason:
+        print(f"   {verdict.reason}")
+    for unit in verdict.units:
+        lock = "verrou" if unit.locked else "SANS VERROU (plages résolues à l'install)"
+        gate = {True: "gate ✓", False: "gate ✗", None: "gate non lancé"}[unit.gate_ok]
+        state = "install ✓" if unit.install_ok else "install ✗"
+        print(f"   {'✓' if unit.ok else '✗'} {unit.rel_dir:<12} {lock:<44} "
+              f"{' '.join(unit.install_argv[1:])} → {state} · {gate} · {unit.seconds:.0f}s")
+        if unit.detail:
+            print(f"      {unit.detail.splitlines()[-1][:200]}")
+    if verdict.workdir:
+        print(f"   semis conservé : {verdict.workdir}")
+    return verdict.exit_code
+
+
+_ACTIONS = {"list": _list, "validate": _validate, "show": _show, "version": _version,
+            "derive": _derive, "verify": _verify}
 
 
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:

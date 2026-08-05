@@ -89,7 +89,7 @@ _ABSENT_MSG = {
 
 # -- détection par convention (PUR) -----------------------------------------------------------------
 
-def _has_gate_script(pkg: Path) -> bool:
+def has_gate_script(pkg: Path) -> bool:
     """True ssi `pkg` est un package.json portant un script npm `gate` (la toolchain node conventionnelle)."""
     if not pkg.is_file():
         return False
@@ -103,11 +103,11 @@ def _node_gate_dir(worktree: Path, group: str) -> Path | None:
     """Dossier où lancer `npm run gate` pour un trigger node (`front`|`backend-node`), ou None si non couvert.
     Un `package.json` **racine** avec un script `gate` couvre tout (univers TS unifié / workspaces) ; sinon
     per-dir : `web/` pour `front`, `server/` pour `backend-node`."""
-    if _has_gate_script(worktree / "package.json"):
+    if has_gate_script(worktree / "package.json"):
         return worktree                                    # unité racine unifiée (couvre web/ ET server/)
     subdir = "web" if group == "front" else "server"
     d = worktree / subdir
-    return d if _has_gate_script(d / "package.json") else None
+    return d if has_gate_script(d / "package.json") else None
 
 
 def detect_groups(worktree: Path) -> list[str]:

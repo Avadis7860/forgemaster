@@ -75,7 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # -- bundle -------------------------------------------------------------------------------------
     p_bundle = sub.add_parser("bundle", parents=[common],
-                              help="gestion des bundles : list|validate|show|version|derive")
+                              help="gestion des bundles : list|validate|show|version|derive|verify")
     p_bundle_sub = p_bundle.add_subparsers(dest="action", required=True, metavar="<action>")
     p_bundle_sub.add_parser("list", parents=[common], help="lister les types du registre + validité")
     blv = p_bundle_sub.add_parser("validate", parents=[common],
@@ -90,6 +90,14 @@ def build_parser() -> argparse.ArgumentParser:
     bdv.add_argument("--type", help="type à dériver ; défaut = tous les dérivables")
     bdv.add_argument("--check", action="store_true",
                      help="ne rien écrire : exit 1 si l'overlay a dérivé de son template (drift)")
+    bvf = p_bundle_sub.add_parser(
+        "verify", parents=[common],
+        help="PREUVE : semer le type dans un dossier jetable, y installer les deps npm et lancer son "
+             "script `gate` (0 vert · 1 rouge · 2 non montable)")
+    bvf.add_argument("type", help="type de bundle à prouver (ex. browser-game)")
+    bvf.add_argument("--json", action="store_true", help="verdict structuré sur stdout")
+    bvf.add_argument("--keep", action="store_true",
+                     help="conserver le semis jetable (inspection d'un rouge) — son chemin est affiché")
 
     # -- scaffold -----------------------------------------------------------------------------------
     p_scaffold = sub.add_parser("scaffold", parents=[common],

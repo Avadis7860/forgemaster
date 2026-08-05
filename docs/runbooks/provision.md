@@ -78,9 +78,25 @@ Signale un câblage refusé **avant tout effet** : zéro ou plusieurs voies de s
 `src/forgemaster/provision/mcp.py:191` · lu par `onboarding.status` (axe `mcp` du wizard).
 Rend `{wired, endpoint}` : la **présence** de la ref et l'endpoint résolu, jamais la valeur. C'est ce qui permet au wizard de dire « corpus privé câblé / pas câblé » sans jamais lire un secret.
 
+## verify_bundle() — la PREUVE qu'un bundle template s'installe et tourne
+`src/forgemaster/provision/verify.py:161` · CLI `forgemaster bundle verify <type>` (`manage._verify`).
+Sème le type dans un dossier **jetable**, installe les dépendances de chaque unité npm et lance son script `gate`. Démontage garanti (`finally`), `keep=True` conserve le semis pour inspecter un rouge. I/O injectable : `runner` (défaut `core.run`) et `which` sont des paramètres — le comportement se teste sans réseau ni npm (`tests/test_bundle_verify.py`).
+
+Elle referme un trou de **capital semé** : `npm run gate` juge le `web/` du forgemaster, les tests Python qui citent un bundle vérifient le *semis* (il se résout, se copie), et le crash-test void-runner prouve le câblage MCP **sans installer aucune dépendance npm**. Rien ne prouvait les manifestes que chaque projet créé hérite.
+
+**Trois non-verts distincts, jamais confondus avec un succès** — `rouge` (la preuve a tourné et refuse, exit 1) · `non montable` (npm absent, exit 2) · `sans unité npm` (aucun `package.json` avec script `gate`, exit 2). Et deux refus fail-closed : une **installation ratée n'ouvre pas la porte au gate** (son rouge serait inattribuable), un **repli `npm ci` → `npm install`** (lockfile absent) est **dit** dans le verdict — sans verrou, l'arbre est résolu à l'install, la preuve est plus faible et doit se lire ainsi.
+
+## materialize() — le semis EXACT, pas une reconstruction
+`src/forgemaster/provision/verify.py:118` · appelé par `verify_bundle`.
+Écrit `load_bundle(type)` dans un dossier — la **même** composition `base ⊕ overlay` que `registry.create_project` écrit verbatim dans le SoT d'un projet neuf (aucune substitution de jeton au semis). Ce qui est installé et gaté est donc octet pour octet ce que reçoit le premier projet créé après ; une preuve qui reconstruirait son échantillon ne prouverait que son échantillon.
+
+## npm_units() — les unités gatables d'un semis, découvertes et non listées
+`src/forgemaster/provision/verify.py:129` · appelé par `verify_bundle`.
+Les dossiers portant un `package.json` avec un script `gate` (`node_modules` exclu), via `gate.toolchain.has_gate_script` — la **même** définition d'« unité gatable » que le Tier-0 natif, réutilisée telle quelle : deux définitions finiraient par diverger. Mesuré sur les types vendorés : `browser-game` et `front-ts` à la racine, `site-vitrine` dans `web/`.
+
 ## Zones non détaillées
 - **Helpers privés de `__init__.py`** : `_walk_files` (parcours récursif trié, exclut `_SKIP_DIRS` + `*.pyc` — sources only, pas de binaire dans le SoT), `_read_tree` (arbre → mapping `chemin POSIX → texte`, fail-soft dossier absent → `{}`), `_parse_manifest` (table `[bundle]` d'un bundle composé, lève `BundleError` si absent/illisible). Plomberie déterministe sans surface publique.
 - **`__init__.py`** — `read_reseed_owned` (les chemins que le scaffold POSSÈDE, relus au reseed) et `check_launch_roadmap_drift` (la graine de roadmap a-t-elle divergé de ce que le bundle sème aujourd'hui).
 - **`facet.py`** — `resolve_facet_model` (le modèle de la facette, lu par `worker.dispatch_next` : le mécanique tolère un modèle plus léger, le gate reste le garde-fou).
-- **`manage.py`** (`forgemaster bundle …`) : façade MINCE de présentation sur l'API `provision`, ne ré-implémente aucune logique. `_list` (une ligne/type, valides ✓ + cassés ✗, retour 0), `_validate` (diagnostic actionnable, **retour 1** dès un bundle invalide → gate/CI), `_show` (détail d'un bundle), `_version` (version nue scriptable), `cli_dispatch` (route `args.action` via `_ACTIONS`, `settings` inutilisé — registre = filesystem vendoré).
+- **`manage.py`** (`forgemaster bundle …`) : façade MINCE de présentation sur l'API `provision`, ne ré-implémente aucune logique. `_list` (une ligne/type, valides ✓ + cassés ✗, retour 0), `_validate` (diagnostic actionnable, **retour 1** dès un bundle invalide → gate/CI), `_show` (détail d'un bundle), `_version` (version nue scriptable), `_verify` (`manage.py:144` — présentation du verdict de `verify.verify_bundle` + son exit code, `--json`/`--keep`), `cli_dispatch` (route `args.action` via `_ACTIONS`, `settings` inutilisé — registre = filesystem vendoré).
 - **Nommage divergent** : le label serveur / `aud` (`vault-catalogs`) et l'`iss` (`vault-mcp`) reproduisent verbatim le contrat validé par le serveur forgemaster-catalogs (ex-CT 9113) ; le renommage `vault-catalogs → forgemaster-catalogs` est coordonné serveur-d'abord (backlog `forgemaster-catalogs-naming-coherence`), pas une demi-migration côté client.
