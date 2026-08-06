@@ -15,6 +15,7 @@ Les modes de panne du geste lui-même (moitié restaurée, ordre inversé) sont 
 """
 from __future__ import annotations
 
+import ast
 import json
 import os
 import sqlite3
@@ -341,3 +342,114 @@ def test_un_retour_arriere_ne_repart_pas_EN_AVANT(apres_maj: Settings, tmp_path:
 
     assert "EN AVANT" in str(exc.value)
     assert "update apply" in str(exc.value), "le refus doit nommer le verbe qui va, lui, en avant"
+
+
+# --- 6. l'unité de retour arrière est EXÉCUTOIRE ---------------------------------------------------------
+#
+# Les deux gestes — le lien ET les données — forment une seule unité. Ce que ces tests interdisent n'est pas
+# l'échec : c'est la MOITIÉ. « Binaire rebasculé, données non restaurées » met un binaire ancien sur une base
+# déjà migrée — et la base monte en forward-only, donc cette moitié-là est définitive. Chaque test porte un
+# mode de panne NOMMÉ, parce qu'un test qui garde « le cas d'erreur » en général ne garde rien.
+
+def _args_rollback(home: Path, tmp: Path, shim: Path, cible_venv: Path, snap: Path):
+    return apply_update._parse([
+        "--mode", "rollback", "--home", str(home), "--link", str(home / "current"),
+        "--target-venv", str(cible_venv), "--snapshot", str(snap),
+        "--run-dir", str(tmp / "run"), "--base-url", "http://127.0.0.1:1",
+        "--systemctl", str(shim), "--timeout", "1"])
+
+
+@pytest.fixture
+def shim(tmp_path: Path) -> Path:
+    """Un `systemctl` qui note ce qu'on lui demande — on ne pilote pas le systemd de la machine de test."""
+    trace = tmp_path / "systemctl.trace"
+    faux = tmp_path / "systemctl"
+    faux.write_text(f"#!/bin/sh\necho \"$@\" >> {trace}\n", encoding="utf-8")
+    faux.chmod(0o755)
+    return faux
+
+
+def test_si_la_RESTAURATION_echoue_le_lien_est_RE_bascule_en_avant(
+        apres_maj: Settings, tmp_path: Path, shim: Path, monkeypatch):
+    """MODE DE PANNE 1 — le seul état que l'invariant interdit. Le lien vient de passer sur l'ancien binaire
+    et les données n'ont pas suivi : la base porte l'état NEUF, déjà migré, et l'ancien binaire ne sait pas
+    la lire. Forward-only : rien ne rattraperait ça. On re-bascule donc EN AVANT — le binaire neuf, lui,
+    sait lire cette base."""
+    avant = (apres_maj.home / "current").resolve()
+    snap = next(iter(snapshot.snapshots_dir(apres_maj).iterdir()))
+    cible = apres_maj.home / snapshot.VENVS / "2026-08-01T00-00-00Z"
+    monkeypatch.setattr(apply_update, "probe_isolated", lambda *_a, **_k: {"version": "0.1.0", "sha": "abc"})
+    monkeypatch.setattr(apply_update, "take_snapshot", lambda *_a, **_k: snap)
+    monkeypatch.setattr(apply_update, "_restore", lambda *_a, **_k: False)      # LA panne
+
+    rc, verdict, details = apply_update.rollback(
+        _args_rollback(apres_maj.home, tmp_path, shim, cible, snap), lambda _m: None)
+
+    assert rc == 1
+    assert (apres_maj.home / "current").resolve() == avant, "l'instance est restée sur l'ancien binaire"
+    assert "RE-basculé" in verdict
+    assert "Aucune moitié" in verdict
+
+
+def test_si_la_BASCULE_echoue_aucune_restauration_nest_tentee(
+        apres_maj: Settings, tmp_path: Path, shim: Path, monkeypatch):
+    """MODE DE PANNE 2, le symétrique. La première moitié n'a pas eu lieu : on n'entame pas la seconde.
+    Restaurer des données sous un binaire qu'on n'a pas pu changer, c'est fabriquer l'autre moitié."""
+    snap = next(iter(snapshot.snapshots_dir(apres_maj).iterdir()))
+    cible = apres_maj.home / snapshot.VENVS / "2026-08-01T00-00-00Z"
+    restaure: list[Path] = []
+    monkeypatch.setattr(apply_update, "probe_isolated", lambda *_a, **_k: {"version": "0.1.0", "sha": "abc"})
+    monkeypatch.setattr(apply_update, "take_snapshot", lambda *_a, **_k: snap)
+    monkeypatch.setattr(apply_update, "_restore", lambda s, *_a, **_k: restaure.append(s) or True)
+
+    def _swap_casse(link, target):
+        raise OSError("disque en lecture seule")
+    monkeypatch.setattr(apply_update, "swap", _swap_casse)
+
+    rc, verdict, _ = apply_update.rollback(
+        _args_rollback(apres_maj.home, tmp_path, shim, cible, snap), lambda _m: None)
+
+    assert rc == 1
+    assert restaure == [], "une restauration a été tentée alors que le lien n'avait pas bougé"
+    assert "AUCUNE restauration" in verdict
+
+
+def test_lORDRE_des_deux_gestes_est_fige_DANS_LE_CODE(tmp_path: Path):
+    """MODE DE PANNE 3 — celui de demain, pas d'aujourd'hui. L'ordre `swap` PUIS `_restore` est contraint :
+    `restore` interroge `<home>/current` pour savoir quel schéma le binaire en place lit ; inversé, il verrait
+    le binaire NEUF et refuserait une restauration pourtant légitime. Un mock ne garde que l'appel du jour ;
+    ce test LIT le code, comme le garde AST des `Popen` — parce que la « simplification » qui échangera deux
+    lignes ne se verra pas à la relecture, et que le symptôme qu'elle produirait (un refus de compatibilité)
+    ne ressemble pas à sa cause."""
+    source = Path(apply_update.__file__).read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(source))
+              if isinstance(n, ast.FunctionDef) and n.name == "rollback")
+
+    gestes = [(n.lineno, n.func.id) for n in ast.walk(fn)
+              if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+              and n.func.id in ("swap", "_restore")]
+    premier_couple = gestes[:2]
+
+    assert [nom for _l, nom in premier_couple] == ["swap", "_restore"], (
+        f"l'ordre des deux gestes a changé dans `rollback` : {premier_couple}. Le lien D'ABORD, la "
+        f"restauration ENSUITE — sans quoi le garde de compatibilité voit le mauvais binaire.")
+
+
+def test_une_cible_qui_ne_ramene_pas_est_refusee_AVANT_TOUT_EFFET(
+        apres_maj: Settings, tmp_path: Path, capsys):
+    """MODE DE PANNE 4. Le refus est déjà porté par le préflight ; ce qui est gardé ici est qu'il tombe
+    AVANT le premier geste — lien intact, aucun ordre donné au service. Un refus tardif laisse une instance
+    dans un état que personne n'a choisi."""
+    from forgemaster.cli import main
+
+    ancien = apres_maj.home / snapshot.VENVS / "2026-08-01T00-00-00Z"
+    (ancien / "bin" / "python").write_text(f"#!/bin/sh\necho {schema.SCHEMA_VERSION + 5}\n", encoding="utf-8")
+    avant = (apres_maj.home / "current").resolve()
+
+    rc = main(["update", "rollback", "--unit", str(_unite(apres_maj, tmp_path)),
+               "--home", str(apres_maj.home), "--projects-root", str(apres_maj.projects_root)])
+
+    assert rc == 1
+    assert "restaurable" in capsys.readouterr().err
+    assert (apres_maj.home / "current").resolve() == avant
+    assert not (apres_maj.home / "updates").exists(), "un dossier de run a été créé : le geste avait commencé"

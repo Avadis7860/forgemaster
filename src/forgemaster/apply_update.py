@@ -211,7 +211,17 @@ def apply(args: argparse.Namespace, log) -> tuple[int, str, dict]:
     log("      → RETOUR ARRIÈRE automatique (lien + instantané), sans rien te demander")
     _systemctl(args, "stop", log)
     swap(link, old_venv)
-    _restore(snap, home, log)
+    if not _restore(snap, home, log):
+        # La moitié « données » a manqué : le lien est sur l'ANCIEN binaire et la base porte l'état NEUF,
+        # déjà migré. Ancien binaire sur données neuves = base illisible, l'unique état que l'invariant
+        # interdit. On re-bascule EN AVANT : le binaire neuf sait lire ces données-là, l'instance sert.
+        log("      ✗ la restauration a échoué — RE-BASCULE en avant : un binaire ancien sur des données "
+            "neuves est le seul état interdit")
+        swap(link, blue)
+        _systemctl(args, "start", log)
+        return 2, (f"MAJ échouée ({why}) ET retour arrière incomplet : les données n'ont pas été remises. "
+                   f"Le lien est resté sur la version NEUVE, qui sait lire la base. L'instantané est "
+                   f"intact : {snap}"), {**details, "impact": "aucune moitié : le lien n'a pas bougé"}
     _systemctl(args, "start", log)
     back, back_why = _wait_health(args.base_url, args.timeout)
     details["impact"] = "revenu à l'état d'avant (venv + données)"
@@ -271,8 +281,24 @@ def rollback(args: argparse.Namespace, log) -> tuple[int, str, dict]:
     # NEUF et refuserait une restauration pourtant légitime. Cf. `tests/test_rollback.py`, qui lit cet ordre
     # dans le code même — le risque n'est pas l'appel d'aujourd'hui, c'est la simplification de demain.
     log(f"[4/5] bascule du lien {link} → {cible_venv.name}, PUIS restauration de {cible_snap.name}")
-    swap(link, cible_venv)
-    _restore(cible_snap, home, log)
+    try:
+        swap(link, cible_venv)
+    except OSError as exc:
+        # La PREMIÈRE moitié a échoué : on n'entame pas la seconde. Un lien qui n'a pas bougé et des données
+        # non touchées, c'est une instance intacte — la seule issue acceptable quand le geste ne peut pas
+        # être complet.
+        _systemctl(args, "start", log)
+        return 1, (f"retour arrière refusé — la bascule du lien a échoué ({exc}) : AUCUNE restauration n'a "
+                   f"été tentée, l'instance repart telle qu'elle était"), \
+            {**details, "impact": "aucun : service relancé tel quel"}
+    if not _restore(cible_snap, home, log):
+        log("      ✗ la restauration a échoué — RE-BASCULE en avant : un binaire ancien sur des données "
+            "neuves est le seul état interdit")
+        swap(link, venv_courant)
+        _systemctl(args, "start", log)
+        return 1, ("retour arrière échoué — les données n'ont pas été remises, et le lien a été RE-basculé "
+                   "sur la version courante : elle sait lire cette base. Aucune moitié n'est restée en "
+                   "place."), {**details, "impact": "aucune moitié : l'instance est comme avant le geste"}
     _systemctl(args, "start", log)
 
     log("[5/5] vérification EN VIVANT contre l'identité prouvée à l'étape 1")
@@ -286,10 +312,18 @@ def rollback(args: argparse.Namespace, log) -> tuple[int, str, dict]:
     log("      → RETOUR DU RETOUR : l'instance est remise telle qu'elle était il y a une minute")
     _systemctl(args, "stop", log)
     swap(link, venv_courant)
-    _restore(surete, home, log)
+    # Ici le lien est DÉJÀ revenu sur le binaire courant, qui lit le schéma le plus haut : même si la remise
+    # de la sûreté échoue, la base en place reste lisible par lui. Rien à compenser — mais l'échec se DIT,
+    # parce que les données ne sont alors pas celles qu'on croit.
+    remis = _restore(surete, home, log)
     _systemctl(args, "start", log)
     back, back_why = _wait_health(args.base_url, args.timeout)
-    details["impact"] = "revenu à l'état d'AVANT le retour arrière (venv + données)"
+    details["impact"] = ("revenu à l'état d'AVANT le retour arrière (venv + données)" if remis else
+                         "lien revenu, mais les DONNÉES d'avant le geste n'ont pas pu être remises")
+    if not remis:
+        return 2, (f"retour arrière échoué ({why}), et la remise de l'instantané de sûreté a échoué elle "
+                   f"aussi. Le lien est revenu sur la version courante, qui sait lire la base en place ; "
+                   f"l'instantané de sûreté est intact : {surete}"), details
     if not back:
         return 2, (f"retour arrière échoué ({why}) — l'instance a été remise comme avant, mais elle ne sert "
                    f"TOUJOURS pas : {back_why}. L'instantané de sûreté est intact : {surete}"), details
@@ -355,9 +389,13 @@ def _systemctl(args: argparse.Namespace, action: str, log) -> None:
         log(f"      ⚠ {' '.join(cmd)} → rc={proc.returncode} {proc.stderr.strip()}")
 
 
-def _restore(snapshot: Path, home: Path, log) -> None:
+def _restore(snapshot: Path, home: Path, log) -> bool:
     """Restaure par le script FIGÉ DANS l'instantané — celui écrit en même temps que son manifeste, donc
     celui qui le comprend. C'est aussi le chemin de secours manuel : on exerce ici ce qu'on documente.
+
+    **Rend `False` au lieu d'avaler l'échec** (2026-08-06) : les deux gestes du retour arrière forment une
+    unité, et un appelant qui ne sait pas que la moitié « données » a manqué laisse l'instance avec un
+    binaire ancien sur des données neuves — exactement la moitié que l'invariant interdit.
 
     On lui passe `--allow-unverified-binary` **quand il le connaît**. Ce n'est pas un affaiblissement du garde
     de compatibilité : ici le lien vient d'être rebasculé sur le venv qui a PRIS cet instantané (`apply` fait
@@ -376,6 +414,8 @@ def _restore(snapshot: Path, home: Path, log) -> None:
         log(f"      {line}")
     if proc.returncode != 0:
         log(f"      ⚠ restauration rc={proc.returncode} : {proc.stderr.strip()}")
+        return False
+    return True
 
 
 def _supports_flag(script: Path, flag: str) -> bool:
