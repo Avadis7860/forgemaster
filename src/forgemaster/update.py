@@ -6,17 +6,20 @@ signature, **aucun** réseau. Le canal (proposer, consentir) reste hors périmè
 pas ouvrir un canal.
 
 Le travail réel est fait par `apply_update.py`, script autonome (stdlib pure, zéro import `forgemaster`) que
-ce
-verbe **copie** puis **lance détaché**, sous le `python3` du système : une MAJ qui bascule le venv et
-redémarre le service ne doit pas mourir parce que le shell qui l'a lancée a été fermé — ni, surtout, parce
-que c'est le daemon lui-même qui l'a lancée et qu'on vient de l'arrêter. Le verbe, lui, **suit le journal**
-et rend le code de sortie : détaché ne veut pas dire aveugle.
+ce verbe **copie** puis lance dans sa **propre unité transitoire**, sous le `python3` du système : une MAJ
+qui bascule le venv et redémarre le service ne doit pas mourir parce que le shell qui l'a lancée a été fermé
+— ni, surtout, parce que c'est le daemon lui-même qui l'a lancée et qu'on vient de l'arrêter. Ce second cas
+n'est pas théorique : il a été mesuré, et il exige plus qu'un détachement de session (cf.
+`_echappement_cgroup`). Le verbe, lui, **suit le journal** et rend le code de sortie : détaché ne veut pas
+dire aveugle.
 
 Ce module ne porte donc que ce qu'un script autonome ne peut pas porter : le **refus fail-closed**, avant
 que quoi que ce soit ne bouge.
 
-Quatre refus, tous explicites, jamais un devinage :
+Cinq refus, tous explicites, jamais un devinage :
 
+- **pas de `systemd-run`** → sans lui l'applicateur ne peut pas sortir du cgroup de son lanceur, donc il se
+  ferait tuer par l'arrêt qu'il émet. Livré avec systemd, dont le verbe dépend déjà ;
 - **pas d'unité systemd** → la bascule exige un service gérable. On ne va pas inventer une façon de
   redémarrer le forgemaster de quelqu'un ;
 - **une unité qui lance un venv EN DUR** → c'est l'état de toute installation antérieure au bleu/vert. Elle
@@ -48,7 +51,9 @@ from forgemaster.service import stable_link, unit_path
 
 APPLY = "apply.py"
 UPDATES = "updates"
+RUNNER = "systemd-run"     # le seul échappement au cgroup du lanceur, cf. `_echappement_cgroup`
 FOLLOW_TIMEOUT = 900.0     # 15 min : venv neuf + pip install + deux redémarrages, large
+REGISTER_TIMEOUT = 30.0    # l'ENREGISTREMENT de l'unité (un aller-retour D-Bus), pas le travail qu'elle fait
 
 
 class UpdateRefused(Exception):
@@ -75,10 +80,16 @@ def preflight(settings: Settings, *, wheel: str, unit: str | None, scope: str,
 
 
 def _preflight_service(settings: Settings, *, unit: str | None, scope: str) -> dict:
-    """Ce que l'aller ET le retour vérifient tous les deux : la portée, l'unité, le lien stable, et que
-    l'unité passe **par** ce lien. Extrait de `preflight` le 2026-08-06 en écrivant `preflight_rollback` —
-    dupliquer ces quatre refus aurait produit deux jeux de messages qui divergent, alors que c'est
-    exactement le même invariant de déploiement qui est en jeu."""
+    """Ce que l'aller ET le retour vérifient tous les deux : le lanceur, la portée, l'unité, le lien stable,
+    et que l'unité passe **par** ce lien. Extrait de `preflight` le 2026-08-06 en écrivant
+    `preflight_rollback` — dupliquer ces refus aurait produit deux jeux de messages qui divergent, alors que
+    c'est exactement le même invariant de déploiement qui est en jeu."""
+    if shutil.which(RUNNER) is None:
+        raise UpdateRefused(
+            f"`{RUNNER}` introuvable — sans lui l'applicateur resterait dans le cgroup de son lanceur et le "
+            f"`systemctl stop` qu'il émet le tuerait AVANT qu'il ait posé quoi que ce soit. Il est livré "
+            f"avec systemd, dont ce verbe dépend déjà : s'il manque, il n'y avait de toute façon aucun "
+            f"service à piloter.")
     if scope == "system" and os.geteuid() != 0:
         raise UpdateRefused("portée système demandée sans être root — `systemctl` échouerait en plein "
                             "milieu, service arrêté. Relance en root, ou installe le service en portée "
@@ -296,8 +307,10 @@ def describe_rollback(plan: dict) -> list[str]:
 
 def launch(settings: Settings, plan: dict, *, systemctl: str, service: str, detach: bool,
            mode: str = "apply") -> int:
-    """Copie `apply.py` dans un dossier de run, le lance DÉTACHÉ sous le `python3` système, et suit son
-    journal. Copié et non lancé depuis le paquet : le script doit survivre au venv qu'il remplace.
+    """Copie `apply.py` dans un dossier de run, le lance dans sa PROPRE UNITÉ TRANSITOIRE sous le `python3`
+    système, et suit son journal. Copié et non lancé depuis le paquet : le script doit survivre au venv
+    qu'il remplace — et lancé hors du cgroup de son lanceur (`_echappement_cgroup`) : il doit aussi survivre
+    au SERVICE qu'il arrête.
 
     **Un seul lanceur pour les deux gestes** : c'est le même applicateur hors-processus, le même dossier de
     run, le même journal et le même `result.json`. Ce que `mode` change tient dans les arguments de cible."""
@@ -307,17 +320,46 @@ def launch(settings: Settings, plan: dict, *, systemctl: str, service: str, deta
     shutil.copyfile(Path(__file__).with_name("apply_update.py"), script)
     script.chmod(0o755)
 
-    cmd = [_system_python(), str(script), "--mode", mode,
+    quoi = "MAJ" if mode == "apply" else "retour arrière"
+
+    def _non_lance(motif: str) -> int:
+        """Un lancement qui n'a pas eu lieu se DIT, et rend un rc — il ne remonte pas en exception. `launch`
+        est appelé hors du `try` de `cli_dispatch` (le message « rien n'a été touché » y serait faux : le
+        dossier de run existe), donc une `UpdateRefused` qui sortirait d'ici deviendrait une trace nue."""
+        print(f"✗ {quoi} non lancé(e) — `{RUNNER}` n'a pas enregistré l'unité. Rien n'a bougé sur "
+              f"l'instance ; le dossier de run reste pour la trace.\n  {motif}", file=sys.stderr)
+        return 2
+
+    try:
+        prefixe = _echappement_cgroup(run_dir, scope=plan["scope"], workdir=plan["home"])
+    except UpdateRefused as exc:        # `systemd-run` disparu entre le préflight et ici
+        return _non_lance(str(exc))
+    cmd = [*prefixe, _system_python(), str(script), "--mode", mode,
            "--home", str(plan["home"]), "--link", str(plan["link"]),
            "--run-dir", str(run_dir), "--base-url", plan["base_url"],
            "--service", service, "--systemctl", systemctl, "--scope", plan["scope"]]
     cmd += (["--wheel", str(plan["wheel"])] if mode == "apply" else
             ["--target-venv", str(plan["target_venv"]), "--snapshot", str(plan["snapshot"])])
-    with (run_dir / "launch.log").open("w") as out:
-        subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT,  # noqa: S603
-                         start_new_session=True, cwd=str(settings.home))
-    quoi = "MAJ" if mode == "apply" else "retour arrière"
-    print(f"{quoi} lancé(e) (détaché) — journal : {run_dir / 'journal.log'}")
+    # `run` et non `Popen` : `systemd-run` rend la main dès l'unité ENREGISTRÉE, pas à la fin du travail.
+    # On lit donc son verdict d'enregistrement — un lancement qui ne part pas cesse d'être silencieux. Avec
+    # `Popen`, personne ne le savait : `follow` attendait le quart d'heure entier puis rendait un délai,
+    # c'est-à-dire « je ne sais pas » là où le système avait déjà dit « non ».
+    #
+    # Le `timeout` n'est pas une précaution de style : `Popen` ne bloquait JAMAIS, `run` si. Enregistrer une
+    # unité est un aller-retour D-Bus avec le gestionnaire systemd — un gestionnaire coincé ferait attendre
+    # ce processus sans fin. Acceptable pour un humain devant un terminal, pas pour la route de la 3a·2b qui
+    # appellera d'ici : une requête qui ne rend jamais la main est pire qu'une requête qui refuse.
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True,  # noqa: S603
+                              check=False, timeout=REGISTER_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return _non_lance(f"aucune réponse du gestionnaire systemd après {REGISTER_TIMEOUT:.0f} s "
+                          f"(enregistrement de l'unité, pas la MAJ elle-même)")
+    if proc.returncode != 0:
+        return _non_lance((proc.stderr or proc.stdout or "").strip() or f"rc={proc.returncode}")
+    # Rien n'est écrit dans `launch.log` ici : c'est l'unité qui y écrit (`StandardOutput=append:`), et
+    # l'écraser avec le « Running as unit… » de `systemd-run` effacerait précisément la trace qu'on garde.
+    print(f"{quoi} lancé(e) (unité {_unite_transitoire(run_dir)}) — journal : {run_dir / 'journal.log'}")
     if detach:
         print("ça continue même si tu fermes ce terminal ; `cat` le journal pour le suivre.")
         return 0
@@ -348,6 +390,43 @@ def follow(run_dir: Path, *, timeout: float = FOLLOW_TIMEOUT, poll: float = 0.3)
 def _system_python() -> str:
     """Le `python3` du SYSTÈME, jamais celui du venv qu'on est en train de remplacer."""
     return shutil.which("python3") or "/usr/bin/python3"
+
+
+def _unite_transitoire(run_dir: Path) -> str:
+    """Le nom de l'unité qui portera l'applicateur — **dérivé** du dossier de run, jamais posé à côté de
+    lui. Un run et son unité ne peuvent donc pas diverger, et depuis un dossier de run on sait quoi
+    interroger (`systemctl [--user] status …`) sans mémoire externe. Même doctrine que la correspondance
+    instantané ↔ binaire (`preflight_rollback`) : ce qui se dérive ne se stocke pas."""
+    return f"forgemaster-update-{run_dir.name}"
+
+
+def _echappement_cgroup(run_dir: Path, *, scope: str, workdir: Path) -> list[str]:
+    """Le préfixe qui sort l'applicateur du cgroup de son lanceur, en le faisant devenir **sa propre unité
+    transitoire**.
+
+    Pourquoi il faut sortir, et pourquoi `setsid` ne suffisait pas : `Popen(start_new_session=True)` change
+    la **session**, pas le **cgroup**. Lancé par le daemon, l'applicateur restait dans le cgroup de
+    `forgemaster.service` — que le `systemctl stop` qu'il émet lui-même vide entièrement (`KillMode` par
+    défaut = `control-group`). Mesuré sur vrai systemd le 2026-08-06 : service laissé à terre, aucun
+    `result.json` écrit, donc **aucun verdict à retrouver**. Jamais rencontré avant parce que toutes nos
+    preuves partaient d'un ssh, c'est-à-dire de dehors.
+
+    **Pourquoi pas `KillMode=process` sur l'unité** (l'autre échappement possible) : le daemon n'a pas qu'un
+    enfant. Les shells PTY (`terminal.pty`) et les workers de dispatch (`dispatch.worker`) vivent eux aussi
+    dans son cgroup, et `KillMode=process` les orphelinerait **tous**, à chaque arrêt, pour corriger ce seul
+    cas. L'unité transitoire ne change le sort que de l'applicateur, à l'endroit qui le concerne.
+
+    `--collect` : l'unité s'efface après sa sortie, y compris en échec — sans quoi un run échoué laisserait
+    un nom occupé. `append:` conserve `launch.log`, qui porte ce qui arrive **avant** que l'applicateur
+    ouvre son propre `journal.log` : les pannes les plus précoces, celles dont il ne reste rien d'autre."""
+    runner = shutil.which(RUNNER)
+    if runner is None:                  # normalement déjà refusé au préflight ; ceinture, et honnête
+        raise UpdateRefused(f"`{RUNNER}` introuvable au moment de lancer.")
+    log = run_dir / "launch.log"
+    return [runner, *(["--user"] if scope == "user" else []),
+            "--collect", f"--unit={_unite_transitoire(run_dir)}",
+            "-p", f"WorkingDirectory={workdir}",
+            "-p", f"StandardOutput=append:{log}", "-p", f"StandardError=append:{log}"]
 
 
 # --- CLI ----------------------------------------------------------------------------------------------
