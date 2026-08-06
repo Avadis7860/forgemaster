@@ -28,7 +28,7 @@ from __future__ import annotations
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from forgemaster import update
 from forgemaster.daemon.deps import Deps, get_deps
@@ -41,12 +41,21 @@ Scope = Literal["user", "system"]
 DEFAULT_SCOPE: Scope = "user"
 
 
+# `extra="forbid"` — déviation ASSUMÉE de la permissivité par défaut, et le motif est propre à ces deux
+# corps : un champ ignoré en silence laisserait croire qu'on a épinglé l'unité (`unit`) ou le binaire
+# systemctl. Sur la route la plus puissante du produit, « ignoré » se lit « honoré » par qui l'a écrit. Un
+# 422 dit la vérité — c'est le même invariant que « jamais de cap silencieux », appliqué à une entrée.
+_STRICT = ConfigDict(extra="forbid")
+
+
 class ApplyRequest(BaseModel):
+    model_config = _STRICT
     wheel: str                       # le wheel LOCAL à poser (aucun réseau, aucune résolution)
     scope: Scope = DEFAULT_SCOPE
 
 
 class RollbackRequest(BaseModel):
+    model_config = _STRICT
     snapshot: str | None = None      # défaut : le plus récent instantané qui ramène VRAIMENT en arrière
     scope: Scope = DEFAULT_SCOPE
 
@@ -108,6 +117,10 @@ def make_update_router() -> APIRouter:
         plan = _plan(deps, request, mode=mode, wheel=wheel, snapshot=snapshot, scope=scope)
         issue = update.spawn(deps.settings, plan, systemctl="systemctl", service="forgemaster", mode=mode)
         if not issue["ok"]:
+            if issue["reason"] == "collision":
+                # Un autre geste est parti dans la même seconde : conflit TRANSITOIRE, pas une panne — et
+                # surtout rien n'a été touché, ni sur l'instance ni sur le run de l'autre.
+                raise HTTPException(status_code=409, detail=issue["detail"])
             # Ce n'est PAS un refus (l'instance était d'accord) : c'est une machinerie indisponible. Le 503
             # le dit, et l'identifiant du run voyage quand même — le dossier existe, la trace est trouvable.
             raise HTTPException(

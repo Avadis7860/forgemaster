@@ -212,21 +212,49 @@ def test_une_ORIGINE_TIERCE_ne_peut_pas_declencher_une_MAJ(instance):
     assert ok.headers.get("access-control-allow-origin") == "http://localhost:5173"
 
 
-def test_la_surface_HTTP_est_plus_ETROITE_que_la_CLI(instance, monkeypatch):
+def test_la_surface_HTTP_est_plus_ETROITE_que_la_CLI_et_le_DIT(instance, monkeypatch):
     """Ni `unit`, ni `systemctl`, ni `service` dans le corps : ce sont des points d'injection pour un test
-    ou pour un opérateur devant un terminal, pas des choses qu'on accepte du réseau. Un corps qui les porte
-    ne doit pas les voir honorés."""
-    client, _settings, wheel = instance
+    ou pour un opérateur devant un terminal, pas des choses qu'on accepte du réseau.
+
+    Et le corps les **refuse** au lieu de les ignorer (`extra="forbid"`) : sur la route la plus puissante du
+    produit, « ignoré » se lit « honoré » par qui l'a écrit. Un 422 dit la vérité, et aucun run ne part."""
+    client, settings, wheel = instance
     lances = _pas_de_vrai_systemd(monkeypatch)
 
     r = client.post("/api/update/apply",
                     json={"wheel": str(wheel), "unit": "/tmp/pirate.service",
                           "systemctl": "/tmp/pirate", "service": "autre"})
 
-    assert r.status_code == 202, r.text
+    assert r.status_code == 422, r.text
+    assert lances == [] and not (settings.home / update.UPDATES).exists()
+
+    # Le contre-témoin : le corps LÉGITIME passe, et le lanceur reçoit nos valeurs, pas celles du réseau.
+    ok = client.post("/api/update/apply", json={"wheel": str(wheel)})
+    assert ok.status_code == 202, ok.text
     argv = " ".join(lances[0])
-    assert "/tmp/pirate" not in argv, "un chemin venu du corps de la requête a atteint l'argv du lanceur"
-    assert "--service forgemaster" in argv and "--service autre" not in argv
+    assert "/tmp/pirate" not in argv and "--service forgemaster" in argv
+
+
+def test_deux_gestes_dans_la_MEME_seconde_ne_sEcrasent_pas(instance, monkeypatch):
+    """L'horodatage d'un run est à la SECONDE, et le handler est synchrone — donc servi par un fil du pool :
+    deux requêtes peuvent y tomber ensemble. Avec un `mkdir(exist_ok=True)`, la seconde écrasait le
+    `run.json` de la première (l'intention d'un run EN VOL, perdue) avant d'échouer de toute façon sur un nom
+    d'unité déjà pris. Elle refuse maintenant en 409, et rien de l'autre n'est touché."""
+    client, settings, wheel = instance
+    _pas_de_vrai_systemd(monkeypatch)
+
+    premier = client.post("/api/update/apply", json={"wheel": str(wheel)}).json()
+    meta = (settings.home / update.UPDATES / premier["run"] / update.RUN_META)
+    avant = meta.read_text(encoding="utf-8")
+    # Le temps est gelé sur la seconde du premier run : la collision devient CERTAINE au lieu d'être une
+    # course qu'on espère perdre. Un identifiant de run ne porte aucun `%`, donc `strftime` le rend verbatim.
+    monkeypatch.setattr(update, "RUN_STAMP", premier["run"])
+
+    r = client.post("/api/update/apply", json={"wheel": str(wheel)})
+
+    assert r.status_code == 409
+    assert "même seconde" in r.json()["detail"]
+    assert meta.read_text(encoding="utf-8") == avant, "l'intention du run en vol a été écrasée"
 
 
 def test_les_shells_VIVANTS_du_terminal_sont_dits_par_la_ROUTE(instance):

@@ -577,9 +577,13 @@ def test_un_lancement_qui_nA_PAS_LIEU_rend_un_rc_au_lieu_dune_trace(live: Settin
                                                                     monkeypatch, capsys):
     """`launch` est appelé HORS du `try` de `cli_dispatch` : une `UpdateRefused` qui en sortirait deviendrait
     une trace nue. Les deux façons de ne pas partir — le lanceur disparu entre le préflight et ici, et un
-    gestionnaire systemd qui ne répond pas — rendent donc un rc, comme le refus d'enregistrement."""
+    gestionnaire systemd qui ne répond pas — rendent donc un rc, comme le refus d'enregistrement.
+
+    Chaque volet part d'un `home` NEUF : depuis que deux runs de la même seconde se refusent
+    (`test_un_second_geste_dans_la_MEME_seconde_se_REFUSE`), enchaîner deux `launch` ici mesurerait la
+    collision au lieu de ce que ce test garde. Deux scénarios dans une fonction ne doivent pas se marcher
+    dessus."""
     monkeypatch.setattr(update, "follow", lambda run_dir, **_k: 0)
-    plan = _plan_de_lancement(live, tmp_path, "user")
 
     # `which` est piloté dans les DEUX volets, jamais laissé à l'hôte : un test dont le résultat dépend de
     # la présence de `systemd-run` sur la machine de build mesure la machine, pas le code.
@@ -587,16 +591,44 @@ def test_un_lancement_qui_nA_PAS_LIEU_rend_un_rc_au_lieu_dune_trace(live: Settin
     absent = lambda nom, *a, **k: None if nom == update.RUNNER else vrai(nom, *a, **k)          # noqa: E731
     present = lambda nom, *a, **k: "/usr/bin/systemd-run" if nom == update.RUNNER else vrai(nom)  # noqa: E731
 
+    plan = _plan_de_lancement(live, tmp_path, "user")
     monkeypatch.setattr(update.shutil, "which", absent)
     assert update.launch(live, plan, systemctl="systemctl", service="forgemaster", detach=False) == 2
 
     def _bloque(cmd, **_kw):
         raise subprocess.TimeoutExpired(cmd, update.REGISTER_TIMEOUT)
 
+    ailleurs = Settings.resolve(home=tmp_path / "home-2", projects_root=tmp_path / "projects")
+    plan2 = {**plan, "home": ailleurs.home}
     monkeypatch.setattr(update.shutil, "which", present)
     monkeypatch.setattr(update.subprocess, "run", _bloque)
-    assert update.launch(live, plan, systemctl="systemctl", service="forgemaster", detach=False) == 2
+    assert update.launch(ailleurs, plan2, systemctl="systemctl", service="forgemaster", detach=False) == 2
     assert "gestionnaire systemd" in capsys.readouterr().err
+
+
+def test_un_second_geste_dans_la_MEME_seconde_se_REFUSE(live: Settings, tmp_path: Path, monkeypatch,
+                                                        capsys):
+    """L'horodatage d'un run est à la SECONDE. Avec un `mkdir(exist_ok=True)`, un second geste tombé dans la
+    même seconde écrasait le `run.json` du premier — l'intention d'un run EN VOL — avant d'échouer de toute
+    façon sur un nom d'unité déjà pris. Il refuse maintenant, et le chapô du message suit le motif : dire
+    « systemd n'a pas enregistré » sur une collision enverrait chercher la panne là où il n'y en a pas."""
+    _capture_lancements(monkeypatch)
+    monkeypatch.setattr(update, "follow", lambda run_dir, **_k: 0)
+    plan = _plan_de_lancement(live, tmp_path, "user")
+    premier = update.spawn(live, plan, systemctl="systemctl", service="forgemaster")
+    assert premier["ok"] is True
+    avant = (premier["run"] / update.RUN_META).read_text(encoding="utf-8")
+
+    # Temps gelé sur la seconde du premier : la collision devient CERTAINE au lieu d'être une course qu'on
+    # espère perdre. Un identifiant de run ne porte aucun `%`, donc `strftime` le rend verbatim.
+    monkeypatch.setattr(update, "RUN_STAMP", premier["run"].name)
+
+    rc = update.launch(live, plan, systemctl="systemctl", service="forgemaster", detach=False)
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "horodatage" in err and "n'a pas enregistré" not in err
+    assert (premier["run"] / update.RUN_META).read_text(encoding="utf-8") == avant
 
 
 def test_sans_systemd_run_le_preflight_REFUSE_avant_tout_effet(live: Settings, tmp_path: Path, monkeypatch):

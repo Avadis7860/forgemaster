@@ -386,11 +386,21 @@ def spawn(settings: Settings, plan: dict, *, systemctl: str, service: str,
     run, le même journal et le même `result.json`. Ce que `mode` change tient dans les arguments de cible."""
     now = datetime.now(UTC)
     run_dir = settings.home / UPDATES / now.strftime(RUN_STAMP)
-    run_dir.mkdir(parents=True, exist_ok=True)
+    unite = _unite_transitoire(run_dir)
+    # `exist_ok=False` : l'horodatage est à la SECONDE, et depuis la route deux requêtes peuvent tomber dans
+    # la même (le handler est synchrone, donc servi par un fil du pool). Avec `exist_ok=True`, la seconde
+    # écrasait le `run.json` de la première — l'intention d'un run en vol, perdue — avant d'échouer de toute
+    # façon sur un nom d'unité déjà pris. Un second geste dans la même seconde n'est de toute manière pas un
+    # geste qu'on veut servir : on le REFUSE, et rien de l'autre n'est touché.
+    try:
+        run_dir.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        return {"run": run_dir, "unit": unite, "ok": False, "reason": "collision",
+                "detail": f"un run porte déjà l'horodatage {run_dir.name} — un autre geste vient de partir "
+                          f"dans la même seconde. Rien n'a été touché ; regarde son état avant de relancer."}
     script = run_dir / APPLY
     shutil.copyfile(Path(__file__).with_name("apply_update.py"), script)
     script.chmod(0o755)
-    unite = _unite_transitoire(run_dir)
 
     # L'INTENTION, écrite AVANT l'effet — et avant même de savoir si le lancement partira. Le mode ne se
     # dérive de rien : `result.json` ne le porte pas et n'existe qu'à la fin ; le déduire de la prose de
@@ -404,7 +414,7 @@ def spawn(settings: Settings, plan: dict, *, systemctl: str, service: str,
                  "started_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"), **cible})
 
     def _non_lance(motif: str) -> dict:
-        return {"run": run_dir, "unit": unite, "ok": False, "detail": motif}
+        return {"run": run_dir, "unit": unite, "ok": False, "reason": "runner", "detail": motif}
 
     try:
         prefixe = _echappement_cgroup(run_dir, scope=plan["scope"], workdir=plan["home"])
@@ -435,7 +445,7 @@ def spawn(settings: Settings, plan: dict, *, systemctl: str, service: str,
         return _non_lance((proc.stderr or proc.stdout or "").strip() or f"rc={proc.returncode}")
     # Rien n'est écrit dans `launch.log` ici : c'est l'unité qui y écrit (`StandardOutput=append:`), et
     # l'écraser avec le « Running as unit… » de `systemd-run` effacerait précisément la trace qu'on garde.
-    return {"run": run_dir, "unit": unite, "ok": True, "detail": ""}
+    return {"run": run_dir, "unit": unite, "ok": True, "reason": "", "detail": ""}
 
 
 def launch(settings: Settings, plan: dict, *, systemctl: str, service: str, detach: bool,
@@ -448,8 +458,13 @@ def launch(settings: Settings, plan: dict, *, systemctl: str, service: str, deta
     quoi = "MAJ" if mode == "apply" else "retour arrière"
     issue = spawn(settings, plan, systemctl=systemctl, service=service, mode=mode)
     if not issue["ok"]:
-        print(f"✗ {quoi} non lancé(e) — `{RUNNER}` n'a pas enregistré l'unité. Rien n'a bougé sur "
-              f"l'instance ; le dossier de run reste pour la trace.\n  {issue['detail']}", file=sys.stderr)
+        # Le motif du chapô suit le `reason` : dire « systemd n'a pas enregistré » sur une COLLISION
+        # d'horodatage enverrait chercher la panne au mauvais endroit — et il n'y a pas de panne.
+        tete = ("un run porte déjà cet horodatage. Rien n'a bougé"
+                if issue["reason"] == "collision"
+                else f"`{RUNNER}` n'a pas enregistré l'unité. Rien n'a bougé sur l'instance ; le dossier "
+                     f"de run reste pour la trace")
+        print(f"✗ {quoi} non lancé(e) — {tete}.\n  {issue['detail']}", file=sys.stderr)
         return 2
     run_dir = issue["run"]
     print(f"{quoi} lancé(e) (unité {issue['unit']}) — journal : {run_dir / RUN_JOURNAL}")

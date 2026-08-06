@@ -36,6 +36,12 @@ bascule. `GET /api/update/plan` (préflight + description, **idempotent**) · `P
   **et** confinement du chemin résolu).
 - `update.spawn` est extrait de `launch` : le cœur ne parle pas (aucun `print`, aucune exception qui
   s'échappe), la CLI et le daemon en sont deux vues.
+- **Deux gestes dans la même seconde ne s'écrasent plus.** L'horodatage d'un run est à la seconde, et le
+  handler HTTP est synchrone (donc servi par un fil du pool) : avec `mkdir(exist_ok=True)`, le second
+  écrasait le `run.json` du premier — l'intention d'un run **en vol** — avant d'échouer de toute façon sur
+  un nom d'unité déjà pris. Il refuse maintenant (**409**), et rien de l'autre n'est touché.
+- **Les corps de requête sont `extra="forbid"`** (**422** sur un champ inconnu) : sur cette route, un champ
+  ignoré en silence se lit « honoré » par qui l'a écrit.
 
 ### Les deux gardes de l'invariant de retour arrière (aucun changement de schéma, aucun format touché)
 
