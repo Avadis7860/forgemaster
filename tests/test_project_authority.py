@@ -228,7 +228,7 @@ def test_la_base_absente_ne_produit_aucun_verdict(tmp_path: Path):
     disque → pas de verdict, et surtout pas de base créée pour l'occasion."""
     settings = Settings.resolve(home=tmp_path / "vide", projects_root=tmp_path / "p")
 
-    assert update._survey_authority(settings) == []
+    assert update.survey_authority(settings) == []
     assert not settings.db_path.exists()
 
 
@@ -242,4 +242,4 @@ def test_une_base_illisible_ne_bloque_pas(tmp_path: Path):
     with pytest.raises(sqlite3.DatabaseError):             # prémisse : elle est bien illisible
         store.connect(settings.db_path).execute("SELECT 1 FROM projects")
 
-    assert update._survey_authority(settings) == []
+    assert update.survey_authority(settings) == []

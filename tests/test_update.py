@@ -777,3 +777,226 @@ def test_la_politique_est_declaree_UNE_fois_et_les_deux_retentions_en_derivent()
     """`ROLLBACK_DEPTH` vit chez le module stdlib-pur parce que `snapshot` peut le lire, jamais l'inverse."""
     assert apply_update.KEEP_VENVS == apply_update.ROLLBACK_DEPTH + 1
     assert snapshot.KEEP == apply_update.ROLLBACK_DEPTH + 2
+
+
+# --- la route lanceuse : un état qui SURVIT au daemon (2026-08-06, sous-phase 3a·2b) -------------------
+#
+# Le processus qui répond au `GET` d'après n'est ni celui qui a reçu le `POST`, ni même le même binaire : la
+# bascule est passée entre les deux. Tout ce qui suit garde donc UNE propriété — l'état d'un run se relit du
+# disque, et il sait dire « je ne sais pas ».
+
+def _run_sur_disque(live: Settings, nom: str = "2026-08-06T10-00-00Z", **fichiers: str) -> Path:
+    """Un dossier de run construit à la main : on juge la LECTURE d'état, pas le lanceur qui l'a produit."""
+    run_dir = live.home / update.UPDATES / nom
+    run_dir.mkdir(parents=True)
+    for base, contenu in fichiers.items():
+        (run_dir / base).write_text(contenu, encoding="utf-8")
+    return run_dir
+
+
+def test_spawn_ecrit_lINTENTION_avant_de_savoir_si_le_lancement_partira(live: Settings, tmp_path: Path,
+                                                                       monkeypatch, capsys):
+    """Le mode ne se dérive de RIEN : `result.json` ne le porte pas et n'existe qu'à la fin. Un run qui n'a
+    jamais démarré doit quand même dire ce qu'il allait faire — sinon la liste des runs affiche des dossiers
+    muets. Et le cœur ne PARLE pas : appelé depuis une requête HTTP, un `print` finirait dans le journal du
+    service."""
+    _capture_lancements(monkeypatch, rc=1, err="Access denied")
+    issue = update.spawn(live, _plan_de_lancement(live, tmp_path, "user"),
+                         systemctl="systemctl", service="forgemaster")
+
+    assert issue["ok"] is False and "Access denied" in issue["detail"]
+    assert capsys.readouterr() == ("", ""), "le cœur a parlé — la route l'appelle depuis une requête"
+    meta = json.loads((issue["run"] / update.RUN_META).read_text(encoding="utf-8"))
+    assert meta["mode"] == "apply" and meta["scope"] == "user"
+    assert meta["unit"] == issue["unit"] == f"forgemaster-update-{issue['run'].name}"
+    assert meta["wheel"].endswith("c.whl"), "l'intention ne dit pas ce qu'elle allait poser"
+
+
+def test_un_run_TERMINE_rend_son_verdict_sans_interroger_personne(live: Settings):
+    """Le cas nominal d'après la bascule : `result.json` est là, et il tranche AVANT toute question à
+    systemd — l'unité a été effacée par `--collect`, l'interroger ne dirait rien d'utile."""
+    run_dir = _run_sur_disque(
+        live, **{update.RUN_META: '{"mode": "apply", "scope": "user"}',
+                 update.RUN_RESULT: '{"rc": 0, "verdict": "MAJ posée"}',
+                 update.RUN_JOURNAL: "== MAJ lancée\n"})
+    demandes: list[tuple[str, str]] = []
+
+    etat = update.run_state(run_dir, is_active=lambda u, s: demandes.append((u, s)) or True)
+
+    assert etat["state"] == "done" and etat["rc"] == 0 and etat["verdict"] == "MAJ posée"
+    assert etat["mode"] == "apply" and etat["journal"].startswith("== MAJ lancée")
+    assert demandes == [], "l'unité a été interrogée alors que le verdict était déjà écrit"
+
+
+def test_un_run_qui_a_ECHOUE_est_distinct_dun_run_qui_a_REUSSI(live: Settings):
+    """Un rc non nul n'est pas une absence de verdict : c'est un verdict, et il porte son motif."""
+    run_dir = _run_sur_disque(live, **{update.RUN_RESULT: '{"rc": 3, "verdict": "le vivant ne sert pas"}'})
+
+    etat = update.run_state(run_dir)
+
+    assert etat["state"] == "failed" and etat["rc"] == 3 and "ne sert pas" in etat["verdict"]
+
+
+def test_sans_sonde_un_run_SANS_verdict_avoue_au_lieu_de_conclure(live: Settings):
+    """Le garde-fou de l'économie de sonde. Sans avoir demandé au gestionnaire, on ne peut PAS conclure à
+    `interrupted` : ce serait annoncer une mort qu'on n'a pas vérifiée — et c'est exactement ce qu'un appelant
+    qui saute la sonde (la liste) produirait sinon."""
+    run_dir = _run_sur_disque(live, **{update.RUN_JOURNAL: "== MAJ lancée\n"})
+
+    etat = update.run_state(run_dir)                      # aucune sonde injectée
+
+    assert etat["state"] == "unknown" and "pas été sondée" in etat["verdict"]
+
+
+def test_un_run_SANS_verdict_dont_lunite_TOURNE_est_en_cours(live: Settings):
+    """L'unité se dérive du dossier de run : on sait quoi interroger sans aucune mémoire externe. C'est la
+    seule chose que la sonde systemd sert à trancher — `running` contre `interrupted`."""
+    run_dir = _run_sur_disque(live, **{update.RUN_META: '{"mode": "apply", "scope": "user"}',
+                                       update.RUN_JOURNAL: "== MAJ lancée\n"})
+    demandes: list[tuple[str, str]] = []
+
+    etat = update.run_state(run_dir, is_active=lambda u, s: demandes.append((u, s)) or True)
+
+    assert etat["state"] == "running" and etat["rc"] is None
+    assert demandes == [(f"forgemaster-update-{run_dir.name}", "user")]
+
+
+def test_un_run_PARTI_sans_verdict_et_sans_unite_dit_QUIL_NE_SAIT_PAS(live: Settings):
+    """L'état que le fire-and-forget d'avant ne savait pas dire : il ne restait qu'un silence, impossible à
+    distinguer d'une attente. Une lecture d'état qui ne sait pas dire « je ne sais pas » n'en est pas une."""
+    run_dir = _run_sur_disque(live, **{update.RUN_LAUNCH: "Running as unit …\n"})
+
+    etat = update.run_state(run_dir, is_active=lambda _u, _s: False)
+
+    assert etat["state"] == "interrupted" and etat["rc"] is None and etat["verdict"]
+
+
+def test_un_run_qui_nA_JAMAIS_demarre_ne_se_confond_pas_avec_un_run_interrompu(live: Settings):
+    """`launch.log` est ouvert par l'UNITÉ, à son démarrage. Son absence CONJOINTE avec celle du verdict est
+    donc ce qui sépare « enregistré, jamais parti » de « parti, jamais conclu » — et seul le premier permet
+    de dire « rien n'a bougé sur l'instance »."""
+    run_dir = _run_sur_disque(live, **{update.RUN_META: '{"mode": "rollback", "scope": "user"}'})
+
+    etat = update.run_state(run_dir, is_active=lambda _u, _s: False)
+
+    assert etat["state"] == "never_started" and "rien n'a bougé" in etat["verdict"]
+    assert etat["mode"] == "rollback"
+
+
+def test_la_liste_des_runs_DIT_sa_borne_au_lieu_de_la_taire(live: Settings):
+    """Invariant de la forge : jamais de cap silencieux. Une liste tronquée sans le dire se lit « c'est
+    tout » — et sur une instance qui accumule ses runs, ce serait faux dès le 51ᵉ."""
+    for i in range(4):
+        _run_sur_disque(live, f"2026-08-0{i + 1}T10-00-00Z", **{update.RUN_RESULT: '{"rc": 0}'})
+    (live.home / update.UPDATES / "pas-un-run").mkdir()      # un intrus ne devient pas un run
+
+    vue = update.list_runs(live, limit=2)
+
+    assert [r["run"] for r in vue["runs"]] == ["2026-08-04T10-00-00Z", "2026-08-03T10-00-00Z"]
+    assert vue["total"] == 4 and vue["truncated"] is True
+    assert all(r["journal"] == "" for r in vue["runs"]), "la liste porte des journaux qu'elle n'affiche pas"
+
+
+def test_la_liste_ne_depense_QU_UNE_sonde_systemd(live: Settings):
+    """Sonder chaque run coûterait jusqu'à `limit` allers-retours au gestionnaire sur une simple vue de
+    liste, et le plafond tomberait sur une requête HTTP le jour où ce gestionnaire est coincé — le jour où
+    l'on regarde justement cette page. La sonde va au run sans verdict le plus RÉCENT ; les suivants
+    rendent `unknown`, jamais un `interrupted` que personne n'a vérifié."""
+    _run_sur_disque(live, "2026-08-01T10-00-00Z", **{update.RUN_JOURNAL: "vieux\n"})
+    _run_sur_disque(live, "2026-08-02T10-00-00Z", **{update.RUN_RESULT: '{"rc": 0}'})
+    _run_sur_disque(live, "2026-08-03T10-00-00Z", **{update.RUN_JOURNAL: "récent\n"})
+    demandes: list[str] = []
+
+    vue = update.list_runs(live, is_active=lambda u, _s: demandes.append(u) or True)
+
+    assert [(r["run"], r["state"]) for r in vue["runs"]] == [
+        ("2026-08-03T10-00-00Z", "running"),
+        ("2026-08-02T10-00-00Z", "done"),
+        ("2026-08-01T10-00-00Z", "unknown")]
+    assert demandes == ["forgemaster-update-2026-08-03T10-00-00Z"], f"sondes dépensées : {demandes}"
+
+
+def test_un_identifiant_de_run_venu_du_reseau_nEST_PAS_un_chemin(live: Settings):
+    """Deux gardes, et aucune ne suffit seule : la FORME (`..`, un chemin absolu), puis le CONFINEMENT du
+    chemin résolu — une forme valide peut être un lien symbolique posé là par autre chose."""
+    _run_sur_disque(live)
+    dehors = live.home / "secret"
+    dehors.mkdir()
+    os.symlink(dehors, live.home / update.UPDATES / "2026-01-01T00-00-00Z")
+
+    assert update.run_dir_for(live, "2026-08-06T10-00-00Z").is_dir()
+    for hostile in ("../../etc", "..", ".", "/etc", "2026-08-06T10-00-00Z/../..", "inconnu",
+                    "2026-01-01T00-00-00Z"):
+        with pytest.raises(KeyError):
+            update.run_dir_for(live, hostile)
+
+
+# --- le sixième refus : ne pas emporter un travail en cours --------------------------------------------
+
+def test_un_dispatch_en_cours_BLOQUE_les_deux_gestes_et_les_nomme(live: Settings, tmp_path: Path,
+                                                                  monkeypatch):
+    """L'arrêt du service tue le worker in-process ; le boot suivant le réape `killed`, sa task retombe
+    `todo`, et les jetons déjà dépensés sont perdus. Le consentement porte sur *appliquer la MAJ*, jamais
+    sur *perdre le travail en cours*. Le refus vit dans le préflight PARTAGÉ — la CLI arrête exactement le
+    même service, elle doit en hériter."""
+    whl = tmp_path / "c.whl"
+    whl.write_bytes(b"")
+    _unit(tmp_path / "u", str(live.home / "current" / "bin" / "forgemaster"))
+    en_vol = [{"job_id": "j-1", "project": "atelier-fictif", "feature": "f", "task": "t",
+               "started_at": "2026-08-06T09:00:00Z"}]
+
+    for geste in ("apply", "rollback"):
+        with pytest.raises(UpdateRefused) as exc:
+            if geste == "apply":
+                update.preflight(live, wheel=str(whl), unit=str(tmp_path / "u"), scope="user",
+                                 in_flight=en_vol)
+            else:
+                update.preflight_rollback(live, snapshot=None, unit=str(tmp_path / "u"), scope="user",
+                                          in_flight=en_vol)
+        assert "atelier-fictif/f/t" in str(exc.value) and "j-1" in str(exc.value)
+        assert "abort" in str(exc.value), "le refus ne dit pas comment le lever"
+
+
+def test_une_base_absente_ou_illisible_ne_BLOQUE_pas_la_mise_a_jour(tmp_path: Path):
+    """Dégradation honnête, même contrat que `survey_authority` : « je ne sais pas » n'est pas « non ». Un
+    refus qui se déclencherait sur une base illisible interdirait la MAJ des instances qu'il faut justement
+    mettre à jour — celles dont la base est en retard."""
+    vierge = Settings.resolve(home=tmp_path / "vide", projects_root=tmp_path / "p")
+    assert update.survey_in_flight(vierge) == []
+
+    vierge.home.mkdir(parents=True, exist_ok=True)
+    vierge.db_path.write_bytes(b"ceci n'est pas une base sqlite")
+    assert update.survey_in_flight(vierge) == []
+
+
+def test_survey_in_flight_voit_un_VRAI_job_running(live: Settings):
+    """La sonde lit la même table que l'abort, par le même join — mais à l'échelle de l'INSTANCE : une MAJ
+    n'arrête pas un projet, elle arrête le daemon."""
+    from forgemaster.dispatch import jobs
+    from forgemaster.roadmap import model
+
+    conn = store.open_db(live)
+    model.add_feature(conn, project_slug="atelier-fictif", slug="f-fictive")
+    tache = model.add_task(conn, feature_ref="atelier-fictif/f-fictive", slug="t-fictive")
+    jid = jobs.record_start(conn, task_id=tache["id"], worktree="/tmp/wt", session_id="s-fictive")
+    conn.close()
+
+    en_vol = update.survey_in_flight(live)
+
+    assert [(j["job_id"], j["project"], j["feature"], j["task"]) for j in en_vol] == [
+        (jid, "atelier-fictif", "f-fictive", "t-fictive")]
+
+
+def test_les_shells_du_terminal_web_sont_DITS_et_ne_bloquent_pas(live: Settings, tmp_path: Path):
+    """Ils meurent aussi (ils vivent dans le cgroup du daemon), mais un onglet ouvert n'est pas du travail
+    en cours : bloquer dessus rendrait la MAJ impossible à qui laisse un shell ouvert, c'est-à-dire à tout
+    le monde. Ce qui bloque, c'est ce qui COÛTE — un dispatch."""
+    whl = tmp_path / "c.whl"
+    whl.write_bytes(b"")
+    _unit(tmp_path / "u", str(live.home / "current" / "bin" / "forgemaster"))
+
+    plan = update.preflight(live, wheel=str(whl), unit=str(tmp_path / "u"), scope="user",
+                            sessions=["atelier-fictif", "interview:autre"])
+
+    dit = "\n".join(update.describe(plan))
+    assert "2 shell(s)" in dit and "atelier-fictif" in dit

@@ -92,6 +92,23 @@ def get_job(conn: sqlite3.Connection, job_id: str) -> dict:
     return dict(r)
 
 
+def running(conn: sqlite3.Connection) -> list[dict]:
+    """Les jobs `running` de **toute** l'instance, avec de quoi les nommer (`projet/feature/task`), du plus
+    ancien au plus récent. Sert la question « y a-t-il du travail en vol ? » — celle que `update.preflight`
+    pose avant d'arrêter le service.
+
+    Voisin, mais pas le même besoin que `abort._running_jobs` : celui-là est **par projet**, privé, et rend
+    des `pid` parce qu'il va tuer. Ici on ne tue rien, on nomme — et la portée est l'instance entière, parce
+    qu'une MAJ n'arrête pas un projet, elle arrête le daemon."""
+    rows = conn.execute(
+        "SELECT j.id AS job_id, j.started_at AS started_at, p.slug AS project, f.slug AS feature, "
+        "t.slug AS task FROM dispatch_jobs j "
+        "JOIN tasks t ON j.task_id = t.id JOIN features f ON t.feature_id = f.id "
+        "JOIN projects p ON f.project_id = p.id "
+        "WHERE j.status = 'running' ORDER BY j.started_at ASC, j.id ASC").fetchall()
+    return [dict(r) for r in rows]
+
+
 def count_fix_jobs(conn: sqlite3.Connection, feature_id: str) -> int:
     """Nombre de jobs de **correction** (`kind='fix'`) déjà lancés pour une feature (join `tasks`). Sert la
     **borne** de `dispatch.refix` (max passes de fix/feature) — feature-scopée, indépendante de la task-ancre

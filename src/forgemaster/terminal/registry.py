@@ -195,6 +195,11 @@ class PtySessionRegistry:
         if cur is not None and (session is None or cur is session):
             del self._sessions[project]
 
+    def live(self) -> list[str]:
+        """Les clés des sessions dont le shell **vit encore** — ce qu'un arrêt du service emporterait.
+        Filtre les shells déjà sortis : annoncer une perte qui a déjà eu lieu n'informe personne."""
+        return sorted(k for k, s in self._sessions.items() if s.alive())
+
     def reap(self, *, ttl_s: float = DETACH_TTL_S) -> list[str]:
         """Ferme et retire les sessions **détachées** qui sont mortes (shell sorti pendant le détach) ou
         détachées depuis > `ttl_s`. Ne touche JAMAIS une session attachée (son pump la possède). Retourne

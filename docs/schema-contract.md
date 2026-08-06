@@ -359,6 +359,26 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   demande (`GET /version` sous JWT), il ne se devine pas. `none` est un **état normal** (instance sans
   corpus à interroger), pas une panne.
   *Additif (route neuve + champs `build`/`maps` optionnels) → CHANGELOG, pas de bump `SCHEMA_VERSION`.*
+- **update** — le cycle de MAJ **depuis le produit**, sans terminal. `GET /api/update/plan?mode=apply|rollback
+  &wheel=&snapshot=&scope=` (préflight complet + `describe` — **ce qui se passerait**, strictement idempotent,
+  aucun dossier de run créé) · `POST /api/update/apply` `{wheel, scope?}` · `POST /api/update/rollback`
+  `{snapshot?, scope?}` (**202** `{run, unit, mode, state}` — accepté et parti, pas fini : le daemon va mourir
+  puis revenir) · `GET /api/update/runs` (`{runs, total, truncated}`, récents d'abord, borne **dite**) ·
+  `GET /api/update/runs/{id}` (`{run, mode, scope, unit, started_at, target, state, rc, verdict, journal}`).
+  **L'état d'un run se relit du DISQUE**, jamais d'une mémoire : le processus qui répond au `GET` d'après
+  n'est ni celui qui a reçu le `POST`, ni même le même binaire. Cinq états, tranchés dans cet ordre —
+  `done`/`failed` (`result.json` écrit) · `unknown` (verdict absent, unité non sondée : la liste n'en sonde
+  qu'**une**, la plus récente sans verdict, et **avoue** pour les autres au lieu de conclure) · `running`
+  (unité transitoire active) · `interrupted` (parti, jamais conclu) · `never_started`. **Preview d'ABORD via le `GET /plan` idempotent, le POST exécute — pas de
+  dry-run POST** (même doctrine que `git/sync` → `git/sync/reconcile`). Surface volontairement **plus étroite
+  que la CLI** : ni `unit`, ni `systemctl`, ni `service` dans le corps (points d'injection d'un test ou d'un
+  opérateur, pas du réseau) ; l'unité est celle de la portée, `scope` défaut `user` — mesuré, un daemon non
+  privilégié ne peut pas piloter une unité système. **409** = l'instance refuse dans son état (les **six**
+  refus du préflight voyagent avec leur texte intégral, jamais un « impossible » nu), **503** = `systemd-run`
+  n'a pas enregistré l'unité (machinerie indisponible, pas un refus ; l'identifiant du run voyage quand même),
+  **404** = run inconnu ou identifiant hors forme (deux gardes : forme, puis confinement du chemin résolu sous
+  `<home>/updates`), **400** = `wheel` manquant en `mode=apply`.
+  *Additif (routes neuves, aucun schéma touché) → CHANGELOG, pas de bump `SCHEMA_VERSION`.*
 - **bootstrap** — `GET /api/bootstrap` (aperçu **idempotent** de l'amorçage des outils du framework :
   `{available, tools:[{slug, source_url, kind, adopted}], adopted, total}` ; manifeste absent →
   `available:false` ; **400** manifeste invalide ; aucun secret, goto-only safe) · `POST /api/bootstrap`

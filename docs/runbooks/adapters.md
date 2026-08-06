@@ -57,6 +57,6 @@ Résout `<projects_root>/<project>[/<subpath>]` via `fs.safe_path` (#4) : `subpa
 - `codemap_argv` (`index.py:39`) / `CodemapError` (`index.py:47`) — argv `sys.executable -m codemap` (pas de dépendance PATH systemd) et type d'erreur signal ; triviaux.
 - `_parse_json` (`flow.py:49`) — parse défensif du stdout CLI (rc 0 même sur `ok:false`) ; illisible → `CodemapError`.
 - `_relay` (`pty.py:157`) — le relais bidirectionnel lui-même : deux tasks (`pty_to_ws`, qui lit le scrollback par curseur ; `ws_to_pty`), la première terminée gagne et l'autre est annulée ; une exception de transport (client coupé net) est traitée comme une déconnexion — loggée, jamais avalée.
-- `PtySession` (`registry.py:51`) / `run_reaper` (`registry.py:220`) — la session elle-même (spawn, attach/detach, scrollback, close) et la boucle de reap périodique ; sémantique détaillée dans la section registry ci-dessus.
+- `PtySession` (`registry.py:51`) / `run_reaper` (`registry.py:225`) — la session elle-même (spawn, attach/detach, scrollback, close) et la boucle de reap périodique ; sémantique détaillée dans la section registry ci-dessus.
 - helpers PTY `_set_winsize` (`pty.py:87`) — ioctl `TIOCSWINSZ` ; et `_terminate` (`registry.py:35`, **plus dans `pty.py`** depuis l'extraction du registre) — kill de groupe SIGTERM → grâce → SIGKILL anti-zombie, appelé par `PtySession.close`.
 - `shell_env` (`pty.py:51`) / `local_shell_argv` (`pty.py:32`) — env couleur forcé (`TERM=xterm-256color`, `COLORTERM=truecolor`) et argv `bash -l` ; PURs.
