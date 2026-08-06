@@ -1,4 +1,4 @@
-// eslint.config.js — flat config (ESLint 9) : 1er maillon du gate Tier-0 `eslint → tsc → vitest`. Base JS
+// eslint.config.js — flat config (ESLint 10) : 1er maillon du gate Tier-0 `eslint → tsc → vitest`. Base JS
 // recommandée + TypeScript recommandé (non type-checked : rapide, sans service de projet) + règles des Hooks
 // React. `no-undef` est OFF sur le TS (le compilateur gère déjà `document`/`process`/`setInterval`) ; les
 // `.d.ts` sont ignorés (triple-slash de Vite légitime). Étends les règles au fil du projet ; garde le seed

@@ -13,7 +13,7 @@ export const Resource = z.object({
 export type Resource = z.infer<typeof Resource>;
 
 export const Player = z.object({
-  id: z.string().uuid(),
+  id: z.uuid(),
   name: z.string().min(1),
   resources: z.array(Resource),
 });
