@@ -17,35 +17,40 @@ forward-only, un binaire ancien sur des données neuves est définitif.
 Le substrat qu'ils pilotent (prendre un instantané, le remettre) a son propre runbook : `snapshot.md`.
 
 ## UpdateRefused — le refus fail-closed, levé avant tout effet
-`src/forgemaster/update.py:54` · levée par `preflight`, `preflight_rollback`, `parse_exec_start` · rattrapée par `cli_dispatch`
+`src/forgemaster/update.py:58` · levée par `preflight`, `preflight_rollback`, `parse_exec_start` · rattrapée par `cli_dispatch`
 L'instance est **intacte** quand cette exception sort : c'est ce que « fail-closed » veut dire ici. `cli_dispatch` la
 rend en `✗ … refusé(e) — rien n'a été touché` et rc 1. Son pendant côté applicateur est `UpdateFailed`
 (`apply_update.py:67`), qui signifie la même chose un cran plus bas : échec **arrêté avant la bascule**.
 
 ## preflight() — tout ce qui doit être vérifié avant que la moindre chose bouge
-`src/forgemaster/update.py:58` · appelé par `cli_dispatch` · retourne le plan (chemins + URL de sonde) · lève `UpdateRefused`
+`src/forgemaster/update.py:62` · appelé par `cli_dispatch` · retourne le plan (chemins + URL de sonde) · lève `UpdateRefused`
 Vérifie le wheel (existe, suffixe `.whl` — aucune résolution, aucun réseau : ce verbe ne pose que le fichier désigné),
 délègue le socle de service à `_preflight_service`, puis refuse sur le travail non commité. Le verdict d'autorité
 `authority` est **calculé par l'appelant** et passé en argument (injection explicite) : ce module ne va pas chercher
 une connexion DB tout seul, et un préflight qui refuse ne doit pas avoir ouvert quoi que ce soit en écriture.
 
-## _preflight_service() — les quatre refus que l'aller ET le retour partagent
-`src/forgemaster/update.py:77` · appelé par `preflight` et `preflight_rollback` · lève `UpdateRefused`
-Quatre refus, tous explicites, jamais un devinage — et chacun nomme le geste qui débloque :
+## _preflight_service() — les cinq refus que l'aller ET le retour partagent
+`src/forgemaster/update.py:81` · appelé par `preflight` et `preflight_rollback` · lève `UpdateRefused`
+Cinq refus, tous explicites, jamais un devinage — et chacun nomme le geste qui débloque :
 
-1. **portée système sans être root** — `systemctl` échouerait en plein milieu, service arrêté. Refuser avant ;
-2. **pas d'unité systemd** — la bascule exige un service gérable ; on n'invente pas une façon de redémarrer le
+1. **pas de `systemd-run`** — sans lui l'applicateur ne peut pas sortir du cgroup de son lanceur, donc il se ferait
+   tuer par l'arrêt qu'il émet lui-même (cf. `_echappement_cgroup`). Il est livré **avec** systemd, dont ce verbe
+   dépend déjà : son absence signifie qu'il n'y avait de toute façon aucun service à piloter ;
+2. **portée système sans être root** — `systemctl` échouerait en plein milieu, service arrêté. Refuser avant ;
+3. **pas d'unité systemd** — la bascule exige un service gérable ; on n'invente pas une façon de redémarrer le
    forgemaster de quelqu'un ;
-3. **pas de lien stable** — sans `<home>/current`, il n'y a rien à remplacer, donc rien à défaire ;
-4. **une unité qui lance un venv EN DUR** — l'état de toute installation antérieure au bleu/vert. Elle n'est pas
+4. **pas de lien stable** — sans `<home>/current`, il n'y a rien à remplacer, donc rien à défaire ;
+5. **une unité qui lance un venv EN DUR** — l'état de toute installation antérieure au bleu/vert. Elle n'est pas
    cassée, elle est *non migrée*, et la MAJ n'aurait **aucun effet** sur le service. Réécrire l'unité sous les pieds de
    l'utilisateur serait pire que refuser.
 
-Extrait de `preflight` en écrivant `preflight_rollback` : dupliquer ces quatre refus aurait produit deux jeux de
-messages qui divergent, alors que c'est le même invariant de déploiement qui est en jeu.
+Extrait de `preflight` en écrivant `preflight_rollback` : dupliquer ces refus aurait produit deux jeux de
+messages qui divergent, alors que c'est le même invariant de déploiement qui est en jeu. Le refus n°1 vit **ici** et
+non dans `launch` pour une raison de vérité : au préflight, « rien n'a été touché » est exactement vrai — pas même un
+dossier de run — et `--dry-run` le dit donc aussi.
 
 ## _refuse_uncommitted_work() — le refus d'autorité, porté par les DEUX gestes
-`src/forgemaster/update.py:108` · appelé par `preflight` et `preflight_rollback` · consomme `projects.authority.blocking`
+`src/forgemaster/update.py:118` · appelé par `preflight` et `preflight_rollback` · consomme `projects.authority.blocking`
 `projects_root` **n'entre pas dans l'instantané** : si le geste tourne mal, le travail qui n'est qu'là ne reviendra
 pas. Le motif « git fait autorité » n'est vrai que là où il *y a* une autorité — le refus la vérifie au lieu de la
 supposer. On ne bloque **que** sur du non-commité : « aucun remote » est un cas normal du produit distribué, et
@@ -53,17 +58,17 @@ refuser dessus interdirait toute mise à jour à qui n'en veut pas. Porté aussi
 revenir en arrière pendant qu'un travail non commité vit dans un worktree est exactement le geste à refuser.
 
 ## preflight_rollback() — le préflight du retour VOLONTAIRE, plus la résolution de la cible
-`src/forgemaster/update.py:126` · appelé par `cli_dispatch` · retourne le plan (+ `snapshot`, `target_venv`) · lève `UpdateRefused`
+`src/forgemaster/update.py:136` · appelé par `cli_dispatch` · retourne le plan (+ `snapshot`, `target_venv`) · lève `UpdateRefused`
 Même socle de service, même refus d'autorité, plus la question propre au retour : **quel instantané remettre, et vers
 quel venv rebasculer**. La correspondance instantané ↔ binaire se **dérive** par égalité de schéma, elle ne se stocke
 pas — aucun état nouveau, aucune ligne de plus au manifeste, et le garde vaut aussi pour les instantanés *déjà pris*.
 Sans référence explicite, on **parcourt** les candidats au lieu de prendre le premier `restaurable` : le plus récent
 est souvent l'instantané de sûreté d'un retour déjà fait, qui ramènerait vers la version qu'on vient de quitter. Quand
-aucun ne convient, le refus liste les motifs un par un puis `_PISTES` (`update.py:180`), les trois gestes voisins —
+aucun ne convient, le refus liste les motifs un par un puis `_PISTES` (`update.py:190`), les trois gestes voisins —
 dont `update apply`, « le verbe qui va, lui, en AVANT ».
 
 ## _cible_utilisable() — quatre façons de ne pas être un retour en arrière
-`src/forgemaster/update.py:185` · appelé par `preflight_rollback` · retourne `(venv cible, motif de refus)`
+`src/forgemaster/update.py:195` · appelé par `preflight_rollback` · retourne `(venv cible, motif de refus)`
 Instantané invalide · état autre que `restaurable` · venv introuvable alors qu'il se dit restaurable (la liste et la
 résolution ne voient pas le même disque : on ne devine pas) · **le venv déjà actif** · et la quatrième, révélée en
 revue : une cible dont le binaire lit un schéma **supérieur** au courant — « son binaire lit le schéma 21 et le tien
@@ -71,7 +76,7 @@ lit le 20 : ce serait aller EN AVANT, pas revenir ». Un état dit ce qu'un arte
 geste qu'on *demande* : la direction est une propriété du verbe, pas de la cible.
 
 ## _venv_pour() — égalité de schéma, jamais « au moins », et le choix se fait ailleurs
-`src/forgemaster/update.py:212` · appelé par `_cible_utilisable` · retourne le venv ou `None`
+`src/forgemaster/update.py:222` · appelé par `_cible_utilisable` · retourne le venv ou `None`
 Le venv dont le forgemaster lit **exactement** le schéma de cet instantané (`restore.snapshot_schema`). Un binaire qui
 lit plus loin remettrait les données puis migrerait la base en avant — l'état que `snapshot list` nomme `données
 seules`, et qui n'est pas un retour arrière.
@@ -83,42 +88,68 @@ quand les deux divergeaient. La liste partagée inclut le venv d'**origine**, ho
 saut d'une install fraîche était sans retour (cf. `runbooks/snapshot.md#_venvs_candidats`).
 
 ## parse_exec_start() — l'unité est la SEULE vérité sur le bind du service
-`src/forgemaster/update.py:233` · appelé par `_preflight_service` · retourne `(binaire, host, port)` · lève `UpdateRefused`
+`src/forgemaster/update.py:243` · appelé par `_preflight_service` · retourne `(binaire, host, port)` · lève `UpdateRefused`
 Lit le dernier `ExecStart=` de l'unité et en tire le binaire, `--host` et `--port`. Déduire le bind de
 `forgemaster.env` ou d'un défaut sonderait une **autre** instance que celle qu'on vient de redémarrer, et conclurait au
 vert sur la mauvaise. Port illisible → refus : sans lui, aucune vérification en vivant, donc aucun retour arrière
 automatique.
 
 ## describe() / describe_rollback() — ce qui va se passer, dit avant de le faire
-`src/forgemaster/update.py:254` · `src/forgemaster/update.py:275` · appelés par `cli_dispatch` · seul contenu de `--dry-run`
+`src/forgemaster/update.py:264` · `src/forgemaster/update.py:285` · appelés par `cli_dispatch` · seul contenu de `--dry-run`
 `describe_rollback` nomme **les deux gestes et leur ordre** — c'est l'unité que le retour rend exécutoire, et la dire
 ici est ce qui permet de refuser en connaissance de cause. Les deux ajoutent une ligne « hors instantané » pour les
 projets qui n'ont pas bloqué : un projet sans remote n'est pas une faute, mais l'utilisateur doit savoir que sa seule
 copie est là et qu'elle n'entre pas dans l'instantané. Ce qui n'a pas bloqué est **dit quand même**.
 
-## launch() — un seul lanceur détaché pour les deux gestes
-`src/forgemaster/update.py:297` · appelé par `cli_dispatch` · retourne le rc de `follow` (ou 0 si `--detach`)
-Crée `<home>/updates/<horodatage>/`, y **copie** `apply_update.py` sous le nom `apply.py`, et le lance détaché
-(`start_new_session=True`) sous `_system_python()` (`update.py:348`) — jamais le python du venv qu'on remplace. Copié
-et non lancé depuis le paquet : le script doit survivre au venv qu'il remplace. Détaché parce qu'une MAJ qui bascule
-le venv et redémarre le service ne doit pas mourir parce que le shell a été fermé — ni, surtout, parce que c'est le
-daemon lui-même qui l'a lancée et qu'on vient de l'arrêter. La sortie du `Popen` est redirigée dans `launch.log` : un
-tuyau non lu bloquerait l'écrivain. `mode` ne change que les arguments de cible — même applicateur, même dossier de
-run, même journal, même `result.json`.
+## launch() — un seul lanceur pour les deux gestes, et l'applicateur part dans SA propre unité
+`src/forgemaster/update.py:307` · appelé par `cli_dispatch` · retourne le rc de `follow` (ou 0 si `--detach`)
+Crée `<home>/updates/<horodatage>/`, y **copie** `apply_update.py` sous le nom `apply.py`, et le lance dans une
+**unité transitoire** (`_echappement_cgroup`) sous `_system_python()` — jamais le python du venv qu'on remplace.
+Copié et non lancé depuis le paquet : le script doit survivre au venv qu'il remplace.
+
+Le lancement passe par `subprocess.run` et **son code de retour est lu**. `systemd-run` rend la main dès l'unité
+enregistrée, pas à la fin du travail : on peut donc distinguer « parti » de « refusé ». Avec le `Popen`
+fire-and-forget d'avant, un applicateur qui ne partait pas passait pour un applicateur lent — `follow` attendait le
+quart d'heure entier puis rendait « je ne sais pas », là où le système avait déjà répondu « non ».
+
+`launch.log` n'est **pas** écrit ici : c'est l'unité qui y écrit (`StandardOutput=append:`). L'écraser avec le
+« Running as unit… » de `systemd-run` effacerait précisément la trace qu'on garde. `mode` ne change que les arguments
+de cible — même applicateur, même dossier de run, même journal, même `result.json`.
+
+## _echappement_cgroup() — pourquoi `setsid` ne suffisait pas, et pourquoi pas `KillMode`
+`src/forgemaster/update.py:383` · appelé par `launch` · rend le préfixe `systemd-run` de la commande
+**Le défaut, mesuré sur vrai systemd le 2026-08-06.** `Popen(start_new_session=True)` change la **session**, pas le
+**cgroup**. Lancé par le daemon, l'applicateur restait dans le cgroup de `forgemaster.service` — que le
+`systemctl stop` qu'il émet **lui-même** (`apply_update.py:191`) vide entièrement, `KillMode` valant `control-group`
+par défaut. Conséquence constatée : service laissé à terre, `/api/version` muet, **`result.json` jamais écrit**, donc
+aucun verdict à retrouver. Jamais rencontré avant parce que toutes nos preuves partaient d'un ssh, c'est-à-dire de
+**dehors** — la propriété n'est pas observable hors d'un vrai cgroup systemd.
+
+**Le remède.** L'applicateur devient sa propre unité transitoire, de la portée du service (`--user` ou non). Le nom
+se **dérive** du dossier de run (`_unite_transitoire`) : un run et son unité ne peuvent pas diverger, et depuis un
+dossier de run on sait quoi interroger sans mémoire externe. `--collect` efface l'unité à sa sortie, échec compris —
+sinon un run raté occuperait son nom au suivant.
+
+**Pourquoi pas `KillMode=process` sur l'unité du service** (l'autre échappement possible) : le daemon n'a pas qu'un
+enfant. Les shells PTY (`terminal.pty`) et les workers de dispatch (`dispatch.worker`) vivent eux aussi dans son
+cgroup, et `KillMode=process` les orphelinerait **tous**, à chaque arrêt, pour corriger ce seul cas. L'unité
+transitoire ne change le sort que de l'applicateur, à l'endroit qui le concerne — son lanceur.
+
+**Plancher.** `StandardOutput=append:` exige systemd ≥ 240 ; le produit dépend déjà de systemd pour tout le reste.
 
 ## follow() — détaché ne veut pas dire aveugle
-`src/forgemaster/update.py:327` · appelé par `launch` · retourne le rc lu dans `result.json`
+`src/forgemaster/update.py:349` · appelé par `launch` · retourne le rc lu dans `result.json`
 Suit `journal.log` en flux jusqu'à ce que `result.json` apparaisse. Un suivi interrompu (délai `FOLLOW_TIMEOUT`,
 `update.py:51`, 15 min) ne conclut **pas** à l'échec : il dit où regarder, et le script continue. La supervision se
 fait par **fichier de verdict**, pas par le tuyau ssh — c'est ce qui la rend valable depuis un banc distant.
 
 ## _survey_authority() — dégrader honnêtement plutôt que bloquer sur ce qu'on ignore
-`src/forgemaster/update.py:355` · appelé par `cli_dispatch` · retourne les verdicts, ou `[]`
+`src/forgemaster/update.py:414` · appelé par `cli_dispatch` · retourne les verdicts, ou `[]`
 N'ouvre la base **que si elle existe déjà** : un préflight qui refuse ne doit pas avoir créé la base de son refus. Une
 base d'un schéma qu'on ne lit pas rend « je ne sais pas » — ce module ne bloque que sur ce qu'il **sait**.
 
 ## cli_dispatch() — `apply` et `rollback` suivent la MÊME séquence
-`src/forgemaster/update.py:375` · appelé par `cli._h_update` (routé par `_HANDLERS`) · retourne le code de sortie
+`src/forgemaster/update.py:434` · appelé par `cli._h_update` (routé par `_HANDLERS`) · retourne le code de sortie
 Préflight qui refuse avant tout effet → description → (`--dry-run` : on s'arrête là) → lancement détaché. La symétrie
 est structurelle et pas cosmétique : c'est elle qui garantit qu'on ne découvre pas le chemin du retour le jour où il
 compte.

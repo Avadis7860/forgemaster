@@ -20,6 +20,7 @@ import io
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import textwrap
 import time
@@ -483,19 +484,106 @@ def test_le_verbe_copie_le_script_au_lieu_de_le_lancer_depuis_le_paquet(live: Se
                                                                        monkeypatch):
     """Le script doit survivre au venv qu'il remplace : on le copie dans le dossier de run avant de le
     lancer. Le lancer depuis `site-packages` reviendrait à scier la branche pendant qu'on est dessus."""
-    lances: list[list[str]] = []
-    monkeypatch.setattr(update.subprocess, "Popen",
-                        lambda cmd, **_k: lances.append(cmd) or _FauxProc())
+    lances = _capture_lancements(monkeypatch)
     plan = {"wheel": tmp_path / "c.whl", "home": live.home, "link": live.home / "current",
             "base_url": "http://127.0.0.1:8700", "scope": "user",
             "unit": tmp_path / "u", "venv": Path("/x")}
     monkeypatch.setattr(update, "follow", lambda run_dir, **_k: 0)
     assert update.launch(live, plan, systemctl="systemctl", service="forgemaster", detach=False) == 0
 
-    script = Path(lances[0][1])
+    # Le script se cherche DANS l'argv, jamais à un index : depuis le 2026-08-06 la commande commence par
+    # `systemd-run` et ses propriétés, et un test ancré sur `cmd[1]` casserait sur un préfixe qui grandit
+    # alors que le contrat qu'il garde — le script est COPIÉ, pas lancé depuis le paquet — n'a pas bougé.
+    script = Path(next(a for a in lances[0] if a.endswith(update.APPLY)))
     assert script.name == "apply.py" and script.parent.parent == live.home / "updates"
     assert script.read_text(encoding="utf-8") == Path(apply_update.__file__).read_text(encoding="utf-8")
     assert os.access(script, os.X_OK)
+
+
+# --- l'échappement au cgroup (2026-08-06) --------------------------------------------------------------
+#
+# Mesuré sur vrai systemd : `Popen(start_new_session=True)` change la SESSION, pas le CGROUP. Lancé par le
+# daemon, l'applicateur mourait du `systemctl stop` qu'il émet lui-même, sans écrire de verdict. Ces tests
+# gardent la forme du remède, pas son détail : ce qui compte est qu'il y ait une unité transitoire, qu'elle
+# soit de la BONNE portée, et qu'un enregistrement refusé se dise.
+
+def _plan_de_lancement(live: Settings, tmp_path: Path, scope: str) -> dict:
+    return {"wheel": tmp_path / "c.whl", "home": live.home, "link": live.home / "current",
+            "base_url": "http://127.0.0.1:8700", "scope": scope,
+            "unit": tmp_path / "u", "venv": Path("/x")}
+
+
+@pytest.mark.parametrize(("scope", "attendu"), [("user", True), ("system", False)])
+def test_lapplicateur_part_dans_sa_PROPRE_unite_transitoire(live: Settings, tmp_path: Path, monkeypatch,
+                                                            scope: str, attendu: bool):
+    """Il doit survivre au service qu'il arrête. `--user` suit la PORTÉE : une unité transitoire de portée
+    système ne serait pas pilotable par un gestionnaire `user`, et l'inverse ne pourrait pas toucher au
+    service système."""
+    lances = _capture_lancements(monkeypatch)
+    monkeypatch.setattr(update, "follow", lambda run_dir, **_k: 0)
+    update.launch(live, _plan_de_lancement(live, tmp_path, scope),
+                  systemctl="systemctl", service="forgemaster", detach=True)
+
+    cmd = lances[0]
+    assert Path(cmd[0]).name == update.RUNNER, f"l'applicateur n'est pas lancé par {update.RUNNER} : {cmd}"
+    assert ("--user" in cmd) is attendu, f"portée {scope} : `--user` mal placé dans {cmd}"
+    assert "--collect" in cmd, "une unité qui reste en `failed` occuperait son nom au run suivant"
+
+
+def test_lunite_transitoire_DERIVE_du_dossier_de_run(live: Settings, tmp_path: Path, monkeypatch):
+    """Le run et son unité ne peuvent pas diverger — donc depuis un dossier de run on sait quoi interroger,
+    sans mémoire externe. C'est ce que la route de la sous-phase suivante lira."""
+    lances = _capture_lancements(monkeypatch)
+    monkeypatch.setattr(update, "follow", lambda run_dir, **_k: 0)
+    update.launch(live, _plan_de_lancement(live, tmp_path, "user"),
+                  systemctl="systemctl", service="forgemaster", detach=True)
+
+    cmd = lances[0]
+    run_dir = Path(next(a for a in cmd if a.endswith(update.APPLY))).parent
+    assert f"--unit=forgemaster-update-{run_dir.name}" in cmd, f"unité non dérivée du run : {cmd}"
+
+
+def test_le_journal_precoce_survit_a_lechappement(live: Settings, tmp_path: Path, monkeypatch):
+    """`launch.log` porte ce qui arrive AVANT que l'applicateur ouvre son propre `journal.log`. Une unité
+    transitoire n'hérite d'aucun descripteur : sans `append:`, cette trace-là disparaîtrait en silence."""
+    lances = _capture_lancements(monkeypatch)
+    monkeypatch.setattr(update, "follow", lambda run_dir, **_k: 0)
+    update.launch(live, _plan_de_lancement(live, tmp_path, "user"),
+                  systemctl="systemctl", service="forgemaster", detach=True)
+
+    cmd = lances[0]
+    run_dir = Path(next(a for a in cmd if a.endswith(update.APPLY))).parent
+    for flux in ("StandardOutput", "StandardError"):
+        assert f"{flux}=append:{run_dir / 'launch.log'}" in cmd, f"{flux} n'atterrit pas dans launch.log"
+
+
+def test_un_enregistrement_REFUSE_se_dit_au_lieu_de_se_taire(live: Settings, tmp_path: Path, monkeypatch,
+                                                             capsys):
+    """Avec le fire-and-forget d'avant, un applicateur qui ne partait pas passait pour un applicateur lent :
+    `follow` attendait le quart d'heure entier puis rendait « je ne sais pas ». Le système, lui, avait déjà
+    répondu « non »."""
+    _capture_lancements(monkeypatch, rc=1, err="Failed to start transient service unit: Access denied")
+    ecoule: list[bool] = []
+    monkeypatch.setattr(update, "follow", lambda run_dir, **_k: ecoule.append(True) or 0)
+
+    rc = update.launch(live, _plan_de_lancement(live, tmp_path, "user"),
+                       systemctl="systemctl", service="forgemaster", detach=False)
+
+    assert rc != 0 and not ecoule, "on a suivi un journal que personne n'écrira"
+    assert "Access denied" in capsys.readouterr().err, "le motif du système est perdu en route"
+
+
+def test_sans_systemd_run_le_preflight_REFUSE_avant_tout_effet(live: Settings, tmp_path: Path, monkeypatch):
+    """Le refus est au préflight, pas au lancement : à ce moment-là « rien n'a été touché » est exactement
+    vrai, et `--dry-run` le dit aussi. Sans échappement, l'applicateur se ferait tuer par l'arrêt qu'il
+    émet — le poser quand même serait poser un geste qu'on sait cassé."""
+    whl = tmp_path / "c.whl"
+    whl.write_bytes(b"")
+    vrai = update.shutil.which
+    monkeypatch.setattr(update.shutil, "which",
+                        lambda nom, *a, **k: None if nom == update.RUNNER else vrai(nom, *a, **k))
+    with pytest.raises(UpdateRefused, match=update.RUNNER):
+        update.preflight(live, wheel=str(whl), unit=None, scope="user")
 
 
 def test_le_suivi_interrompu_ne_conclut_pas_a_lechec(tmp_path: Path, capsys):
@@ -536,8 +624,18 @@ def test_le_venv_et_le_lien_sont_dits_hors_perimetre_de_linstantane(live: Settin
     assert {"venvs/", "current", "updates/"} <= set(exclus)
 
 
-class _FauxProc:
-    pid = 4242
+def _capture_lancements(monkeypatch, *, rc: int = 0, err: str = "") -> list[list[str]]:
+    """Intercepte le lancement de l'applicateur et rend les argv vus. Cible `subprocess.run` (et non plus
+    `Popen`) depuis le 2026-08-06 : le lanceur LIT désormais le verdict d'enregistrement de `systemd-run`,
+    ce qu'un fire-and-forget ne permettait pas."""
+    lances: list[list[str]] = []
+
+    def _run(cmd, **_kw):
+        lances.append(cmd)
+        return subprocess.CompletedProcess(cmd, rc, stdout="", stderr=err)
+
+    monkeypatch.setattr(update.subprocess, "run", _run)
+    return lances
 
 
 def _slugs(db: Path) -> list[str]:

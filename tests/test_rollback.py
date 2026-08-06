@@ -19,6 +19,7 @@ import ast
 import json
 import os
 import sqlite3
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -270,14 +271,14 @@ def test_le_lanceur_passe_la_CIBLE_et_pas_un_wheel(apres_maj: Settings, tmp_path
     `--wheel` fuyait dans un retour arrière, l'applicateur exigerait un fichier qui n'existe pas."""
     vus: dict[str, list[str]] = {}
 
-    class _Popen:
-        def __init__(self, cmd, **_kw):
-            vus["cmd"] = cmd
+    def _run(cmd, **_kw):
+        vus["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-    # Le plan se résout AVANT le monkeypatch : la résolution sonde les venvs par `subprocess.run`, qui
-    # passe par le même `Popen`. Patcher d'abord ferait échouer la sonde et non le lanceur.
+    # Le plan se résout AVANT le monkeypatch : la résolution sonde les venvs par `subprocess.run`, que le
+    # lanceur emprunte désormais lui aussi. Patcher d'abord ferait échouer la sonde et non le lanceur.
     plan = _plan(apres_maj, tmp_path)
-    monkeypatch.setattr(update.subprocess, "Popen", _Popen)
+    monkeypatch.setattr(update.subprocess, "run", _run)
 
     update.launch(apres_maj, plan, systemctl="systemctl", service="forgemaster", detach=True,
                   mode="rollback")
