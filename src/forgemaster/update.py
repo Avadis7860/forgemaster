@@ -212,7 +212,14 @@ def _cible_utilisable(settings: Settings, info: dict, *, actuel: Path,
 def _venv_pour(settings: Settings, snapshot_dir: Path) -> Path | None:
     """Le venv dont le forgemaster lit **exactement** le schéma de cet instantané. Égalité, pas « au moins » :
     un binaire qui lit plus loin remettrait les données puis migrerait la base en avant — l'état que la
-    phase 1 nomme `données seules`, et qui n'est pas un retour arrière."""
+    phase 1 nomme `données seules`, et qui n'est pas un retour arrière.
+
+    Le **choix** ne se fait pas ici : il vit chez `snapshot.venv_for_schema`, seul endroit qui énumère les
+    candidats et les ordonne. Cette marche parcourait `<home>/venvs` de son côté, comme `_restorability` du
+    sien — deux marches qui choisissent séparément finissent par ne pas choisir pareil, et le troisième refus
+    de `_cible_utilisable` (« la liste et la résolution ne voient pas le même disque ») est précisément ce que
+    ça produisait. Elles lisent désormais la même liste, qui inclut le venv d'**origine**, hors
+    `<home>/venvs` : sans lui, le PREMIER saut d'une install fraîche était sans retour."""
     from forgemaster import restore
     from forgemaster import snapshot as snap_mod
 
@@ -220,13 +227,7 @@ def _venv_pour(settings: Settings, snapshot_dir: Path) -> Path | None:
     voulu = restore.snapshot_schema(snapshot_dir, manifest)
     if voulu is None:
         return None
-    root = settings.home / snap_mod.VENVS
-    if not root.is_dir():
-        return None
-    for venv in sorted(root.iterdir(), reverse=True):
-        if venv.is_dir() and restore.python_schema(venv / "bin" / "python") == voulu:
-            return venv
-    return None
+    return snap_mod.venv_for_schema(settings, voulu)
 
 
 def parse_exec_start(unit_text: str) -> tuple[str, str, int]:

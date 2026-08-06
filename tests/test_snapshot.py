@@ -232,15 +232,32 @@ def test_cli_create_puis_list(live: Settings, capsys):
 # est celui qui coûte le plus cher : la remise PASSE, puis la base migre en avant, et le retour arrière
 # qu'on croyait faire n'a jamais eu lieu. Le rendre visible est tout l'objet de la phase.
 
-def _venv_factice(home: Path, nom: str, schema_lu: int) -> Path:
+def _venv_a(chemin: Path, schema_lu: int) -> Path:
     """Un venv réduit à ce que la sonde interroge : un `bin/python` qui imprime une constante. C'est
-    exactement ce que `restore.python_schema` demande — pas un verbe CLI, pas un import réel."""
-    venv = home / snapshot.VENVS / nom
-    (venv / "bin").mkdir(parents=True)
-    python = venv / "bin" / "python"
+    exactement ce que `restore.python_schema` demande — pas un verbe CLI, pas un import réel. Prend un
+    chemin ABSOLU, parce que le venv qui compte le plus vit justement hors de `<home>/venvs`."""
+    (chemin / "bin").mkdir(parents=True)
+    python = chemin / "bin" / "python"
     python.write_text(f"#!/bin/sh\necho {schema_lu}\n", encoding="utf-8")
     python.chmod(0o755)
-    return venv
+    return chemin
+
+
+def _venv_factice(home: Path, nom: str, schema_lu: int) -> Path:
+    """Un venv estampillé, sous `<home>/venvs` — celui que le cycle de MAJ crée."""
+    return _venv_a(home / snapshot.VENVS / nom, schema_lu)
+
+
+def _run_de_maj(home: Path, stamp: str, venv_avant: Path | str | None) -> Path:
+    """Le journal que `update.launch` laisse derrière lui. Seul `result.json:venv_avant` est lu ici —
+    `venv_avant=None` fige le cas d'une instance ANTÉRIEURE à cette clé, qui ne doit rien casser."""
+    run = home / "updates" / stamp
+    run.mkdir(parents=True)
+    verdict: dict[str, object] = {"rc": 0, "verdict": "MAJ posée"}
+    if venv_avant is not None:
+        verdict["venv_avant"] = str(venv_avant)
+    (run / "result.json").write_text(json.dumps(verdict), encoding="utf-8")
+    return run
 
 
 def test_un_instantane_est_restaurable_quand_un_venv_porte_SON_schema(live: Settings):
@@ -297,6 +314,92 @@ def test_le_venv_le_plus_recent_gagne_quand_deux_portent_le_meme_schema(live: Se
     (lu,) = snapshot.list_snapshots(live)
     assert lu["state"] == "restaurable"
     assert "2026-08-03T00-00-00Z" in lu["state_reason"]
+
+
+# --- le PREMIER saut : le venv d'origine vit hors de <home>/venvs -------------------------------------
+#
+# `<home>/venvs` est CRÉÉ par le premier `update apply` : le venv que `pip install` a posé n'y est jamais.
+# Ne sonder que ce dossier rendait le premier saut d'une install fraîche SANS RETOUR, alors que le binaire
+# d'avant était intact sur le disque — mesuré le 2026-08-06 sur vrai systemd (VM 9311, portée `user`), et
+# invisible pour la preuve de la phase 2a, dont l'acte de retour arrivait après TROIS MAJ. Le premier geste
+# d'un utilisateur n'est jamais le troisième geste d'un banc.
+
+def test_le_venv_d_ORIGINE_hors_de_home_venvs_rend_l_instantane_RESTAURABLE(live: Settings, tmp_path: Path):
+    """LE cas du premier saut. Un seul venv estampillé, qui lit PLUS LOIN que l'instantané : sans le venv
+    d'origine, c'est `données seules` — le piège. Avec lui, c'est `restaurable`, et le motif doit dire OÙ il
+    est : `forgemaster` comme nom ne suffit pas à retrouver un binaire."""
+    origine = _venv_a(tmp_path / ".venvs" / "forgemaster", schema.SCHEMA_VERSION)
+    _venv_factice(live.home, "2026-08-06T00-00-00Z", schema.SCHEMA_VERSION + 1)
+    _run_de_maj(live.home, "2026-08-06T00-00-00Z", origine)
+    snapshot.create(live)
+
+    (lu,) = snapshot.list_snapshots(live)
+    assert lu["state"] == "restaurable"
+    assert str(origine) in lu["state_reason"]
+
+
+def test_update_venv_pour_designe_le_MEME_venv_que_l_etat(live: Settings, tmp_path: Path):
+    """Le couplage entre les DEUX marches, éprouvé à travers `update` — pas seulement dans `snapshot`.
+
+    Elles parcouraient `<home>/venvs` chacune de son côté ; `update._cible_utilisable` porte déjà le refus
+    que ça produit (« il se dit `restaurable` mais son venv n'a pas été retrouvé — la liste et la résolution
+    ne voient pas le même disque »). Ne réparer QUE `snapshot` aurait transformé un refus explicable en un
+    refus incompréhensible. Ce test-ci est celui qui casse dans ce cas-là."""
+    from forgemaster import update
+
+    origine = _venv_a(tmp_path / ".venvs" / "forgemaster", schema.SCHEMA_VERSION)
+    _venv_factice(live.home, "2026-08-06T00-00-00Z", schema.SCHEMA_VERSION + 1)
+    _run_de_maj(live.home, "2026-08-06T00-00-00Z", origine)
+    snapshot.create(live)
+
+    (lu,) = snapshot.list_snapshots(live)
+    assert lu["state"] == "restaurable"
+    assert update._venv_pour(live, Path(lu["path"])) == origine
+    assert snapshot.venv_for_schema(live, schema.SCHEMA_VERSION) == origine
+    assert str(origine) in lu["state_reason"]
+
+
+def test_a_schema_egal_l_estampille_passe_devant_le_venv_d_origine(live: Settings, tmp_path: Path):
+    """Quand les deux lisent le même schéma, il y a un CHOIX, et il se fait une seule fois. Le cycle de MAJ
+    gère les estampillés (il les crée, les compte et les purge) ; le venv d'origine appartient à
+    l'utilisateur et n'est que le **repli**. Viser l'origine alors qu'un estampillé équivalent existe
+    ferait remonter plus loin que `ROLLBACK_DEPTH` sans le dire."""
+    origine = _venv_a(tmp_path / ".venvs" / "forgemaster", schema.SCHEMA_VERSION)
+    estampille = _venv_factice(live.home, "2026-08-06T00-00-00Z", schema.SCHEMA_VERSION)
+    _run_de_maj(live.home, "2026-08-06T00-00-00Z", origine)
+
+    assert snapshot.venv_for_schema(live, schema.SCHEMA_VERSION) == estampille
+
+
+def test_un_venv_avant_DISPARU_est_ignore_au_lieu_d_etre_compte(live: Settings, tmp_path: Path):
+    """Un `venv_avant` dont le dossier n'existe plus (purgé, ou effacé à la main) ne doit pas devenir une
+    cible fantôme : `snapshot list` dirait `restaurable` et le retour arrière échouerait au geste suivant.
+    On ne devine pas — on l'ignore, et l'état retombe honnêtement sur ce qui reste."""
+    _venv_factice(live.home, "2026-08-06T00-00-00Z", schema.SCHEMA_VERSION + 1)
+    _run_de_maj(live.home, "2026-08-06T00-00-00Z", tmp_path / ".venvs" / "jamais-pose")
+    snapshot.create(live)
+
+    (lu,) = snapshot.list_snapshots(live)
+    assert lu["state"] == "données seules"
+    assert snapshot.venv_for_schema(live, schema.SCHEMA_VERSION) is None
+
+
+def test_un_journal_de_run_INCOMPLET_ne_fait_pas_tomber_la_liste(live: Settings, tmp_path: Path):
+    """Trois façons dont un run ne dit rien d'exploitable : tué avant son verdict (pas de `result.json`),
+    JSON tronqué, et instance antérieure à la clé `venv_avant`. Aucune n'invalide les AUTRES runs —
+    ces dossiers sont des journaux. `snapshot list` est le verbe qu'on lance précisément quand ça va mal."""
+    origine = _venv_a(tmp_path / ".venvs" / "forgemaster", schema.SCHEMA_VERSION)
+    (live.home / "updates" / "2026-08-04T00-00-00Z").mkdir(parents=True)          # tué avant son verdict
+    tronque = live.home / "updates" / "2026-08-05T00-00-00Z"
+    tronque.mkdir(parents=True)
+    (tronque / "result.json").write_text('{"rc": 0, "verdi', encoding="utf-8")    # JSON tronqué
+    _run_de_maj(live.home, "2026-08-06T00-00-00Z", None)                          # antérieur à la clé
+    _run_de_maj(live.home, "2026-08-07T00-00-00Z", origine)
+    snapshot.create(live)
+
+    (lu,) = snapshot.list_snapshots(live)
+    assert lu["state"] == "restaurable"
+    assert str(origine) in lu["state_reason"]
 
 
 def test_les_deux_retentions_derivent_de_LA_politique(live: Settings):

@@ -192,11 +192,14 @@ def list_snapshots(settings: Settings) -> list[dict]:
 
     Chaque instantané valide porte en plus son **état de restauration** (`state` + `state_reason`) : tous ne
     se valent pas, et les présenter côte à côte sans le dire laisse choisir celui qui ne ramènera pas. La
-    mesure coûte **une sonde par venv retenu** (`KEEP_VENVS`, soit 2 en régime), pas une par instantané."""
+    mesure coûte **une sonde par venv candidat DISTINCT** (2 en régime, 3 au premier saut) plus **une lecture
+    JSON par run de MAJ** — et le nombre de runs, lui, n'est borné par rien aujourd'hui (`<home>/updates` n'a
+    pas de rétention, contrairement aux venvs et aux instantanés). Dit ici plutôt que découvert : le coût est
+    linéaire en runs, pas en instantanés."""
     root = snapshots_dir(settings)
     if not root.is_dir():
         return []
-    venvs = _venv_schemas(settings)
+    venvs = venv_schemas(settings)
     out: list[dict] = []
     for d in sorted((p for p in root.iterdir() if p.is_dir()), reverse=True):
         info, raw = _read_manifest(d / MANIFEST)
@@ -222,25 +225,94 @@ def _read_manifest(path: Path) -> tuple[dict, dict | None]:
             data)
 
 
-def _venv_schemas(settings: Settings) -> dict[str, int]:
-    """Le schéma que sait lire **chaque** venv encore posé sous `<home>/venvs` — c'est l'ensemble des
-    binaires vers lesquels un retour arrière peut basculer, donc la seule mesure qui décide de l'état d'un
-    instantané. Un venv qu'on ne sait pas sonder est **absent** du résultat plutôt que compté à zéro : un
-    schéma indéterminable n'est pas un schéma bas (même raison que `restore._user_version`)."""
-    root = settings.home / VENVS
-    if not root.is_dir():
-        return {}
-    found: dict[str, int] = {}
-    for venv in sorted(root.iterdir()):
-        if not venv.is_dir():
-            continue
+def venv_schemas(settings: Settings) -> dict[Path, int]:
+    """Le schéma que sait lire **chaque** venv vers lequel un retour arrière peut basculer — donc la seule
+    mesure qui décide de l'état d'un instantané. Ordonné par **préférence** (cf. `_venvs_candidats`), et
+    l'ordre EST le contrat : `_premier_du_schema` s'en sert pour choisir.
+
+    Un venv qu'on ne sait pas sonder est **absent** du résultat plutôt que compté à zéro : un schéma
+    indéterminable n'est pas un schéma bas (même raison que `restore._user_version`).
+
+    Clé = `Path` et non plus le nom : deux venvs de racines différentes peuvent porter le même nom (le venv
+    d'origine s'appelle typiquement `forgemaster`), et une collision de clés en effacerait un en silence."""
+    found: dict[Path, int] = {}
+    for venv in _venvs_candidats(settings):
         readable = python_schema(venv / "bin" / "python")
         if readable is not None:
-            found[venv.name] = readable
+            found[venv] = readable
     return found
 
 
-def _restorability(snapshot_dir: Path, manifest: dict, venvs: dict[str, int]) -> dict:
+def _venvs_candidats(settings: Settings) -> list[Path]:
+    """Les venvs posés, du **plus préférable au moins** : les estampillés de `<home>/venvs` du plus récent au
+    plus ancien, puis ceux qu'un run de MAJ a nommés et qui vivent **ailleurs**.
+
+    Ce « ailleurs » est tout l'objet de cette fonction. `<home>/venvs` est **créé par le premier `update
+    apply`** : le venv d'origine — celui que `pip install` a posé (`~/.venvs/forgemaster`) et que le lien
+    stable désignait avant la toute première bascule — n'y est JAMAIS. Ne regarder que ce dossier rendait
+    donc le **premier** saut sans retour, alors que le binaire d'avant était intact sur le disque (mesuré
+    le 2026-08-06 sur vrai systemd).
+
+    On le **dérive**, on ne le stocke pas : `updates/<stamp>/result.json` porte déjà `venv_avant` depuis le
+    2026-08-06. Aucun état nouveau, aucune ligne de plus au manifeste, `SCHEMA` inchangé — et ça vaut pour
+    les instantanés **déjà pris**, ce qu'un marqueur posé au prochain `apply` ne ferait pas. Même doctrine
+    que `update.preflight_rollback` : la correspondance instantané ↔ binaire se dérive.
+
+    Ce venv-là n'est jamais **purgé** non plus (`apply_update._purge_venvs` ne balaie que `<home>/venvs`), et
+    c'est voulu : il appartient à l'utilisateur, pas au cycle de MAJ. La rétention ne s'applique qu'à ce que
+    le produit a créé."""
+    root = settings.home / VENVS
+    estampilles = sorted((p for p in root.iterdir() if p.is_dir()), reverse=True) if root.is_dir() else []
+    vus = {p.resolve() for p in estampilles}
+    ailleurs: list[Path] = []
+    for avant in _venvs_nommes_par_les_runs(settings):
+        if not avant.is_dir():          # purgé, ou l'utilisateur l'a effacé : on ne devine pas, on l'ignore
+            continue
+        resolu = avant.resolve()
+        if resolu in vus:               # run N ≥ 2 : `venv_avant` est un estampillé, déjà dans la liste
+            continue
+        vus.add(resolu)
+        ailleurs.append(avant)
+    return estampilles + ailleurs
+
+
+def _venvs_nommes_par_les_runs(settings: Settings) -> list[Path]:
+    """Les `venv_avant` écrits par les runs de MAJ, du **plus récent au plus ancien**. Un run sans verdict
+    (interrompu), au JSON illisible, ou d'une version antérieure à cette clé, est **sauté** — pas une erreur :
+    ces dossiers sont des journaux, et un journal incomplet n'invalide pas les autres."""
+    from forgemaster.update import UPDATES  # tardif, comme `update` importe `snapshot` : pas de cycle
+
+    root = settings.home / UPDATES
+    if not root.is_dir():
+        return []
+    out: list[Path] = []
+    for run in sorted((p for p in root.iterdir() if p.is_dir()), reverse=True):
+        try:
+            data = json.loads((run / "result.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        avant = data.get("venv_avant") if isinstance(data, dict) else None
+        if avant:
+            out.append(Path(str(avant)))
+    return out
+
+
+def _premier_du_schema(venvs: dict[Path, int], voulu: int) -> Path | None:
+    """Le venv qui lit **exactement** ce schéma, pris dans l'ordre de préférence de `venv_schemas`.
+
+    **Une seule** règle de choix, appelée par les deux marches — l'état (`_restorability`) et la résolution
+    (`update._venv_pour`). Elles parcouraient chacune `<home>/venvs` de leur côté : deux marches qui
+    choisissent séparément finissent par ne pas choisir pareil, et `update._cible_utilisable` porte déjà le
+    refus que ça produit (« la liste et la résolution ne voient pas le même disque »)."""
+    return next((v for v, s in venvs.items() if s == voulu), None)
+
+
+def venv_for_schema(settings: Settings, voulu: int) -> Path | None:
+    """`_premier_du_schema` depuis les réglages — la porte d'entrée de `update._venv_pour`."""
+    return _premier_du_schema(venv_schemas(settings), voulu)
+
+
+def _restorability(snapshot_dir: Path, manifest: dict, venvs: dict[Path, int]) -> dict:
     """Les **trois états** d'un instantané, face aux binaires réellement disponibles. Ils reprennent le
     vocabulaire du garde de `restore.check_compatibility` — deux formulations du même invariant seraient
     deux façons de le comprendre :
@@ -252,8 +324,9 @@ def _restorability(snapshot_dir: Path, manifest: dict, venvs: dict[str, int]) ->
       et on ne pourra plus. C'est le piège que cette phase existe pour rendre visible.
     - `irrestaurable` — tous les binaires disponibles lisent moins loin : `restore` refusera, et il a raison.
 
-    Rien à mesurer (aucun venv sondable) → `inconnu`, pas un état. Une instance installée par `pip` n'a pas
-    de `<home>/venvs` : rendre `irrestaurable` sur ce qui est NORMAL ferait un check défaillant, donc ignoré.
+    Rien à mesurer (aucun venv sondable) → `inconnu`, pas un état. Une instance installée par `pip` et jamais
+    mise à jour n'a ni `<home>/venvs` ni run de MAJ : rendre `irrestaurable` sur ce qui est NORMAL ferait un
+    check défaillant, donc ignoré.
     """
     entries = manifest.get("entries")
     # `_read_manifest` tolère un manifeste tronqué (`data.get("entries", [])`) et le rend `valid` ;
@@ -270,10 +343,13 @@ def _restorability(snapshot_dir: Path, manifest: dict, venvs: dict[str, int]) ->
                 "state_reason": "aucune base dans cet instantané — rien qui puisse devenir illisible"}
     if not venvs:
         return {"state": "inconnu",
-                "state_reason": f"aucun venv sondable sous <home>/{VENVS} : cette instance n'a pas été posée "
-                                f"par le cycle de MAJ, l'état ne se mesure pas ici"}
-    if snap in venvs.values():
-        exact = sorted(n for n, s in venvs.items() if s == snap)[-1]
+                "state_reason": f"aucun venv sondable — ni sous <home>/{VENVS}, ni parmi ceux qu'un run de "
+                                f"MAJ a nommés : cette instance n'a pas été posée par le cycle de MAJ, "
+                                f"l'état ne se mesure pas ici"}
+    exact = _premier_du_schema(venvs, snap)
+    if exact is not None:
+        # Le CHEMIN, pas le nom : le venv d'origine s'appelle `forgemaster`, ce qui ne dit pas où il est —
+        # et ce motif est exactement ce qu'on relit quand un retour arrière se discute.
         return {"state": "restaurable",
                 "state_reason": f"le venv {exact} porte le schéma {snap} : binaire et données reviennent "
                                 f"ensemble"}
@@ -334,8 +410,8 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
         if etat in ("données seules", "irrestaurable"):
             print(f"    → {etat.upper()} — {snap['state_reason']}")
     if any(s.get("state") == "inconnu" for s in snaps):
-        print(f"\n· état de restauration non mesuré : aucun venv sondable sous <home>/{VENVS} — cette "
-              f"instance n'a pas été posée par le cycle de MAJ")
+        print(f"\n· état de restauration non mesuré : aucun venv sondable, ni sous <home>/{VENVS} ni parmi "
+              f"ceux qu'un run de MAJ a nommés — cette instance n'a pas été posée par le cycle de MAJ")
     return 0
 
 
