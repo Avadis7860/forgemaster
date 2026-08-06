@@ -253,6 +253,15 @@ def _restorability(snapshot_dir: Path, manifest: dict, venvs: dict[str, int]) ->
     Rien à mesurer (aucun venv sondable) → `inconnu`, pas un état. Une instance installée par `pip` n'a pas
     de `<home>/venvs` : rendre `irrestaurable` sur ce qui est NORMAL ferait un check défaillant, donc ignoré.
     """
+    entries = manifest.get("entries")
+    # `_read_manifest` tolère un manifeste tronqué (`data.get("entries", [])`) et le rend `valid` ;
+    # `snapshot_schema`, lui, fait `manifest["entries"]`. Sans cette garde, `snapshot list` — le verbe
+    # qu'on lance PRÉCISÉMENT quand ça va mal — remonte un `KeyError` au lieu de lister. Trouvé en revue
+    # du diff, après avoir vérifié que le cas se produit (manifeste `{"schema": 1}` seul).
+    if not isinstance(entries, list):
+        return {"state": "inconnu",
+                "state_reason": "manifeste tronqué : il ne déclare aucune entrée, le schéma de la base ne "
+                                "s'y lit pas"}
     snap = snapshot_schema(snapshot_dir, manifest)
     if snap is None:
         return {"state": "restaurable",

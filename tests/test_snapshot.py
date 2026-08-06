@@ -320,3 +320,18 @@ def test_cli_list_DIT_le_piege_des_donnees_seules(live: Settings, capsys):
                  "--projects-root", str(live.projects_root)]) == 0
     sortie = capsys.readouterr().out
     assert "DONNÉES SEULES" in sortie and "migrera EN AVANT" in sortie
+
+
+def test_un_manifeste_tronque_ne_fait_pas_PLANTER_la_liste(live: Settings):
+    """`snapshot list` est le verbe qu'on lance quand ça va mal — il doit toujours répondre. Un manifeste
+    au schéma valide mais sans entrées passait `_read_manifest` (qui tolère l'absence) puis atteignait
+    `snapshot_schema` (qui fait `manifest["entries"]`) : `KeyError` au lieu d'une liste. Vérifié reproductible
+    avant d'être corrigé."""
+    d = snapshot.snapshots_dir(live) / "2026-08-06T00-00-00Z"
+    d.mkdir(parents=True)
+    (d / snapshot.MANIFEST).write_text(json.dumps({"schema": snapshot.SCHEMA}), encoding="utf-8")
+
+    (lu,) = snapshot.list_snapshots(live)
+
+    assert lu["valid"] is True and lu["state"] == "inconnu"
+    assert "tronqué" in lu["state_reason"]
