@@ -336,6 +336,10 @@ def test_le_venv_d_ORIGINE_hors_de_home_venvs_rend_l_instantane_RESTAURABLE(live
     (lu,) = snapshot.list_snapshots(live)
     assert lu["state"] == "restaurable"
     assert str(origine) in lu["state_reason"]
+    # Et le `restaurable` le dit à voix haute : ce binaire-là, rien ne le protège. Sans cette note, la
+    # liste laisserait croire que le produit tient le retour, alors qu'un `rm -rf ~/.venvs` le supprime.
+    assert lu["state_note"] is True
+    assert "ni compté ni protégé" in lu["state_reason"]
 
 
 def test_update_venv_pour_designe_le_MEME_venv_que_l_etat(live: Settings, tmp_path: Path):

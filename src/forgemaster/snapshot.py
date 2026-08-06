@@ -204,7 +204,7 @@ def list_snapshots(settings: Settings) -> list[dict]:
     for d in sorted((p for p in root.iterdir() if p.is_dir()), reverse=True):
         info, raw = _read_manifest(d / MANIFEST)
         if raw is not None:
-            info |= _restorability(d, raw, venvs)
+            info |= _restorability(d, raw, venvs, settings.home / VENVS)
         out.append({"path": str(d), "name": d.name, **info})
     return out
 
@@ -312,7 +312,7 @@ def venv_for_schema(settings: Settings, voulu: int) -> Path | None:
     return _premier_du_schema(venv_schemas(settings), voulu)
 
 
-def _restorability(snapshot_dir: Path, manifest: dict, venvs: dict[Path, int]) -> dict:
+def _restorability(snapshot_dir: Path, manifest: dict, venvs: dict[Path, int], racine: Path) -> dict:
     """Les **trois états** d'un instantané, face aux binaires réellement disponibles. Ils reprennent le
     vocabulaire du garde de `restore.check_compatibility` — deux formulations du même invariant seraient
     deux façons de le comprendre :
@@ -350,9 +350,17 @@ def _restorability(snapshot_dir: Path, manifest: dict, venvs: dict[Path, int]) -
     if exact is not None:
         # Le CHEMIN, pas le nom : le venv d'origine s'appelle `forgemaster`, ce qui ne dit pas où il est —
         # et ce motif est exactement ce qu'on relit quand un retour arrière se discute.
-        return {"state": "restaurable",
-                "state_reason": f"le venv {exact} porte le schéma {snap} : binaire et données reviennent "
-                                f"ensemble"}
+        motif = f"le venv {exact} porte le schéma {snap} : binaire et données reviennent ensemble"
+        if exact.parent == racine:
+            return {"state": "restaurable", "state_reason": motif}
+        # `restaurable` n'a normalement rien à ajouter — sauf ici. Le retour dépend alors d'un binaire que
+        # le cycle de MAJ n'a pas créé, ne compte pas et ne purge pas : l'effacer (c'est le venv de
+        # l'utilisateur, il a toutes les raisons de croire qu'il ne sert plus) supprimerait le seul retour
+        # possible. Un état qui tait ce dont il dépend n'est pas un état honnête.
+        return {"state": "restaurable", "state_note": True,
+                "state_reason": f"{motif} — ce venv est HORS de <home>/{VENVS} : posé par `pip`, pas par le "
+                                f"cycle de MAJ, donc ni compté ni protégé par la rétention. L'effacer "
+                                f"retirerait le seul retour possible"}
     au_dessus = [s for s in venvs.values() if s > snap]
     if au_dessus:
         proche = min(au_dessus)
@@ -405,9 +413,11 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
         print(f"{MARQUEURS.get(etat, '·')} {snap['name']}  {snap['created_at']}  "
               f"forgemaster {snap['forgemaster']['version']} "
               f"({snap['forgemaster']['build_sha'] or 'build inconnu'})  [{', '.join(snap['entries'])}]")
-        # Les deux états qui trompent se DISENT, ligne à ligne. `restaurable` n'a rien à ajouter, et
-        # `inconnu` se dit une fois en pied de liste : le répéter noierait ceux qui comptent.
-        if etat in ("données seules", "irrestaurable"):
+        # Les deux états qui trompent se DISENT, ligne à ligne. `restaurable` n'a rien à ajouter — SAUF
+        # quand son binaire vit hors de `<home>/venvs` (`state_note`) : le retour dépend alors de quelque
+        # chose que le produit ne protège pas, et ça, il faut le lire AVANT de faire le ménage. `inconnu`
+        # se dit une fois en pied de liste : le répéter noierait ceux qui comptent.
+        if etat in ("données seules", "irrestaurable") or snap.get("state_note"):
             print(f"    → {etat.upper()} — {snap['state_reason']}")
     if any(s.get("state") == "inconnu" for s in snaps):
         print(f"\n· état de restauration non mesuré : aucun venv sondable, ni sous <home>/{VENVS} ni parmi "

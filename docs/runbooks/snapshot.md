@@ -83,9 +83,12 @@ n'est borné par rien : `<home>/updates` n'a pas de rétention, contrairement au
 donc linéaire en **runs**, pas en instantanés.
 
 ## _restorability() — `restaurable`, `données seules`, `irrestaurable` — et le vide honnête
-`src/forgemaster/snapshot.py:315` · appelé par `list_snapshots` · retourne `state` + `state_reason`
+`src/forgemaster/snapshot.py:315` · appelé par `list_snapshots` · retourne `state` + `state_reason` (+ `state_note`)
 - **`restaurable`** — un venv porte **exactement** le schéma de l'instantané : binaire et données reviennent ensemble.
-  Le seul état qui tient la promesse du retour arrière.
+  Le seul état qui tient la promesse du retour arrière. Il porte en plus `state_note` quand ce venv vit **hors** de
+  `<home>/venvs` (`racine`, passée par `list_snapshots`) : le retour dépend alors d'un binaire que le cycle de MAJ n'a
+  ni créé, ni compté, ni protégé — l'effacer, ce que son propriétaire a toutes les raisons de faire, supprimerait le
+  seul retour possible. Un état qui tait ce dont il dépend n'est pas honnête.
 - **`données seules`** — aucun venv n'a ce schéma, mais au moins un le dépasse. La remise passera le garde, puis la
   base **migrera en avant** à la première ouverture : on récupère ses données, on ne revient pas, et on ne pourra
   plus. C'est le piège que cet étage existe pour rendre visible.
@@ -131,14 +134,16 @@ chacun `<home>/venvs` de leur côté : deux marches qui choisissent séparément
 `update._cible_utilisable` porte déjà le refus que ça produit (« la liste et la résolution ne voient pas le même
 disque »). Elles lisent désormais la même liste, dans le même ordre.
 
-## cli_dispatch() — les deux états qui trompent se disent, ligne à ligne
-`src/forgemaster/snapshot.py:386` · appelé par `cli._h_snapshot` (routé par `_HANDLERS`) · retourne le code de sortie
-Route `create` / `restore` / la liste. `restaurable` n'a rien à ajouter, et `inconnu` se dit **une fois** en pied de
-liste : le répéter noierait ceux qui comptent. `données seules` et `irrestaurable` portent chacun leur motif complet
-sous leur ligne. Les marqueurs viennent de `MARQUEURS` (`snapshot.py:52`).
+## cli_dispatch() — les états qui trompent se disent, ligne à ligne
+`src/forgemaster/snapshot.py:394` · appelé par `cli._h_snapshot` (routé par `_HANDLERS`) · retourne le code de sortie
+Route `create` / `restore` / la liste. `données seules` et `irrestaurable` portent chacun leur motif complet sous leur
+ligne, et `restaurable` **aussi** quand il porte `state_note` — c'est-à-dire quand son binaire vit hors de
+`<home>/venvs` : ça, il faut le lire AVANT de faire le ménage. Un `restaurable` ordinaire n'a rien à ajouter, et
+`inconnu` se dit **une fois** en pied de liste : le répéter noierait ceux qui comptent. Les marqueurs viennent de
+`MARQUEURS` (`snapshot.py:52`).
 
 ## _launch_restore() — on LANCE le script figé, on ne le réimplémente pas
-`src/forgemaster/snapshot.py:418` · appelé par `cli_dispatch` · retourne le rc du sous-processus
+`src/forgemaster/snapshot.py:428` · appelé par `cli_dispatch` · retourne le rc du sous-processus
 De préférence la copie **figée dans l'instantané** : elle a été écrite avec son manifeste, donc elle le comprend — et
 le chemin de secours (lancer le script à la main) devient exactement celui qu'on exerce ici, au lieu d'un jumeau
 jamais joué. `--allow-unverified-binary` n'est ajouté **que s'il est demandé** : une copie d'avant ce drapeau ferait
@@ -146,7 +151,7 @@ sortir argparse en usage, et casserait la restauration des instantanés anciens 
 jour où ça compte.
 
 ## _describe() — dit à la prise, pas à la restauration
-`src/forgemaster/snapshot.py:443` · appelé par `cli_dispatch` (`create`) · retourne les lignes à afficher
+`src/forgemaster/snapshot.py:453` · appelé par `cli_dispatch` (`create`) · retourne les lignes à afficher
 Ce qui a été pris, ce qui manquait, ce qui reste dehors. Le moment de dire ce qu'un instantané ne couvre pas est celui
 où on le prend, pas celui où on découvre le manque.
 
