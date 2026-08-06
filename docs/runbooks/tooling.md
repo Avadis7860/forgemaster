@@ -127,11 +127,15 @@ rapatrier l'historique — la sonde dit *lesquelles* ont bougé, jamais *de comb
 `render_unit` est **pur** : rend l'unité systemd pour `forgemaster serve`, deux portées `user` (défaut, sans root) /
 `system` (root, épingle `User=`/`Group=`). `Environment=HOME` est **obligatoire** (sans lui git ne lit pas le
 helper de credentials → fetch/push non-auth en silence). `install_service` écrit l'unité + un `forgemaster.env`
-gabarit (jamais écrasé s'il existe) et retourne `(unit_path, env_path, systemctl_hint)` — l'appelant imprime le
+gabarit (jamais écrasé s'il existe) et retourne `(unit_path, env_path, hint)` — l'appelant imprime le
 hint, on n'exécute PAS systemctl (pas de footgun privilège).
+Le hint lui-même vient de `src/forgemaster/service.py:183` (`systemctl_hint`), **pur**, partagé avec
+`mcp.local.install` : une seule formulation pour toutes les unités que ce produit pose. En portée `user` il
+ouvre le `linger` **en premier** — sans lui le gestionnaire systemd de l'utilisateur meurt avec sa dernière
+session, et le service avec (mesuré sur vrai systemd le 2026-08-06) ; en portée `system` il ne l'écrit pas.
 
 ## mcp.local.install() — co-installer le serveur de corpus SUR cet hôte
-`src/forgemaster/mcp/local.py:248` (`install`) · `src/forgemaster/mcp/local.py:120` (`install_plan`, pur) · appelés par
+`src/forgemaster/mcp/local.py:249` (`install`) · `src/forgemaster/mcp/local.py:120` (`install_plan`, pur) · appelés par
 `forgemaster mcp install` et l'étape `[8/9]` de `deploy/provision-ct.sh` (`--with-mcp`).
 Pose un venv **dédié** (`$FORGEMASTER_HOME/mcp/venv` — ni celui du forgemaster, ni celui des outils : trois cycles de
 vie distincts), installe `forgemaster-catalogs` au **SHA épinglé** (`SERVER_REF`, pas une réf mobile — §3 de la
@@ -149,7 +153,7 @@ tourne, à chaque appel d'une commande annoncée idempotente. Clone **anonyme** 
 figée à `0.1.0`, donc `--upgrade` seul saute l'install en rendant rc 0.
 
 ## mcp.local.topology() — laquelle des deux topologies cette instance est-elle
-`src/forgemaster/mcp/local.py:201` · consommé par `build_provenance.provenance` → `GET /api/version` (clé `mcp`).
+`src/forgemaster/mcp/local.py:202` · consommé par `build_provenance.provenance` → `GET /api/version` (clé `mcp`).
 Répond à l'exigence du §4 de la décision d'édition : deux topologies déclarées, et l'instance **dit** laquelle.
 Retourne `{topology, sha, endpoint, reason}`, lecture **locale, zéro réseau, qui ne lève jamais**.
 **Déduit du disque, jamais déclaré** — une clé d'env `…_TOPOLOGY` serait un champ qui peut mentir, que rien ne

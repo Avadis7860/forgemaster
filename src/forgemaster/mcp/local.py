@@ -32,6 +32,7 @@ from ipaddress import ip_address
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from forgemaster import service as svc
 from forgemaster.config import Settings
 from forgemaster.core.run import RunResult, run
 from forgemaster.provision import mcp as wiring
@@ -304,13 +305,13 @@ def install(settings: Settings, *, data_root: str | Path, port: int = DEFAULT_PO
     unit.parent.mkdir(parents=True, exist_ok=True)
     unit.write_text(render_unit(settings, data_root=root, scope=scope), encoding="utf-8")
 
-    flag = "--user " if scope == "user" else ""
-    sudo = "" if scope == "user" else "sudo "
     report.update({
         "unit": str(unit), "env_file": str(envf), "endpoint": ep,
         "sha": server_provenance(settings).get("sha"),
-        "hint": (f"{sudo}systemctl {flag}daemon-reload && "
-                 f"{sudo}systemctl {flag}enable --now {SERVER_UNIT}"),
+        # Le hint vient de `service.systemctl_hint` et n'est pas ré-écrit ici : deux formulations du même
+        # geste divergent, et c'est la portée `user` — celle qui a besoin du linger — qui aurait été oubliée
+        # dans la copie (elle l'était, jusqu'au 2026-08-06).
+        "hint": svc.systemctl_hint(scope, SERVER_UNIT),
     })
     return report
 

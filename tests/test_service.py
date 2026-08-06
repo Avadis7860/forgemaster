@@ -48,6 +48,29 @@ def test_install_service_writes_unit_and_env_without_clobber(tmp_path: Path, mon
     assert "systemctl --user" in hint and "enable --now forgemaster" in hint
 
 
+def test_install_service_hint_teaches_linger_in_user_scope_only(tmp_path: Path, monkeypatch):
+    """Le hint de la portée `user` DOIT enseigner le linger, et celui de la portée `system` ne doit PAS.
+
+    Ce n'est pas du style : sans linger, le gestionnaire `user` s'arrête avec la dernière session et le
+    service meurt à la déconnexion — mesuré sur vrai systemd le 2026-08-06. En portée `system` le linger
+    n'a aucun sens (l'unité vit sous `multi-user.target`), donc l'y écrire enseignerait un geste inutile.
+    Les deux moitiés sont figées ensemble : c'est leur ASYMÉTRIE qui porte le sens."""
+    monkeypatch.setenv("HOME", str(tmp_path / "fakehome"))
+    settings = _settings(tmp_path)
+
+    # Le chemin complet pour la portée `user` — c'est le message que l'utilisateur lit vraiment.
+    _u, _e, user_hint = service.install_service(settings, host="127.0.0.1", port=8700, scope="user")
+    assert "loginctl enable-linger" in user_hint
+    # l'ordre compte : activer le service avant d'ouvrir le linger, c'est l'activer pour une seule session
+    assert user_hint.index("enable-linger") < user_hint.index("enable --now")
+
+    # La portée `system` se juge sur la fonction PURE : `install_service` y écrirait dans
+    # /etc/systemd/system, que la suite de tests n'a pas le droit de toucher — et ne doit pas vouloir.
+    assert "enable-linger" not in service.systemctl_hint("system", "forgemaster")
+    # et le même geste vaut pour TOUTES les unités que le produit pose, pas seulement le forgemaster
+    assert "loginctl enable-linger" in service.systemctl_hint("user", "forgemaster-catalogs")
+
+
 def test_install_service_seeds_env_template_when_absent(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "fakehome"))
     settings = _settings(tmp_path)

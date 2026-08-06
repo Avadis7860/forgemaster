@@ -177,8 +177,25 @@ def install_service(
     if not env_path.exists():                            # ne jamais écraser une conf existante
         env_path.write_text(_env_template(settings, host=host, port=port), encoding="utf-8")
 
+    return unit_file, env_path, systemctl_hint(scope, "forgemaster")
+
+
+def systemctl_hint(scope: str, unit_name: str) -> str:
+    """La suite de gestes qui met une unité debout, par portée — **une seule** formulation pour toutes les
+    unités que ce produit pose (le forgemaster, le serveur de catalogues co-installé).
+
+    Le `linger` OUVRE la portée `user`, il ne l'orne pas : sans lui, le gestionnaire systemd de
+    l'utilisateur s'arrête avec sa dernière session, et le service avec. Sur un serveur sans écran — le cas
+    normal d'une instance auto-hébergée — cela veut dire « ça marche tant que je suis connecté en ssh, ça
+    meurt quand je raccroche ». `deploy/provision-ct.sh` le posait déjà ; le message que lit celui qui
+    installe À LA MAIN ne le disait pas, et c'est lui qui en a le plus besoin (mesuré le 2026-08-06 sur
+    vrai systemd : l'unité `user` ne tenait que grâce à un linger posé hors du produit).
+
+    Il vient EN PREMIER : ouvrir le linger après avoir activé le service, c'est l'activer pour une seule
+    session. En portée `system` il n'a aucun sens — l'unité vit sous `multi-user.target` — et l'y écrire
+    enseignerait un geste inutile."""
     flag = "--user " if scope == "user" else ""
     sudo = "" if scope == "user" else "sudo "
-    hint = (f"{sudo}systemctl {flag}daemon-reload && "
-            f"{sudo}systemctl {flag}enable --now forgemaster")
-    return unit_file, env_path, hint
+    linger = f"loginctl enable-linger {getpass.getuser()} && " if scope == "user" else ""
+    return (f"{linger}{sudo}systemctl {flag}daemon-reload && "
+            f"{sudo}systemctl {flag}enable --now {unit_name}")

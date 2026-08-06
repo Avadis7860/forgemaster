@@ -82,9 +82,13 @@ Le plus simple — un **service utilisateur** (sans root), qui redémarre tout s
 
 ```bash
 forgemaster install-service --host 0.0.0.0        # écrit ~/.config/systemd/user/forgemaster.service
+loginctl enable-linger "$USER"                    # AVANT d'activer : sinon le service meurt à la déconnexion
 systemctl --user daemon-reload && systemctl --user enable --now forgemaster
-loginctl enable-linger "$USER"                 # démarrer sans session ouverte (serveur headless)
 ```
+
+L'ordre n'est pas cosmétique : sans `linger`, le gestionnaire systemd de l'utilisateur s'arrête avec sa
+dernière session, et le service avec lui — sur un serveur sans écran, « ça marche tant que je suis connecté
+en ssh ». `install-service` imprime désormais les trois gestes dans cet ordre ; cette page les répète.
 
 Ou un **service système** (root) : `forgemaster install-service --system --host 0.0.0.0` puis
 `sudo systemctl daemon-reload && sudo systemctl enable --now forgemaster`.
