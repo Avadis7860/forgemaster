@@ -143,40 +143,70 @@ def preflight_rollback(settings: Settings, *, snapshot: str | None, unit: str | 
             f"aucun instantané sous {snap_mod.snapshots_dir(settings)} — il n'y a rien vers quoi revenir. "
             f"Un instantané est pris automatiquement avant chaque `forgemaster update apply`.")
 
+    from forgemaster import restore
+
+    actuel = socle["venv"].resolve()
+    lu_courant = restore.python_schema(socle["venv"] / "bin" / "python")
+
     if snapshot:
         cible = next((s for s in snaps if s["name"] == snapshot or s["path"] == snapshot), None)
         if cible is None:
             connus = ", ".join(s["name"] for s in snaps[:5])
             raise UpdateRefused(f"instantané inconnu : {snapshot}. Les plus récents : {connus} "
                                 f"(`forgemaster snapshot list` les classe avec leur état)")
+        venv, refus = _cible_utilisable(settings, cible, actuel=actuel, lu_courant=lu_courant)
+        if venv is None:
+            raise UpdateRefused(f"{cible['name']} : {refus}\n{_PISTES}")
     else:
-        cible = next((s for s in snaps if s.get("state") == "restaurable"), None)
-        if cible is None:
-            etats = ", ".join(f"{s['name']} → {s.get('state', 'inconnu')}" for s in snaps[:5])
-            raise UpdateRefused(
-                f"aucun instantané n'est `restaurable` : aucun venv posé ne porte exactement leur schéma, "
-                f"donc aucun ne ramènerait binaire ET données.\n  {etats}\n"
-                f"  → `forgemaster snapshot list` dit pour chacun ce qu'il ramènerait vraiment")
-
-    if not cible["valid"]:
-        raise UpdateRefused(f"{cible['name']} est un instantané invalide — {cible['reason']}")
-    if cible.get("state") != "restaurable":
-        raise UpdateRefused(
-            f"{cible['name']} est `{cible.get('state', 'inconnu')}`, pas `restaurable` — "
-            f"{cible.get('state_reason', 'état non mesuré')}.\n"
-            f"  → vise un instantané `restaurable`, ou assume le geste à la main "
-            f"(`forgemaster snapshot restore {cible['name']}`), qui te dira ce qu'il fait")
-
-    venv = _venv_pour(settings, Path(cible["path"]))
-    if venv is None:
-        raise UpdateRefused(f"{cible['name']} se dit `restaurable` mais son venv n'a pas été retrouvé — "
-                            f"la liste et la résolution ne voient pas le même disque, ne devine pas")
-    if venv.resolve() == socle["venv"]:
-        raise UpdateRefused(f"{cible['name']} correspond au venv DÉJÀ actif ({venv.name}) — il n'y a nulle "
-                            f"part où revenir. `forgemaster snapshot restore` remet les données seules.")
+        # On PARCOURT, on ne prend pas le premier `restaurable` : le plus récent est souvent l'instantané de
+        # sûreté d'un retour arrière déjà fait, qui ramène vers la version qu'on venait de quitter. Chercher
+        # la première cible qui ramène VRAIMENT en arrière évite ce va-et-vient.
+        venv, cible = None, None
+        motifs: list[str] = []
+        for info in snaps:
+            venv, refus = _cible_utilisable(settings, info, actuel=actuel, lu_courant=lu_courant)
+            if venv is not None:
+                cible = info
+                break
+            motifs.append(f"{info['name']} — {refus}")
+        if venv is None or cible is None:
+            detail = "\n  ".join(motifs[:5])
+            raise UpdateRefused(f"aucun instantané ne ramènerait en arrière :\n  {detail}\n{_PISTES}")
 
     return {**socle, "snapshot": Path(cible["path"]), "snapshot_name": cible["name"],
             "target_venv": venv, "authority": authority or []}
+
+
+_PISTES = ("  → `forgemaster snapshot list` dit pour chacun ce qu'il ramènerait vraiment\n"
+           "  → `forgemaster snapshot restore <instantané>` remet les DONNÉES seules, en le disant\n"
+           "  → `forgemaster update apply --wheel <fichier>` est le verbe qui va, lui, en AVANT")
+
+
+def _cible_utilisable(settings: Settings, info: dict, *, actuel: Path,
+                      lu_courant: int | None) -> tuple[Path | None, str]:
+    """`(venv cible, motif de refus)` — le motif est vide quand cette cible ramène **vraiment** en arrière.
+
+    Quatre façons de ne pas en être une, et la quatrième s'est révélée en revue : après un retour arrière,
+    l'instantané de sûreté est le plus récent et il est `restaurable` — le viser ferait repartir **en avant**
+    vers la version qu'on vient de quitter. « Revenir » a un sens, et ce n'est pas « bouger »."""
+    from forgemaster import restore
+
+    if not info["valid"]:
+        return None, f"instantané invalide — {info['reason']}"
+    if info.get("state") != "restaurable":
+        return None, (f"il est `{info.get('state', 'inconnu')}`, pas `restaurable` — "
+                      f"{info.get('state_reason', 'état non mesuré')}")
+    venv = _venv_pour(settings, Path(info["path"]))
+    if venv is None:
+        return None, ("il se dit `restaurable` mais son venv n'a pas été retrouvé — la liste et la "
+                      "résolution ne voient pas le même disque, on ne devine pas")
+    if venv.resolve() == actuel:
+        return None, f"il correspond au venv DÉJÀ actif ({venv.name}) — il n'y a nulle part où revenir"
+    lu_cible = restore.python_schema(venv / "bin" / "python")
+    if lu_courant is not None and lu_cible is not None and lu_cible > lu_courant:
+        return None, (f"son binaire lit le schéma {lu_cible} et le tien lit le {lu_courant} : ce serait "
+                      f"aller EN AVANT, pas revenir")
+    return venv, ""
 
 
 def _venv_pour(settings: Settings, snapshot_dir: Path) -> Path | None:

@@ -321,3 +321,23 @@ def test_le_schema_de_linstantane_est_bien_celui_de_la_base_prise(apres_maj: Set
         assert int(conn.execute("PRAGMA user_version").fetchone()[0]) == schema.SCHEMA_VERSION
     finally:
         conn.close()
+
+
+def test_un_retour_arriere_ne_repart_pas_EN_AVANT(apres_maj: Settings, tmp_path: Path):
+    """Trouvé en revue du diff, reproduit sur le produit avant d'être corrigé. Après un retour arrière,
+    l'instantané de SÛRETÉ est le plus récent et il est `restaurable` : le prendre par défaut ferait
+    repartir vers la version qu'on vient de quitter. « Revenir » a un sens, et ce n'est pas « bouger »."""
+    # L'état d'APRÈS un retour arrière : le lien est sur l'ancien, et un instantané de sûreté au schéma du
+    # NEUF traîne, plus récent que tous les autres.
+    (apres_maj.home / "current").unlink()
+    os.symlink(apres_maj.home / snapshot.VENVS / "2026-08-01T00-00-00Z", apres_maj.home / "current")
+    conn = sqlite3.connect(str(apres_maj.db_path))
+    conn.execute(f"PRAGMA user_version = {schema.SCHEMA_VERSION + 1}")
+    conn.close()
+    snapshot.create(apres_maj)                       # la sûreté, prise après la MAJ : schéma N+1
+
+    with pytest.raises(UpdateRefused) as exc:
+        _plan(apres_maj, tmp_path)
+
+    assert "EN AVANT" in str(exc.value)
+    assert "update apply" in str(exc.value), "le refus doit nommer le verbe qui va, lui, en avant"
