@@ -9,6 +9,40 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### La route de MAJ, et un état de run qui SURVIT au daemon (routes neuves, aucun schéma touché)
+
+Poser une mise à jour depuis le produit, sans terminal — et retrouver son verdict de l'autre côté de la
+bascule. `GET /api/update/plan` (préflight + description, **idempotent**) · `POST /api/update/apply` ·
+`POST /api/update/rollback` (**202** + identifiant du run) · `GET /api/update/runs[/{id}]`.
+
+- **Rien ne vit en mémoire.** Le processus qui répond au `GET` d'après n'est ni celui qui a reçu le `POST`,
+  ni même le même binaire. `update.run_state` relit tout du **disque** et tranche cinq états :
+  `done`/`failed` (`result.json` écrit) · `unknown` (verdict absent, unité non sondée) · `running` (unité
+  transitoire active) · `interrupted` (parti, jamais conclu — l'état que le fire-and-forget d'avant ne savait
+  pas dire) · `never_started`. `unknown` est le garde-fou de l'économie de sonde : `GET /runs` n'en dépense
+  qu'**une** pour toute la liste, sinon un gestionnaire systemd coincé ferait attendre la page qui sert
+  justement à le regarder.
+- **`run.json`, l'intention écrite avant l'effet.** Le `mode` ne se dérive de rien (`result.json` ne le porte
+  pas et n'existe qu'à la fin) : un run qui n'a jamais démarré garde quand même sa raison d'avoir existé.
+- **Le POST exécute, il ne prévisualise pas.** Pas de `dry_run` dans un corps de requête : la
+  prévisualisation d'un geste mutant est un `GET` idempotent, comme `git/sync` avant `git/sync/reconcile`.
+- **Sixième refus, dans le préflight PARTAGÉ** — un dispatch en cours **bloque** les deux gestes. L'arrêt du
+  service tue le worker, le boot suivant le réape `killed`, sa task retombe `todo` et les jetons dépensés
+  sont perdus. La CLI arrête le même service : elle en hérite. Les shells du terminal web, eux, sont **dits**
+  et ne bloquent pas — un onglet ouvert n'est pas du travail en cours.
+- **Surface plus étroite que la CLI** : ni `unit`, ni `systemctl`, ni `service` dans le corps ; `scope` défaut
+  `user`. **409** = l'instance refuse (texte intégral du refus) · **503** = `systemd-run` n'a pas enregistré
+  l'unité (l'identifiant du run voyage quand même) · **404** = run inconnu ou identifiant hors forme (forme
+  **et** confinement du chemin résolu).
+- `update.spawn` est extrait de `launch` : le cœur ne parle pas (aucun `print`, aucune exception qui
+  s'échappe), la CLI et le daemon en sont deux vues.
+- **Deux gestes dans la même seconde ne s'écrasent plus.** L'horodatage d'un run est à la seconde, et le
+  handler HTTP est synchrone (donc servi par un fil du pool) : avec `mkdir(exist_ok=True)`, le second
+  écrasait le `run.json` du premier — l'intention d'un run **en vol** — avant d'échouer de toute façon sur
+  un nom d'unité déjà pris. Il refuse maintenant (**409**), et rien de l'autre n'est touché.
+- **Les corps de requête sont `extra="forbid"`** (**422** sur un champ inconnu) : sur cette route, un champ
+  ignoré en silence se lit « honoré » par qui l'a écrit.
+
 ### Les deux gardes de l'invariant de retour arrière (aucun changement de schéma, aucun format touché)
 
 L'invariant : *aucune séquence de gestes accessible à l'utilisateur ne peut rendre sa base illisible, ni lui

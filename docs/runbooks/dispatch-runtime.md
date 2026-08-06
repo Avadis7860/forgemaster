@@ -7,19 +7,19 @@ La plomberie sous l'orchestrateur de dispatch. Un **job** matérialise un worker
 `record_start` insère un job en statut `running` et rend son id ; `session_id` est le handle de suivi live (le chemin du transcript en dérive) ; `kind` (v11) est l'**identité du run** — `task` pour l'ouvrier, `review` posé par le reviewer — et c'est ce qui distingue les deux populations de jobs dans la table. À appeler AVANT le run pour que `started_at` soit le début réel. `record_finish` le clôt : `done` si `parsed.ok`, sinon `failed` — mais un `status` explicite (`killed`/`cancelled`) l'emporte, et `session_id` n'est écrasé que si non nul (`COALESCE`). Renseigne les métriques du run (num_turns, cost_usd, wall_s).
 
 ## jobs.read_events() — lecture incrémentale robuste du transcript `(inode, offset)`
-`src/forgemaster/dispatch/jobs.py:148` · appelé par `stream.stream_job` (boucle live) et `jobs.tail`
+`src/forgemaster/dispatch/jobs.py:165` · appelé par `stream.stream_job` (boucle live) et `jobs.tail`
 Cœur du refactor #5 : remplace le legacy `find … | tail -F` fragile par une relecture locale par `(inode, offset)`. Reprend à `offset` ; si l'`inode` a changé (rotation), relit depuis 0 ; **s'arrête sur une ligne partielle sans consommer son offset** — elle sera relue complète au prochain appel (invariant anti-troncature). Rend `{events, offset, inode}`, les events déjà normalisés.
 
 ## jobs.tail() — drain one-shot des events d'un job
-`src/forgemaster/dispatch/jobs.py:172` · appelé par les lectures ponctuelles (historique / API non-live)
+`src/forgemaster/dispatch/jobs.py:189` · appelé par les lectures ponctuelles (historique / API non-live)
 Résout le job, puis un unique `read_events` de tout le courant (sans offset persisté — c'est le stream qui boucle pour le live). Vide si `log_path` absent ou transcript pas encore écrit.
 
 ## jobs.transcript_path() — résout le chemin réel du transcript
-`src/forgemaster/dispatch/jobs.py:135` · appelé par le suivi live pour localiser le fichier écrit par le worker
+`src/forgemaster/dispatch/jobs.py:152` · appelé par le suivi live pour localiser le fichier écrit par le worker
 Rend le chemin **déterministe** `~/.claude/projects/<encode-cwd>/<session_id>.jsonl` (encodage Claude Code : `/`, `.`, `_` → `-`) s'il existe, sinon un glob de secours en une passe, sinon `None` (worker n'a encore rien écrit). À distinguer de `dispatch_log_path` (le log streamé `<home>/logs/<session_id>.jsonl` que le daemon écrit lui-même).
 
 ## jobs.normalize_line() — une ligne JSONL → événement conversation canonique (PUR)
-`src/forgemaster/dispatch/jobs.py:235` · appelé par `read_events` sur chaque ligne complète
+`src/forgemaster/dispatch/jobs.py:252` · appelé par `read_events` sur chaque ligne complète
 Pur, réutilisé live ET en relecture (porté de l'ex-arbre `services/aggregator`, décommissionné depuis — ce module est désormais le seul foyer). Émet un event `assistant` (textes + tool_use résumés + usage) ou `tool_result`, `None` sinon. Ignore : lignes non-JSON, types non-conversationnels, assistant/user vides, et le **prompt user initial**. S'appuie sur les helpers `_summarize_input/_result/_usage`.
 
 ## stream.stream_job() — pont transcript → WebSocket (SSE live)

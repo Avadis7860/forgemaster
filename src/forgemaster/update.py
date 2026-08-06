@@ -16,7 +16,7 @@ dire aveugle.
 Ce module ne porte donc que ce qu'un script autonome ne peut pas porter : le **refus fail-closed**, avant
 que quoi que ce soit ne bouge.
 
-Cinq refus, tous explicites, jamais un devinage :
+Six refus, tous explicites, jamais un devinage :
 
 - **pas de `systemd-run`** → sans lui l'applicateur ne peut pas sortir du cgroup de son lanceur, donc il se
   ferait tuer par l'arrêt qu'il émet. Livré avec systemd, dont le verbe dépend déjà ;
@@ -29,19 +29,28 @@ Cinq refus, tous explicites, jamais un devinage :
 - **du travail non commité dans `projects_root`** → cette racine n'entre PAS dans l'instantané. Le motif
   (« git fait autorité ») ne vaut que là où il *y a* une autorité : le refus la vérifie au lieu de la
   supposer. Seul le non commité bloque — « aucun remote » est un cas normal du produit distribué, et refuser
-  dessus interdirait toute mise à jour à qui n'en veut pas.
+  dessus interdirait toute mise à jour à qui n'en veut pas ;
+- **un dispatch en cours** → l'arrêt du service tue le worker, et le boot suivant le réape `killed` : la
+  task retombe `todo` et les jetons déjà dépensés sont perdus. Le consentement porte sur *appliquer la MAJ*,
+  jamais sur *perdre le travail en cours*.
+
+Ce module porte aussi la **lecture d'état d'un run** (`run_state`, `list_runs`) — et elle se fait entièrement
+**sur le disque**. C'est ce qui permet à la route HTTP d'exister : le processus qui répond au `GET` d'après
+n'est ni celui qui a reçu le `POST`, ni même le même binaire. Rien de cet état ne peut donc vivre en mémoire.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import sqlite3
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -54,6 +63,18 @@ UPDATES = "updates"
 RUNNER = "systemd-run"     # le seul échappement au cgroup du lanceur, cf. `_echappement_cgroup`
 FOLLOW_TIMEOUT = 900.0     # 15 min : venv neuf + pip install + deux redémarrages, large
 REGISTER_TIMEOUT = 30.0    # l'ENREGISTREMENT de l'unité (un aller-retour D-Bus), pas le travail qu'elle fait
+ACTIVE_TIMEOUT = 10.0      # `systemctl is-active` sur une unité transitoire : une question, pas un travail
+
+RUN_META = "run.json"        # l'INTENTION du lanceur, écrite avant l'effet (le mode ne se dérive pas)
+RUN_RESULT = "result.json"   # le VERDICT, écrit par l'applicateur à la toute fin
+RUN_JOURNAL = "journal.log"  # ce que l'applicateur raconte pendant qu'il travaille
+RUN_LAUNCH = "launch.log"    # ce que l'UNITÉ capture — donc ce qui reste des pannes les plus précoces
+RUN_STAMP = "%Y-%m-%dT%H-%M-%SZ"
+# Un identifiant de run qui arrive du réseau n'est pas un nom de dossier : il se valide par sa FORME avant
+# de toucher au disque. Seconde garde (confinement du chemin résolu) dans `run_dir_for` — deux, parce
+# qu'aucune des deux seule ne suffit (une forme valide peut être un lien symbolique).
+RUN_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$")
+MAX_RUNS = 50                # borne DITE (`truncated`), jamais un cap silencieux
 
 
 class UpdateRefused(Exception):
@@ -61,13 +82,17 @@ class UpdateRefused(Exception):
 
 
 def preflight(settings: Settings, *, wheel: str, unit: str | None, scope: str,
-              authority: list[dict] | None = None) -> dict:
+              authority: list[dict] | None = None, in_flight: list[dict] | None = None,
+              sessions: list[str] | None = None) -> dict:
     """Vérifie tout ce qui doit l'être avant que la moindre chose bouge, et rend le plan (chemins + URL de
     sonde). Lève `UpdateRefused` avec ce qu'il faut faire — jamais un « impossible » nu.
 
-    `authority` est le verdict par projet (`projects.authority.survey`), **calculé par l'appelant** et passé
-    ici : ce module ne va pas chercher une connexion DB tout seul (injection explicite), et un preflight ne
-    doit rien ouvrir en écriture avant d'avoir le droit de refuser."""
+    `authority` (verdict par projet, `projects.authority.survey`), `in_flight` (jobs `running`,
+    `dispatch.jobs.running`) et `sessions` (shells PTY vivants) sont **calculés par l'appelant** et passés
+    ici : ce module ne va pas chercher une connexion DB ni un registre tout seul (injection explicite), et un
+    preflight ne doit rien ouvrir en écriture avant d'avoir le droit de refuser. `sessions` n'est connu que
+    du daemon — la CLI est un autre processus et ne le voit pas ; il ne **bloque** donc rien, il se **dit**.
+    """
     whl = Path(wheel).expanduser()
     if not whl.is_file():
         raise UpdateRefused(f"wheel introuvable : {whl}")
@@ -76,7 +101,8 @@ def preflight(settings: Settings, *, wheel: str, unit: str | None, scope: str,
                             f"résolution : ce verbe ne pose que le fichier qu'on lui désigne")
     socle = _preflight_service(settings, unit=unit, scope=scope)
     _refuse_uncommitted_work(authority or [], geste="cette MAJ")
-    return {**socle, "wheel": whl, "authority": authority or []}
+    _refuse_busy_dispatch(in_flight or [], geste="cette MAJ")
+    return {**socle, "wheel": whl, "authority": authority or [], "sessions": sessions or []}
 
 
 def _preflight_service(settings: Settings, *, unit: str | None, scope: str) -> dict:
@@ -134,8 +160,32 @@ def _refuse_uncommitted_work(verdicts: list[dict], *, geste: str) -> None:
             f"  → commite (ou remise) dans chaque worktree cité, puis relance")
 
 
+def _refuse_busy_dispatch(jobs: list[dict], *, geste: str) -> None:
+    """Le refus de **non-interruption** : un worker tourne, et le geste demandé arrête le service.
+
+    Le motif est mesuré, pas moral. L'arrêt tue le worker in-process ; au boot suivant
+    `dispatch.reconcile.reconcile_orphans` le trouve `running` sans verdict, le marque `killed`, et sa task
+    retombe `todo` — les jetons déjà dépensés sont perdus, et `record_finish` (gardé `WHERE status='running'`)
+    ne pourra plus rien rattraper. Le même module documente ce footgun comme **déjà vécu**.
+
+    Le consentement de l'utilisateur porte sur *appliquer la MAJ*, jamais sur *perdre le travail en cours*
+    (Décision B §1, non-interruption fail-closed). Il vit ici, dans le préflight partagé, et non dans la
+    route : la CLI arrête exactement le même service, elle doit hériter du même refus."""
+    if not jobs:
+        return
+    details = "\n  ".join(
+        f"{j.get('project', '?')}/{j.get('feature', '?')}/{j.get('task', '?')} — job {j.get('job_id', '?')} "
+        f"depuis {j.get('started_at', '?')}" for j in jobs)
+    raise UpdateRefused(
+        f"{len(jobs)} run(s) de dispatch en cours, et {geste} arrête le service qui les porte : ils seraient "
+        f"tués en vol, leur task retomberait `todo` et les jetons déjà dépensés seraient perdus.\n"
+        f"  {details}\n"
+        f"  → attends la fin, ou `forgemaster abort <projet>` pour les arrêter proprement, puis relance")
+
+
 def preflight_rollback(settings: Settings, *, snapshot: str | None, unit: str | None, scope: str,
-                       authority: list[dict] | None = None) -> dict:
+                       authority: list[dict] | None = None, in_flight: list[dict] | None = None,
+                       sessions: list[str] | None = None) -> dict:
     """Le préflight du retour **volontaire**. Même socle de service que l'aller, même refus d'autorité, plus
     la **résolution de la cible** : quel instantané remettre, et vers quel venv rebasculer.
 
@@ -147,6 +197,7 @@ def preflight_rollback(settings: Settings, *, snapshot: str | None, unit: str | 
 
     socle = _preflight_service(settings, unit=unit, scope=scope)
     _refuse_uncommitted_work(authority or [], geste="ce retour arrière")
+    _refuse_busy_dispatch(in_flight or [], geste="ce retour arrière")
 
     snaps = snap_mod.list_snapshots(settings)
     if not snaps:
@@ -185,7 +236,7 @@ def preflight_rollback(settings: Settings, *, snapshot: str | None, unit: str | 
             raise UpdateRefused(f"aucun instantané ne ramènerait en arrière :\n  {detail}\n{_PISTES}")
 
     return {**socle, "snapshot": Path(cible["path"]), "snapshot_name": cible["name"],
-            "target_venv": venv, "authority": authority or []}
+            "target_venv": venv, "authority": authority or [], "sessions": sessions or []}
 
 
 _PISTES = ("  → `forgemaster snapshot list` dit pour chacun ce qu'il ramènerait vraiment\n"
@@ -273,13 +324,30 @@ def describe(plan: dict) -> list[str]:
         "déroulé         : venv neuf à côté → sonde en isolation → arrêt + instantané à froid → "
         "bascule du lien → vérification en vivant → retour arrière automatique si elle échoue",
     ]
-    # Ce qui n'a pas bloqué est DIT quand même : un projet sans remote n'est pas une faute, mais l'utilisateur
-    # doit savoir que sa seule copie est ici et qu'elle n'entre pas dans l'instantané.
+    lines.extend(_a_savoir(plan))
+    return lines
+
+
+def _a_savoir(plan: dict) -> list[str]:
+    """Ce qui n'a pas bloqué mais doit être su. Deux familles, et elles n'ont pas le même statut :
+
+    - les **projets hors instantané** — un projet sans remote n'est pas une faute, mais l'utilisateur doit
+      savoir que sa seule copie est ici et qu'elle n'entre pas dans l'instantané ;
+    - les **shells du terminal web** — ils vivent dans le cgroup du daemon, donc l'arrêt les emporte. Ils ne
+      **bloquent** pas : un onglet ouvert n'est pas du travail en cours, et refuser dessus rendrait la MAJ
+      impossible à qui laisse un shell ouvert, c'est-à-dire à tout le monde. Ce qui bloque, c'est un
+      dispatch (`_refuse_busy_dispatch`), parce que lui coûte des jetons. Le registre n'étant connu que du
+      daemon, cette ligne n'apparaît **que** par la route — la CLI ne peut pas la dire, elle ne sait pas."""
+    lines: list[str] = []
     noted = [v for v in plan.get("authority") or [] if v["state"] != "clean_pushed"]
     if noted:
         lines.append(f"hors instantané : {plan.get('projects_root', 'projects_root')} — "
                      f"{len(noted)} projet(s) à savoir")
         lines.extend(auth.describe(noted))
+    sessions = plan.get("sessions") or []
+    if sessions:
+        lines.append(f"seront perdus  : {len(sessions)} shell(s) du terminal web ({', '.join(sessions)}) — "
+                     f"ils vivent dans le service qu'on arrête ; rien d'écrit n'est perdu, la session l'est")
     return lines
 
 
@@ -297,38 +365,56 @@ def describe_rollback(plan: dict) -> list[str]:
         "déroulé         : sonde du binaire cible en isolation → arrêt + instantané de SÛRETÉ à froid → "
         "bascule du lien PUIS restauration → vérification en vivant → retour du retour si elle échoue",
     ]
-    noted = [v for v in plan.get("authority") or [] if v["state"] != "clean_pushed"]
-    if noted:
-        lines.append(f"hors instantané : {plan.get('projects_root', 'projects_root')} — "
-                     f"{len(noted)} projet(s) à savoir")
-        lines.extend(auth.describe(noted))
+    lines.extend(_a_savoir(plan))
     return lines
 
 
-def launch(settings: Settings, plan: dict, *, systemctl: str, service: str, detach: bool,
-           mode: str = "apply") -> int:
-    """Copie `apply.py` dans un dossier de run, le lance dans sa PROPRE UNITÉ TRANSITOIRE sous le `python3`
-    système, et suit son journal. Copié et non lancé depuis le paquet : le script doit survivre au venv
-    qu'il remplace — et lancé hors du cgroup de son lanceur (`_echappement_cgroup`) : il doit aussi survivre
-    au SERVICE qu'il arrête.
+def spawn(settings: Settings, plan: dict, *, systemctl: str, service: str,
+          mode: str = "apply") -> dict:
+    """Le **cœur** du lancement : copie `apply.py` dans un dossier de run, écrit l'intention, puis remet le
+    tout à sa PROPRE UNITÉ TRANSITOIRE sous le `python3` système. Rend
+    `{"run", "unit", "ok", "detail"}` — et **rien d'autre** : aucun `print`, aucune exception qui s'échappe.
+
+    Cette séparation d'avec `launch` n'est pas de l'esthétique : le daemon appelle ce cœur depuis une
+    requête HTTP, où un `print` finirait dans le journal du service et où une exception deviendrait un 500
+    nu. La spine est le cœur déterministe ; la CLI et le daemon en sont deux **vues**.
+
+    Copié et non lancé depuis le paquet : le script doit survivre au venv qu'il remplace — et lancé hors du
+    cgroup de son lanceur (`_echappement_cgroup`) : il doit aussi survivre au SERVICE qu'il arrête.
 
     **Un seul lanceur pour les deux gestes** : c'est le même applicateur hors-processus, le même dossier de
     run, le même journal et le même `result.json`. Ce que `mode` change tient dans les arguments de cible."""
-    run_dir = settings.home / UPDATES / datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
-    run_dir.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(UTC)
+    run_dir = settings.home / UPDATES / now.strftime(RUN_STAMP)
+    unite = _unite_transitoire(run_dir)
+    # `exist_ok=False` : l'horodatage est à la SECONDE, et depuis la route deux requêtes peuvent tomber dans
+    # la même (le handler est synchrone, donc servi par un fil du pool). Avec `exist_ok=True`, la seconde
+    # écrasait le `run.json` de la première — l'intention d'un run en vol, perdue — avant d'échouer de toute
+    # façon sur un nom d'unité déjà pris. Un second geste dans la même seconde n'est de toute manière pas un
+    # geste qu'on veut servir : on le REFUSE, et rien de l'autre n'est touché.
+    try:
+        run_dir.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        return {"run": run_dir, "unit": unite, "ok": False, "reason": "collision",
+                "detail": f"un run porte déjà l'horodatage {run_dir.name} — un autre geste vient de partir "
+                          f"dans la même seconde. Rien n'a été touché ; regarde son état avant de relancer."}
     script = run_dir / APPLY
     shutil.copyfile(Path(__file__).with_name("apply_update.py"), script)
     script.chmod(0o755)
 
-    quoi = "MAJ" if mode == "apply" else "retour arrière"
+    # L'INTENTION, écrite AVANT l'effet — et avant même de savoir si le lancement partira. Le mode ne se
+    # dérive de rien : `result.json` ne le porte pas et n'existe qu'à la fin ; le déduire de la prose de
+    # `journal.log` serait un analyseur de phrases françaises. Ce qui ne se dérive pas s'écrit, une fois, à
+    # l'endroit qui le sait. Un run qui n'a jamais démarré garde donc quand même sa raison d'avoir existé.
+    cible = ({"wheel": str(plan["wheel"])} if mode == "apply" else
+             {"snapshot": str(plan["snapshot"]), "snapshot_name": plan["snapshot_name"],
+              "target_venv": str(plan["target_venv"])})
+    _write_json(run_dir / RUN_META,
+                {"mode": mode, "unit": unite, "scope": plan["scope"], "service": service,
+                 "started_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"), **cible})
 
-    def _non_lance(motif: str) -> int:
-        """Un lancement qui n'a pas eu lieu se DIT, et rend un rc — il ne remonte pas en exception. `launch`
-        est appelé hors du `try` de `cli_dispatch` (le message « rien n'a été touché » y serait faux : le
-        dossier de run existe), donc une `UpdateRefused` qui sortirait d'ici deviendrait une trace nue."""
-        print(f"✗ {quoi} non lancé(e) — `{RUNNER}` n'a pas enregistré l'unité. Rien n'a bougé sur "
-              f"l'instance ; le dossier de run reste pour la trace.\n  {motif}", file=sys.stderr)
-        return 2
+    def _non_lance(motif: str) -> dict:
+        return {"run": run_dir, "unit": unite, "ok": False, "reason": "runner", "detail": motif}
 
     try:
         prefixe = _echappement_cgroup(run_dir, scope=plan["scope"], workdir=plan["home"])
@@ -347,8 +433,8 @@ def launch(settings: Settings, plan: dict, *, systemctl: str, service: str, deta
     #
     # Le `timeout` n'est pas une précaution de style : `Popen` ne bloquait JAMAIS, `run` si. Enregistrer une
     # unité est un aller-retour D-Bus avec le gestionnaire systemd — un gestionnaire coincé ferait attendre
-    # ce processus sans fin. Acceptable pour un humain devant un terminal, pas pour la route de la 3a·2b qui
-    # appellera d'ici : une requête qui ne rend jamais la main est pire qu'une requête qui refuse.
+    # ce processus sans fin. Acceptable pour un humain devant un terminal, inacceptable pour la route qui
+    # appelle d'ici : une requête qui ne rend jamais la main est pire qu'une requête qui refuse.
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True,  # noqa: S603
                               check=False, timeout=REGISTER_TIMEOUT)
@@ -359,7 +445,29 @@ def launch(settings: Settings, plan: dict, *, systemctl: str, service: str, deta
         return _non_lance((proc.stderr or proc.stdout or "").strip() or f"rc={proc.returncode}")
     # Rien n'est écrit dans `launch.log` ici : c'est l'unité qui y écrit (`StandardOutput=append:`), et
     # l'écraser avec le « Running as unit… » de `systemd-run` effacerait précisément la trace qu'on garde.
-    print(f"{quoi} lancé(e) (unité {_unite_transitoire(run_dir)}) — journal : {run_dir / 'journal.log'}")
+    return {"run": run_dir, "unit": unite, "ok": True, "reason": "", "detail": ""}
+
+
+def launch(settings: Settings, plan: dict, *, systemctl: str, service: str, detach: bool,
+           mode: str = "apply") -> int:
+    """La **vue CLI** du lancement : `spawn`, puis dire, puis suivre. Rend un code de sortie.
+
+    Un lancement qui n'a pas eu lieu se DIT, et rend un rc — il ne remonte pas en exception. `launch` est
+    appelé hors du `try` de `cli_dispatch` (le message « rien n'a été touché » y serait faux : le dossier de
+    run existe), donc une `UpdateRefused` qui sortirait d'ici deviendrait une trace nue."""
+    quoi = "MAJ" if mode == "apply" else "retour arrière"
+    issue = spawn(settings, plan, systemctl=systemctl, service=service, mode=mode)
+    if not issue["ok"]:
+        # Le motif du chapô suit le `reason` : dire « systemd n'a pas enregistré » sur une COLLISION
+        # d'horodatage enverrait chercher la panne au mauvais endroit — et il n'y a pas de panne.
+        tete = ("un run porte déjà cet horodatage. Rien n'a bougé"
+                if issue["reason"] == "collision"
+                else f"`{RUNNER}` n'a pas enregistré l'unité. Rien n'a bougé sur l'instance ; le dossier "
+                     f"de run reste pour la trace")
+        print(f"✗ {quoi} non lancé(e) — {tete}.\n  {issue['detail']}", file=sys.stderr)
+        return 2
+    run_dir = issue["run"]
+    print(f"{quoi} lancé(e) (unité {issue['unit']}) — journal : {run_dir / RUN_JOURNAL}")
     if detach:
         print("ça continue même si tu fermes ce terminal ; `cat` le journal pour le suivre.")
         return 0
@@ -369,7 +477,7 @@ def launch(settings: Settings, plan: dict, *, systemctl: str, service: str, deta
 def follow(run_dir: Path, *, timeout: float = FOLLOW_TIMEOUT, poll: float = 0.3) -> int:
     """Suit `journal.log` jusqu'à ce que `result.json` apparaisse, et rend le code de sortie du script.
     Un suivi interrompu (délai) ne conclut PAS à l'échec : il dit où regarder. Le script, lui, continue."""
-    journal, result = run_dir / "journal.log", run_dir / "result.json"
+    journal, result = run_dir / RUN_JOURNAL, run_dir / RUN_RESULT
     seen = 0
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -385,6 +493,154 @@ def follow(run_dir: Path, *, timeout: float = FOLLOW_TIMEOUT, poll: float = 0.3)
     print(f"⚠ suivi interrompu après {timeout:.0f} s — la MAJ continue en arrière-plan. "
           f"Son verdict arrivera dans {result}.")
     return 2
+
+
+# --- l'état d'un run, lu sur le DISQUE -----------------------------------------------------------------
+#
+# Tout ce qui suit se relit à froid. C'est la condition d'existence de la surface HTTP : le processus qui
+# répond au `GET` d'après n'est ni celui qui a reçu le `POST`, ni même le même binaire — la bascule est
+# passée entre les deux. Un registre en mémoire, un `BackgroundTasks`, un dictionnaire sur `app.state` : tous
+# rendraient « inconnu » exactement au moment où l'utilisateur attend son verdict.
+
+def runs_dir(settings: Settings) -> Path:
+    """Le dossier qui porte tous les runs de MAJ et de retour arrière."""
+    return settings.home / UPDATES
+
+
+def run_dir_for(settings: Settings, run_id: str) -> Path:
+    """Le dossier d'un run, par son identifiant, ou `KeyError`. **Deux gardes**, parce qu'aucune ne suffit
+    seule : la FORME (un identifiant venu du réseau n'est pas un nom de dossier — `..`, `/`, un chemin
+    absolu) puis le CONFINEMENT du chemin résolu sous `<home>/updates` (une forme valide peut être un lien
+    symbolique posé là par autre chose)."""
+    if not RUN_ID_RE.match(run_id):
+        raise KeyError(f"run {run_id!r}")
+    base = runs_dir(settings)
+    candidat = base / run_id
+    try:
+        resolu = candidat.resolve(strict=True)
+    except OSError as exc:
+        raise KeyError(f"run {run_id!r}") from exc
+    if not resolu.is_dir() or not resolu.is_relative_to(base.resolve()):
+        raise KeyError(f"run {run_id!r}")
+    return candidat
+
+
+def run_state(run_dir: Path, *, is_active: Callable[[str, str], bool] | None = None,
+              tail: int = 4000) -> dict:
+    """L'état d'un run, tranché **dans cet ordre** :
+
+    | lu sur le disque | état | ce que ça dit |
+    |---|---|---|
+    | `result.json` présent | `done` (rc 0) / `failed` | le verdict existe, avec son motif |
+    | sinon, **sans sonde** | `unknown` | verdict absent, et personne n'a demandé au gestionnaire |
+    | sinon, unité **active** | `running` | ça tourne encore, maintenant |
+    | sinon, `launch.log`/`journal.log` présents | `interrupted` | parti, jamais conclu |
+    | sinon | `never_started` | enregistré, jamais démarré |
+
+    `interrupted` est l'état que le fire-and-forget d'avant ne savait pas dire : il ne restait qu'un silence
+    qu'on ne pouvait pas distinguer d'une attente. `unknown` en est le garde-fou : **sans** sonde, on ne peut
+    PAS conclure à `interrupted` — ce serait annoncer une mort qu'on n'a pas vérifiée. Un appelant qui
+    économise la sonde (`list_runs`) doit donc récolter un aveu, pas une conclusion.
+
+    `is_active` est **injecté** (invariant : toute I/O l'est) et reçoit `(unité, portée)`. `--collect` efface
+    l'unité à sa sortie, donc `systemctl` ne distingue pas « terminée » d'« introuvable » — sans conséquence
+    ici : l'unité n'est interrogée qu'**après** que `result.json` a été jugé absent, elle ne sert donc qu'à
+    séparer `running` d'`interrupted`."""
+    meta = _read_json(run_dir / RUN_META) or {}
+    result = _read_json(run_dir / RUN_RESULT)
+    journal = run_dir / RUN_JOURNAL
+    unite = str(meta.get("unit") or _unite_transitoire(run_dir))
+    portee = str(meta.get("scope") or "user")
+    etat = {"run": run_dir.name, "mode": meta.get("mode"), "scope": portee, "unit": unite,
+            "started_at": meta.get("started_at"),
+            "target": meta.get("wheel") or meta.get("snapshot_name") or meta.get("snapshot"),
+            "journal": _tail(journal, tail)}
+    if result is not None:
+        rc = int(result.get("rc", 2))
+        return {**etat, "state": "done" if rc == 0 else "failed", "rc": rc,
+                "verdict": result.get("verdict", "")}
+    if is_active is None:
+        return {**etat, "state": "unknown", "rc": None,
+                "verdict": "verdict pas encore écrit, et l'unité n'a pas été sondée — demande l'adresse de "
+                           "ce run pour savoir s'il tourne encore"}
+    if is_active(unite, portee):
+        return {**etat, "state": "running", "rc": None, "verdict": ""}
+    if journal.is_file() or (run_dir / RUN_LAUNCH).is_file():
+        return {**etat, "state": "interrupted", "rc": None,
+                "verdict": "parti, jamais conclu — l'unité n'est plus là et aucun verdict n'a été écrit"}
+    return {**etat, "state": "never_started", "rc": None,
+            "verdict": "l'unité n'a jamais démarré — rien n'a bougé sur l'instance"}
+
+
+def list_runs(settings: Settings, *, is_active: Callable[[str, str], bool] | None = None,
+              limit: int = MAX_RUNS) -> dict:
+    """Les runs, du plus récent au plus ancien, chacun avec son état. La borne est **dite** (`truncated` +
+    `total`) — invariant « jamais de cap silencieux » : une liste tronquée en silence se lit « c'est tout ».
+
+    **Une seule sonde systemd pour toute la liste**, dépensée sur le run sans verdict le plus récent. Sonder
+    chaque run coûterait jusqu'à `limit` allers-retours au gestionnaire sur une simple vue de liste, et le
+    plafond (`limit × ACTIVE_TIMEOUT`) tomberait sur une requête HTTP le jour où ce gestionnaire est coincé
+    — c'est-à-dire le jour où l'on regarde justement cette page.
+
+    Les runs sans verdict plus anciens rendent donc `unknown`, jamais `interrupted` : la liste **avoue** au
+    lieu de conclure, et leur adresse propre (`GET /runs/{id}`) sonde, elle."""
+    base = runs_dir(settings)
+    noms = sorted((p.name for p in base.iterdir() if p.is_dir() and RUN_ID_RE.match(p.name)),
+                  reverse=True) if base.is_dir() else []
+    gardes = noms[:limit]
+    vue, sonde = [], is_active
+    for nom in gardes:
+        run_dir = base / nom
+        conclu = (run_dir / RUN_RESULT).is_file()
+        vue.append(run_state(run_dir, is_active=None if conclu else sonde, tail=0))
+        if not conclu:
+            sonde = None                     # budget épuisé : les suivants avouent au lieu de conclure
+    return {"runs": vue, "total": len(noms), "truncated": len(noms) > len(gardes)}
+
+
+def systemd_is_active(systemctl: str = "systemctl") -> Callable[[str, str], bool]:
+    """La sonde de production pour `run_state` : `systemctl [--user] is-active <unité>`. Bornée dans le
+    temps — une question posée au gestionnaire ne doit jamais faire attendre une requête HTTP."""
+    def _probe(unit: str, scope: str) -> bool:
+        cmd = [systemctl, *(["--user"] if scope == "user" else []), "is-active", unit]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True,  # noqa: S603
+                                  check=False, timeout=ACTIVE_TIMEOUT)
+        except (OSError, subprocess.TimeoutExpired):
+            return False            # gestionnaire injoignable : on ne SAIT pas qu'elle tourne
+        return proc.stdout.strip() == "active"
+    return _probe
+
+
+def _read_json(path: Path) -> dict | None:
+    """Le contenu d'un JSON de run, ou `None` — présent-mais-illisible se lit comme absent : un fichier
+    tronqué par une écriture concurrente ne doit pas faire tomber la lecture d'état de tous les autres."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _write_json(path: Path, data: dict) -> None:
+    """Écriture ATOMIQUE (temporaire + `os.replace`) : un lecteur concurrent voit l'ancien fichier ou le
+    nouveau, jamais un demi-fichier. Même forme que `apply_update._write_json`, dont ce module est le
+    pendant côté lanceur."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _tail(path: Path, n: int) -> str:
+    """Les `n` derniers octets d'un journal, décodés en tolérant les coupures. `n <= 0` → rien (la liste ne
+    porte pas les journaux : elle dirait des kilo-octets pour une vue qui n'en affiche aucun)."""
+    if n <= 0 or not path.is_file():
+        return ""
+    try:
+        texte = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return texte[-n:]
 
 
 def _system_python() -> str:
@@ -429,9 +685,13 @@ def _echappement_cgroup(run_dir: Path, *, scope: str, workdir: Path) -> list[str
             "-p", f"StandardOutput=append:{log}", "-p", f"StandardError=append:{log}"]
 
 
-# --- CLI ----------------------------------------------------------------------------------------------
+# --- ce que l'appelant doit SAVOIR avant de demander (injecté aux préflights) --------------------------
+#
+# Ces deux sondes étaient sous l'en-tête « CLI » tant que la CLI était le seul appelant. Elles sont
+# remontées ici le 2026-08-06 : le daemon les appelle aussi, et une fonction que deux vues partagent n'est
+# pas un détail d'implémentation de l'une d'elles.
 
-def _survey_authority(settings: Settings) -> list[dict]:
+def survey_authority(settings: Settings) -> list[dict]:
     """Le verdict d'autorité, ou une liste vide en dégradation honnête. On n'ouvre la base **que si elle
     existe déjà** : un preflight qui refuse ne doit pas avoir créé la base de son refus. Une base illisible
     ne bloque pas non plus — elle rend « je ne sais pas », et ce module ne bloque que sur ce qu'il SAIT."""
@@ -451,6 +711,29 @@ def _survey_authority(settings: Settings) -> list[dict]:
         conn.close()
 
 
+def survey_in_flight(settings: Settings) -> list[dict]:
+    """Les runs de dispatch en vol, ou une liste vide en dégradation honnête — **même contrat** que
+    `survey_authority` : base absente ou d'un schéma qu'on ne lit pas ⇒ « je ne sais pas », et ce module ne
+    bloque que sur ce qu'il SAIT. Un refus qui se déclencherait sur une base illisible refuserait toutes les
+    MAJ des instances qu'il faut justement mettre à jour."""
+    if not settings.db_path.is_file():
+        return []
+    from forgemaster.db import store
+    from forgemaster.dispatch import jobs
+    try:
+        conn = store.connect(settings.db_path)
+    except sqlite3.Error:
+        return []
+    try:
+        return jobs.running(conn)
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+
+
+# --- CLI ------------------------------------------------------------------------------------------------
+
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     """Route `forgemaster update <action>` — `apply` et `rollback` suivent la MÊME séquence : préflight qui
     refuse avant tout effet, description, puis lancement de l'applicateur détaché."""
@@ -459,9 +742,11 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     quoi = "MAJ" if aller else "retour arrière"
     try:
         plan = (preflight(settings, wheel=args.wheel, unit=args.unit, scope=scope,
-                          authority=_survey_authority(settings)) if aller else
+                          authority=survey_authority(settings),
+                          in_flight=survey_in_flight(settings)) if aller else
                 preflight_rollback(settings, snapshot=args.snapshot, unit=args.unit, scope=scope,
-                                   authority=_survey_authority(settings)))
+                                   authority=survey_authority(settings),
+                                   in_flight=survey_in_flight(settings)))
     except UpdateRefused as exc:
         print(f"✗ {quoi} refusé(e) — rien n'a été touché.\n  {exc}", file=sys.stderr)
         return 1
