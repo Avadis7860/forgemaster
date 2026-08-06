@@ -344,6 +344,32 @@ def test_apply_ne_depend_de_rien_du_forgemaster():
     assert modules <= set(sys.stdlib_module_names), modules - set(sys.stdlib_module_names)
 
 
+def _est_popen(func: ast.expr) -> bool:
+    return (isinstance(func, ast.Attribute) and func.attr == "Popen") or (
+        isinstance(func, ast.Name) and func.id == "Popen")
+
+
+def test_aucun_popen_de_maj_ne_laisse_sa_sortie_a_son_lanceur():
+    """MESURÉ le 2026-08-06, à travers le rebond ssh réel : un descendant qui garde ouverte la sortie du
+    canal retient ce canal EXACTEMENT le temps de sa vie — 25,2 s contre 0,4 s quand cette sortie va dans un
+    fichier. Ce n'est PAS l'entrée standard qui compte : poser `stdin=DEVNULL` a été mesuré sans effet, et sa
+    prémisse (un esclave de pty tenu par le petit-fils) est absente de ce chemin. C'est la SORTIE.
+
+    Les deux `Popen` du chemin de MAJ redirigent déjà — ce test ne corrige rien, il FIGE. Et il couvre le
+    troisième que quelqu'un ajoutera : par AST, parce qu'un `Popen` nu ne se voit pas à la relecture, et que
+    le symptôme qu'il produirait (« la commande ne rend pas la main ») ne ressemble pas à sa cause."""
+    for module in (update, apply_update):
+        nom = Path(module.__file__).name
+        for node in ast.walk(ast.parse(Path(module.__file__).read_text(encoding="utf-8"))):
+            if not (isinstance(node, ast.Call) and _est_popen(node.func)):
+                continue
+            passes = {k.arg for k in node.keywords}
+            for flux in ("stdout", "stderr"):
+                assert flux in passes, (
+                    f"{nom}:{node.lineno} — `Popen` sans `{flux}=` : le descendant hérite ce flux de son "
+                    f"lanceur, et à travers un rebond ssh il retient le canal jusqu'à sa mort")
+
+
 def test_le_verbe_copie_le_script_au_lieu_de_le_lancer_depuis_le_paquet(live: Settings, tmp_path: Path,
                                                                        monkeypatch):
     """Le script doit survivre au venv qu'il remplace : on le copie dans le dossier de run avant de le
