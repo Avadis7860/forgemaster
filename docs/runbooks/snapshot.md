@@ -185,6 +185,10 @@ installed`, un avertissement **DONNÉES SEULES** : cet écart-là *passe* le gar
 voit pas venir. L'annoncer comme deux nombres neutres à l'instant où le geste devient irréversible laissait
 l'utilisateur le lire comme un détail — le message d'un garde doit être **au point où le geste devient
 irréversible**, pas là où l'information est disponible.
+L'écriture, enfin, ne détruit rien : l'état remplacé part dans `<home>/before-restore-<horodatage>/`, rendu par
+`_aside_dir` (`os.replace`, même système de fichiers, donc déplacement atomique et zéro copie), et les entrées sont
+remises par temporaire + `os.replace` — jamais de fichier à moitié écrit sous le nom final. Restaurer le mauvais instantané reste rattrapable,
+et c'est ce qui rend le geste praticable par quelqu'un qui doute.
 
 ## _with_sidecars() — le `-wal` part avec l'ancienne base
 `src/forgemaster/restore.py:296` · appelé par `restore` · retourne le fichier et ses journaux existants
@@ -193,13 +197,6 @@ fichier remis et **ressuscite ce qu'on voulait défaire** — vérifié le 2026-
 ligne écrite après l'instantané revient sans la moindre erreur. Un retour arrière qui ne retourne pas en arrière, en
 silence, est pire qu'un échec bruyant. Appliqué à **toute** entrée : un `-wal` à côté d'un fichier plat n'existe pas,
 et le vérifier coûte moins cher que de savoir lesquelles sont des bases.
-
-## Le rangement de côté — rien n'est détruit
-`src/forgemaster/restore.py:278` · dans `restore` · destination rendue par `_aside_dir`
-L'état remplacé part dans `<home>/before-restore-<horodatage>/` par `os.replace` — même système de fichiers, donc
-déplacement atomique, zéro copie. Les entrées sont ensuite écrites par temporaire + `os.replace` : jamais de fichier à
-moitié écrit sous le nom final. Restaurer le mauvais instantané reste rattrapable, et c'est ce qui rend le geste
-praticable par quelqu'un qui doute.
 
 ## main() / _snapshot_beside_script() / _default_home() / _list_snapshots() — le chemin de secours manuel
 `src/forgemaster/restore.py:355` · `318` · `324` · `333` · point d'entrée quand on lance le script à la main
