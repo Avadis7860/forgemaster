@@ -425,9 +425,11 @@ def test_lORDRE_des_deux_gestes_est_fige_DANS_LE_CODE(tmp_path: Path):
     fn = next(n for n in ast.walk(ast.parse(source))
               if isinstance(n, ast.FunctionDef) and n.name == "rollback")
 
-    gestes = [(n.lineno, n.func.id) for n in ast.walk(fn)
-              if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-              and n.func.id in ("swap", "_restore")]
+    # `ast.walk` parcourt en LARGEUR : son ordre n'est pas celui du source. On trie sur `lineno`, sans quoi
+    # ce test dirait quelque chose d'autre que ce qu'il prétend — et le dirait par hasard.
+    gestes = sorted((n.lineno, n.func.id) for n in ast.walk(fn)
+                    if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                    and n.func.id in ("swap", "_restore"))
     premier_couple = gestes[:2]
 
     assert [nom for _l, nom in premier_couple] == ["swap", "_restore"], (

@@ -221,7 +221,8 @@ def apply(args: argparse.Namespace, log) -> tuple[int, str, dict]:
         _systemctl(args, "start", log)
         return 2, (f"MAJ échouée ({why}) ET retour arrière incomplet : les données n'ont pas été remises. "
                    f"Le lien est resté sur la version NEUVE, qui sait lire la base. L'instantané est "
-                   f"intact : {snap}"), {**details, "impact": "aucune moitié : le lien n'a pas bougé"}
+                   f"intact : {snap}"),\
+            {**details, "impact": "aucune moitié : le lien est revenu sur la version neuve"}
     _systemctl(args, "start", log)
     back, back_why = _wait_health(args.base_url, args.timeout)
     details["impact"] = "revenu à l'état d'avant (venv + données)"
