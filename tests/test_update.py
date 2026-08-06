@@ -125,6 +125,55 @@ def test_le_vivant_qui_ne_sert_pas_fait_rebasculer_le_lien_ET_restaurer_linstant
     assert _trace(trace) == ["stop", "start", "stop", "start"]   # arrêt+bascule, puis arrêt+retour arrière
 
 
+def test_une_instance_QUI_SE_DIT_INSERVABLE_declenche_le_retour_arriere_automatique(
+        live: Settings, tmp_path: Path, monkeypatch):
+    """LE critère de la phase 2a″ — le reste n'est que de la plomberie de sonde.
+
+    Les autres tests du retour arrière remplacent `_verify_live` par un mock : ils prouvent que le retour
+    part **quand on lui dit** de partir. Ici on ne mocke que la SONDE HTTP, et on vérifie que la chaîne
+    entière conclut toute seule : `/health` 503 `ready:false` → `_wait_health` → `_verify_live` → retour
+    arrière. C'est exactement le chemin qui passait au VERT avant cette phase, sur une instance dont la
+    base est illisible — le cas nominal du retour arrière volontaire qui vient ensuite (binaire ancien,
+    donnée neuve)."""
+    import urllib.error
+    import urllib.request
+    from contextlib import contextmanager
+
+    shim, trace = _systemctl_shim(tmp_path)
+    avant = (live.home / "current").resolve()
+    neuf = tmp_path / "venvs" / "neuf"
+    (neuf / "bin").mkdir(parents=True)
+    dest = snapshot.create(live)
+    monkeypatch.setattr(apply_update, "build_blue", lambda *a, **k: neuf / "bin" / "forgemaster")
+    monkeypatch.setattr(apply_update, "probe_isolated", lambda *a, **k: {"version": "9.9", "sha": "beef"})
+    monkeypatch.setattr(apply_update, "take_snapshot", lambda *a, **k: dest)
+
+    appels = []
+
+    class _Ok:
+        status = 200
+        def read(self): return b'{"status":"ok","ready":true}'
+
+    @contextmanager
+    def _urlopen(url, timeout=None):                     # noqa: ARG001
+        appels.append(url)
+        if len(appels) == 1:                             # la vérification en vivant, après la bascule
+            corps = json.dumps({"status": "unservable", "ready": False,
+                                "detail": "cette base porte le schéma 21"}).encode()
+            raise urllib.error.HTTPError(url, 503, "unservable", {}, io.BytesIO(corps))
+        yield _Ok()                                      # après le retour arrière, elle sert de nouveau
+
+    monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+
+    rc, verdict, details = apply_update.apply(_args(live, tmp_path, shim), lambda _m: None)
+
+    assert rc == 1, "l'instance se disait inservable et la MAJ a conclu au succès"
+    assert "schéma 21" in verdict, "le verdict ne dit pas POURQUOI — l'utilisateur n'a que le journal"
+    assert (live.home / "current").resolve() == avant, "le retour arrière n'a pas rebasculé le lien"
+    assert details["impact"].startswith("revenu à l'état d'avant")
+    assert _trace(trace) == ["stop", "start", "stop", "start"]
+
+
 def test_le_retour_arriere_qui_ne_ramene_pas_le_service_le_DIT(live: Settings, tmp_path: Path, monkeypatch):
     """Un retour arrière qui échoue lui aussi doit sortir en rc 2 et pointer l'instantané intact — pas
     conclure au vert parce qu'il a « fait ce qu'il pouvait »."""
