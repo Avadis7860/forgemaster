@@ -453,3 +453,27 @@ def test_une_cible_qui_ne_ramene_pas_est_refusee_AVANT_TOUT_EFFET(
     assert "restaurable" in capsys.readouterr().err
     assert (apres_maj.home / "current").resolve() == avant
     assert not (apres_maj.home / "updates").exists(), "un dossier de run a été créé : le geste avait commencé"
+
+
+def _instantane_dont_le_restore_sort_en(code: int, tmp: Path) -> Path:
+    """Un instantané réduit à ce que `_restore` lance : sa copie FIGÉE de `restore.py`. C'est bien celle-là
+    qui est jouée (l'invariant « le script voyage »), donc c'est elle qu'on fait échouer."""
+    dossier = tmp / f"snap-rc{code}"
+    dossier.mkdir()
+    (dossier / "restore.py").write_text(f"import sys\nsys.exit({code})\n", encoding="utf-8")
+    return dossier
+
+
+def test__restore_RAPPORTE_un_echec_reel_du_script_fige(tmp_path: Path):
+    """La couture que les autres tests sautent : ils mockent `_restore`, donc aucun ne prouve qu'un rc non
+    nul du VRAI script est bien rapporté. Sans ce test, faire rendre `True` à l'échec passait inaperçu —
+    mesuré par mutation, pas supposé. Toute la compensation repose sur ce booléen."""
+    assert apply_update._restore(_instantane_dont_le_restore_sort_en(1, tmp_path),
+                                 tmp_path / "home", lambda _m: None) is False
+
+
+def test__restore_RAPPORTE_un_succes_reel(tmp_path: Path):
+    """Le symétrique, sans quoi « rendre toujours False » passerait : la compensation partirait à chaque
+    retour arrière RÉUSSI, ce qui le défait aussitôt."""
+    assert apply_update._restore(_instantane_dont_le_restore_sort_en(0, tmp_path),
+                                 tmp_path / "home", lambda _m: None) is True
