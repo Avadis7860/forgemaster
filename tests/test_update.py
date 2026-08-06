@@ -411,3 +411,54 @@ def _slugs(db: Path) -> list[str]:
         return sorted(r[0] for r in conn.execute("SELECT slug FROM projects"))
     finally:
         conn.close()
+
+
+# --- le garde de compatibilité vu du retour arrière AUTOMATIQUE ---------------------------------------
+#
+# Le garde de `restore.py` refuse une remise dont il ne peut pas vérifier le binaire en place. Le retour
+# arrière automatique, lui, a une connaissance que le garde n'a pas : le lien vient d'être rebasculé sur le
+# venv qui a PRIS cet instantané. Il lève donc le DOUTE (indéterminable), jamais la CERTITUDE (incompatible).
+
+def test_le_retour_arriere_automatique_nest_pas_bloque_par_un_binaire_indeterminable(
+        live: Settings, tmp_path: Path, monkeypatch):
+    """Régression : sans la levée du doute, ce retour arrière échouerait sur un venv que `restore.py` ne sait
+    pas interroger — l'utilisateur se retrouverait avec le binaire d'avant et les données d'après, soit
+    exactement l'état que l'invariant interdit."""
+    assert not (live.home / "current" / "bin" / "python").exists(), (
+        "prémisse ratée : ce venv de décor doit être NON interrogeable")
+    shim, _ = _systemctl_shim(tmp_path)
+    neuf = tmp_path / "venvs" / "neuf"
+    (neuf / "bin").mkdir(parents=True)
+    dest = snapshot.create(live)
+    monkeypatch.setattr(apply_update, "build_blue", lambda *a, **k: neuf / "bin" / "forgemaster")
+    monkeypatch.setattr(apply_update, "probe_isolated", lambda *a, **k: {"version": "9.9", "sha": "beef"})
+    monkeypatch.setattr(apply_update, "take_snapshot", lambda *a, **k: dest)
+    monkeypatch.setattr(apply_update, "_verify_live", lambda *a, **k: (False, "il ne sert pas"))
+    monkeypatch.setattr(apply_update, "_wait_health", lambda *a, **k: True)
+
+    rc, verdict, _ = apply_update.apply(_args(live, tmp_path, shim), lambda _m: None)
+
+    assert rc == 1 and "revenue à l'état d'avant" in verdict
+    assert _slugs(live.db_path) == ["atelier-fictif"]
+
+
+def test_le_drapeau_nest_pas_passe_a_un_restore_qui_ne_le_connait_pas(tmp_path: Path):
+    """Le piège d'argparse : un instantané pris AVANT ce garde embarque un `restore.py` qui sortirait en usage
+    sur un drapeau inconnu — et ferait échouer le retour arrière au pire moment. On lit donc le script figé
+    avant de lui parler."""
+    ancien = tmp_path / "ancien.py"
+    ancien.write_text("import argparse\n# ne connaît que --snapshot et --home\n", encoding="utf-8")
+    moderne = tmp_path / "moderne.py"
+    moderne.write_text(f"p.add_argument({apply_update.FORCE_FLAG!r})\n", encoding="utf-8")
+
+    assert apply_update._supports_flag(ancien, apply_update.FORCE_FLAG) is False
+    assert apply_update._supports_flag(moderne, apply_update.FORCE_FLAG) is True
+    assert apply_update._supports_flag(tmp_path / "jamais.py", apply_update.FORCE_FLAG) is False
+
+
+def test_le_restore_reellement_pose_porte_le_drapeau(live: Settings):
+    """Le lien entre les deux tests précédents : la copie que le produit fige AUJOURD'HUI dans chaque
+    instantané connaît le drapeau. Sans cette ligne, `_supports_flag` renverrait toujours faux et le retour
+    arrière automatique retomberait dans le refus — vert en apparence, cassé en vrai."""
+    dest = snapshot.create(live)
+    assert apply_update._supports_flag(dest / snapshot.RESTORE, apply_update.FORCE_FLAG) is True

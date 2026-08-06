@@ -258,6 +258,12 @@ def _launch_restore(settings: Settings, args: argparse.Namespace) -> int:
     cmd = [sys.executable, str(script), "--snapshot", str(target), "--home", str(settings.home)]
     if args.dry_run:
         cmd.append("--dry-run")
+    # Ajouté SEULEMENT s'il est demandé : le script qu'on lance est de préférence la copie FIGÉE dans
+    # l'instantané, et une copie d'avant ce drapeau ferait sortir argparse en usage. Le passer
+    # inconditionnellement casserait la restauration des instantanés anciens — exactement ceux qu'on
+    # restaure le jour où ça compte.
+    if getattr(args, "allow_unverified_binary", False):
+        cmd.append("--allow-unverified-binary")
     return subprocess.run(cmd, check=False).returncode  # noqa: S603 (argv construit ici, pas de shell)
 
 

@@ -42,7 +42,11 @@ def _slugs(db: Path) -> list[str]:
 
 @pytest.fixture
 def live(tmp_path: Path) -> Settings:
-    """Une instance qui a vécu (miroir de la fixture de `test_snapshot`) : base migrée, réglages, coffre."""
+    """Une instance qui a vécu (miroir de la fixture de `test_snapshot`) : base migrée, réglages, coffre,
+    **et son lien `current`**. Le lien n'est pas un détail de décor : toute install réelle en a un (posé par
+    `install-service`), et sans lui le garde de compatibilité classe l'instance en *indéterminable* et refuse.
+    Le faire pointer sur le venv qui exécute les tests donne le cas nominal — le binaire en place sait lire
+    exactement le schéma que la prise vient d'écrire."""
     settings = Settings.resolve(home=tmp_path / "home", projects_root=tmp_path / "projects")
     conn = store.open_db(settings)
     _seed_projet(conn, "atelier-fictif")
@@ -50,6 +54,7 @@ def live(tmp_path: Path) -> Settings:
     conn.close()
     (settings.home / "forgemaster.env").write_text("FORGEMASTER_SECRET_STORE=file\n", encoding="utf-8")
     EncryptedFileStore(settings.secrets_dir).put("jeton-fictif", label="forge")
+    (settings.home / restore.STABLE_LINK).symlink_to(Path(sys.prefix))
     return settings
 
 
@@ -151,6 +156,7 @@ def test_une_entree_absente_a_la_prise_est_retiree_de_linstance(tmp_path: Path):
     Laisser le fichier créé depuis, c'est restaurer à moitié en silence."""
     settings = Settings.resolve(home=tmp_path / "home", projects_root=tmp_path / "p")
     store.open_db(settings).close()
+    (settings.home / restore.STABLE_LINK).symlink_to(Path(sys.prefix))   # toute install réelle en a un
     dest = snapshot.create(settings)                             # ni forgemaster.env ni store.enc à ce moment
     EncryptedFileStore(settings.secrets_dir).put("apparu-apres", label="forge")
 
@@ -289,3 +295,111 @@ def test_apres_restauration_par_le_script_linstance_est_fonctionnellement_identi
     conn.close()
     assert (live.home / "forgemaster.env").read_text(encoding="utf-8") == "FORGEMASTER_SECRET_STORE=file\n"
     assert EncryptedFileStore(live.secrets_dir).get(ref) == "jeton-fictif"
+
+
+# --- le garde de compatibilité ----------------------------------------------------------------------
+#
+# L'invariant de première classe : aucune séquence de gestes accessible à l'utilisateur ne peut rendre sa
+# base illisible. Le piège tient en trois faits — la base monte en forward-only, le retour arrière demande
+# DEUX gestes (le lien ET l'instantané), et rien ne vérifiait leur cohérence. `db/store.migrate()` ne réagit
+# qu'à une base EN RETARD : une base trop neuve sous un binaire ancien passait en silence.
+
+def _pris_par_un_binaire_de_schema(live: Settings, version: int) -> Path:
+    """Le spécimen : un instantané pris par un forgemaster dont le schéma vaut `version`. On force la base
+    VIVANTE avant la prise, jamais l'instantané après — le manifeste porte les empreintes, et un `.db`
+    retouché derrière serait rejeté par `verify()` bien avant d'atteindre le garde (constaté). Au passage,
+    ça prouve que `VACUUM INTO` transporte bien `user_version`."""
+    conn = sqlite3.connect(str(live.db_path))
+    try:
+        conn.execute(f"PRAGMA user_version = {version}")
+    finally:
+        conn.close()
+    dest = snapshot.create(live)
+    assert _user_version(dest / "forgemaster.db") == version, "VACUUM INTO n'a pas transporté user_version"
+    return dest
+
+
+def _user_version(db: Path) -> int:
+    conn = sqlite3.connect(str(db))
+    try:
+        return int(conn.execute("PRAGMA user_version").fetchone()[0])
+    finally:
+        conn.close()
+
+
+def _aside_dirs(home: Path) -> list[Path]:
+    return [p for p in home.iterdir() if p.name.startswith(restore.ASIDE_PREFIX)]
+
+
+def test_une_base_trop_neuve_pour_le_binaire_en_place_est_refusee_avant_decrire(live: Settings):
+    """LE test du garde. Une base de schéma N+1 sous un binaire qui lit jusqu'à N est illisible, et aucune
+    down-migration ne la sauvera. Ce qui prouve le fail-closed n'est pas le message : c'est qu'AUCUN
+    `before-restore-*` n'existe — le refus est tombé avant la première écriture."""
+    dest = _pris_par_un_binaire_de_schema(live, schema.SCHEMA_VERSION + 1)
+
+    with pytest.raises(restore.RestoreError) as exc:
+        restore.restore(dest)
+
+    assert str(schema.SCHEMA_VERSION + 1) in str(exc.value)
+    assert str(schema.SCHEMA_VERSION) in str(exc.value)
+    assert _aside_dirs(live.home) == [], "le refus a écrit : il n'est pas tombé avant la première écriture"
+
+
+def test_un_binaire_indeterminable_refuse_mais_dit_sa_porte(live: Settings):
+    """Lien `current` mort = on ne sait pas ce que le binaire en place sait lire. Refuser sec bloquerait le
+    secours dans la situation même qu'il sert ; passer outre en silence ne tiendrait plus l'invariant. Donc :
+    refus, et le message porte la sortie."""
+    (live.home / restore.STABLE_LINK).unlink()
+    dest = snapshot.create(live)
+
+    with pytest.raises(restore.RestoreError) as exc:
+        restore.restore(dest)
+    assert "--allow-unverified-binary" in str(exc.value)
+    assert _aside_dirs(live.home) == []
+
+    restore.restore(dest, allow_unverified=True)                  # la porte s'ouvre pour qui la lit
+    assert _slugs(live.db_path) == ["atelier-fictif"]
+
+
+def test_la_porte_ne_couvre_pas_une_incompatibilite_constatee(live: Settings):
+    """La distinction qui fait tout : *indéterminable* est un doute (on peut l'assumer), *incompatible* est
+    une certitude (la panne est acquise). `--allow-unverified-binary` ne doit jamais forcer la seconde."""
+    dest = _pris_par_un_binaire_de_schema(live, schema.SCHEMA_VERSION + 1)
+
+    with pytest.raises(restore.RestoreError):
+        restore.restore(dest, allow_unverified=True)
+    assert _aside_dirs(live.home) == []
+
+
+def test_un_instantane_plus_ancien_reste_restaurable(live: Settings):
+    """Le garde ne doit refuser que dans UN sens. Une base plus ancienne se remet sans broncher : le binaire
+    en place la migrera vers l'avant à sa première ouverture, ce que forward-only sait précisément faire."""
+    dest = _pris_par_un_binaire_de_schema(live, max(0, schema.SCHEMA_VERSION - 1))
+
+    restore.restore(dest)
+
+    assert _slugs(live.db_path) == ["atelier-fictif"]
+
+
+def test_le_garde_lit_le_schema_de_linstantane_sans_toucher_au_format(live: Settings):
+    """Ce qui rend le garde opérant sur les instantanés DÉJÀ PRIS : il lit `PRAGMA user_version` dans le
+    `.db` embarqué, il n'attend rien de neuf au manifeste. Le format ne bouge pas."""
+    dest = snapshot.create(live)
+    manifest = json.loads((dest / snapshot.MANIFEST).read_text(encoding="utf-8"))
+
+    assert manifest["schema"] == restore.SCHEMA == 1
+    assert restore.snapshot_schema(dest, manifest) == schema.SCHEMA_VERSION
+    assert restore.installed_schema(live.home) == schema.SCHEMA_VERSION
+
+
+def test_un_instantane_sans_base_na_rien_a_garder(live: Settings, tmp_path: Path):
+    """Une instance qui n'avait pas encore de base : l'entrée est `absent`, il n'y a aucune base à rendre
+    illisible. Le garde ne doit pas inventer un refus là où il n'y a rien à protéger."""
+    vierge = Settings.resolve(home=tmp_path / "vierge", projects_root=tmp_path / "projets-vierges")
+    (vierge.home).mkdir(parents=True, exist_ok=True)
+    dest = snapshot.create(vierge)
+    manifest = json.loads((dest / snapshot.MANIFEST).read_text(encoding="utf-8"))
+
+    assert "forgemaster.db" in manifest["absent"]
+    assert restore.snapshot_schema(dest, manifest) is None
+    restore.restore(dest)                                # aucun lien `current` ici, et pourtant : ça passe

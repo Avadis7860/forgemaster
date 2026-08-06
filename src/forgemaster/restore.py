@@ -27,6 +27,10 @@ Trois choix portent le reste :
 - **Rien n'est détruit, tout est mis de côté** dans `<home>/before-restore-<horodatage>/`. Restaurer le
   mauvais instantané reste une erreur rattrapable — et une erreur rattrapable est ce qui rend le geste
   praticable par quelqu'un qui doute.
+- **Le binaire et la donnée forment une seule unité de retour arrière.** Remettre une base que le
+  forgemaster en place ne sait pas lire la rend illisible *définitivement* — la base monte en forward-only.
+  Le garde de compatibilité (§« garde de compatibilité ») vit donc ici, avant la première écriture, et
+  **nulle part ailleurs** : deux implémentations, c'est une seule testée.
 """
 from __future__ import annotations
 
@@ -35,6 +39,8 @@ import hashlib
 import json
 import os
 import shutil
+import sqlite3
+import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -44,6 +50,14 @@ MANIFEST = "manifest.json"
 ASIDE_PREFIX = "before-restore-"
 # Un `.db` SQLite ne voyage jamais seul : ces deux-là appartiennent à l'ancienne base, pas à la remise.
 SIDECARS = ("-wal", "-shm")
+# `<home>/current` — le lien vers le venv ACTIF (`service.LINK_NAME`). Redit ici, et pas importé : ce module
+# est stdlib-pur par contrat. Le couplage est nommé pour qu'un renommage là-bas se voie ici.
+STABLE_LINK = "current"
+# Les modules qui portent `SCHEMA_VERSION`, du plus récent au plus ancien. Le second est d'avant le
+# renommage `cockpit` → `forgemaster` : le binaire dangereux est par construction l'ANCIEN, donc c'est lui
+# qu'il faut savoir interroger.
+SCHEMA_MODULES = ("forgemaster.db.schema", "cockpit.db.schema")
+PROBE_TIMEOUT = 30.0
 
 
 class RestoreError(Exception):
@@ -92,14 +106,119 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+# --- garde de compatibilité (aucune écriture) -------------------------------------------------------
+#
+# La base monte en FORWARD-ONLY : aucune down-migration n'existe et il n'en sera pas écrit. Une base de
+# schéma neuf sous un binaire ancien est donc illisible, et rien ne peut la sauver. Or le retour arrière
+# d'une MAJ demande DEUX gestes — rebasculer le lien ET restaurer l'instantané — et rien ne vérifiait leur
+# cohérence : `db/store.migrate()` ne réagit que si la base est EN RETARD (`user_version < SCHEMA_VERSION`),
+# une base trop neuve passe en silence.
+#
+# La comparaison porte sur le SCHÉMA, ni sur la version produit ni sur le SHA de build : deux versions
+# peuvent partager un schéma (refuser dessus produirait des refus faux) et un SHA n'ordonne rien. Heureuse
+# conséquence : le schéma se lit DANS le `.db` de l'instantané, donc le format d'instantané ne change pas
+# (`SCHEMA` reste 1) et le garde protège aussi les instantanés déjà pris.
+
+def snapshot_schema(snapshot_dir: Path, manifest: dict) -> int | None:
+    """Schéma de la base **portée par l'instantané**. `None` si l'instantané n'en porte pas (l'instance ne
+    l'avait pas à la prise) — il n'y a alors aucune base à rendre illisible, donc rien à garder."""
+    for entry in manifest["entries"]:
+        if str(entry["restore_to"]).endswith(".db"):
+            return _user_version(snapshot_dir / entry["name"])
+    return None
+
+
+def installed_schema(home: Path) -> int | None:
+    """Schéma **maximum** que sait lire le forgemaster actuellement en place, ou `None` si on ne peut pas le
+    savoir (lien mort, venv sans python, paquet illisible).
+
+    On demande sa **constante** au python du venv actif, jamais un verbe CLI : un verbe neuf ne serait porté
+    que par les binaires POSTÉRIEURS à ce garde, alors que le binaire dangereux est l'ancien. `SCHEMA_VERSION`
+    existe, elle, depuis le premier commit du dépôt."""
+    python = home / STABLE_LINK / "bin" / "python"
+    if not python.is_file():
+        return None
+    code = (
+        "import sys\n"
+        f"for name in {SCHEMA_MODULES!r}:\n"
+        "    try:\n"
+        "        mod = __import__(name, fromlist=['SCHEMA_VERSION'])\n"
+        "    except Exception:\n"
+        "        continue\n"
+        "    print(mod.SCHEMA_VERSION)\n"
+        "    sys.exit(0)\n"
+        "sys.exit(1)\n"
+    )
+    try:
+        proc = subprocess.run([str(python), "-c", code],  # noqa: S603 (argv construit ici, pas de shell)
+                              capture_output=True, text=True, check=False, timeout=PROBE_TIMEOUT)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        return int(proc.stdout.strip())
+    except ValueError:
+        return None
+
+
+def check_compatibility(snap: int | None, installed: int | None, *, allow_unverified: bool = False) -> None:
+    """Refuse une remise que le binaire en place ne saurait pas lire. Trois issues, toutes explicites :
+    **compatible** (on passe), **incompatible** (refus sec — la panne est certaine), **indéterminable**
+    (refus, mais le message dit la porte : un refus qui bloque le secours dans la situation même qu'il sert
+    serait un check défaillant, un simple avertissement ne tiendrait plus l'invariant)."""
+    if snap is None:
+        return                              # aucune base dans l'instantané : rien à rendre illisible
+    if installed is None:
+        if allow_unverified:
+            return
+        raise RestoreError(
+            f"impossible de savoir quel schéma de base le forgemaster en place sait lire "
+            f"(<home>/{STABLE_LINK} : lien mort, venv sans python, ou paquet illisible), et cet instantané "
+            f"porte le schéma {snap}. La remettre à l'aveugle peut rendre la base définitivement illisible : "
+            f"la base monte en forward-only, aucune down-migration n'existe.\n"
+            f"  → rebascule d'abord <home>/{STABLE_LINK} vers le venv d'alors, puis relance\n"
+            f"  → ou, si tu sais ce que tu fais : --allow-unverified-binary")
+    if snap > installed:
+        raise RestoreError(
+            f"cet instantané porte une base de schéma {snap}, et le forgemaster en place ne sait lire que "
+            f"jusqu'au schéma {installed}. La remettre la rendrait illisible pour lui, définitivement : la "
+            f"base monte en forward-only, aucune down-migration n'existe.\n"
+            f"  → rebascule <home>/{STABLE_LINK} vers le venv qui a PRIS cet instantané, puis relance\n"
+            f"  → ou choisis un instantané plus ancien (`{sys.executable} {__file__}` les liste)")
+
+
+def _user_version(db: Path) -> int | None:
+    """`PRAGMA user_version` d'une base, en lecture seule. Toute erreur rend `None` — un fichier illisible
+    est un schéma **indéterminable**, pas un schéma 0 (qui, lui, passerait le garde en silence)."""
+    if not db.is_file():
+        return None
+    try:
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return None
+    try:
+        row = conn.execute("PRAGMA user_version").fetchone()
+        return int(row[0]) if row and row[0] is not None else None
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+
+
 # --- restauration -----------------------------------------------------------------------------------
 
-def restore(snapshot_dir: Path, *, home: Path | None = None, dry_run: bool = False) -> None:
+def restore(snapshot_dir: Path, *, home: Path | None = None, dry_run: bool = False,
+            allow_unverified: bool = False) -> None:
     """Remet l'instantané dans `home` (défaut : le `home` inscrit au manifeste)."""
     snapshot_dir = Path(snapshot_dir).resolve()
     manifest = load_manifest(snapshot_dir)
     verify(snapshot_dir, manifest)
     target = Path(home).expanduser().resolve() if home else Path(manifest["home"])
+
+    snap_schema = snapshot_schema(snapshot_dir, manifest)
+    installed = installed_schema(target)
+    check_compatibility(snap_schema, installed, allow_unverified=allow_unverified)
 
     # Ce qui quitte l'instance : les entrées remplacées ET celles qui n'existaient pas à la prise (les
     # remettre à l'état d'alors, c'est aussi les RETIRER — sinon la restauration est partielle en silence).
@@ -116,6 +235,10 @@ def restore(snapshot_dir: Path, *, home: Path | None = None, dry_run: bool = Fal
         if path.name.endswith(SIDECARS):
             print(f"  écarte   : {path.name}  (journal de l'ANCIENNE base — le laisser annulerait la remise)")
     print(f"  intact   : {', '.join(manifest['excluded'])}")
+    if snap_schema is not None:
+        print(f"  schéma   : {snap_schema} — " + (
+            f"le forgemaster en place lit jusqu'au {installed}" if installed is not None
+            else "binaire en place non interrogeable, garde de compatibilité FORCÉ"))
 
     if dry_run:
         print("\n(--dry-run : rien n'a été écrit)")
@@ -206,13 +329,18 @@ def main(argv: list[str] | None = None) -> int:
                         help="dossier de l'instantané (inutile si ce script est DANS l'instantané)")
     parser.add_argument("--home", type=Path, help="racine à réécrire (défaut : celle inscrite au manifeste)")
     parser.add_argument("--dry-run", action="store_true", help="dire ce qui serait fait, ne rien écrire")
+    parser.add_argument("--allow-unverified-binary", action="store_true",
+                        help="passer outre quand le schéma lisible par le forgemaster en place est "
+                             "INDÉTERMINABLE (lien mort, venv cassé). N'annule PAS le refus d'une "
+                             "incompatibilité constatée : celle-là est certaine, pas douteuse.")
     args = parser.parse_args(argv)
 
     snapshot_dir = args.snapshot or _snapshot_beside_script()
     if snapshot_dir is None:
         return _list_snapshots(_default_home(args.home))
     try:
-        restore(snapshot_dir, home=args.home, dry_run=args.dry_run)
+        restore(snapshot_dir, home=args.home, dry_run=args.dry_run,
+                allow_unverified=args.allow_unverified_binary)
     except RestoreError as exc:
         print(f"✗ {exc}", file=sys.stderr)
         return 1

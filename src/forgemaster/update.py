@@ -15,14 +15,18 @@ et rend le code de sortie : détaché ne veut pas dire aveugle.
 Ce module ne porte donc que ce qu'un script autonome ne peut pas porter : le **refus fail-closed**, avant
 que quoi que ce soit ne bouge.
 
-Trois refus, tous explicites, jamais un devinage :
+Quatre refus, tous explicites, jamais un devinage :
 
 - **pas d'unité systemd** → la bascule exige un service gérable. On ne va pas inventer une façon de
   redémarrer le forgemaster de quelqu'un ;
 - **une unité qui lance un venv EN DUR** → c'est l'état de toute installation antérieure au bleu/vert. Elle
   n'est pas cassée, elle est *non migrée* : le message dit la commande unique qui la migre. Réécrire l'unité
   sous les pieds de l'utilisateur serait pire que refuser ;
-- **portée système sans être root** → `systemctl` échouerait au milieu, service arrêté. Refuser avant.
+- **portée système sans être root** → `systemctl` échouerait au milieu, service arrêté. Refuser avant ;
+- **du travail non commité dans `projects_root`** → cette racine n'entre PAS dans l'instantané. Le motif
+  (« git fait autorité ») ne vaut que là où il *y a* une autorité : le refus la vérifie au lieu de la
+  supposer. Seul le non commité bloque — « aucun remote » est un cas normal du produit distribué, et refuser
+  dessus interdirait toute mise à jour à qui n'en veut pas.
 """
 from __future__ import annotations
 
@@ -31,6 +35,7 @@ import json
 import os
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -38,6 +43,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from forgemaster.config import Settings
+from forgemaster.projects import authority as auth
 from forgemaster.service import stable_link, unit_path
 
 APPLY = "apply.py"
@@ -49,9 +55,14 @@ class UpdateRefused(Exception):
     """Refus fail-closed. Levée AVANT tout effet — l'instance est intacte quand elle sort."""
 
 
-def preflight(settings: Settings, *, wheel: str, unit: str | None, scope: str) -> dict:
+def preflight(settings: Settings, *, wheel: str, unit: str | None, scope: str,
+              authority: list[dict] | None = None) -> dict:
     """Vérifie tout ce qui doit l'être avant que la moindre chose bouge, et rend le plan (chemins + URL de
-    sonde). Lève `UpdateRefused` avec ce qu'il faut faire — jamais un « impossible » nu."""
+    sonde). Lève `UpdateRefused` avec ce qu'il faut faire — jamais un « impossible » nu.
+
+    `authority` est le verdict par projet (`projects.authority.survey`), **calculé par l'appelant** et passé
+    ici : ce module ne va pas chercher une connexion DB tout seul (injection explicite), et un preflight ne
+    doit rien ouvrir en écriture avant d'avoir le droit de refuser."""
     whl = Path(wheel).expanduser()
     if not whl.is_file():
         raise UpdateRefused(f"wheel introuvable : {whl}")
@@ -79,9 +90,22 @@ def preflight(settings: Settings, *, wheel: str, unit: str | None, scope: str) -
             f"une installation : tant que l'unité ne passe pas par {link}, la MAJ n'aurait aucun effet sur "
             f"le service. Migre-la : `forgemaster install-service` puis `systemctl daemon-reload`.")
 
+    # Quatrième refus : du travail que la MAJ ne protège pas. `projects_root` est hors instantané — le motif
+    # « git fait autorité » n'est vrai que là où il Y A une autorité. On ne bloque QUE sur du non-commité :
+    # « aucun remote » est un cas normal du produit distribué, et refuser dessus interdirait toute MAJ.
+    verdicts = authority or []
+    refused = [v for v in verdicts if v["state"] == auth.BLOCKING]
+    if refused:
+        details = "\n  ".join(f"{v['slug']} — {v['detail']}" for v in refused)
+        raise UpdateRefused(
+            f"{len(refused)} projet(s) portent du travail NON COMMITÉ, et `projects_root` n'entre pas dans "
+            f"l'instantané : si cette MAJ tourne mal, ce travail-là ne reviendra pas.\n  {details}\n"
+            f"  → commite (ou remise) dans chaque worktree cité, puis relance")
+
     return {"wheel": whl, "unit": up, "link": link, "venv": link.resolve(),
             "base_url": f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{port}",
-            "scope": scope, "home": settings.home}
+            "scope": scope, "home": settings.home, "authority": verdicts,
+            "projects_root": settings.projects_root}
 
 
 def parse_exec_start(unit_text: str) -> tuple[str, str, int]:
@@ -107,7 +131,7 @@ def parse_exec_start(unit_text: str) -> tuple[str, str, int]:
 
 def describe(plan: dict) -> list[str]:
     """Ce qui va se passer, dit avant de le faire (et seul contenu de `--dry-run`)."""
-    return [
+    lines = [
         f"wheel à poser   : {plan['wheel']}",
         f"venv actuel     : {plan['venv']}  (via {plan['link']})",
         f"unité systemd   : {plan['unit']}  (portée {plan['scope']})",
@@ -115,6 +139,14 @@ def describe(plan: dict) -> list[str]:
         "déroulé         : venv neuf à côté → sonde en isolation → arrêt + instantané à froid → "
         "bascule du lien → vérification en vivant → retour arrière automatique si elle échoue",
     ]
+    # Ce qui n'a pas bloqué est DIT quand même : un projet sans remote n'est pas une faute, mais l'utilisateur
+    # doit savoir que sa seule copie est ici et qu'elle n'entre pas dans l'instantané.
+    noted = [v for v in plan.get("authority") or [] if v["state"] != "clean_pushed"]
+    if noted:
+        lines.append(f"hors instantané : {plan.get('projects_root', 'projects_root')} — "
+                     f"{len(noted)} projet(s) à savoir")
+        lines.extend(auth.describe(noted))
+    return lines
 
 
 def launch(settings: Settings, plan: dict, *, systemctl: str, service: str, detach: bool) -> int:
@@ -168,11 +200,32 @@ def _system_python() -> str:
 
 # --- CLI ----------------------------------------------------------------------------------------------
 
+def _survey_authority(settings: Settings) -> list[dict]:
+    """Le verdict d'autorité, ou une liste vide en dégradation honnête. On n'ouvre la base **que si elle
+    existe déjà** : un preflight qui refuse ne doit pas avoir créé la base de son refus. Une base illisible
+    ne bloque pas non plus — elle rend « je ne sais pas », et ce module ne bloque que sur ce qu'il SAIT."""
+    if not settings.db_path.is_file():
+        return []
+    from forgemaster.db import store
+    from forgemaster.git.internal import InternalGit
+    try:
+        conn = store.connect(settings.db_path)
+    except sqlite3.Error:
+        return []
+    try:
+        return auth.survey(conn, settings, InternalGit())
+    except sqlite3.Error:
+        return []                       # base d'un schéma qu'on ne lit pas : pas un motif de refus
+    finally:
+        conn.close()
+
+
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     """Route `forgemaster update <action>`."""
     scope = "system" if getattr(args, "system", False) else "user"
     try:
-        plan = preflight(settings, wheel=args.wheel, unit=args.unit, scope=scope)
+        plan = preflight(settings, wheel=args.wheel, unit=args.unit, scope=scope,
+                         authority=_survey_authority(settings))
     except UpdateRefused as exc:
         print(f"✗ MAJ refusée — rien n'a été touché.\n  {exc}", file=sys.stderr)
         return 1

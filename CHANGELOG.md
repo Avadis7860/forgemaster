@@ -9,6 +9,41 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Les deux gardes de l'invariant de retour arrière (aucun changement de schéma, aucun format touché)
+
+L'invariant : *aucune séquence de gestes accessible à l'utilisateur ne peut rendre sa base illisible, ni lui
+faire perdre du travail sans qu'on le lui ait dit.* Trois faits en formaient un piège — la base monte en
+**forward-only** (aucune down-migration n'existe, et il n'en sera pas écrit), le retour arrière demande **deux
+gestes** (l'instantané couvre la donnée, jamais le binaire), et **rien ne vérifiait leur cohérence**.
+
+- **Garde de compatibilité** (`restore.py`, et nulle part ailleurs). Une restauration dont l'instantané porte
+  un **schéma de base** que le forgemaster en place ne sait pas lire est refusée **avant la première
+  écriture**. La ligne qui rendait la panne possible est nommée : `db/store.migrate()` ne réagit qu'à une base
+  **en retard** (`user_version < SCHEMA_VERSION`) — une base trop **neuve** passait en silence, et l'ancien
+  binaire travaillait dessus.
+- **La comparaison porte sur le schéma, ni sur la version produit ni sur le SHA de build.** Deux versions
+  peuvent partager un schéma : refuser sur la version produirait des refus faux, et un SHA n'ordonne rien.
+  Conséquence : le schéma se lit **dans le `.db` de l'instantané** (`PRAGMA user_version`), donc le format
+  d'instantané **ne change pas** (`SCHEMA` reste `1`) et le garde protège les instantanés **déjà pris**.
+- **Le binaire s'interroge par sa constante, pas par un verbe CLI** : `installed_schema` demande
+  `SCHEMA_VERSION` au python de `<home>/current`, avec repli sur `cockpit.db.schema`. Un verbe neuf
+  n'interrogerait que les binaires *postérieurs* au garde — or le binaire dangereux est l'**ancien**.
+- **Trois issues, toutes explicites** : *compatible* · *incompatible* (refus sec, la panne est certaine) ·
+  *indéterminable* (lien `current` mort, venv cassé → refus, et le message porte la sortie
+  `--allow-unverified-binary`). La porte lève un **doute**, jamais une **certitude** : elle ne couvre pas une
+  incompatibilité constatée. Un refus sec sur l'indéterminable bloquerait le secours dans la situation même
+  qu'il sert ; un simple avertissement ne tiendrait plus l'invariant.
+- **Le retour arrière automatique n'est pas bloqué** : `apply_update` a rebasculé le lien sur le venv qui a
+  *pris* l'instantané, donc il lève le doute — mais il ne passe le drapeau que si le `restore.py` **figé dans
+  l'instantané** le connaît. Un instantané d'avant ce garde ferait sinon sortir argparse en usage, et ferait
+  échouer le retour arrière au pire moment.
+- **Verdict d'autorité par projet** (`projects/authority.py`, pure lecture, `GitBackend` injecté). Cinq états
+  rendus : `clean_pushed` · `uncommitted` · `unpushed` · `no_remote` · `unreachable`. `update apply` refuse
+  **fail-closed** sur du travail **non commité** — `projects_root` n'entre pas dans l'instantané, donc ce
+  travail-là ne reviendrait pas. « Non poussé » et « aucun remote » sont **dits**, jamais bloquants : un
+  utilisateur sans miroir est un cas *normal* du produit distribué, et refuser dessus lui interdirait toute
+  mise à jour. L'exclusion de `projects_root` devient une **constatation vérifiée** au lieu d'une hypothèse.
+
 ### Une install fraîche ne réclame plus les tokens du mainteneur — schéma **v19 → v20**
 - **Le défaut, mesuré sur une install vierge** (2026-08-04, VM neuve) : `GET /api/onboarding` rendait
   `complete: false` avec **quatre** exigences insatisfiables — un token de **push** vers

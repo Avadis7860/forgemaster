@@ -51,6 +51,7 @@ from pathlib import Path
 KEEP_VENVS = 2          # le courant + le précédent : de quoi rebasculer à la main si tout le reste a échoué
 PROBE_TIMEOUT = 60.0    # démarrage d'un daemon FastAPI, venv froid inclus
 RESTORE = "restore.py"
+FORCE_FLAG = "--allow-unverified-binary"
 
 
 class UpdateFailed(Exception):
@@ -241,15 +242,35 @@ def _systemctl(args: argparse.Namespace, action: str, log) -> None:
 
 def _restore(snapshot: Path, home: Path, log) -> None:
     """Restaure par le script FIGÉ DANS l'instantané — celui écrit en même temps que son manifeste, donc
-    celui qui le comprend. C'est aussi le chemin de secours manuel : on exerce ici ce qu'on documente."""
+    celui qui le comprend. C'est aussi le chemin de secours manuel : on exerce ici ce qu'on documente.
+
+    On lui passe `--allow-unverified-binary` **quand il le connaît**. Ce n'est pas un affaiblissement du garde
+    de compatibilité : ici le lien vient d'être rebasculé sur le venv qui a PRIS cet instantané (`apply` fait
+    `swap(link, old_venv)` juste avant), donc la compatibilité est acquise par construction et le seul état
+    que le garde pourrait rendre est *indéterminable* — un doute que cet appelant-ci, lui, a levé. Le refus
+    d'une incompatibilité **constatée** reste, lui, absolu : la porte ne le couvre pas.
+
+    Le drapeau n'est ajouté que si le script figé le porte : un instantané pris avant ce garde embarque un
+    `restore.py` dont l'argparse sortirait en usage, et ferait échouer le retour arrière au pire moment."""
     script = snapshot / RESTORE
-    proc = subprocess.run(  # noqa: S603
-        [sys.executable, str(script), "--snapshot", str(snapshot), "--home", str(home)],
-        capture_output=True, text=True, check=False)
+    cmd = [sys.executable, str(script), "--snapshot", str(snapshot), "--home", str(home)]
+    if _supports_flag(script, FORCE_FLAG):
+        cmd.append(FORCE_FLAG)
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)  # noqa: S603
     for line in proc.stdout.strip().splitlines():
         log(f"      {line}")
     if proc.returncode != 0:
         log(f"      ⚠ restauration rc={proc.returncode} : {proc.stderr.strip()}")
+
+
+def _supports_flag(script: Path, flag: str) -> bool:
+    """Le script figé connaît-il ce drapeau ? Lu dans son texte, pas déduit d'une version : un instantané ne
+    porte pas le numéro de version de son propre `restore.py`, et lancer `--help` pour le savoir coûterait un
+    processus de plus au moment le moins opportun. Illisible → on ne le passe pas (prudent)."""
+    try:
+        return flag in script.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
 
 
 def _verify_live(base: str, expected: dict, timeout: float, log) -> tuple[bool, str]:

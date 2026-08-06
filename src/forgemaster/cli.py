@@ -319,6 +319,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_snap_res.add_argument("snapshot", help="nom de l'instantané (ou chemin d'un dossier)")
     p_snap_res.add_argument("--dry-run", action="store_true",
                             help="dire ce qui serait remis, ne rien écrire")
+    p_snap_res.add_argument("--allow-unverified-binary", action="store_true",
+                            help="remettre malgré un schéma de binaire INDÉTERMINABLE (lien `current` mort, "
+                                 "venv cassé). N'annule pas le refus d'une incompatibilité constatée")
 
     # -- update -------------------------------------------------------------------------------------
     p_up = sub.add_parser("update", parents=[common],
