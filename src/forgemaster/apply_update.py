@@ -48,7 +48,13 @@ import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 
-KEEP_VENVS = 2          # le courant + le précédent : de quoi rebasculer à la main si tout le reste a échoué
+# LA politique de rétention, déclarée UNE fois et ici. Ici parce que ce module est stdlib-pur par contrat
+# (il ne peut rien importer de `forgemaster`, cf. `test_apply_ne_depend_de_rien_du_forgemaster`) : c'est
+# `snapshot.py` qui lit la constante, l'inverse serait impossible. Ce qui change n'est pas le disque
+# consommé — les deux valeurs dérivées valent ce qu'elles valaient — mais que « jusqu'où on sait revenir »
+# devienne un NOMBRE NOMMÉ, sur lequel les deux rétentions s'accordent au lieu de coïncider.
+ROLLBACK_DEPTH = 1                  # de combien de crans `forgemaster update rollback` sait remonter
+KEEP_VENVS = ROLLBACK_DEPTH + 1     # le courant + les crans joignables : rien de plus ne sert à revenir
 PROBE_TIMEOUT = 60.0    # démarrage d'un daemon FastAPI, venv froid inclus
 RESTORE = "restore.py"
 FORCE_FLAG = "--allow-unverified-binary"
@@ -358,13 +364,28 @@ def _free_port() -> int:
 
 
 def _purge_venvs(root: Path, *, keep: set[Path], log) -> None:
-    """Garde les `KEEP_VENVS` venvs les plus récents (le courant en fait toujours partie). Une capacité qui
-    remplit le disque en silence est une régression, pas une garantie."""
+    """Purge tout venv qui n'est **pas joignable par un retour arrière**. `keep` EST cette liste : l'appelant
+    vient de faire la bascule, il la connaît. Une capacité qui remplit le disque en silence est une
+    régression, pas une garantie.
+
+    **On ne re-devine plus la liste par date de création.** L'ancienne formulation gardait « les `KEEP_VENVS`
+    plus récents », ce qui donne le bon résultat à `ROLLBACK_DEPTH = 1` — et seulement là, parce que `keep`
+    remplit alors tout le quota et ne laisse aucune place à la date. À `DEPTH` supérieur elle aurait gardé le
+    plus récent des NON-gardés, qui est typiquement un bleu ayant ÉCHOUÉ en vivant : précisément le venv vers
+    lequel il ne faut pas revenir. « Le plus récent » et « le cran d'avant » sont deux ordres différents, et
+    ils ne coïncident qu'ici.
+
+    Déclaration incohérente avec la politique → **on ne purge rien** et on le dit. Supprimer sur une liste
+    qu'on ne comprend pas est le seul résultat irréversible de cette fonction."""
     kept = {p.resolve() for p in keep}
-    olds = [p for p in sorted(root.iterdir(), reverse=True) if p.is_dir() and p.resolve() not in kept]
-    for stale in olds[max(0, KEEP_VENVS - len(kept)):]:
-        shutil.rmtree(stale, ignore_errors=True)
-        log(f"      purge du venv {stale.name}")
+    if len(kept) != KEEP_VENVS:
+        log(f"      ⚠ purge sautée : {len(kept)} venv(s) déclarés joignables, la politique en attend "
+            f"{KEEP_VENVS} (ROLLBACK_DEPTH={ROLLBACK_DEPTH}) — rien n'a été supprimé")
+        return
+    for stale in sorted(root.iterdir(), reverse=True):
+        if stale.is_dir() and stale.resolve() not in kept:
+            shutil.rmtree(stale, ignore_errors=True)
+            log(f"      purge du venv {stale.name}")
 
 
 def _write_json(path: Path, data: dict) -> None:

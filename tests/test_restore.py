@@ -403,3 +403,28 @@ def test_un_instantane_sans_base_na_rien_a_garder(live: Settings, tmp_path: Path
     assert "forgemaster.db" in manifest["absent"]
     assert restore.snapshot_schema(dest, manifest) is None
     restore.restore(dest)                                # aucun lien `current` ici, et pourtant : ça passe
+
+
+def test_le_dry_run_NOMME_le_piege_des_donnees_seules_avant_le_geste(live: Settings, capsys):
+    """Trouvé par la preuve sur le produit, pas par un test : le `--dry-run` annonçait l'écart de schéma
+    comme deux nombres (« 19 — le forgemaster en place lit jusqu'au 20 »), à l'instant précis où le geste
+    devient irréversible. Un écart vers le BAS passe le garde, puis la base migre en avant : on récupère ses
+    données, on ne revient pas, et on ne le pourra plus. Le dire est le seul moment où ça sert."""
+    dest = _pris_par_un_binaire_de_schema(live, max(0, schema.SCHEMA_VERSION - 1))
+
+    restore.restore(dest, dry_run=True)
+
+    sortie = capsys.readouterr().out
+    assert "DONNÉES SEULES" in sortie
+    assert f"vers le schéma {schema.SCHEMA_VERSION}" in sortie
+    assert "forward-only" in sortie
+
+
+def test_le_dry_run_nannonce_PAS_le_piege_quand_les_schemas_correspondent(live: Settings, capsys):
+    """Le symétrique, qui garde la garde : un avertissement qui s'allume sur le cas NOMINAL — celui d'un
+    retour arrière réussi — serait un check défaillant, et finirait ignoré le jour où il dit vrai."""
+    dest = snapshot.create(live)
+
+    restore.restore(dest, dry_run=True)
+
+    assert "DONNÉES SEULES" not in capsys.readouterr().out

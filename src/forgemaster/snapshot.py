@@ -35,11 +35,19 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from forgemaster.apply_update import ROLLBACK_DEPTH
 from forgemaster.config import Settings
+from forgemaster.restore import python_schema, snapshot_schema
 
 SCHEMA = 1                 # un `restore.py` qui lit un schéma inconnu REFUSE honnêtement au lieu de deviner
-KEEP = 3                   # assez pour « la MAJ a échoué, j'ai restauré, j'ai retenté, ça a re-échoué »
+# Dérivée de LA politique (`apply_update.ROLLBACK_DEPTH`), pas posée à côté d'elle : les deux rétentions —
+# venvs et instantanés — répondent à la même question, « jusqu'où sait-on revenir ? ». La marge de 2 tient
+# le scénario « la MAJ a échoué, j'ai restauré, j'ai retenté, ça a re-échoué ». La valeur ne change pas (3) ;
+# ce qui change est qu'elle ne peut plus dériver toute seule de celle des venvs.
+KEEP = ROLLBACK_DEPTH + 2
 MANIFEST = "manifest.json"
+VENVS = "venvs"            # même convention que `apply_update._parse` (défaut `<home>/venvs`)
+MARQUEURS = {"restaurable": "✔", "données seules": "⚠", "irrestaurable": "✗", "inconnu": "·"}
 RESTORE = "restore.py"     # l'unique implémentation de la restauration (stdlib pure) — cf. `restore.py`
 
 # Le périmètre, déclaré : (chemin relatif à `home`, comment on le prend, mode du fichier posé).
@@ -178,27 +186,96 @@ def _purge(root: Path, *, keep: int, spare: Path) -> list[Path]:
 
 def list_snapshots(settings: Settings) -> list[dict]:
     """Les instantanés du plus récent au plus ancien. Un dossier invalide est **listé** avec sa raison, pas
-    masqué : c'est ce qui rend l'invariant « manifeste en dernier » observable plutôt que déclaratif."""
+    masqué : c'est ce qui rend l'invariant « manifeste en dernier » observable plutôt que déclaratif.
+
+    Chaque instantané valide porte en plus son **état de restauration** (`state` + `state_reason`) : tous ne
+    se valent pas, et les présenter côte à côte sans le dire laisse choisir celui qui ne ramènera pas. La
+    mesure coûte **une sonde par venv retenu** (`KEEP_VENVS`, soit 2 en régime), pas une par instantané."""
     root = snapshots_dir(settings)
     if not root.is_dir():
         return []
+    venvs = _venv_schemas(settings)
     out: list[dict] = []
     for d in sorted((p for p in root.iterdir() if p.is_dir()), reverse=True):
-        out.append({"path": str(d), "name": d.name, **_read_manifest(d / MANIFEST)})
+        info, raw = _read_manifest(d / MANIFEST)
+        if raw is not None:
+            info |= _restorability(d, raw, venvs)
+        out.append({"path": str(d), "name": d.name, **info})
     return out
 
 
-def _read_manifest(path: Path) -> dict:
+def _read_manifest(path: Path) -> tuple[dict, dict | None]:
+    """Rend `(ce qu'on expose, le manifeste brut)`. Le brut n'est **pas** exposé — il ne sert qu'à
+    `_restorability`, qui a besoin des entrées complètes là où l'appelant n'a besoin que de leurs noms."""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except OSError:
-        return {"valid": False, "reason": "manifeste absent — prise interrompue, instantané incomplet"}
+        return {"valid": False, "reason": "manifeste absent — prise interrompue, instantané incomplet"}, None
     except ValueError:
-        return {"valid": False, "reason": "manifeste illisible (JSON invalide)"}
+        return {"valid": False, "reason": "manifeste illisible (JSON invalide)"}, None
     if data.get("schema") != SCHEMA:
-        return {"valid": False, "reason": f"schéma {data.get('schema')!r} inconnu (attendu {SCHEMA})"}
-    return {"valid": True, "created_at": data.get("created_at"), "forgemaster": data.get("forgemaster"),
-            "entries": [e["name"] for e in data.get("entries", [])], "absent": data.get("absent", [])}
+        return {"valid": False, "reason": f"schéma {data.get('schema')!r} inconnu (attendu {SCHEMA})"}, None
+    return ({"valid": True, "created_at": data.get("created_at"), "forgemaster": data.get("forgemaster"),
+             "entries": [e["name"] for e in data.get("entries", [])], "absent": data.get("absent", [])},
+            data)
+
+
+def _venv_schemas(settings: Settings) -> dict[str, int]:
+    """Le schéma que sait lire **chaque** venv encore posé sous `<home>/venvs` — c'est l'ensemble des
+    binaires vers lesquels un retour arrière peut basculer, donc la seule mesure qui décide de l'état d'un
+    instantané. Un venv qu'on ne sait pas sonder est **absent** du résultat plutôt que compté à zéro : un
+    schéma indéterminable n'est pas un schéma bas (même raison que `restore._user_version`)."""
+    root = settings.home / VENVS
+    if not root.is_dir():
+        return {}
+    found: dict[str, int] = {}
+    for venv in sorted(root.iterdir()):
+        if not venv.is_dir():
+            continue
+        readable = python_schema(venv / "bin" / "python")
+        if readable is not None:
+            found[venv.name] = readable
+    return found
+
+
+def _restorability(snapshot_dir: Path, manifest: dict, venvs: dict[str, int]) -> dict:
+    """Les **trois états** d'un instantané, face aux binaires réellement disponibles. Ils reprennent le
+    vocabulaire du garde de `restore.check_compatibility` — deux formulations du même invariant seraient
+    deux façons de le comprendre :
+
+    - `restaurable` — un venv porte **exactement** le schéma de l'instantané : on remet le binaire ET les
+      données, et on est revenu. C'est le seul état qui tient la promesse du retour arrière.
+    - `données seules` — aucun venv n'a ce schéma, mais au moins un le dépasse : la remise passera le garde,
+      puis la base **migrera en avant** à la première ouverture. On récupère ses données ; on ne revient pas,
+      et on ne pourra plus. C'est le piège que cette phase existe pour rendre visible.
+    - `irrestaurable` — tous les binaires disponibles lisent moins loin : `restore` refusera, et il a raison.
+
+    Rien à mesurer (aucun venv sondable) → `inconnu`, pas un état. Une instance installée par `pip` n'a pas
+    de `<home>/venvs` : rendre `irrestaurable` sur ce qui est NORMAL ferait un check défaillant, donc ignoré.
+    """
+    snap = snapshot_schema(snapshot_dir, manifest)
+    if snap is None:
+        return {"state": "restaurable",
+                "state_reason": "aucune base dans cet instantané — rien qui puisse devenir illisible"}
+    if not venvs:
+        return {"state": "inconnu",
+                "state_reason": f"aucun venv sondable sous <home>/{VENVS} : cette instance n'a pas été posée "
+                                f"par le cycle de MAJ, l'état ne se mesure pas ici"}
+    if snap in venvs.values():
+        exact = sorted(n for n, s in venvs.items() if s == snap)[-1]
+        return {"state": "restaurable",
+                "state_reason": f"le venv {exact} porte le schéma {snap} : binaire et données reviennent "
+                                f"ensemble"}
+    au_dessus = [s for s in venvs.values() if s > snap]
+    if au_dessus:
+        proche = min(au_dessus)
+        return {"state": "données seules",
+                "state_reason": f"aucun venv ne porte le schéma {snap} ; le plus proche lit le {proche}. "
+                                f"La remise passera, puis la base migrera EN AVANT vers le {proche} — tu "
+                                f"récupères tes données, tu ne reviens pas, et la base monte en forward-only"}
+    return {"state": "irrestaurable",
+            "state_reason": f"cet instantané porte le schéma {snap} et aucun venv posé ne lit plus loin que "
+                            f"le {max(venvs.values())} — `restore` refusera, il a raison"}
 
 
 # --- utilitaires ------------------------------------------------------------------------------------
@@ -235,10 +312,19 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
         return 0
     for snap in snaps:
         if not snap["valid"]:
-            print(f"{snap['name']}  ⚠ INVALIDE — {snap['reason']}")
+            print(f"⚠ {snap['name']}  INVALIDE — {snap['reason']}")
             continue
-        print(f"{snap['name']}  {snap['created_at']}  forgemaster {snap['forgemaster']['version']} "
+        etat = snap.get("state", "inconnu")
+        print(f"{MARQUEURS.get(etat, '·')} {snap['name']}  {snap['created_at']}  "
+              f"forgemaster {snap['forgemaster']['version']} "
               f"({snap['forgemaster']['build_sha'] or 'build inconnu'})  [{', '.join(snap['entries'])}]")
+        # Les deux états qui trompent se DISENT, ligne à ligne. `restaurable` n'a rien à ajouter, et
+        # `inconnu` se dit une fois en pied de liste : le répéter noierait ceux qui comptent.
+        if etat in ("données seules", "irrestaurable"):
+            print(f"    → {etat.upper()} — {snap['state_reason']}")
+    if any(s.get("state") == "inconnu" for s in snaps):
+        print(f"\n· état de restauration non mesuré : aucun venv sondable sous <home>/{VENVS} — cette "
+              f"instance n'a pas été posée par le cycle de MAJ")
     return 0
 
 

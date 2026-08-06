@@ -223,3 +223,100 @@ def test_cli_create_puis_list(live: Settings, capsys):
 
     assert main(["snapshot", "list", *racines]) == 0
     assert "forgemaster.db" in capsys.readouterr().out
+
+
+# --- les trois états de restauration ----------------------------------------------------------------
+#
+# Ce que ces tests protègent n'est pas la plomberie de la sonde : c'est que `snapshot list` cesse de
+# présenter comme équivalents des instantanés qui ne le sont pas. Le piège nommé ici — « données seules » —
+# est celui qui coûte le plus cher : la remise PASSE, puis la base migre en avant, et le retour arrière
+# qu'on croyait faire n'a jamais eu lieu. Le rendre visible est tout l'objet de la phase.
+
+def _venv_factice(home: Path, nom: str, schema_lu: int) -> Path:
+    """Un venv réduit à ce que la sonde interroge : un `bin/python` qui imprime une constante. C'est
+    exactement ce que `restore.python_schema` demande — pas un verbe CLI, pas un import réel."""
+    venv = home / snapshot.VENVS / nom
+    (venv / "bin").mkdir(parents=True)
+    python = venv / "bin" / "python"
+    python.write_text(f"#!/bin/sh\necho {schema_lu}\n", encoding="utf-8")
+    python.chmod(0o755)
+    return venv
+
+
+def test_un_instantane_est_restaurable_quand_un_venv_porte_SON_schema(live: Settings):
+    """Le seul état qui tient la promesse : binaire ET données reviennent ensemble."""
+    _venv_factice(live.home, "2026-08-01T00-00-00Z", schema.SCHEMA_VERSION)
+    snapshot.create(live)
+
+    (lu,) = snapshot.list_snapshots(live)
+    assert lu["state"] == "restaurable"
+    assert str(schema.SCHEMA_VERSION) in lu["state_reason"]
+
+
+def test_sans_venv_de_son_schema_mais_avec_un_PLUS_HAUT_c_est_donnees_seules(live: Settings):
+    """LE piège de cette phase. Aucun venv ne lit le schéma de l'instantané, mais un le dépasse : `restore`
+    laissera passer, puis la base migrera EN AVANT — on récupère ses données, on ne revient pas. L'état doit
+    NOMMER le schéma vers lequel elle migrerait, sinon le message ne sert à rien au moment où il compte."""
+    _venv_factice(live.home, "2026-08-02T00-00-00Z", schema.SCHEMA_VERSION + 1)
+    snapshot.create(live)
+
+    (lu,) = snapshot.list_snapshots(live)
+    assert lu["state"] == "données seules"
+    assert f"le {schema.SCHEMA_VERSION + 1}" in lu["state_reason"]
+    assert "forward-only" in lu["state_reason"]
+
+
+def test_quand_aucun_binaire_ne_lit_assez_loin_l_instantane_est_irrestaurable(live: Settings):
+    """Le garde de `restore.check_compatibility` vu depuis la liste : il refusera, et il a raison. Le dire
+    AVANT le geste évite de choisir un instantané qui ne se remettra pas."""
+    _venv_factice(live.home, "2026-07-01T00-00-00Z", schema.SCHEMA_VERSION - 1)
+    snapshot.create(live)
+
+    (lu,) = snapshot.list_snapshots(live)
+    assert lu["state"] == "irrestaurable"
+
+
+def test_sans_venv_a_sonder_l_etat_n_est_pas_mesure_au_lieu_d_etre_rouge(live: Settings):
+    """Une instance posée par `pip` n'a pas de `<home>/venvs`. Rendre `irrestaurable` sur ce qui est NORMAL
+    ferait un check défaillant — et un check qui s'allume sur du normal finit ignoré, y compris le jour où
+    il dit vrai."""
+    snapshot.create(live)
+
+    (lu,) = snapshot.list_snapshots(live)
+    assert lu["state"] == "inconnu"
+    assert "n'a pas été posée par le cycle de MAJ" in lu["state_reason"]
+
+
+def test_le_venv_le_plus_recent_gagne_quand_deux_portent_le_meme_schema(live: Settings):
+    """Deux venvs peuvent lire le même schéma (deux versions produit, un seul schéma). L'état reste
+    `restaurable` et nomme le plus récent — celui vers lequel un retour arrière basculerait."""
+    _venv_factice(live.home, "2026-08-01T00-00-00Z", schema.SCHEMA_VERSION)
+    _venv_factice(live.home, "2026-08-03T00-00-00Z", schema.SCHEMA_VERSION)
+    snapshot.create(live)
+
+    (lu,) = snapshot.list_snapshots(live)
+    assert lu["state"] == "restaurable"
+    assert "2026-08-03T00-00-00Z" in lu["state_reason"]
+
+
+def test_les_deux_retentions_derivent_de_LA_politique(live: Settings):
+    """`ROLLBACK_DEPTH` est déclarée une fois, chez le module stdlib-pur ; les deux rétentions en dérivent.
+    Elles ne coïncident plus par hasard — c'est tout ce que la constante achète, et c'est ce qui casserait
+    en silence si quelqu'un re-posait un nombre en dur."""
+    from forgemaster.apply_update import KEEP_VENVS, ROLLBACK_DEPTH
+
+    assert KEEP_VENVS == ROLLBACK_DEPTH + 1
+    assert snapshot.KEEP == ROLLBACK_DEPTH + 2
+
+
+def test_cli_list_DIT_le_piege_des_donnees_seules(live: Settings, capsys):
+    """L'état ne sert que s'il arrive sous les yeux : le rendu CLI le porte, en toutes lettres."""
+    from forgemaster.cli import main
+
+    _venv_factice(live.home, "2026-08-02T00-00-00Z", schema.SCHEMA_VERSION + 1)
+    snapshot.create(live)
+
+    assert main(["snapshot", "list", "--home", str(live.home),
+                 "--projects-root", str(live.projects_root)]) == 0
+    sortie = capsys.readouterr().out
+    assert "DONNÉES SEULES" in sortie and "migrera EN AVANT" in sortie

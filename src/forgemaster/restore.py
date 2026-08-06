@@ -130,12 +130,20 @@ def snapshot_schema(snapshot_dir: Path, manifest: dict) -> int | None:
 
 def installed_schema(home: Path) -> int | None:
     """Schéma **maximum** que sait lire le forgemaster actuellement en place, ou `None` si on ne peut pas le
-    savoir (lien mort, venv sans python, paquet illisible).
+    savoir (lien mort, venv sans python, paquet illisible)."""
+    return python_schema(home / STABLE_LINK / "bin" / "python")
 
-    On demande sa **constante** au python du venv actif, jamais un verbe CLI : un verbe neuf ne serait porté
+
+def python_schema(python: Path) -> int | None:
+    """Schéma maximum que sait lire le forgemaster d'**un** venv, `None` si on ne peut pas le savoir.
+
+    On demande sa **constante** au python du venv, jamais un verbe CLI : un verbe neuf ne serait porté
     que par les binaires POSTÉRIEURS à ce garde, alors que le binaire dangereux est l'ancien. `SCHEMA_VERSION`
-    existe, elle, depuis le premier commit du dépôt."""
-    python = home / STABLE_LINK / "bin" / "python"
+    existe, elle, depuis le premier commit du dépôt.
+
+    Séparée d'`installed_schema` le 2026-08-06 : `snapshot.list_snapshots` pose la même question à **chaque**
+    venv retenu pour dire si un instantané est encore restaurable. Une seconde sonde aurait divergé de
+    celle-ci le jour où l'une des deux évolue — et c'est ce garde-là qui compte."""
     if not python.is_file():
         return None
     code = (
@@ -239,6 +247,16 @@ def restore(snapshot_dir: Path, *, home: Path | None = None, dry_run: bool = Fal
         print(f"  schéma   : {snap_schema} — " + (
             f"le forgemaster en place lit jusqu'au {installed}" if installed is not None
             else "binaire en place non interrogeable, garde de compatibilité FORCÉ"))
+        # L'écart VERS LE BAS passe le garde — et c'est justement celui qu'on ne voit pas venir : la base
+        # remise migrera en avant à la première ouverture, sans retour. L'annoncer comme un simple écart de
+        # nombres, à l'instant où le geste devient irréversible, laissait l'utilisateur le lire comme un
+        # détail. Même vocabulaire que l'état « données seules » de `snapshot list` (2026-08-06).
+        if installed is not None and snap_schema < installed:
+            print(f"  ⚠ DONNÉES SEULES : cette base sera migrée EN AVANT vers le schéma {installed} à la "
+                  f"première ouverture.\n"
+                  f"    Tu récupères tes données ; tu ne reviens PAS au forgemaster d'alors, et tu ne le\n"
+                  f"    pourras plus (la base monte en forward-only). Pour revenir pour de bon, rebascule\n"
+                  f"    d'abord <home>/{STABLE_LINK} vers le venv qui a PRIS cet instantané.")
 
     if dry_run:
         print("\n(--dry-run : rien n'a été écrit)")

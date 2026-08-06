@@ -597,3 +597,59 @@ def test_le_restore_reellement_pose_porte_le_drapeau(live: Settings):
     arrière automatique retomberait dans le refus — vert en apparence, cassé en vrai."""
     dest = snapshot.create(live)
     assert apply_update._supports_flag(dest / snapshot.RESTORE, apply_update.FORCE_FLAG) is True
+
+
+# --- la rétention des venvs -------------------------------------------------------------------------
+#
+# Rien ne gardait cette purge, et c'est le seul geste IRRÉVERSIBLE d'une MAJ réussie. L'ancienne
+# formulation — « garder les KEEP_VENVS plus récents » — donnait le bon résultat à ROLLBACK_DEPTH = 1, et
+# seulement là : `keep` remplissait tout le quota, la date n'avait aucune place où s'exprimer. Ces tests
+# figent la formulation qui reste vraie quand la profondeur change, pas la coïncidence.
+
+def _venvs_factices(root: Path, *noms: str) -> list[Path]:
+    for nom in noms:
+        (root / nom).mkdir(parents=True)
+    return [root / nom for nom in noms]
+
+
+def test_la_purge_ne_garde_QUE_les_venvs_joignables_par_un_retour_arriere(tmp_path: Path):
+    """L'appelant vient de faire la bascule : il SAIT lesquels sont joignables. On ne les re-devine pas."""
+    root = tmp_path / "venvs"
+    vieux, cible, courant = _venvs_factices(root, "2026-01-01", "2026-06-01", "2026-08-01")
+
+    apply_update._purge_venvs(root, keep={courant, cible}, log=lambda _m: None)
+
+    assert not vieux.exists()
+    assert cible.is_dir() and courant.is_dir()
+
+
+def test_un_bleu_qui_a_ECHOUE_est_purge_meme_s_il_est_le_PLUS_RECENT_des_non_gardes(tmp_path: Path):
+    """Le cas que l'arithmétique par date aurait manqué dès `ROLLBACK_DEPTH = 2` : après une MAJ ratée, le
+    venv le plus récent hors `keep` est un bleu qui n'a JAMAIS servi — exactement celui vers lequel il ne
+    faut pas revenir. « Le plus récent » et « le cran d'avant » sont deux ordres différents."""
+    root = tmp_path / "venvs"
+    cible, rate, courant = _venvs_factices(root, "2026-06-01", "2026-07-01", "2026-08-01")
+
+    apply_update._purge_venvs(root, keep={courant, cible}, log=lambda _m: None)
+
+    assert not rate.exists(), "un bleu jamais servi a survécu à la purge parce qu'il était récent"
+    assert cible.is_dir()
+
+
+def test_une_declaration_incoherente_avec_la_politique_ne_purge_RIEN(tmp_path: Path):
+    """Fail-closed sur le seul geste irréversible de la MAJ : si la liste des joignables ne correspond pas
+    à la politique, on ne devine pas ce qu'il faut supprimer — on ne supprime pas, et on le dit."""
+    root = tmp_path / "venvs"
+    a, b, c = _venvs_factices(root, "2026-01-01", "2026-06-01", "2026-08-01")
+    dits: list[str] = []
+
+    apply_update._purge_venvs(root, keep={c}, log=dits.append)      # 1 déclaré, la politique en attend 2
+
+    assert all(p.is_dir() for p in (a, b, c))
+    assert any("purge sautée" in ligne for ligne in dits)
+
+
+def test_la_politique_est_declaree_UNE_fois_et_les_deux_retentions_en_derivent():
+    """`ROLLBACK_DEPTH` vit chez le module stdlib-pur parce que `snapshot` peut le lire, jamais l'inverse."""
+    assert apply_update.KEEP_VENVS == apply_update.ROLLBACK_DEPTH + 1
+    assert snapshot.KEEP == apply_update.ROLLBACK_DEPTH + 2
