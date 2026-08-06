@@ -135,7 +135,15 @@ enfant. Les shells PTY (`terminal.pty`) et les workers de dispatch (`dispatch.wo
 cgroup, et `KillMode=process` les orphelinerait **tous**, à chaque arrêt, pour corriger ce seul cas. L'unité
 transitoire ne change le sort que de l'applicateur, à l'endroit qui le concerne — son lanceur.
 
-**Plancher.** `StandardOutput=append:` exige systemd ≥ 240 ; le produit dépend déjà de systemd pour tout le reste.
+**Plancher, et ce qu'il vaut.** `StandardOutput=append:` exige systemd ≥ 240 ; le produit dépend déjà de systemd pour
+tout le reste, et `systemd-run` est livré avec lui. Prouvé sur **systemd 255** (255.4-1ubuntu8.16, VM E2E 9311) — le
+plancher est donc *déclaré*, pas *mesuré* : rien n'a été joué entre 240 et 255. Si une instance plus ancienne devait
+être servie, c'est là qu'il faudrait aller voir, et le seul symptôme serait un `launch.log` vide.
+
+**Ce que ce chemin est le seul à savoir faire.** Le lancement se lit désormais dans deux fichiers durables — `launch.log`
+(écrit par l'unité) et `result.json` (écrit par l'applicateur). Leur absence conjointe distingue « le run n'a jamais
+démarré » de « il tourne encore », ce que le fire-and-forget d'avant ne permettait pas. C'est le substrat que lira la
+route de la sous-phase suivante.
 
 ## follow() — détaché ne veut pas dire aveugle
 `src/forgemaster/update.py:349` · appelé par `launch` · retourne le rc lu dans `result.json`
