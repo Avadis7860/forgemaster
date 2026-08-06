@@ -111,6 +111,26 @@ def test_la_porte_ne_se_prend_pas_par_l_environnement() -> None:
         Settings.resolve(allow_unknown_schema=True)      # type: ignore[call-arg]
 
 
+def test_le_daemon_refuse_de_demarrer_et_repond_503_s_il_tournait_deja(tmp_path: Path) -> None:
+    """Les deux moitiés du chemin daemon, parce que la vérification à la main ne survit pas à la session.
+
+    ① `serve` rend 1 **avant** uvicorn : sans ça le refus sortirait du lifespan en « Application startup
+    failed » + trace, donnant à un état prévu l'allure d'une panne du serveur.
+    ② une base devenue trop neuve pendant que le daemon TOURNE (restauration jouée à côté, service non
+    arrêté) remonte des routes en **503**, pas en 500 nu."""
+    from fastapi.testclient import TestClient
+
+    from forgemaster.daemon import app as daemon_app
+
+    settings = _settings(tmp_path)
+    store.open_db(settings).close()
+    client = TestClient(daemon_app.build_app(settings))       # construit AVANT que la base ne dérive
+    _poser_schema(settings, schema.SCHEMA_VERSION + 1)
+
+    assert daemon_app.serve(settings, host="127.0.0.1", port=0) == 1
+    assert client.get("/api/projects").status_code == 503
+
+
 def test_la_porte_de_secours_reste_ouverte_sur_une_base_trop_neuve(tmp_path: Path) -> None:
     """C'EST CE TEST QUI A PERMIS DE CHOISIR LE REFUS SEC (arbitrage du 2026-08-06).
 

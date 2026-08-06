@@ -171,6 +171,16 @@ def build_app(settings: Settings) -> FastAPI:
     async def _unsupported_media(_request: Request, exc: UploadTypeRejected) -> JSONResponse:
         return JSONResponse(status_code=415, content={"detail": str(exc)})
 
+    # `serve` refuse déjà de DÉMARRER sur une base trop neuve. Ce handler couvre l'autre moitié : une base
+    # devenue trop neuve pendant que le daemon TOURNE (une restauration jouée à côté, service non arrêté).
+    # Les routes ouvrent une connexion par requête, donc le refus remonte là — en 503 « le service ne peut
+    # pas répondre dans cet état », jamais en 500 avec une trace, qui ferait passer un état PRÉVU pour un bug.
+    from forgemaster.db.store import SchemaTooNew
+
+    @app.exception_handler(SchemaTooNew)
+    async def _schema_too_new(_request: Request, exc: SchemaTooNew) -> JSONResponse:
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
+
     _mount_spa(app)                                      # dernier : le fallback SPA ne capte que le reste
     return app
 
