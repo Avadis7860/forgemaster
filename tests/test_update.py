@@ -573,6 +573,32 @@ def test_un_enregistrement_REFUSE_se_dit_au_lieu_de_se_taire(live: Settings, tmp
     assert "Access denied" in capsys.readouterr().err, "le motif du système est perdu en route"
 
 
+def test_un_lancement_qui_nA_PAS_LIEU_rend_un_rc_au_lieu_dune_trace(live: Settings, tmp_path: Path,
+                                                                    monkeypatch, capsys):
+    """`launch` est appelé HORS du `try` de `cli_dispatch` : une `UpdateRefused` qui en sortirait deviendrait
+    une trace nue. Les deux façons de ne pas partir — le lanceur disparu entre le préflight et ici, et un
+    gestionnaire systemd qui ne répond pas — rendent donc un rc, comme le refus d'enregistrement."""
+    monkeypatch.setattr(update, "follow", lambda run_dir, **_k: 0)
+    plan = _plan_de_lancement(live, tmp_path, "user")
+
+    # `which` est piloté dans les DEUX volets, jamais laissé à l'hôte : un test dont le résultat dépend de
+    # la présence de `systemd-run` sur la machine de build mesure la machine, pas le code.
+    vrai = update.shutil.which
+    absent = lambda nom, *a, **k: None if nom == update.RUNNER else vrai(nom, *a, **k)          # noqa: E731
+    present = lambda nom, *a, **k: "/usr/bin/systemd-run" if nom == update.RUNNER else vrai(nom)  # noqa: E731
+
+    monkeypatch.setattr(update.shutil, "which", absent)
+    assert update.launch(live, plan, systemctl="systemctl", service="forgemaster", detach=False) == 2
+
+    def _bloque(cmd, **_kw):
+        raise subprocess.TimeoutExpired(cmd, update.REGISTER_TIMEOUT)
+
+    monkeypatch.setattr(update.shutil, "which", present)
+    monkeypatch.setattr(update.subprocess, "run", _bloque)
+    assert update.launch(live, plan, systemctl="systemctl", service="forgemaster", detach=False) == 2
+    assert "gestionnaire systemd" in capsys.readouterr().err
+
+
 def test_sans_systemd_run_le_preflight_REFUSE_avant_tout_effet(live: Settings, tmp_path: Path, monkeypatch):
     """Le refus est au préflight, pas au lancement : à ce moment-là « rien n'a été touché » est exactement
     vrai, et `--dry-run` le dit aussi. Sans échappement, l'applicateur se ferait tuer par l'arrêt qu'il

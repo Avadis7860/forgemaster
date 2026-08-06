@@ -53,6 +53,7 @@ APPLY = "apply.py"
 UPDATES = "updates"
 RUNNER = "systemd-run"     # le seul échappement au cgroup du lanceur, cf. `_echappement_cgroup`
 FOLLOW_TIMEOUT = 900.0     # 15 min : venv neuf + pip install + deux redémarrages, large
+REGISTER_TIMEOUT = 30.0    # l'ENREGISTREMENT de l'unité (un aller-retour D-Bus), pas le travail qu'elle fait
 
 
 class UpdateRefused(Exception):
@@ -319,24 +320,43 @@ def launch(settings: Settings, plan: dict, *, systemctl: str, service: str, deta
     shutil.copyfile(Path(__file__).with_name("apply_update.py"), script)
     script.chmod(0o755)
 
-    cmd = [*_echappement_cgroup(run_dir, scope=plan["scope"], workdir=plan["home"]),
-           _system_python(), str(script), "--mode", mode,
+    quoi = "MAJ" if mode == "apply" else "retour arrière"
+
+    def _non_lance(motif: str) -> int:
+        """Un lancement qui n'a pas eu lieu se DIT, et rend un rc — il ne remonte pas en exception. `launch`
+        est appelé hors du `try` de `cli_dispatch` (le message « rien n'a été touché » y serait faux : le
+        dossier de run existe), donc une `UpdateRefused` qui sortirait d'ici deviendrait une trace nue."""
+        print(f"✗ {quoi} non lancé(e) — `{RUNNER}` n'a pas enregistré l'unité. Rien n'a bougé sur "
+              f"l'instance ; le dossier de run reste pour la trace.\n  {motif}", file=sys.stderr)
+        return 2
+
+    try:
+        prefixe = _echappement_cgroup(run_dir, scope=plan["scope"], workdir=plan["home"])
+    except UpdateRefused as exc:        # `systemd-run` disparu entre le préflight et ici
+        return _non_lance(str(exc))
+    cmd = [*prefixe, _system_python(), str(script), "--mode", mode,
            "--home", str(plan["home"]), "--link", str(plan["link"]),
            "--run-dir", str(run_dir), "--base-url", plan["base_url"],
            "--service", service, "--systemctl", systemctl, "--scope", plan["scope"]]
     cmd += (["--wheel", str(plan["wheel"])] if mode == "apply" else
             ["--target-venv", str(plan["target_venv"]), "--snapshot", str(plan["snapshot"])])
-    quoi = "MAJ" if mode == "apply" else "retour arrière"
     # `run` et non `Popen` : `systemd-run` rend la main dès l'unité ENREGISTRÉE, pas à la fin du travail.
     # On lit donc son verdict d'enregistrement — un lancement qui ne part pas cesse d'être silencieux. Avec
     # `Popen`, personne ne le savait : `follow` attendait le quart d'heure entier puis rendait un délai,
     # c'est-à-dire « je ne sais pas » là où le système avait déjà dit « non ».
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)  # noqa: S603
+    #
+    # Le `timeout` n'est pas une précaution de style : `Popen` ne bloquait JAMAIS, `run` si. Enregistrer une
+    # unité est un aller-retour D-Bus avec le gestionnaire systemd — un gestionnaire coincé ferait attendre
+    # ce processus sans fin. Acceptable pour un humain devant un terminal, pas pour la route de la 3a·2b qui
+    # appellera d'ici : une requête qui ne rend jamais la main est pire qu'une requête qui refuse.
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True,  # noqa: S603
+                              check=False, timeout=REGISTER_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return _non_lance(f"aucune réponse du gestionnaire systemd après {REGISTER_TIMEOUT:.0f} s "
+                          f"(enregistrement de l'unité, pas la MAJ elle-même)")
     if proc.returncode != 0:
-        motif = (proc.stderr or proc.stdout or "").strip() or f"rc={proc.returncode}"
-        print(f"✗ {quoi} non lancé(e) — `{RUNNER}` a refusé d'enregistrer l'unité. Rien n'a bougé sur "
-              f"l'instance ; le dossier de run reste pour la trace.\n  {motif}", file=sys.stderr)
-        return 2
+        return _non_lance((proc.stderr or proc.stdout or "").strip() or f"rc={proc.returncode}")
     # Rien n'est écrit dans `launch.log` ici : c'est l'unité qui y écrit (`StandardOutput=append:`), et
     # l'écraser avec le « Running as unit… » de `systemd-run` effacerait précisément la trace qu'on garde.
     print(f"{quoi} lancé(e) (unité {_unite_transitoire(run_dir)}) — journal : {run_dir / 'journal.log'}")
