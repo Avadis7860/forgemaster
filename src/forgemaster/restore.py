@@ -159,7 +159,8 @@ def python_schema(python: Path) -> int | None:
     )
     try:
         proc = subprocess.run([str(python), "-c", code],  # noqa: S603 (argv construit ici, pas de shell)
-                              capture_output=True, text=True, check=False, timeout=PROBE_TIMEOUT)
+                              capture_output=True, text=True, check=False, timeout=PROBE_TIMEOUT,
+                              env=_probe_env())
     except (OSError, subprocess.SubprocessError):
         return None
     if proc.returncode != 0:
@@ -194,6 +195,18 @@ def check_compatibility(snap: int | None, installed: int | None, *, allow_unveri
             f"base monte en forward-only, aucune down-migration n'existe.\n"
             f"  → rebascule <home>/{STABLE_LINK} vers le venv qui a PRIS cet instantané, puis relance\n"
             f"  → ou choisis un instantané plus ancien (`{sys.executable} {__file__}` les liste)")
+
+
+def _probe_env() -> dict[str, str]:
+    """L'environnement de la sonde, **débarrassé de ce qui pourrait lui faire importer un autre
+    forgemaster**. Un venv trouve son `site-packages` par son `pyvenv.cfg` : il n'a besoin ni de
+    `PYTHONPATH` ni de `PYTHONHOME`, et les hériter fait répondre la sonde sur le forgemaster de
+    L'APPELANT au lieu de celui du venv sondé.
+
+    Mesuré le 2026-08-06, pas déduit : un `bin/python` isolé (sans `pyvenv.cfg`) répondait `20` tant que
+    l'appelant exportait un `PYTHONPATH`, et `None` sans lui. Ce garde décide d'une restauration
+    irréversible — répondre juste par accident d'environnement n'est pas répondre."""
+    return {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
 
 
 def _user_version(db: Path) -> int | None:

@@ -428,3 +428,24 @@ def test_le_dry_run_nannonce_PAS_le_piege_quand_les_schemas_correspondent(live: 
     restore.restore(dest, dry_run=True)
 
     assert "DONNÉES SEULES" not in capsys.readouterr().out
+
+
+def test_la_sonde_de_schema_n_herite_PAS_du_PYTHONPATH_de_l_appelant(tmp_path: Path, monkeypatch):
+    """Mesuré, pas déduit : un `bin/python` isolé — sans `pyvenv.cfg`, donc sans le `site-packages` d'aucun
+    venv — répondait le schéma de L'APPELANT tant qu'un `PYTHONPATH` traînait dans l'environnement. Cette
+    sonde décide d'une restauration irréversible : elle doit dire ce que CE binaire-là sait lire, ou rien."""
+    faux = tmp_path / "venv" / "bin"
+    faux.mkdir(parents=True)
+    python = faux / "python"
+    python.symlink_to(Path(sys.executable))                  # un python nu, pas un venv
+    monkeypatch.setenv("PYTHONPATH", str(Path(restore.__file__).parents[2]))
+
+    assert restore.python_schema(python) is None, "la sonde a répondu depuis l'environnement de l'appelant"
+
+
+def test_la_sonde_repond_pour_un_VRAI_venv(tmp_path: Path, monkeypatch):
+    """Le symétrique : sans cette moitié, « ne jamais répondre » passerait le test précédent. Le venv qui
+    exécute les tests EST un vrai venv, et il porte `SCHEMA_VERSION`."""
+    monkeypatch.setenv("PYTHONPATH", "/inexistant")
+
+    assert restore.python_schema(Path(sys.prefix) / "bin" / "python") == schema.SCHEMA_VERSION

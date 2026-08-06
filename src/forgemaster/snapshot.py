@@ -35,7 +35,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from forgemaster.apply_update import ROLLBACK_DEPTH
+from forgemaster.apply_update import KEEP_SNAPSHOTS
 from forgemaster.config import Settings
 from forgemaster.restore import python_schema, snapshot_schema
 
@@ -43,8 +43,10 @@ SCHEMA = 1                 # un `restore.py` qui lit un schéma inconnu REFUSE h
 # Dérivée de LA politique (`apply_update.ROLLBACK_DEPTH`), pas posée à côté d'elle : les deux rétentions —
 # venvs et instantanés — répondent à la même question, « jusqu'où sait-on revenir ? ». La marge de 2 tient
 # le scénario « la MAJ a échoué, j'ai restauré, j'ai retenté, ça a re-échoué ». La valeur ne change pas (3) ;
-# ce qui change est qu'elle ne peut plus dériver toute seule de celle des venvs.
-KEEP = ROLLBACK_DEPTH + 2
+# ce qui change est qu'elle ne peut plus dériver toute seule de celle des venvs. Déclarée chez le module
+# stdlib-pur depuis le 2026-08-06 (verbe `rollback`) : lui aussi doit compter les crans, pour refuser une
+# cible que sa propre prise de sûreté détruirait — et il ne peut rien importer d'ici.
+KEEP = KEEP_SNAPSHOTS
 MANIFEST = "manifest.json"
 VENVS = "venvs"            # même convention que `apply_update._parse` (défaut `<home>/venvs`)
 MARQUEURS = {"restaurable": "✔", "données seules": "⚠", "irrestaurable": "✗", "inconnu": "·"}

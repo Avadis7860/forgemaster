@@ -55,6 +55,10 @@ from pathlib import Path
 # devienne un NOMBRE NOMMÉ, sur lequel les deux rétentions s'accordent au lieu de coïncider.
 ROLLBACK_DEPTH = 1                  # de combien de crans `forgemaster update rollback` sait remonter
 KEEP_VENVS = ROLLBACK_DEPTH + 1     # le courant + les crans joignables : rien de plus ne sert à revenir
+# + la marge « la MAJ a échoué, j'ai restauré, j'ai retenté, ça a re-échoué ». Déclarée ICI et lue par
+# `snapshot.KEEP` : le retour arrière volontaire doit savoir compter les crans d'instantanés pour refuser
+# une cible que sa propre prise de sûreté détruirait — et il ne peut rien importer de `forgemaster`.
+KEEP_SNAPSHOTS = ROLLBACK_DEPTH + 2
 PROBE_TIMEOUT = 60.0    # démarrage d'un daemon FastAPI, venv froid inclus
 RESTORE = "restore.py"
 FORCE_FLAG = "--allow-unverified-binary"
@@ -81,7 +85,7 @@ def build_blue(python: str, venv_dir: Path, wheel: Path, log) -> Path:
     return forgemaster
 
 
-def probe_isolated(forgemaster: str | Path, sandbox: Path, log) -> dict:
+def probe_isolated(forgemaster: str | Path, sandbox: Path, log, *, step: str = "3/6") -> dict:
     """Fait servir la nouvelle version sur un port et un `FORGEMASTER_HOME` JETABLES, et retourne l'identité
     de
     build qu'elle déclare (`/api/version`). C'est cette identité qui deviendra l'attendu du vivant : aucun
@@ -92,7 +96,7 @@ def probe_isolated(forgemaster: str | Path, sandbox: Path, log) -> dict:
            "FORGEMASTER_PROJECTS_ROOT": str(sandbox / "projects")}
     sandbox.mkdir(parents=True, exist_ok=True)
     out = (sandbox / "serve.log").open("w")
-    log(f"[3/6] sonde en ISOLATION sur 127.0.0.1:{port} (home jetable — le vivant n'est pas touché)")
+    log(f"[{step}] sonde en ISOLATION sur 127.0.0.1:{port} (home jetable — le vivant n'est pas touché)")
     proc = subprocess.Popen(  # noqa: S603 (argv construit ici, pas de shell)
         [str(forgemaster), "serve", "--host", "127.0.0.1", "--port", str(port)],
         env=env, stdout=out, stderr=subprocess.STDOUT)
@@ -217,6 +221,106 @@ def apply(args: argparse.Namespace, log) -> tuple[int, str, dict]:
     return 1, f"MAJ échouée ({why}) — l'instance est revenue à l'état d'avant, elle sert de nouveau", details
 
 
+def rollback(args: argparse.Namespace, log) -> tuple[int, str, dict]:
+    """Le retour arrière **volontaire** — symétrique de l'aller, pas un second mécanisme.
+
+    Chaque étape réutilise la fonction que `apply` exerce déjà (`probe_isolated`, `take_snapshot`, `swap`,
+    `_restore`, `_verify_live`, `_systemctl`). Un retour arrière qui ne partage pas le code de l'aller est un
+    chemin qu'on ne joue qu'en catastrophe — donc jamais joué pour de vrai avant le jour où il compte.
+
+    Trois issues, toutes explicites : **revenu** (rc 0), **refusé avant le premier geste** (rc 1, rien n'a
+    bougé), **revenu du retour** (rc 1, l'instance est telle qu'avant le retour arrière)."""
+    home, link = Path(args.home).expanduser(), Path(args.link).expanduser()
+    cible_venv = Path(args.target_venv).expanduser().resolve()
+    cible_snap = Path(args.snapshot).expanduser().resolve()
+    venv_courant = link.resolve()
+    run_dir = Path(args.run_dir).expanduser()
+    details: dict[str, object] = {"mode": "rollback", "venv_avant": str(venv_courant),
+                                  "venv_cible": str(cible_venv), "instantane_cible": str(cible_snap)}
+    intact = {**details, "impact": "aucun : le service n'a pas été touché"}
+
+    try:
+        _refuse_if_target_would_be_purged(cible_snap, log)
+        # On prouve le binaire cible AVANT de toucher au vivant. Double effet : c'est l'`expected` de la
+        # vérification finale, et ça prouve du même coup que l'ancien binaire sert encore — s'il ne sert
+        # plus, revenir vers lui n'aurait aucun sens et rien n'a bougé.
+        expected = probe_isolated(cible_venv / "bin" / "forgemaster", run_dir / "sandbox", log, step="1/5")
+    except UpdateFailed as exc:
+        return 1, f"retour arrière refusé — {exc}", intact
+    details["attendu"] = expected
+
+    log("[2/5] arrêt du service, puis instantané de SÛRETÉ à froid (sans lui, un retour raté serait sans "
+        "retour)")
+    _systemctl(args, "stop", log)
+    try:
+        surete = take_snapshot(venv_courant / "bin" / "forgemaster", home, log)
+    except UpdateFailed as exc:
+        _systemctl(args, "start", log)
+        return 1, f"retour arrière refusé — {exc}", {**details, "impact": "aucun : service relancé tel quel"}
+    details["instantane_surete"] = str(surete)
+
+    log("[3/5] re-vérification de la cible : la prise de sûreté a consommé un cran de rétention")
+    if not (cible_snap / "manifest.json").is_file():
+        _systemctl(args, "start", log)
+        return 1, (f"retour arrière refusé — l'instantané cible {cible_snap.name} a disparu pendant la prise "
+                   f"de sûreté. L'instantané de sûreté, lui, est intact : {surete}"), \
+            {**details, "impact": "aucun : service relancé tel quel"}
+
+    # L'ORDRE est contraint et non négociable : le lien D'ABORD, la restauration ENSUITE. `restore` interroge
+    # `<home>/current` pour savoir quel schéma le binaire en place sait lire ; inversé, il verrait le binaire
+    # NEUF et refuserait une restauration pourtant légitime. Cf. `tests/test_rollback.py`, qui lit cet ordre
+    # dans le code même — le risque n'est pas l'appel d'aujourd'hui, c'est la simplification de demain.
+    log(f"[4/5] bascule du lien {link} → {cible_venv.name}, PUIS restauration de {cible_snap.name}")
+    swap(link, cible_venv)
+    _restore(cible_snap, home, log)
+    _systemctl(args, "start", log)
+
+    log("[5/5] vérification EN VIVANT contre l'identité prouvée à l'étape 1")
+    live_ok, why = _verify_live(args.base_url, expected, args.timeout, log)
+    if live_ok:
+        log(f"      ✓ {why}")
+        return 0, f"retour arrière effectué — {why}", \
+            {**details, "impact": "revenu à l'état de l'instantané (venv + données)"}
+
+    log(f"      ✗ {why}")
+    log("      → RETOUR DU RETOUR : l'instance est remise telle qu'elle était il y a une minute")
+    _systemctl(args, "stop", log)
+    swap(link, venv_courant)
+    _restore(surete, home, log)
+    _systemctl(args, "start", log)
+    back, back_why = _wait_health(args.base_url, args.timeout)
+    details["impact"] = "revenu à l'état d'AVANT le retour arrière (venv + données)"
+    if not back:
+        return 2, (f"retour arrière échoué ({why}) — l'instance a été remise comme avant, mais elle ne sert "
+                   f"TOUJOURS pas : {back_why}. L'instantané de sûreté est intact : {surete}"), details
+    return 1, (f"retour arrière échoué ({why}) — l'instance est revenue à son état d'avant, elle sert de "
+               f"nouveau"), details
+
+
+def _refuse_if_target_would_be_purged(cible: Path, log) -> None:
+    """La prise de sûreté consomme un cran de rétention et déclenche la purge : elle peut donc **détruire la
+    cible du retour arrière**. On refuse AVANT le premier geste plutôt que de le découvrir entre les deux
+    moitiés — un refus coûte une relance, une cible détruite ne se rattrape pas.
+
+    `snapshot._purge` garde les `KEEP_SNAPSHOTS - 1` plus récents plus la prise en cours : la cible survit
+    donc si, et seulement si, moins de `KEEP_SNAPSHOTS - 1` instantanés complets lui sont postérieurs."""
+    root = cible.parent
+    if not root.is_dir():
+        raise UpdateFailed(f"{root} n'existe pas — aucun instantané à remettre")
+    complets = [d for d in root.iterdir() if d.is_dir() and (d / "manifest.json").is_file()]
+    posterieurs = [d for d in complets if d.name > cible.name]
+    if len(posterieurs) >= KEEP_SNAPSHOTS - 1:
+        raise UpdateFailed(
+            f"la prise de sûreté purgerait {cible.name}, la cible même de ce retour arrière : "
+            f"{len(posterieurs)} instantanés lui sont postérieurs et la rétention n'en garde "
+            f"{KEEP_SNAPSHOTS}.\n"
+            f"      → vise un instantané plus récent (`forgemaster snapshot list` les classe)\n"
+            f"      → ou rebascule <home>/current à la main, puis "
+            f"`forgemaster snapshot restore {cible.name}`")
+    log(f"      ✓ {cible.name} survivra à la prise de sûreté "
+        f"({len(posterieurs)} instantané(s) postérieur(s))")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse(argv)
     run_dir = Path(args.run_dir).expanduser()
@@ -227,9 +331,13 @@ def main(argv: list[str] | None = None) -> int:
         journal.write(msg + "\n")
         print(msg, flush=True)
 
-    log(f"== MAJ lancée {datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')} — wheel {args.wheel}")
+    quoi = (f"MAJ lancée {datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')} — wheel {args.wheel}"
+            if args.mode == "apply" else
+            f"RETOUR ARRIÈRE lancé {datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')} — "
+            f"vers {args.target_venv} + {args.snapshot}")
+    log(f"== {quoi}")
     try:
-        rc, verdict, details = apply(args, log)
+        rc, verdict, details = (apply if args.mode == "apply" else rollback)(args, log)
     except Exception as exc:                                    # noqa: BLE001 (verdict, jamais de trace nue)
         rc, verdict, details = 2, f"échec inattendu : {exc!r}", {}
     log(f"== {verdict}")
@@ -398,7 +506,14 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="apply.py",
         description="Pose un wheel en bleu/vert ; revient seul si le vivant ne sert pas.")
-    p.add_argument("--wheel", required=True, help="le wheel à poser (fichier local, aucun réseau)")
+    # Un MODE, pas un second script. Le script est **recopié à chaque run** par `update.launch` : sa CLI n'a
+    # aucune compatibilité ascendante à tenir, contrairement à `restore.py` qui voyage dans les instantanés
+    # (c'est pour ça que `_supports_flag` existe — et il ne s'applique pas ici).
+    p.add_argument("--mode", choices=["apply", "rollback"], default="apply",
+                   help="poser un wheel (apply) ou revenir vers un venv + un instantané (rollback)")
+    p.add_argument("--wheel", help="le wheel à poser (--mode apply ; fichier local, aucun réseau)")
+    p.add_argument("--target-venv", help="le venv vers lequel revenir (--mode rollback)")
+    p.add_argument("--snapshot", help="l'instantané à remettre (--mode rollback)")
     p.add_argument("--home", required=True, help="racine d'état du forgemaster (~/.forgemaster)")
     p.add_argument("--link", required=True, help="le lien stable que l'unité systemd lance")
     p.add_argument("--venvs", help="racine des venvs (défaut : <home>/venvs)")
@@ -409,6 +524,12 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--scope", default="user", choices=["user", "system"])
     p.add_argument("--timeout", type=float, default=PROBE_TIMEOUT, help="délai de réponse du vivant (s)")
     args = p.parse_args(argv)
+    # `required=` d'argparse ne sait pas dépendre d'un autre drapeau : on le fait ici, et `p.error` rend
+    # l'usage complet plutôt qu'un `AttributeError` trois étapes plus loin.
+    requis = {"apply": ("wheel",), "rollback": ("target_venv", "snapshot")}[args.mode]
+    absents = [f"--{nom.replace('_', '-')}" for nom in requis if not getattr(args, nom)]
+    if absents:
+        p.error(f"--mode {args.mode} exige {', '.join(absents)}")
     args.venvs = args.venvs or str(Path(args.home).expanduser() / "venvs")
     return args
 

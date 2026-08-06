@@ -69,6 +69,16 @@ def preflight(settings: Settings, *, wheel: str, unit: str | None, scope: str,
     if whl.suffix != ".whl":
         raise UpdateRefused(f"{whl.name} n'est pas un wheel (.whl attendu) — aucun réseau, aucune "
                             f"résolution : ce verbe ne pose que le fichier qu'on lui désigne")
+    socle = _preflight_service(settings, unit=unit, scope=scope)
+    _refuse_uncommitted_work(authority or [], geste="cette MAJ")
+    return {**socle, "wheel": whl, "authority": authority or []}
+
+
+def _preflight_service(settings: Settings, *, unit: str | None, scope: str) -> dict:
+    """Ce que l'aller ET le retour vérifient tous les deux : la portée, l'unité, le lien stable, et que
+    l'unité passe **par** ce lien. Extrait de `preflight` le 2026-08-06 en écrivant `preflight_rollback` —
+    dupliquer ces quatre refus aurait produit deux jeux de messages qui divergent, alors que c'est
+    exactement le même invariant de déploiement qui est en jeu."""
     if scope == "system" and os.geteuid() != 0:
         raise UpdateRefused("portée système demandée sans être root — `systemctl` échouerait en plein "
                             "milieu, service arrêté. Relance en root, ou installe le service en portée "
@@ -90,22 +100,103 @@ def preflight(settings: Settings, *, wheel: str, unit: str | None, scope: str,
             f"une installation : tant que l'unité ne passe pas par {link}, la MAJ n'aurait aucun effet sur "
             f"le service. Migre-la : `forgemaster install-service` puis `systemctl daemon-reload`.")
 
-    # Quatrième refus : du travail que la MAJ ne protège pas. `projects_root` est hors instantané — le motif
-    # « git fait autorité » n'est vrai que là où il Y A une autorité. On ne bloque QUE sur du non-commité :
-    # « aucun remote » est un cas normal du produit distribué, et refuser dessus interdirait toute MAJ.
-    verdicts = authority or []
-    refused = [v for v in verdicts if v["state"] == auth.BLOCKING]
+    return {"unit": up, "link": link, "venv": link.resolve(),
+            "base_url": f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{port}",
+            "scope": scope, "home": settings.home, "projects_root": settings.projects_root}
+
+
+def _refuse_uncommitted_work(verdicts: list[dict], *, geste: str) -> None:
+    """Le refus d'autorité : du travail que ni la MAJ ni le retour arrière ne protègent. `projects_root` est
+    hors instantané — le motif « git fait autorité » n'est vrai que là où il Y A une autorité. On ne bloque
+    QUE sur du non-commité : « aucun remote » est un cas normal du produit distribué, et refuser dessus
+    interdirait toute MAJ.
+
+    Porté par les deux gestes depuis le 2026-08-06 : revenir en arrière pendant qu'un travail non commité
+    vit dans un worktree est exactement le geste à refuser — et c'était l'un des deux acquis que la phase 1a
+    laissait sans câblage côté retour."""
+    refused = auth.blocking(verdicts)
     if refused:
         details = "\n  ".join(f"{v['slug']} — {v['detail']}" for v in refused)
         raise UpdateRefused(
             f"{len(refused)} projet(s) portent du travail NON COMMITÉ, et `projects_root` n'entre pas dans "
-            f"l'instantané : si cette MAJ tourne mal, ce travail-là ne reviendra pas.\n  {details}\n"
+            f"l'instantané : si {geste} tourne mal, ce travail-là ne reviendra pas.\n  {details}\n"
             f"  → commite (ou remise) dans chaque worktree cité, puis relance")
 
-    return {"wheel": whl, "unit": up, "link": link, "venv": link.resolve(),
-            "base_url": f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{port}",
-            "scope": scope, "home": settings.home, "authority": verdicts,
-            "projects_root": settings.projects_root}
+
+def preflight_rollback(settings: Settings, *, snapshot: str | None, unit: str | None, scope: str,
+                       authority: list[dict] | None = None) -> dict:
+    """Le préflight du retour **volontaire**. Même socle de service que l'aller, même refus d'autorité, plus
+    la **résolution de la cible** : quel instantané remettre, et vers quel venv rebasculer.
+
+    La correspondance instantané ↔ binaire se **dérive** (égalité de schéma), elle ne se stocke pas : aucun
+    état nouveau, aucune ligne de plus au manifeste, et le garde vaut aussi pour les instantanés déjà pris.
+    Sans référence, la cible par défaut est le plus récent instantané que la phase 1 marque `restaurable` —
+    le seul état qui ramène binaire **et** données."""
+    from forgemaster import snapshot as snap_mod
+
+    socle = _preflight_service(settings, unit=unit, scope=scope)
+    _refuse_uncommitted_work(authority or [], geste="ce retour arrière")
+
+    snaps = snap_mod.list_snapshots(settings)
+    if not snaps:
+        raise UpdateRefused(
+            f"aucun instantané sous {snap_mod.snapshots_dir(settings)} — il n'y a rien vers quoi revenir. "
+            f"Un instantané est pris automatiquement avant chaque `forgemaster update apply`.")
+
+    if snapshot:
+        cible = next((s for s in snaps if s["name"] == snapshot or s["path"] == snapshot), None)
+        if cible is None:
+            connus = ", ".join(s["name"] for s in snaps[:5])
+            raise UpdateRefused(f"instantané inconnu : {snapshot}. Les plus récents : {connus} "
+                                f"(`forgemaster snapshot list` les classe avec leur état)")
+    else:
+        cible = next((s for s in snaps if s.get("state") == "restaurable"), None)
+        if cible is None:
+            etats = ", ".join(f"{s['name']} → {s.get('state', 'inconnu')}" for s in snaps[:5])
+            raise UpdateRefused(
+                f"aucun instantané n'est `restaurable` : aucun venv posé ne porte exactement leur schéma, "
+                f"donc aucun ne ramènerait binaire ET données.\n  {etats}\n"
+                f"  → `forgemaster snapshot list` dit pour chacun ce qu'il ramènerait vraiment")
+
+    if not cible["valid"]:
+        raise UpdateRefused(f"{cible['name']} est un instantané invalide — {cible['reason']}")
+    if cible.get("state") != "restaurable":
+        raise UpdateRefused(
+            f"{cible['name']} est `{cible.get('state', 'inconnu')}`, pas `restaurable` — "
+            f"{cible.get('state_reason', 'état non mesuré')}.\n"
+            f"  → vise un instantané `restaurable`, ou assume le geste à la main "
+            f"(`forgemaster snapshot restore {cible['name']}`), qui te dira ce qu'il fait")
+
+    venv = _venv_pour(settings, Path(cible["path"]))
+    if venv is None:
+        raise UpdateRefused(f"{cible['name']} se dit `restaurable` mais son venv n'a pas été retrouvé — "
+                            f"la liste et la résolution ne voient pas le même disque, ne devine pas")
+    if venv.resolve() == socle["venv"]:
+        raise UpdateRefused(f"{cible['name']} correspond au venv DÉJÀ actif ({venv.name}) — il n'y a nulle "
+                            f"part où revenir. `forgemaster snapshot restore` remet les données seules.")
+
+    return {**socle, "snapshot": Path(cible["path"]), "snapshot_name": cible["name"],
+            "target_venv": venv, "authority": authority or []}
+
+
+def _venv_pour(settings: Settings, snapshot_dir: Path) -> Path | None:
+    """Le venv dont le forgemaster lit **exactement** le schéma de cet instantané. Égalité, pas « au moins » :
+    un binaire qui lit plus loin remettrait les données puis migrerait la base en avant — l'état que la
+    phase 1 nomme `données seules`, et qui n'est pas un retour arrière."""
+    from forgemaster import restore
+    from forgemaster import snapshot as snap_mod
+
+    manifest = json.loads((snapshot_dir / snap_mod.MANIFEST).read_text(encoding="utf-8"))
+    voulu = restore.snapshot_schema(snapshot_dir, manifest)
+    if voulu is None:
+        return None
+    root = settings.home / snap_mod.VENVS
+    if not root.is_dir():
+        return None
+    for venv in sorted(root.iterdir(), reverse=True):
+        if venv.is_dir() and restore.python_schema(venv / "bin" / "python") == voulu:
+            return venv
+    return None
 
 
 def parse_exec_start(unit_text: str) -> tuple[str, str, int]:
@@ -150,25 +241,54 @@ def describe(plan: dict) -> list[str]:
     return lines
 
 
-def launch(settings: Settings, plan: dict, *, systemctl: str, service: str, detach: bool) -> int:
+def describe_rollback(plan: dict) -> list[str]:
+    """Ce que le retour arrière va faire, dit avant de le faire (et seul contenu de `--dry-run`). Il nomme
+    les DEUX gestes et leur ordre : c'est l'unité que la phase 3 rend exécutoire, et la dire ici est ce qui
+    permet à quelqu'un de refuser en connaissance de cause."""
+    lines = [
+        f"instantané      : {plan['snapshot_name']}  ({plan['snapshot']})",
+        f"venv cible      : {plan['target_venv']}  (le lien {plan['link']} y sera rebasculé)",
+        f"venv actuel     : {plan['venv']}",
+        f"unité systemd   : {plan['unit']}  (portée {plan['scope']})",
+        f"sonde en vivant : {plan['base_url']}/health (readiness : 503 = elle dit pourquoi) puis "
+        f"/api/version",
+        "déroulé         : sonde du binaire cible en isolation → arrêt + instantané de SÛRETÉ à froid → "
+        "bascule du lien PUIS restauration → vérification en vivant → retour du retour si elle échoue",
+    ]
+    noted = [v for v in plan.get("authority") or [] if v["state"] != "clean_pushed"]
+    if noted:
+        lines.append(f"hors instantané : {plan.get('projects_root', 'projects_root')} — "
+                     f"{len(noted)} projet(s) à savoir")
+        lines.extend(auth.describe(noted))
+    return lines
+
+
+def launch(settings: Settings, plan: dict, *, systemctl: str, service: str, detach: bool,
+           mode: str = "apply") -> int:
     """Copie `apply.py` dans un dossier de run, le lance DÉTACHÉ sous le `python3` système, et suit son
-    journal. Copié et non lancé depuis le paquet : le script doit survivre au venv qu'il remplace."""
+    journal. Copié et non lancé depuis le paquet : le script doit survivre au venv qu'il remplace.
+
+    **Un seul lanceur pour les deux gestes** : c'est le même applicateur hors-processus, le même dossier de
+    run, le même journal et le même `result.json`. Ce que `mode` change tient dans les arguments de cible."""
     run_dir = settings.home / UPDATES / datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
     run_dir.mkdir(parents=True, exist_ok=True)
     script = run_dir / APPLY
     shutil.copyfile(Path(__file__).with_name("apply_update.py"), script)
     script.chmod(0o755)
 
-    cmd = [_system_python(), str(script),
-           "--wheel", str(plan["wheel"]), "--home", str(plan["home"]), "--link", str(plan["link"]),
+    cmd = [_system_python(), str(script), "--mode", mode,
+           "--home", str(plan["home"]), "--link", str(plan["link"]),
            "--run-dir", str(run_dir), "--base-url", plan["base_url"],
            "--service", service, "--systemctl", systemctl, "--scope", plan["scope"]]
+    cmd += (["--wheel", str(plan["wheel"])] if mode == "apply" else
+            ["--target-venv", str(plan["target_venv"]), "--snapshot", str(plan["snapshot"])])
     with (run_dir / "launch.log").open("w") as out:
         subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT,  # noqa: S603
                          start_new_session=True, cwd=str(settings.home))
-    print(f"MAJ lancée (détachée) — journal : {run_dir / 'journal.log'}")
+    quoi = "MAJ" if mode == "apply" else "retour arrière"
+    print(f"{quoi} lancé(e) (détaché) — journal : {run_dir / 'journal.log'}")
     if detach:
-        print("elle continue même si tu fermes ce terminal ; `cat` le journal pour la suivre.")
+        print("ça continue même si tu fermes ce terminal ; `cat` le journal pour le suivre.")
         return 0
     return follow(run_dir)
 
@@ -222,18 +342,24 @@ def _survey_authority(settings: Settings) -> list[dict]:
 
 
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
-    """Route `forgemaster update <action>`."""
+    """Route `forgemaster update <action>` — `apply` et `rollback` suivent la MÊME séquence : préflight qui
+    refuse avant tout effet, description, puis lancement de l'applicateur détaché."""
     scope = "system" if getattr(args, "system", False) else "user"
+    aller = args.action == "apply"
+    quoi = "MAJ" if aller else "retour arrière"
     try:
-        plan = preflight(settings, wheel=args.wheel, unit=args.unit, scope=scope,
-                         authority=_survey_authority(settings))
+        plan = (preflight(settings, wheel=args.wheel, unit=args.unit, scope=scope,
+                          authority=_survey_authority(settings)) if aller else
+                preflight_rollback(settings, snapshot=args.snapshot, unit=args.unit, scope=scope,
+                                   authority=_survey_authority(settings)))
     except UpdateRefused as exc:
-        print(f"✗ MAJ refusée — rien n'a été touché.\n  {exc}", file=sys.stderr)
+        print(f"✗ {quoi} refusé(e) — rien n'a été touché.\n  {exc}", file=sys.stderr)
         return 1
-    for line in describe(plan):
+    for line in (describe(plan) if aller else describe_rollback(plan)):
         print(line)
     if args.dry_run:
         print("\n(--dry-run : rien n'a été lancé)")
         return 0
     print()
-    return launch(settings, plan, systemctl=args.systemctl, service=args.service, detach=args.detach)
+    return launch(settings, plan, systemctl=args.systemctl, service=args.service, detach=args.detach,
+                  mode="apply" if aller else "rollback")

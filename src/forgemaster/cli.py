@@ -344,6 +344,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_up_ap.add_argument("--unit", help="chemin de l'unité systemd (défaut : celle de la portée)")
     p_up_ap.add_argument("--service", default="forgemaster", help="nom de l'unité à arrêter/relancer")
     p_up_ap.add_argument("--systemctl", default="systemctl", help="binaire systemctl (injectable)")
+    # Le retour VOLONTAIRE, sous le même verbe que l'aller et symétrique de lui — c'est le même applicateur
+    # hors-processus, le même journal, la même vérification en vivant. Les quatre derniers drapeaux sont
+    # ceux d'`apply`, mot pour mot : deux gestes du même verbe se pilotent pareil.
+    p_up_rb = p_up_sub.add_parser(
+        "rollback", parents=[common],
+        help="revenir en arrière d'un geste — binaire ET données ensemble, ou pas du tout")
+    p_up_rb.add_argument("snapshot", nargs="?", default=None,
+                         help="l'instantané à remettre (défaut : le plus récent marqué `restaurable`)")
+    p_up_rb.add_argument("--dry-run", action="store_true", help="dire ce qui serait fait, ne rien lancer")
+    p_up_rb.add_argument("--detach", action="store_true",
+                         help="ne pas suivre le journal (le retour tourne quand même en arrière-plan)")
+    p_up_rb.add_argument("--system", action="store_true", help="unité systemd système (exige root)")
+    p_up_rb.add_argument("--unit", help="chemin de l'unité systemd (défaut : celle de la portée)")
+    p_up_rb.add_argument("--service", default="forgemaster", help="nom de l'unité à arrêter/relancer")
+    p_up_rb.add_argument("--systemctl", default="systemctl", help="binaire systemctl (injectable)")
 
     # -- doctor -------------------------------------------------------------------------------------
     sub.add_parser("doctor", parents=[common],
