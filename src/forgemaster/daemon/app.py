@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -249,8 +250,23 @@ def _mount_missing_ui_placeholder(app: FastAPI, dist: Path) -> None:
 
 
 def serve(settings: Settings, *, host: str, port: int) -> int:
-    """Démarre uvicorn sur `build_app(settings)`. Import uvicorn paresseux."""
+    """Démarre uvicorn sur `build_app(settings)`. Import uvicorn paresseux.
+
+    La base est ouverte **ici**, avant uvicorn, et pas seulement dans le lifespan : un refus de schéma qui
+    remonterait de là sortirait en « Application startup failed » suivi d'une trace — un état PRÉVU déguisé
+    en panne du serveur. Ouvert puis refermé aussitôt : ce n'est pas une connexion de travail, c'est la
+    question « cette instance peut-elle servir ? », posée au seul moment où on peut encore répondre non."""
     import uvicorn
+
+    from forgemaster.db import store
+
+    try:
+        store.open_db(settings).close()
+    except store.SchemaTooNew as exc:
+        # `print` et pas un logger : à cet instant uvicorn n'a pas encore configuré le logging, et le seul
+        # message qui compte ne doit dépendre d'aucune configuration pour être vu.
+        print(f"✗ le daemon ne démarre pas — base illisible par ce forgemaster.\n  {exc}", file=sys.stderr)
+        return 1
 
     uvicorn.run(build_app(settings), host=host, port=port)
     return 0

@@ -45,6 +45,11 @@ class Settings:
     # déposer l'origine publique (ex. "https://forgemaster.example"). Défaut vide : same-origin + dev couvrent
     # l'usage local/LAN. Env `FORGEMASTER_WS_ALLOWED_ORIGINS` (séparateur virgule/espace).
     ws_allowed_origins: tuple[str, ...] = ()
+    # Porte du garde de schéma (`db.store.migrate`). Délibérément **sans** variable d'environnement et
+    # **absente** de `resolve()` : c'est un laissez-passer d'UNE invocation, posé par la frontière CLI quand
+    # `--allow-unknown-schema` est demandé. Le rendre configurable par l'env le rendrait *permanent*, et un
+    # garde qu'on désactive une fois pour toutes sans s'en souvenir n'est plus un garde.
+    allow_unknown_schema: bool = False
 
     @property
     def db_path(self) -> Path:

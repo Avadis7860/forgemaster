@@ -13,7 +13,9 @@ le backend GitHub (`git/github.py`, P6) — `GitBackend` + `InternalGit` restent
 from __future__ import annotations
 
 import argparse
+import sys
 from collections.abc import Sequence
+from dataclasses import replace
 
 from forgemaster import __version__
 from forgemaster.config import Settings
@@ -32,6 +34,10 @@ def build_parser() -> argparse.ArgumentParser:
     "~/.forgemaster)")
     common.add_argument("--projects-root", help="racine des repos projets (défaut: "
     "$FORGEMASTER_PROJECTS_ROOT)")
+    common.add_argument("--allow-unknown-schema", action="store_true",
+                        help="ouvrir une base dont le schéma DÉPASSE celui que ce forgemaster connaît. "
+                             "N'y touche pas et ne migre rien — assume. Sur `common` (donc sous tout verbe) "
+                             "parce qu'on ne sait pas d'avance lequel servira à sortir de l'ornière")
 
     sub = parser.add_subparsers(dest="command", required=True, metavar="<commande>")
 
@@ -364,8 +370,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _settings(args: argparse.Namespace) -> Settings:
-    return Settings.resolve(home=getattr(args, "home", None),
-                            projects_root=getattr(args, "projects_root", None))
+    settings = Settings.resolve(home=getattr(args, "home", None),
+                                projects_root=getattr(args, "projects_root", None))
+    # La porte du garde de schéma n'est ni un défaut ni une variable d'env : elle ne vaut que pour CETTE
+    # invocation, et seulement si elle a été demandée à la main (cf. `Settings.allow_unknown_schema`).
+    if getattr(args, "allow_unknown_schema", False):
+        settings = replace(settings, allow_unknown_schema=True)
+    return settings
 
 
 def _autoload_env(args: argparse.Namespace) -> None:
@@ -384,12 +395,21 @@ def _autoload_env(args: argparse.Namespace) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Parse, charge forgemaster.env (parité service), résout les Settings, dispatche vers le handler."""
+    """Parse, charge forgemaster.env (parité service), résout les Settings, dispatche vers le handler.
+
+    Le refus de schéma s'attrape **ici**, et nulle part ailleurs : c'est le seul endroit qui voit tous les
+    verbes, et une base trop neuve est un état de l'instance, pas une panne d'un verbe. Sans ce filet, le
+    refus sortirait en trace nue — ce qui donnerait à un état PRÉVU l'allure d'un bug."""
     args = build_parser().parse_args(argv)
     _autoload_env(args)
     settings = _settings(args)
     handler = _HANDLERS[args.command]
-    return handler(settings, args)
+    from forgemaster.db.store import SchemaTooNew
+    try:
+        return handler(settings, args)
+    except SchemaTooNew as exc:
+        print(f"✗ base illisible par ce forgemaster — rien n'a été touché.\n  {exc}", file=sys.stderr)
+        return 1
 
 
 # --- handlers (délégation paresseuse — n'importent la couche qu'à l'appel) -------------------------

@@ -2,6 +2,18 @@
 (row_factory dict-like, FK ON, WAL pour la concurrence CLI↔daemon, busy_timeout pour l'orchestrateur
 parallèle), migration idempotente.
 
+La migration ne va que dans **un** sens. Une base **en retard** monte ; une base **trop neuve** — dont le
+`user_version` dépasse le `SCHEMA_VERSION` du binaire en place — est **refusée**, jamais ouverte en silence.
+C'est la seconde moitié du garde de l'invariant : `restore.check_compatibility` ferme le chemin de la
+*restauration*, celui-ci ferme le chemin de l'*ouverture normale*, que le daemon prend à chaque démarrage.
+Sans lui, le produit travaillerait sur un schéma qu'il ne connaît pas — colonnes inconnues ignorées, colonnes
+attendues absentes — et aucune down-migration n'existe pour rattraper.
+
+Le refus est **sec**, et c'est tenable parce que la porte de secours ne passe pas par ici : `snapshot list`,
+`snapshot restore` et `doctor` n'ouvrent aucune base, et `update apply` passe par `connect` (sans migrer).
+Cette constatation est ce qui justifie la forme du refus — `tests/test_store.py` la rend exécutable, pour
+qu'elle ne se périme pas en silence le jour où un verbe de secours se mettra à ouvrir la base.
+
 Le CRUD haut-niveau (create_project/list_features/…) sera porté à la phase logique via `projects.registry`
 et consorts, qui reçoivent une connexion — jamais un module-global (correctif anti god-module)."""
 from __future__ import annotations
@@ -11,6 +23,12 @@ from pathlib import Path
 
 from forgemaster.config import Settings
 from forgemaster.db import schema
+
+FORCE_FLAG = "--allow-unknown-schema"
+
+
+class SchemaTooNew(Exception):
+    """La base porte un schéma que ce binaire ne connaît pas. Levée **avant** toute écriture."""
 
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
@@ -30,17 +48,44 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
     return conn
 
 
-def migrate(conn: sqlite3.Connection) -> int:
-    """Applique le schéma si la base est vierge (ou en retard). Idempotent. Retourne la version finale.
-    `create_schema` gère à la fois la base neuve (tout par DDL) et l'évolution en place d'une base d'une
-    version antérieure (tables neuves via `IF NOT EXISTS`, colonnes neuves via `ensure_columns`)."""
-    if schema.schema_version(conn) < schema.SCHEMA_VERSION:
+def migrate(conn: sqlite3.Connection, *, allow_unknown: bool = False) -> int:
+    """Applique le schéma si la base est vierge (ou en retard), **refuse** si elle est trop neuve.
+    Idempotent. Retourne la version finale. `create_schema` gère à la fois la base neuve (tout par DDL) et
+    l'évolution en place d'une base d'une version antérieure (tables neuves via `IF NOT EXISTS`, colonnes
+    neuves via `ensure_columns`).
+
+    `allow_unknown` est la porte de `--allow-unknown-schema` : elle ne « répare » rien et ne migre rien, elle
+    assume.
+    Elle existe parce qu'un garde sans recours enfermerait l'utilisateur qui a raison contre lui — mais elle
+    ne se prend pas par défaut, sinon ce n'est plus un garde."""
+    found = schema.schema_version(conn)
+    if found > schema.SCHEMA_VERSION and not allow_unknown:
+        raise SchemaTooNew(
+            f"cette base porte le schéma {found}, et ce forgemaster ne sait lire que jusqu'au "
+            f"{schema.SCHEMA_VERSION}. L'ouvrir travaillerait sur un schéma inconnu, et la base monte en "
+            f"forward-only : aucune down-migration n'existe pour rattraper.\n"
+            f"  → `forgemaster snapshot list` puis `forgemaster snapshot restore <instantané>` "
+            f"(ces verbes n'ouvrent pas la base et répondent encore)\n"
+            f"  → ou rebascule <home>/current vers le venv qui écrivait ce schéma\n"
+            f"  → ou, si tu sais ce que tu fais : {FORCE_FLAG}")
+    if found < schema.SCHEMA_VERSION:
         schema.create_schema(conn)
     return schema.schema_version(conn)
 
 
 def open_db(settings: Settings) -> sqlite3.Connection:
-    """Connexion migrée à la base du forgemaster (`settings.db_path`). Point d'entrée des couches."""
+    """Connexion migrée à la base du forgemaster (`settings.db_path`). Point d'entrée des couches.
+
+    La porte se lit dans `settings`, pas dans un argument : elle vaut pour l'invocation entière et il y a
+    une trentaine d'appelants — la faire voyager en paramètre aurait demandé de la reposer à chaque étage,
+    donc de l'oublier quelque part. `Settings` est déjà l'objet injecté explicitement partout.
+
+    Referme la connexion avant de propager un refus : une base qu'on refuse d'ouvrir ne doit pas laisser
+    derrière elle un descripteur ouvert (ni, sous WAL, un `-shm` que personne ne referme)."""
     conn = connect(settings.db_path)
-    migrate(conn)
+    try:
+        migrate(conn, allow_unknown=settings.allow_unknown_schema)
+    except SchemaTooNew:
+        conn.close()
+        raise
     return conn
