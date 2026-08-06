@@ -111,7 +111,13 @@ def readiness(settings: Settings) -> tuple[bool, str]:
 
     Deux façons de répondre non : le schéma dépasse ce que ce binaire sait lire, ou le fichier n'est pas une
     base lisible du tout. C'est la même question, pas deux. Si la porte `--allow-unknown-schema` est ouverte,
-    l'instance sert pour de bon et la sonde le dit — mentir dans ce sens-là serait un faux-rouge."""
+    l'instance sert pour de bon et la sonde le dit — mentir dans ce sens-là serait un faux-rouge.
+
+    **Base absente → prête**, et sans y toucher : `connect` créerait le fichier (il fait `mkdir` puis pose le
+    WAL), or une sonde interrogée toutes les 10 s par le front n'a pas à produire ce qu'elle mesure. Rien à
+    rendre illisible tant qu'il n'y a rien : le premier verbe qui écrit la créera au schéma courant."""
+    if not Path(settings.db_path).is_file():
+        return True, ""
     try:
         conn = connect(settings.db_path)
     except sqlite3.Error as exc:

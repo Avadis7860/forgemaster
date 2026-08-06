@@ -145,6 +145,17 @@ def test_le_daemon_demarre_inservable_et_dit_pourquoi(tmp_path: Path) -> None:
     assert client.get("/api/projects").status_code == 503
 
 
+def test_la_sonde_ne_cree_pas_la_base_qu_elle_mesure(tmp_path: Path) -> None:
+    """`/health` est interrogé toutes les 10 s par le front. Passer par `connect` créerait le fichier (mkdir
+    + WAL) : une sonde produirait ce qu'elle mesure, et une instance jamais utilisée porterait une base née
+    d'un regard. Rien à rendre illisible tant qu'il n'y a rien → prête, sans rien poser."""
+    settings = _settings(tmp_path)
+    assert not Path(settings.db_path).exists()
+
+    assert store.readiness(settings) == (True, "")
+    assert not Path(settings.db_path).exists(), "la sonde a créé la base qu'elle interrogeait"
+
+
 def test_le_lifespan_ne_tue_pas_le_daemon_sur_une_base_illisible(tmp_path: Path) -> None:
     """LE TROISIÈME CHEMIN, trouvé par la preuve sur le produit et pas par un test — le test précédent ne
     l'exerçait pas, `TestClient` ne jouant le lifespan que sous `with`.
