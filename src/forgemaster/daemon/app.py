@@ -72,6 +72,7 @@ def build_app(settings: Settings) -> FastAPI:
         types,
     )
     from forgemaster.daemon.ws_token import ensure_ws_token
+    from forgemaster.db import store
 
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):  # type: ignore[no-untyped-def]
@@ -85,16 +86,27 @@ def build_app(settings: Settings) -> FastAPI:
         from forgemaster.dispatch import reconcile
         from forgemaster.terminal.registry import PtySessionRegistry, run_reaper
 
-        conn = store.open_db(settings)
+        # Le lifespan est le TROISIÈME chemin qui ouvre la base — après le démarrage et les routes. Sans ce
+        # `try`, une base illisible y remonte en « Application startup failed » et uvicorn sort en 3 : le
+        # daemon qu'on vient de faire démarrer pour qu'il DISE pourquoi mourrait avant d'avoir rien dit.
+        # Trouvé par la preuve sur le produit, pas par un test — le TestClient ne joue le lifespan que sous
+        # `with`. Réconcilier n'a de toute façon aucun sens sur une instance qui ne sert rien.
         try:
-            orphans = reconcile.reconcile_orphans(conn)
-            if orphans:
-                logging.getLogger("forgemaster").warning(
-                    "réconcilié %d job(s) de dispatch interrompu(s) au boot "
-                    "(finalisé depuis leur transcript si verdict présent, sinon killed ; task→todo) : %s",
-                    len(orphans), orphans)
-        finally:
-            conn.close()
+            conn = store.open_db(settings)
+        except store.SchemaTooNew as exc:
+            logging.getLogger("forgemaster").warning(
+                "instance INSERVABLE — réconciliation des jobs sautée, le daemon démarre pour le dire : %s",
+                exc)
+        else:
+            try:
+                orphans = reconcile.reconcile_orphans(conn)
+                if orphans:
+                    logging.getLogger("forgemaster").warning(
+                        "réconcilié %d job(s) de dispatch interrompu(s) au boot "
+                        "(finalisé depuis leur transcript si verdict présent, sinon killed ; task→todo) : %s",
+                        len(orphans), orphans)
+            finally:
+                conn.close()
 
         # Registre des sessions PTY détachables + reaper de sessions détachées (feature « le terminal survit à
         # la déconnexion WS »). Le registre vit sur `app.state` (slot dédié, pas un god-module mutable) ; le
@@ -125,9 +137,28 @@ def build_app(settings: Settings) -> FastAPI:
         allow_headers=["*"],
     )
 
-    @app.get("/health")
-    def health() -> dict:                                # liveness self (sonde) — pas de gate
-        return {"status": "ok", "version": __version__}
+    # `response_model=None` + retour explicite d'une `JSONResponse` : sous `from __future__ import
+    # annotations`, les annotations sont des CHAÎNES que FastAPI résout dans les globals du module — or
+    # `Response`/`JSONResponse` sont importés dans le corps de `build_app` (import paresseux). Un
+    # `response: Response` en paramètre y devient un paramètre de requête non résolu → 422 sur une route
+    # qui n'a pourtant aucun argument. Mesuré, pas déduit.
+    @app.get("/health", response_model=None)
+    def health():
+        """**Readiness**, pas liveness : « cette instance peut-elle servir ? », pas « le processus vit-il ? ».
+
+        Un 200 sur une instance qui rend 503 sur toutes ses vraies routes serait un faux-vert, et il ne
+        tromperait pas qu'un humain : `apply_update._verify_live` tire son verdict de **cette** sonde, donc
+        une MAJ ou un retour arrière qui casse l'instance conclurait au succès. Le motif voyage dans
+        `detail` — sans lui, l'échec n'est qu'un silence, et le seul endroit qui dirait pourquoi est le
+        journal du service, hors d'atteinte de qui n'ouvre pas de terminal.
+
+        `version` reste rendu dans les deux cas : savoir *quel* binaire refuse fait partie du diagnostic."""
+        ready, detail = store.readiness(app.state.deps.settings)
+        if ready:
+            return JSONResponse({"status": "ok", "version": __version__, "ready": True, "detail": ""})
+        return JSONResponse(status_code=503,
+                            content={"status": "unservable", "version": __version__,
+                                     "ready": False, "detail": detail})
 
     @app.get("/api/ws-token")
     def get_ws_token() -> dict:
@@ -259,24 +290,36 @@ def _mount_missing_ui_placeholder(app: FastAPI, dist: Path) -> None:
         return HTMLResponse(_MISSING_UI_HTML)
 
 
+def startup_readiness(settings: Settings) -> tuple[bool, str]:
+    """La question posée **avant** uvicorn : « cette instance peut-elle servir ? ». Fonction nommée et non
+    un `if` en ligne dans `serve` — c'est la couture par laquelle les tests l'interrogent sans lancer un
+    serveur, et un test qui doit démarrer uvicorn pour vérifier une condition ne s'écrit pas."""
+    from forgemaster.db import store
+
+    return store.readiness(settings)
+
+
 def serve(settings: Settings, *, host: str, port: int) -> int:
     """Démarre uvicorn sur `build_app(settings)`. Import uvicorn paresseux.
 
-    La base est ouverte **ici**, avant uvicorn, et pas seulement dans le lifespan : un refus de schéma qui
-    remonterait de là sortirait en « Application startup failed » suivi d'une trace — un état PRÉVU déguisé
-    en panne du serveur. Ouvert puis refermé aussitôt : ce n'est pas une connexion de travail, c'est la
-    question « cette instance peut-elle servir ? », posée au seul moment où on peut encore répondre non."""
+    **Le daemon démarre même s'il ne peut rien servir** — et c'est délibéré (2026-08-06, revenant sur la
+    moitié « refus au démarrage » du garde de schéma). Sortir en 1 semblait le geste fail-closed ; mesuré,
+    c'en était le contraire : l'unité porte `Restart=on-failure`, donc un refus dont aucun redémarrage ne
+    guérit devenait une **boucle**, et le message qui nomme les gestes qui débloquent ne vivait plus que
+    dans le journal — hors d'atteinte de qui n'ouvre pas de terminal, ce que ce produit promet. Un daemon
+    qui démarre et **dit** pourquoi il ne sert pas est joignable ; un daemon absent ne l'est pas.
+
+    Le garde lui-même n'a pas bougé : la base n'est toujours **jamais** ouverte au-delà du schéma connu
+    (`store.migrate`), et toute vraie route rend 503. Ce qui change est ce qu'on fait du refus, pas le refus.
+    La readiness est aussi rendue par `/health` — ici c'est le journal qu'on sert, là c'est le produit."""
     import uvicorn
 
-    from forgemaster.db import store
-
-    try:
-        store.open_db(settings).close()
-    except store.SchemaTooNew as exc:
+    ready, detail = startup_readiness(settings)
+    if not ready:
         # `print` et pas un logger : à cet instant uvicorn n'a pas encore configuré le logging, et le seul
         # message qui compte ne doit dépendre d'aucune configuration pour être vu.
-        print(f"✗ le daemon ne démarre pas — base illisible par ce forgemaster.\n  {exc}", file=sys.stderr)
-        return 1
+        print(f"⚠ le daemon démarre INSERVABLE — il répondra 503 en disant pourquoi.\n  {detail}",
+              file=sys.stderr)
 
     uvicorn.run(build_app(settings), host=host, port=port)
     return 0

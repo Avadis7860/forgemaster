@@ -14,6 +14,11 @@ Le refus est **sec**, et c'est tenable parce que la porte de secours ne passe pa
 Cette constatation est ce qui justifie la forme du refus — `tests/test_store.py` la rend exécutable, pour
 qu'elle ne se périme pas en silence le jour où un verbe de secours se mettra à ouvrir la base.
 
+Le refus a une **jumelle non levante** : `readiness()`. Elle pose la même question — *cette base est-elle
+lisible par ce binaire ?* — sans agir et sans lever, pour que le daemon puisse le **dire** au lieu de mourir.
+Les deux partagent le même texte (`_unreadable`) : deux formulations du même invariant, ce serait deux façons
+de le comprendre, donc une de trop.
+
 Le CRUD haut-niveau (create_project/list_features/…) sera porté à la phase logique via `projects.registry`
 et consorts, qui reçoivent une connexion — jamais un module-global (correctif anti god-module)."""
 from __future__ import annotations
@@ -29,6 +34,18 @@ FORCE_FLAG = "--allow-unknown-schema"
 
 class SchemaTooNew(Exception):
     """La base porte un schéma que ce binaire ne connaît pas. Levée **avant** toute écriture."""
+
+
+def _unreadable(found: int) -> str:
+    """Le message, écrit **une** fois : `migrate` le lève, `readiness` le rend. Il nomme trois gestes qui
+    débloquent — un refus qui dit seulement « impossible » laisse l'utilisateur sans issue."""
+    return (f"cette base porte le schéma {found}, et ce forgemaster ne sait lire que jusqu'au "
+            f"{schema.SCHEMA_VERSION}. L'ouvrir travaillerait sur un schéma inconnu, et la base monte en "
+            f"forward-only : aucune down-migration n'existe pour rattraper.\n"
+            f"  → `forgemaster snapshot list` puis `forgemaster snapshot restore <instantané>` "
+            f"(ces verbes n'ouvrent pas la base et répondent encore)\n"
+            f"  → ou rebascule <home>/current vers le venv qui écrivait ce schéma\n"
+            f"  → ou, si tu sais ce que tu fais : {FORCE_FLAG}")
 
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
@@ -60,14 +77,7 @@ def migrate(conn: sqlite3.Connection, *, allow_unknown: bool = False) -> int:
     ne se prend pas par défaut, sinon ce n'est plus un garde."""
     found = schema.schema_version(conn)
     if found > schema.SCHEMA_VERSION and not allow_unknown:
-        raise SchemaTooNew(
-            f"cette base porte le schéma {found}, et ce forgemaster ne sait lire que jusqu'au "
-            f"{schema.SCHEMA_VERSION}. L'ouvrir travaillerait sur un schéma inconnu, et la base monte en "
-            f"forward-only : aucune down-migration n'existe pour rattraper.\n"
-            f"  → `forgemaster snapshot list` puis `forgemaster snapshot restore <instantané>` "
-            f"(ces verbes n'ouvrent pas la base et répondent encore)\n"
-            f"  → ou rebascule <home>/current vers le venv qui écrivait ce schéma\n"
-            f"  → ou, si tu sais ce que tu fais : {FORCE_FLAG}")
+        raise SchemaTooNew(_unreadable(found))
     if found < schema.SCHEMA_VERSION:
         schema.create_schema(conn)
     return schema.schema_version(conn)
@@ -89,3 +99,30 @@ def open_db(settings: Settings) -> sqlite3.Connection:
         conn.close()
         raise
     return conn
+
+
+def readiness(settings: Settings) -> tuple[bool, str]:
+    """*Cette instance peut-elle servir ?* — la question de `migrate`, posée sans agir et sans lever.
+
+    Passe par `connect` et **pas** par `open_db` : une sonde qui migrerait la base ferait de la lecture d'un
+    état une modification de cet état. Elle ne répond qu'à **une** question — pas un agrégat de vérifications
+    qui rougirait sur ce qui est normal — et rend le message de `_unreadable`, celui-là même que porterait le
+    refus, avec ses gestes qui débloquent.
+
+    Deux façons de répondre non : le schéma dépasse ce que ce binaire sait lire, ou le fichier n'est pas une
+    base lisible du tout. C'est la même question, pas deux. Si la porte `--allow-unknown-schema` est ouverte,
+    l'instance sert pour de bon et la sonde le dit — mentir dans ce sens-là serait un faux-rouge."""
+    try:
+        conn = connect(settings.db_path)
+    except sqlite3.Error as exc:
+        return False, f"la base {settings.db_path} ne s'ouvre pas : {exc}"
+    try:
+        found = schema.schema_version(conn)
+    except sqlite3.DatabaseError as exc:
+        return False, (f"la base {settings.db_path} n'est pas lisible ({exc}). Un instantané la remplace : "
+                       f"`forgemaster snapshot list` puis `forgemaster snapshot restore <instantané>`.")
+    finally:
+        conn.close()
+    if found > schema.SCHEMA_VERSION and not settings.allow_unknown_schema:
+        return False, _unreadable(found)
+    return True, ""

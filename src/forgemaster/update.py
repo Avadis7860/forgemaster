@@ -135,7 +135,8 @@ def describe(plan: dict) -> list[str]:
         f"wheel à poser   : {plan['wheel']}",
         f"venv actuel     : {plan['venv']}  (via {plan['link']})",
         f"unité systemd   : {plan['unit']}  (portée {plan['scope']})",
-        f"sonde en vivant : {plan['base_url']}/health puis /api/version",
+        f"sonde en vivant : {plan['base_url']}/health (readiness : 503 = elle dit pourquoi) puis "
+        f"/api/version",
         "déroulé         : venv neuf à côté → sonde en isolation → arrêt + instantané à froid → "
         "bascule du lien → vérification en vivant → retour arrière automatique si elle échoue",
     ]

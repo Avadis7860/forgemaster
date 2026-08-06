@@ -111,24 +111,88 @@ def test_la_porte_ne_se_prend_pas_par_l_environnement() -> None:
         Settings.resolve(allow_unknown_schema=True)      # type: ignore[call-arg]
 
 
-def test_le_daemon_refuse_de_demarrer_et_repond_503_s_il_tournait_deja(tmp_path: Path) -> None:
-    """Les deux moitiés du chemin daemon, parce que la vérification à la main ne survit pas à la session.
+def test_le_daemon_demarre_inservable_et_dit_pourquoi(tmp_path: Path) -> None:
+    """Les trois moitiés du chemin daemon, parce que la vérification à la main ne survit pas à la session.
 
-    ① `serve` rend 1 **avant** uvicorn : sans ça le refus sortirait du lifespan en « Application startup
-    failed » + trace, donnant à un état prévu l'allure d'une panne du serveur.
-    ② une base devenue trop neuve pendant que le daemon TOURNE (restauration jouée à côté, service non
-    arrêté) remonte des routes en **503**, pas en 500 nu."""
+    ① `startup_readiness` répond **non avec un motif** avant uvicorn — mais `serve` démarre quand même
+    (2026-08-06, revenant sur le refus au démarrage). Sortir en 1 mettait l'unité `Restart=on-failure` en
+    boucle et laissait le motif dans le seul journal du service, hors d'atteinte de qui n'ouvre pas de
+    terminal.
+    ② `/health` rend **503** avec ce même motif : c'est la sonde dont `apply_update._verify_live` tire son
+    verdict, donc un 200 ici ferait passer une instance morte pour une MAJ réussie.
+    ③ une base devenue trop neuve pendant que le daemon TOURNE (restauration jouée à côté, service non
+    arrêté) remonte des routes en **503**, pas en 500 nu.
+
+    `serve` n'est pas appelé : il lancerait uvicorn. La couture est `startup_readiness`, nommée pour ça."""
     from fastapi.testclient import TestClient
 
     from forgemaster.daemon import app as daemon_app
 
     settings = _settings(tmp_path)
     store.open_db(settings).close()
-    client = TestClient(daemon_app.build_app(settings))       # construit AVANT que la base ne dérive
+    client = TestClient(daemon_app.build_app(settings), raise_server_exceptions=False)
+    _poser_schema(settings, schema.SCHEMA_VERSION + 1)       # la base dérive APRÈS la construction
+
+    ready, detail = daemon_app.startup_readiness(settings)
+    assert ready is False
+    assert str(schema.SCHEMA_VERSION + 1) in detail and "snapshot restore" in detail
+
+    health = client.get("/health")
+    assert health.status_code == 503
+    assert health.json()["ready"] is False
+    assert health.json()["detail"] == detail                 # le MÊME texte, pas un second vocabulaire
+
+    assert client.get("/api/projects").status_code == 503
+
+
+def test_le_lifespan_ne_tue_pas_le_daemon_sur_une_base_illisible(tmp_path: Path) -> None:
+    """LE TROISIÈME CHEMIN, trouvé par la preuve sur le produit et pas par un test — le test précédent ne
+    l'exerçait pas, `TestClient` ne jouant le lifespan que sous `with`.
+
+    Le lifespan ouvre la base pour réconcilier les jobs de dispatch orphelins. Sur une base illisible, le
+    refus y remontait en « Application startup failed » et uvicorn sortait en **3** : le daemon qu'on venait
+    de faire démarrer pour qu'il DISE pourquoi mourait avant d'avoir rien dit. Mesuré sur un `home` réel
+    (`forgemaster serve` → `Exit 3`), pas relu."""
+    from fastapi.testclient import TestClient
+
+    from forgemaster.daemon import app as daemon_app
+
+    settings = _settings(tmp_path)
+    store.open_db(settings).close()
     _poser_schema(settings, schema.SCHEMA_VERSION + 1)
 
-    assert daemon_app.serve(settings, host="127.0.0.1", port=0) == 1
-    assert client.get("/api/projects").status_code == 503
+    with TestClient(daemon_app.build_app(settings)) as client:   # `with` = le lifespan est JOUÉ
+        assert client.get("/health").status_code == 503
+
+
+def test_une_instance_saine_se_declare_prete(tmp_path: Path) -> None:
+    """Le sens qui doit rester vrai : sans la moitié verte, la sonde pourrait rougir sur du normal et
+    personne ne le verrait avant qu'une MAJ saine ne se fasse annuler."""
+    from fastapi.testclient import TestClient
+
+    from forgemaster.daemon import app as daemon_app
+
+    settings = _settings(tmp_path)
+    store.open_db(settings).close()
+
+    assert daemon_app.startup_readiness(settings) == (True, "")
+    health = TestClient(daemon_app.build_app(settings)).get("/health")
+    assert health.status_code == 200
+    assert health.json()["ready"] is True
+
+
+def test_la_porte_ouverte_rend_l_instance_prete_car_elle_sert_vraiment(tmp_path: Path) -> None:
+    """`--allow-unknown-schema` ouvre la base pour de bon : la sonde doit dire prête. Un faux-rouge dans cet
+    état ferait annuler une MAJ sur une instance qui sert — le garde se retournerait contre celui qu'il
+    protège."""
+    from dataclasses import replace
+
+    settings = _settings(tmp_path)
+    store.open_db(settings).close()
+    _poser_schema(settings, schema.SCHEMA_VERSION + 1)
+
+    assert store.readiness(settings)[0] is False
+    assert store.readiness(replace(settings, allow_unknown_schema=True)) == (True, "")
 
 
 def test_la_porte_de_secours_reste_ouverte_sur_une_base_trop_neuve(tmp_path: Path) -> None:

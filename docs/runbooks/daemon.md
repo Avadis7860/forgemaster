@@ -11,9 +11,25 @@ module-global mutable (correctif #1, anti god-module `import server`). Les erreu
 `src/forgemaster/daemon/app.py:42` · appelé par serve() / les tests
 DI explicite : `Deps(settings)` posé sur `app.state.deps` (l.113), puis les 19 `make_*_router()` inclus en
 boucle (l.138-148). Ajoute CORS pour le dev Vite (:5173, localhost-only, pas de credentials), la sonde
-`GET /health` (liveness, pas de gate), et les deux `exception_handler` globaux (`KeyError`→404,
-`ValueError`→400). `_mount_spa` monté **en dernier** (l.119) pour que le catch-all ne capte que le reste. Le
-`lifespan` réconcilie au boot les jobs de dispatch orphelins (`running` zombie → killed, task→todo).
+`GET /health` (**readiness**, cf. § dédié), et les `exception_handler` globaux (`KeyError`→404,
+`ValueError`→400, `SchemaTooNew`→503). `_mount_spa` monté **en dernier** (l.119) pour que le catch-all ne
+capte que le reste. Le `lifespan` réconcilie au boot les jobs de dispatch orphelins (`running` zombie →
+killed, task→todo) — **et tolère une base illisible** : sans ce `try`, le refus y remontait en « Application
+startup failed » et uvicorn sortait en 3, tuant le daemon qu'on fait démarrer précisément pour qu'il dise
+pourquoi il ne sert pas. Réconcilier n'a aucun sens sur une instance qui ne sert rien.
+
+## health() — la sonde `GET /health` : readiness, pas liveness
+`src/forgemaster/daemon/app.py:146` · appelé par `apply_update._wait_health` et par le front (`useHealth`, 10 s)
+Rend `{status, version, ready, detail}` : **200** si l'instance peut servir, **503** sinon, `detail` portant le
+motif et les gestes qui débloquent (`store.readiness`). Ce n'est pas cosmétique : `apply_update._verify_live`
+tire son verdict de **cette** sonde, donc un 200 sur une instance qui rend 503 partout ailleurs ferait conclure
+au succès d'une MAJ — ou d'un retour arrière — qui vient de la casser, sans déclencher le retour du retour.
+`version` est rendu dans les deux cas (savoir *quel* binaire refuse fait partie du diagnostic).
+Détail d'implémentation contre-intuitif : la route rend une `JSONResponse` explicite avec `response_model=None`,
+et **ne prend pas** de paramètre `response: Response`. Sous `from __future__ import annotations`, les
+annotations sont des chaînes que FastAPI résout dans les globals du **module** — or fastapi est importé dans le
+corps de `build_app` (import paresseux), donc `Response` y devient un paramètre de requête non résolu → **422**
+sur une route sans argument. Mesuré, pas déduit.
 
 ## Deps / get_deps() — le conteneur d'injection explicite (immuable, sur app.state)
 `src/forgemaster/daemon/deps.py:26` (`Deps`) · `:43` (`get_deps`)
@@ -24,8 +40,18 @@ est la dépendance FastAPI qui rend le conteneur posé sur `app.state` (`request
 global. Ne tire que `starlette` (transitif de fastapi, pour typer la `Request`), jamais les couches serveur.
 
 ## serve() / _mount_spa() — lancement uvicorn + service du build SPA
-`src/forgemaster/daemon/app.py:262` (`serve`) · `:188` (`_mount_spa`) · `:26` (`web_dist_dir`)
-`serve()` ouvre puis referme la base **avant** uvicorn — un refus `SchemaTooNew` y rend 1 avec un message net, plutôt qu'un « Application startup failed » + trace sorti du lifespan (un état PRÉVU ne doit pas avoir l'allure d'un bug) — puis démarre uvicorn sur `build_app(settings)` (import uvicorn paresseux). L'autre moitié du chemin est un handler d'exception : les routes ouvrent une connexion PAR REQUÊTE, donc une base devenue trop neuve pendant que le service TOURNE rend **503**, jamais 500. `_mount_spa()` sert le build
+`src/forgemaster/daemon/app.py:302` (`serve`) · `:219` (`_mount_spa`) · `:26` (`web_dist_dir`)
+`serve()` interroge `startup_readiness()` **avant** uvicorn, imprime le motif sur stderr si l'instance ne peut
+pas servir — puis **démarre quand même**, et c'est délibéré (2026-08-06, revenant sur le refus au démarrage
+posé la veille). Sortir en 1 semblait fail-closed ; mesuré, c'en était le contraire : l'unité porte
+`Restart=on-failure`, donc un refus dont aucun redémarrage ne guérit devenait une **boucle**, et le message
+qui nomme les gestes qui débloquent ne vivait plus que dans le journal — hors d'atteinte de qui n'ouvre pas de
+terminal, ce que ce produit promet. Un daemon qui démarre et **dit** pourquoi est joignable ; un daemon absent
+ne l'est pas. Le garde lui-même n'a pas bougé : la base n'est jamais ouverte au-delà du schéma connu.
+`startup_readiness()` est une fonction **nommée** et non un `if` en ligne : c'est la couture par laquelle les
+tests l'interrogent sans lancer un serveur. Les trois chemins qui ouvrent la base sont donc couverts : les
+verbes (frontière `cli.main`), les routes (handler `SchemaTooNew` → **503**, jamais 500 — une connexion PAR
+REQUÊTE), et le lifespan (§ `build_app`). `_mount_spa()` sert le build
 en statique **seulement s'il existe** : assets hashés en cache `immutable`, `index.html` en `no-cache`
 (anti-stale post-déploiement), et un catch-all `GET /{path:path}` qui fallback sur `index.html` (deep-link
 client-side) mais refuse `api/`/`ws/` (→ 404 JSON, jamais index à la place d'une API). `web_dist_dir()`
@@ -56,5 +82,5 @@ explicite (fail-closed, ex. 422 gate / 403 auth). Spawns longs (`claude -p`) pas
 
 ## Zones non détaillées
 - Les corps individuels des 19 routers (forme identique — factory + endpoints + délégation spine) : voir chaque `routes/<x>.py`.
-- `_mount_missing_ui_placeholder` (`app.py:241`) : dist absente → warning + page d'aide fail-loud à `/`, l'API reste valable.
+- `_mount_missing_ui_placeholder` (`app.py:272`) : dist absente → warning + page d'aide fail-loud à `/`, l'API reste valable.
 - Les Pydantic request models — `ProjectCreate`/`ProjectPatch`, `ReviewBody`/`MergeBody`, `BootstrapRequest`, `CredentialLink`, `McpWire`, `InspireRequest`, `FeatureCreate`, `TaskCreate`, … : DTO locaux d'un router, validés par FastAPI → 400/422. Ce sont des **formes**, pas des mécanismes : nommés ici pour que leur silence soit déclaré, pas subi.

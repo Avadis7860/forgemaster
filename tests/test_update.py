@@ -16,11 +16,13 @@ La chaîne réelle (vrai wheel, vrai venv, vrai daemon, vrai systemd-like) est j
 from __future__ import annotations
 
 import ast
+import io
 import json
 import os
 import sqlite3
 import sys
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
@@ -112,7 +114,7 @@ def test_le_vivant_qui_ne_sert_pas_fait_rebasculer_le_lien_ET_restaurer_linstant
         return False, "le daemon ne répond pas"
 
     monkeypatch.setattr(apply_update, "_verify_live", _degat_de_migration)
-    monkeypatch.setattr(apply_update, "_wait_health", lambda *a, **k: True)   # il répond APRÈS le retour
+    monkeypatch.setattr(apply_update, "_wait_health", lambda *a, **k: (True, ""))  # il sert APRÈS le retour
 
     rc, verdict, details = apply_update.apply(_args(live, tmp_path, shim), lambda _m: None)
 
@@ -132,11 +134,11 @@ def test_le_retour_arriere_qui_ne_ramene_pas_le_service_le_DIT(live: Settings, t
     monkeypatch.setattr(apply_update, "probe_isolated", lambda *a, **k: {"version": "9.9", "sha": "beef"})
     monkeypatch.setattr(apply_update, "take_snapshot", lambda *a, **k: dest)
     monkeypatch.setattr(apply_update, "_verify_live", lambda *a, **k: (False, "muet"))
-    monkeypatch.setattr(apply_update, "_wait_health", lambda *a, **k: False)
+    monkeypatch.setattr(apply_update, "_wait_health", lambda *a, **k: (False, "muet lui aussi"))
 
     rc, verdict, _d = apply_update.apply(_args(live, tmp_path, shim), lambda _m: None)
     assert rc == 2
-    assert "ne répond TOUJOURS pas" in verdict and str(dest) in verdict
+    assert "ne sert TOUJOURS pas" in verdict and "muet lui aussi" in verdict and str(dest) in verdict
 
 
 # --- 2. un échec avant la bascule ne touche à rien ------------------------------------------------------
@@ -296,6 +298,64 @@ def test_le_vivant_qui_sert_un_autre_build_est_un_echec():
     ok, why = apply_update.matches({"version": "0.2.0", "sha": "a" * 40},
                                    {"version": "0.1.0", "sha": "a" * 40})
     assert not ok and "0.1.0" in why
+
+
+def _sonde_health(monkeypatch, reponses):
+    """Fait répondre `/health` selon une liste d'issues consommée dans l'ordre : `int` = statut HTTP nu,
+    `dict` = corps d'un 503 de readiness, `Exception` = connexion refusée. Le vrai `urlopen` n'est jamais
+    appelé — on teste la LECTURE de la sonde, pas le réseau."""
+    import urllib.error
+    import urllib.request
+    from contextlib import contextmanager
+
+    restes = list(reponses)
+
+    class _Reponse:
+        def __init__(self, status): self.status = status
+        def read(self): return b"{}"
+
+    @contextmanager
+    def _urlopen(url, timeout=None):                     # noqa: ARG001
+        issue = restes.pop(0) if restes else restes_defaut
+        if isinstance(issue, Exception):
+            raise issue
+        if isinstance(issue, dict):
+            corps = json.dumps(issue).encode()
+            raise urllib.error.HTTPError(url, 503, "unservable", {}, io.BytesIO(corps))
+        yield _Reponse(issue)
+
+    restes_defaut = urllib.error.URLError("refusée")
+    monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+    return restes
+
+
+def test_une_instance_qui_se_declare_inservable_est_un_echec_IMMEDIAT_avec_son_motif(monkeypatch):
+    """LE test de cette phase. `/health` était une liveness : une instance dont la base est illisible
+    répondait 200, donc `_verify_live` concluait au succès — et le retour arrière AUTOMATIQUE ne se
+    déclenchait pas sur le seul mode de panne qui le concerne.
+
+    Deux propriétés, pas une : le verdict est **négatif**, et il est rendu **sans attendre le délai**. Un
+    échec qui ne sort qu'à l'expiration transforme une réponse claire en silence, et c'est ce silence qui
+    remonterait à l'utilisateur comme diagnostic."""
+    debut = time.monotonic()
+    _sonde_health(monkeypatch, [{"ready": False, "detail": "schéma 21 > 20 · snapshot restore"}])
+
+    ok, why = apply_update._wait_health("http://x", timeout=30.0)
+
+    assert ok is False
+    assert "schéma 21 > 20" in why and "snapshot restore" in why
+    assert time.monotonic() - debut < 5.0, "il a attendu le délai au lieu de lire la réponse"
+
+
+def test_un_503_qui_nest_pas_le_notre_ne_conclut_pas_a_notre_place(monkeypatch):
+    """Un 503 de reverse-proxy, ou d'un autre service qui écouterait ce port, n'est pas un verdict de
+    l'instance. On ne conclut que sur notre propre contrat (`ready:false`) — sinon la sonde deviendrait un
+    check défaillant, rouge sur ce qui n'est même pas notre affaire."""
+    _sonde_health(monkeypatch, [{"detail": "Service Unavailable"}, 200])
+
+    ok, why = apply_update._wait_health("http://x", timeout=30.0)
+
+    assert ok is True and why == ""
 
 
 # --- la prise, déléguée au forgemaster ANCIEN --------------------------------------------------------------
@@ -460,7 +520,7 @@ def test_le_retour_arriere_automatique_nest_pas_bloque_par_un_binaire_indetermin
     monkeypatch.setattr(apply_update, "probe_isolated", lambda *a, **k: {"version": "9.9", "sha": "beef"})
     monkeypatch.setattr(apply_update, "take_snapshot", lambda *a, **k: dest)
     monkeypatch.setattr(apply_update, "_verify_live", lambda *a, **k: (False, "il ne sert pas"))
-    monkeypatch.setattr(apply_update, "_wait_health", lambda *a, **k: True)
+    monkeypatch.setattr(apply_update, "_wait_health", lambda *a, **k: (True, ""))
 
     rc, verdict, _ = apply_update.apply(_args(live, tmp_path, shim), lambda _m: None)
 

@@ -55,7 +55,9 @@ export const qk = {
 }
 
 export function useHealth() {
-  // Sonde de liveness — rafraîchie périodiquement pour la pastille d'état du daemon.
+  // Sonde de READINESS — rafraîchie périodiquement pour la pastille d'état du daemon. Un 503 « inservable »
+  // n'est PAS une erreur ici : `api.health` le rend en donnée (`ready:false` + `detail`), pour que la
+  // pastille dise pourquoi au lieu de prétendre que le daemon est injoignable.
   return useQuery({ queryKey: qk.health, queryFn: api.health, refetchInterval: 10_000, retry: false })
 }
 

@@ -92,9 +92,10 @@ def probe_isolated(forgemaster: str | Path, sandbox: Path, log) -> dict:
         env=env, stdout=out, stderr=subprocess.STDOUT)
     try:
         base = f"http://127.0.0.1:{port}"
-        if not _wait_health(base, PROBE_TIMEOUT, proc=proc):
+        served, why = _wait_health(base, PROBE_TIMEOUT, proc=proc)
+        if not served:
             tail = "\n      ".join((sandbox / "serve.log").read_text(errors="replace").splitlines()[-15:])
-            raise UpdateFailed(f"la nouvelle version ne sert pas en isolation.\n      {tail}")
+            raise UpdateFailed(f"la nouvelle version ne sert pas en isolation — {why}.\n      {tail}")
         identity = _identity(_get_json(base, "/api/version"))
     finally:
         proc.terminate()
@@ -202,11 +203,11 @@ def apply(args: argparse.Namespace, log) -> tuple[int, str, dict]:
     swap(link, old_venv)
     _restore(snap, home, log)
     _systemctl(args, "start", log)
-    back = _wait_health(args.base_url, args.timeout)
+    back, back_why = _wait_health(args.base_url, args.timeout)
     details["impact"] = "revenu à l'état d'avant (venv + données)"
     if not back:
-        return 2, (f"MAJ échouée ({why}) — retour arrière effectué, mais l'instance ne répond TOUJOURS "
-                   f"pas. Regarde le journal du service ; l'instantané est intact : {snap}"), details
+        return 2, (f"MAJ échouée ({why}) — retour arrière effectué, mais l'instance ne sert TOUJOURS pas : "
+                   f"{back_why}. L'instantané est intact : {snap}"), details
     return 1, f"MAJ échouée ({why}) — l'instance est revenue à l'état d'avant, elle sert de nouveau", details
 
 
@@ -274,8 +275,9 @@ def _supports_flag(script: Path, flag: str) -> bool:
 
 
 def _verify_live(base: str, expected: dict, timeout: float, log) -> tuple[bool, str]:
-    if not _wait_health(base, timeout):
-        return False, f"le daemon ne répond pas sur {base} après {timeout:.0f} s"
+    ready, why = _wait_health(base, timeout)
+    if not ready:
+        return False, why
     try:
         live = _identity(_get_json(base, "/api/version"))
     except (urllib.error.URLError, OSError, ValueError) as exc:
@@ -283,20 +285,50 @@ def _verify_live(base: str, expected: dict, timeout: float, log) -> tuple[bool, 
     return matches(expected, live)
 
 
-def _wait_health(base: str, timeout: float, *, proc: subprocess.Popen | None = None) -> bool:
-    """Attend `/health`. Si le processus sondé meurt, on n'attend pas la fin du délai : un échec rapide est
-    un meilleur service qu'un long silence."""
+def _wait_health(base: str, timeout: float,
+                 *, proc: subprocess.Popen | None = None) -> tuple[bool, str]:
+    """Attend `/health`, et rend **pourquoi** quand c'est non. Trois issues, pas deux :
+
+    - **200** — l'instance sert ;
+    - **503 portant `ready:false`** — elle a démarré et se déclare inservable : verdict IMMÉDIAT, avec son
+      motif. Attendre la fin du délai pour conclure « ne répond pas » transformerait une réponse claire en
+      silence, et c'est ce silence qui remonterait à l'utilisateur comme diagnostic ;
+    - **rien** (connexion refusée, ou 503 d'une autre forme) — on attend : on ne conclut que sur notre
+      propre contrat, jamais sur un 503 qu'on n'a pas écrit.
+
+    Si le processus sondé meurt, on n'attend pas non plus : un échec rapide est un meilleur service qu'un
+    long silence."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if proc is not None and proc.poll() is not None:
-            return False
+            return False, f"le processus sondé s'est arrêté avant de servir sur {base}"
         try:
             with urllib.request.urlopen(base + "/health", timeout=3) as r:  # noqa: S310 (http local)
                 if r.status == 200:
-                    return True
+                    return True, ""
+        except urllib.error.HTTPError as exc:
+            detail = _unservable_detail(exc)
+            if detail is not None:
+                return False, f"l'instance a démarré mais ne peut pas servir — {detail}"
+            time.sleep(0.5)
         except (urllib.error.URLError, ConnectionError, OSError):
             time.sleep(0.5)
-    return False
+    return False, f"le daemon ne répond pas sur {base} après {timeout:.0f} s"
+
+
+def _unservable_detail(exc: urllib.error.HTTPError) -> str | None:
+    """Le `detail` d'un `/health` qui se déclare inservable, ou `None` si ce 503 n'est pas le nôtre.
+    On exige la forme complète (`ready` à `false`) : un 503 de proxy, de reverse-proxy ou d'un autre service
+    qui écouterait ce port ne doit pas se faire passer pour un verdict de l'instance."""
+    if exc.code != 503:
+        return None
+    try:
+        body = json.loads(exc.read())
+    except (ValueError, OSError):
+        return None
+    if not isinstance(body, dict) or body.get("ready") is not False:
+        return None
+    return str(body.get("detail") or "sans motif")
 
 
 def _get_json(base: str, path: str) -> dict:

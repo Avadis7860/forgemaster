@@ -3,7 +3,15 @@
 // vagues (V3/V4) pour n'avoir aucun schéma non consommé. Miroir exact du contrat exposé par le daemon.
 import { z } from 'zod'
 
-export const HealthSchema = z.object({ status: z.string(), version: z.string() })
+// Readiness du daemon, pas liveness : `ready:false` + `detail` décrit une instance qui a démarré mais ne
+// peut rien servir (base illisible par ce binaire). Le 503 qui la porte n'est PAS une erreur réseau — c'est
+// une réponse, et `detail` nomme les gestes qui débloquent. Cf. daemon.app.health.
+export const HealthSchema = z.object({
+  status: z.string(),
+  version: z.string(),
+  ready: z.boolean().default(true),
+  detail: z.string().default(''),
+})
 export type Health = z.infer<typeof HealthSchema>
 
 // Token WS par-instance (garde CSWSH) : le front same-origin le lit puis l'injecte dans le sous-protocole

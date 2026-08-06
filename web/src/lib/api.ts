@@ -140,8 +140,26 @@ export const gitDownloadUrl = (project: string, ref: string, path: string): stri
   `/api/projects/${encodeURIComponent(project)}/git/download` +
   `?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent(path)}`
 
+// `/health` est la SEULE route dont un 503 est une réponse et pas une panne : l'instance a démarré et se
+// déclare inservable, `detail` nommant les gestes qui débloquent. La passer par `request` la ferait lever en
+// ApiError, donc afficher « daemon injoignable » — le contraire de ce que le daemon vient de dire. Un fetch
+// qui échoue vraiment (daemon absent) lève, lui : c'est un état distinct, pas le même.
+async function fetchHealth() {
+  let res: Response
+  try {
+    res = await fetch('/health', { headers: { 'content-type': 'application/json' } })
+  } catch (cause) {
+    throw new ApiError(0, `daemon injoignable (${String(cause)})`)
+  }
+  const body = await res.json().catch(() => null)
+  if (!res.ok && res.status !== 503) {
+    throw new ApiError(res.status, res.statusText || `HTTP ${res.status}`)
+  }
+  return HealthSchema.parse(body)
+}
+
 export const api = {
-  health: () => request('/health', HealthSchema),
+  health: fetchHealth,
 
   // Token WS par-instance (garde CSWSH) : lu une fois par le front same-origin, injecté au handshake WS via
   // le sous-protocole `forgemaster.token.<v>`. GET idempotent same-origin (une page tierce ne peut PAS le lire).
