@@ -5,25 +5,38 @@ Le schéma SQLite du forgemaster est un **contrat figé** : le fichier `schema.p
 CHANGELOG (docstring d'historique de version) — jamais en douce. Les migrations sont **additives** : tables
 neuves via `CREATE IF NOT EXISTS`, colonnes neuves via `ALTER ADD COLUMN` idempotent. Rien de destructif silencieux
 — l'unique rebuild de table (`_migrate_v8`) préserve les ids et les FK. Invariant central : `migrate()` applique le
-schéma tant que la base est en retard sur `SCHEMA_VERSION`, puis la scelle avec `PRAGMA user_version`.
+schéma tant que la base est en retard sur `SCHEMA_VERSION`, puis la scelle avec `PRAGMA user_version`. Et il ne va
+que dans **un** sens : une base **trop neuve** (`user_version > SCHEMA_VERSION`) est **refusée**, jamais ouverte en
+silence — la migration est forward-only, aucune down-migration n'existe pour rattraper.
 
 ## connect() — ouvre une connexion configurée une fois
-`src/forgemaster/db/store.py:16` · appelé par `open_db()`
+`src/forgemaster/db/store.py:34` · appelé par `open_db()`
 Crée le dossier parent, pose `row_factory = Row` (accès dict-like), `PRAGMA foreign_keys = ON`, `journal_mode = WAL`
 et `busy_timeout = 5000`. Le WAL + busy_timeout servent la concurrence CLI↔daemon sous `forgemaster run`
 (orchestrateur parallèle : N lecteurs + 1 écrivain, 5 s de retry absorbent les rares chevauchements). Bénin pour
 tout appelant mono.
 
-## migrate() — applique le schéma si la base est en retard (idempotent)
-`src/forgemaster/db/store.py:33` · appelé par `open_db()` · retourne la version finale
-Compare `schema.schema_version(conn)` à `schema.SCHEMA_VERSION` ; si strictement inférieure, délègue tout à
-`schema.create_schema()` (qui gère base neuve ET évolution en place). Idempotent : une base à jour ne déclenche
-aucune écriture. Retourne la version finale posée.
+## migrate() — applique le schéma si la base est en retard, REFUSE si elle est trop neuve
+`src/forgemaster/db/store.py:51` · appelé par `open_db()` · retourne la version finale · lève `SchemaTooNew`
+Compare `schema.schema_version(conn)` à `schema.SCHEMA_VERSION`. **Supérieure** → lève `SchemaTooNew` : ce binaire
+travaillerait sur un schéma qu'il ne connaît pas, et rien ne pourrait rattraper. **Strictement inférieure** →
+délègue tout à `schema.create_schema()` (qui gère base neuve ET évolution en place). Idempotent : une base à jour ne
+déclenche aucune écriture. Le message nomme les gestes qui débloquent (`snapshot list`/`restore`, rebasculer
+`current`) — le patron de refus de `update.preflight` et `restore.check_compatibility`. `allow_unknown=True` est la
+porte de `--allow-unknown-schema` : elle assume, elle ne migre pas.
 
 ## open_db() — point d'entrée : connexion migrée à la base du forgemaster
-`src/forgemaster/db/store.py:42` · appelé par les couches supérieures (registry, CRUD)
-Compose `connect(settings.db_path)` puis `migrate(conn)` et rend la connexion prête. Note d'archi : le CRUD
-haut-niveau reçoit cette connexion en argument — jamais un module-global (correctif anti god-module).
+`src/forgemaster/db/store.py:76` · appelé par les couches supérieures (registry, CRUD) · lève `SchemaTooNew`
+Compose `connect(settings.db_path)` puis `migrate(conn)` et rend la connexion prête. Referme la connexion **avant**
+de propager un refus (sous WAL, un descripteur abandonné laisse un `-shm` derrière lui). La porte se lit dans
+`settings.allow_unknown_schema` et non en argument : une trentaine d'appelants, donc un paramètre à reposer à chaque
+étage serait un paramètre oublié quelque part. Ce champ est **absent de `Settings.resolve()`** et sans variable
+d'env — c'est un laissez-passer d'UNE invocation, posé par `cli._settings`. Note d'archi : le CRUD haut-niveau
+reçoit cette connexion en argument — jamais un module-global (correctif anti god-module).
+
+**Qui n'ouvre PAS la base**, et c'est ce qui rend le refus sec tenable : `snapshot list`/`restore` (aucune base ;
+`restore.py` est stdlib-pur), `doctor`, et `update apply` (qui passe par `connect`, sans migrer). La porte de
+secours reste donc franchissable sur une instance dont la base est illisible — `tests/test_store.py` le prouve.
 
 ## create_schema() — crée tables + index, migre les colonnes, scelle la version
 `src/forgemaster/db/schema.py:356` · appelé par `migrate()`

@@ -8,7 +8,7 @@ module-global mutable (correctif #1, anti god-module `import server`). Les erreu
 **paresseux** : le module s'importe sans les deps serveur.
 
 ## build_app() — construit l'app FastAPI, injecte les deps, monte routers + SPA
-`src/forgemaster/daemon/app.py:41` · appelé par serve() / les tests
+`src/forgemaster/daemon/app.py:42` · appelé par serve() / les tests
 DI explicite : `Deps(settings)` posé sur `app.state.deps` (l.113), puis les 19 `make_*_router()` inclus en
 boucle (l.138-148). Ajoute CORS pour le dev Vite (:5173, localhost-only, pas de credentials), la sonde
 `GET /health` (liveness, pas de gate), et les deux `exception_handler` globaux (`KeyError`→404,
@@ -24,8 +24,8 @@ est la dépendance FastAPI qui rend le conteneur posé sur `app.state` (`request
 global. Ne tire que `starlette` (transitif de fastapi, pour typer la `Request`), jamais les couches serveur.
 
 ## serve() / _mount_spa() — lancement uvicorn + service du build SPA
-`src/forgemaster/daemon/app.py:251` (`serve`) · `:177` (`_mount_spa`) · `:25` (`web_dist_dir`)
-`serve()` démarre uvicorn sur `build_app(settings)` (import uvicorn paresseux). `_mount_spa()` sert le build
+`src/forgemaster/daemon/app.py:262` (`serve`) · `:188` (`_mount_spa`) · `:26` (`web_dist_dir`)
+`serve()` ouvre puis referme la base **avant** uvicorn — un refus `SchemaTooNew` y rend 1 avec un message net, plutôt qu'un « Application startup failed » + trace sorti du lifespan (un état PRÉVU ne doit pas avoir l'allure d'un bug) — puis démarre uvicorn sur `build_app(settings)` (import uvicorn paresseux). L'autre moitié du chemin est un handler d'exception : les routes ouvrent une connexion PAR REQUÊTE, donc une base devenue trop neuve pendant que le service TOURNE rend **503**, jamais 500. `_mount_spa()` sert le build
 en statique **seulement s'il existe** : assets hashés en cache `immutable`, `index.html` en `no-cache`
 (anti-stale post-déploiement), et un catch-all `GET /{path:path}` qui fallback sur `index.html` (deep-link
 client-side) mais refuse `api/`/`ws/` (→ 404 JSON, jamais index à la place d'une API). `web_dist_dir()`
@@ -56,5 +56,5 @@ explicite (fail-closed, ex. 422 gate / 403 auth). Spawns longs (`claude -p`) pas
 
 ## Zones non détaillées
 - Les corps individuels des 19 routers (forme identique — factory + endpoints + délégation spine) : voir chaque `routes/<x>.py`.
-- `_mount_missing_ui_placeholder` (`app.py:230`) : dist absente → warning + page d'aide fail-loud à `/`, l'API reste valable.
+- `_mount_missing_ui_placeholder` (`app.py:241`) : dist absente → warning + page d'aide fail-loud à `/`, l'API reste valable.
 - Les Pydantic request models — `ProjectCreate`/`ProjectPatch`, `ReviewBody`/`MergeBody`, `BootstrapRequest`, `CredentialLink`, `McpWire`, `InspireRequest`, `FeatureCreate`, `TaskCreate`, … : DTO locaux d'un router, validés par FastAPI → 400/422. Ce sont des **formes**, pas des mécanismes : nommés ici pour que leur silence soit déclaré, pas subi.
