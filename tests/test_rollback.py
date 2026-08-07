@@ -770,3 +770,22 @@ def test_l_aptitude_ne_DESIGNE_JAMAIS_ce_que_le_verbe_REFUSE(apres_maj: Settings
     assert vue["reversible"]["ok"] is False, "aucune cible ne ramène en arrière — et la surface doit le dire"
     assert vue["reversible"]["target"] is None, "elle ne DÉSIGNE surtout pas la prise de sûreté"
     assert vue["reversible"]["reason"] == str(exc.value), "un seul parcours, donc un seul motif"
+
+
+def test_une_unite_ILLISIBLE_reste_un_ETAT_et_ne_LEVE_pas(apres_maj: Settings, tmp_path: Path):
+    """Trouvé en revoyant mon propre diff, puis MESURÉ — pas déduit. `_preflight_service` lit l'unité
+    (`up.read_text`) APRÈS avoir vérifié qu'elle existe : une unité présente mais illisible remonte une
+    `PermissionError`, pas un `UpdateRefused`. Sans rattrapage, `GET /api/update/aptitude` rendait **500**
+    là où il promet 200, et « ne lève jamais » était une promesse plus forte que le code.
+
+    Le rattrapage ne nomme que ce qu'il sait nommer (`OSError`, `UnicodeDecodeError`) : un `except
+    Exception` avalerait les vraies pannes, ce que ce module refuse partout ailleurs."""
+    unite = _unite(apres_maj, tmp_path)
+    unite.chmod(0o000)
+
+    vue = update.aptitude(apres_maj, unit=str(unite), scope="user")
+
+    assert vue["deployable"]["ok"] is False
+    assert "ne se lit pas" in vue["deployable"]["reason"]
+    assert "PermissionError" in vue["deployable"]["reason"], "le motif doit NOMMER ce qui a bloqué"
+    assert vue["reversible"]["ok"] is None, "rien n'a été mesuré — ce n'est toujours pas « non »"

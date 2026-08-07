@@ -396,18 +396,24 @@ def aptitude(settings: Settings, *, unit: str | None = None, scope: str = "user"
 
     `target` ne porte pas de numéro de schéma : il ne veut rien dire pour qui lit cette réponse dans un
     panneau, et le lire coûterait une sonde de plus. *Vers quoi* on reviendrait, c'est un instantané et un
-    binaire."""
+    binaire.
+
+    **`OSError` est rattrapée, et ce n'est pas de la superstition** : `_preflight_service` lit l'unité
+    (`up.read_text`) APRÈS avoir vérifié qu'elle existe, donc une unité présente mais illisible — droits,
+    contenu non-UTF-8 — remonte une `PermissionError` / `UnicodeDecodeError` et non un `UpdateRefused`.
+    Mesuré, pas supposé : sans ce rattrapage, `GET /api/update/aptitude` rendait **500** là où il promet
+    200, et « ne lève jamais » était une promesse plus forte que le code. On ne rattrape **que** ce qu'on
+    sait nommer : un `except Exception` avalerait les vraies pannes, ce que ce module refuse partout
+    ailleurs (`_restore` rend `False` plutôt que d'avaler)."""
     try:
         socle = _preflight_service(settings, unit=unit, scope=scope)
     except UpdateRefused as exc:
-        return {
-            "deployable": {"ok": False, "reason": str(exc)},
-            "reversible": {"ok": None, "target": None,
-                           "reason": "indéterminé tant que le socle de déploiement n'est pas en place — "
-                                     "sans lien stable ni unité qui passe par lui, il n'y a pas de "
-                                     "« binaire actif » depuis lequel mesurer un retour. Ce n'est pas "
-                                     "« non » : c'est une question qui n'a pas encore de sens ici."},
-        }
+        return _sans_socle(str(exc))
+    except (OSError, UnicodeDecodeError) as exc:
+        ou = Path(unit).expanduser() if unit else unit_path(scope)
+        return _sans_socle(f"l'unité {ou} existe mais ne se lit pas ({exc.__class__.__name__}) — on ne "
+                           f"peut donc rien dire de ce que cette instance sait faire. Vérifie ses droits "
+                           f"de lecture, puis relance.")
 
     from forgemaster import restore
     from forgemaster import snapshot as snap_mod
@@ -426,6 +432,20 @@ def aptitude(settings: Settings, *, unit: str | None = None, scope: str = "user"
             "reversible": {"ok": True, "reason": "",
                            "target": {"snapshot": cible["name"], "path": cible["path"],
                                       "venv": str(venv)}}}
+
+
+def _sans_socle(motif: str) -> dict:
+    """La réponse quand le socle de déploiement ne tient pas, quelle qu'en soit la cause.
+
+    `reversible.ok` vaut `None` — **pas** `False` : c'est le socle qui donne le venv courant, donc sans lui
+    rien n'a été mesuré. Une seule forme pour tous les cas, sinon la surface aurait à distinguer des refus
+    qui disent la même chose."""
+    return {"deployable": {"ok": False, "reason": motif},
+            "reversible": {"ok": None, "target": None,
+                           "reason": "indéterminé tant que le socle de déploiement n'est pas en place — "
+                                     "sans lien stable ni unité qui passe par lui, il n'y a pas de "
+                                     "« binaire actif » depuis lequel mesurer un retour. Ce n'est pas "
+                                     "« non » : c'est une question qui n'a pas encore de sens ici."}}
 
 
 def parse_exec_start(unit_text: str) -> tuple[str, str, int]:

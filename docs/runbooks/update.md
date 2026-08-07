@@ -119,7 +119,7 @@ quand les deux divergeaient. La liste partagée inclut le venv d'**origine**, ho
 saut d'une install fraîche était sans retour (cf. `runbooks/snapshot.md#_venvs_candidats`).
 
 ## aptitude() — ce que l'instance sait faire, dit AVANT qu'on le demande
-`src/forgemaster/update.py:377` · appelé par `aptitude_route` (`src/forgemaster/daemon/routes/update.py:106`) et `_cli_aptitude` (`src/forgemaster/update.py:1076`) · **ne lève jamais**
+`src/forgemaster/update.py:377` · appelé par `aptitude_route` (`src/forgemaster/daemon/routes/update.py:106`) et `_cli_aptitude` (`src/forgemaster/update.py:1096`) · **ne lève jamais**
 Rend `{deployable: {ok, reason}, reversible: {ok, reason, target}}`. Trois lectures partagent ce cœur — la route
 (**200 toujours**), `forgemaster update aptitude` (**rc 0 toujours**), et le panneau **au repos** — et aucune n'a le
 droit d'en avoir une variante : même règle que `_preflight_service`, extrait pour que l'aller et le retour ne refusent
@@ -151,19 +151,29 @@ il ne veut rien dire pour qui lit cette réponse dans un panneau, et le lire co�
 *devient* la cible et un instantané est pris avant migration — sinon la MAJ refuse. La réponse serait « oui » toujours,
 et du bruit dans la prévisualisation coûte l'attention qu'on veut pour les refus réels.
 
+**`OSError` est rattrapée, et ce n'est pas de la superstition.** `_preflight_service` lit l'unité (`up.read_text`)
+**après** avoir vérifié qu'elle existe : une unité présente mais illisible — droits, contenu non-UTF-8 — remonte une
+`PermissionError` / `UnicodeDecodeError`, **pas** un `UpdateRefused`. Trouvé en revue du diff puis **mesuré** :
+sans ce rattrapage, `GET /aptitude` rendait **500** là où il promet 200, et « ne lève jamais » était une promesse plus
+forte que le code. On ne rattrape **que** ce qu'on sait nommer — un `except Exception` avalerait les vraies pannes, ce
+que ce module refuse partout ailleurs (`_restore` rend `False` plutôt que d'avaler). Les préflights, eux, gardent leur
+exposition d'origine : ce défaut leur est **antérieur** et le corriger là-bas serait une autre PR.
+
 **Son coût, et pourquoi la surface ne la martèle pas** : `snapshot.venv_schemas` lance un interpréteur python **par
 venv candidat** pour lire son schéma. Le hook web `useUpdateAptitude` n'a donc **aucun** `refetchInterval` — il relit
-sur événement (un run qui atteint son verdict), seul moment où le produit lui-même a pu déplacer la réponse.
+sur événement (un run qui atteint son verdict), seul moment où le produit lui-même a pu déplacer la réponse. Son
+`refetch` est stable (lié dans le constructeur de `QueryObserver`, vérifié dans `query-core`, pas supposé), sans quoi
+l'effet qui le rappelle boucherait.
 
 ## parse_exec_start() — l'unité est la SEULE vérité sur le bind du service
-`src/forgemaster/update.py:431` · appelé par `_preflight_service` · retourne `(binaire, host, port)` · lève `UpdateRefused`
+`src/forgemaster/update.py:451` · appelé par `_preflight_service` · retourne `(binaire, host, port)` · lève `UpdateRefused`
 Lit le dernier `ExecStart=` de l'unité et en tire le binaire, `--host` et `--port`. Déduire le bind de
 `forgemaster.env` ou d'un défaut sonderait une **autre** instance que celle qu'on vient de redémarrer, et conclurait au
 vert sur la mauvaise. Port illisible → refus : sans lui, aucune vérification en vivant, donc aucun retour arrière
 automatique.
 
 ## describe() / describe_rollback() — ce qui va se passer, dit avant de le faire
-`src/forgemaster/update.py:452` · `src/forgemaster/update.py:491` · appelés par `cli_dispatch` · seul contenu de `--dry-run`
+`src/forgemaster/update.py:472` · `src/forgemaster/update.py:511` · appelés par `cli_dispatch` · seul contenu de `--dry-run`
 `describe_rollback` nomme **les deux gestes et leur ordre** — c'est l'unité que le retour rend exécutoire, et la dire
 ici est ce qui permet de refuser en connaissance de cause. Les deux ajoutent une ligne « hors instantané » pour les
 projets qui n'ont pas bloqué : un projet sans remote n'est pas une faute, mais l'utilisateur doit savoir que sa seule
@@ -187,7 +197,7 @@ travail en cours*. Le refus vit dans le **préflight partagé** et non dans la r
 le même service : elle doit en hériter. La route n'apporte que la **connaissance** (`survey_in_flight`), pas la règle.
 
 ## spawn() — le cœur du lancement, sans une ligne de parole
-`src/forgemaster/update.py:510` · appelé par `launch` et par `routes/update._lance` · rend `{run, unit, ok, detail}`
+`src/forgemaster/update.py:530` · appelé par `launch` et par `routes/update._lance` · rend `{run, unit, ok, detail}`
 Crée `<home>/updates/<horodatage>/`, y **copie** `apply_update.py` sous le nom `apply.py`, écrit `run.json`, puis
 lance le tout dans une **unité transitoire** (`_echappement_cgroup`) sous `_system_python()` — jamais le python du
 venv qu'on remplace. Copié et non lancé depuis le paquet : le script doit survivre au venv qu'il remplace.
@@ -221,14 +231,14 @@ façon sur un nom d'unité déjà pris. La collision se **refuse** (`reason="col
 de message distinct côté CLI : dire « systemd n'a pas enregistré » enverrait chercher la panne là où il n'y en a pas).
 
 ## launch() — la vue CLI : lancer, dire, suivre
-`src/forgemaster/update.py:589` · appelé par `cli_dispatch` · retourne le rc de `follow` (ou 0 si `--detach`)
+`src/forgemaster/update.py:609` · appelé par `cli_dispatch` · retourne le rc de `follow` (ou 0 si `--detach`)
 `spawn`, puis imprimer, puis suivre. **Les trois façons de ne pas partir rendent un rc, jamais une exception** :
 lanceur disparu entre le préflight et ici, enregistrement refusé, gestionnaire muet. `launch` est appelé **hors** du
 `try` de `cli_dispatch` — une `UpdateRefused` qui en sortirait deviendrait une trace nue, et son message « rien n'a
 été touché » serait faux puisque le dossier de run existe.
 
 ## _echappement_cgroup() — pourquoi `setsid` ne suffisait pas, et pourquoi pas `KillMode`
-`src/forgemaster/update.py:966` · appelé par `launch` · rend le préfixe `systemd-run` de la commande
+`src/forgemaster/update.py:986` · appelé par `launch` · rend le préfixe `systemd-run` de la commande
 **Le défaut, mesuré sur vrai systemd le 2026-08-06.** `Popen(start_new_session=True)` change la **session**, pas le
 **cgroup**. Lancé par le daemon, l'applicateur restait dans le cgroup de `forgemaster.service` — que le
 `systemctl stop` qu'il émet **lui-même** (`apply_update.py:191`) vide entièrement, `KillMode` valant `control-group`
@@ -257,7 +267,7 @@ démarré » de « il tourne encore », ce que le fire-and-forget d'avant ne per
 `run_state`, donc la surface HTTP.
 
 ## run_state() / list_runs() / run_dir_for() — l'état se relit du DISQUE, jamais d'une mémoire
-`src/forgemaster/update.py:666` · appelés par `routes/update` · lecture pure, aucun effet
+`src/forgemaster/update.py:686` · appelés par `routes/update` · lecture pure, aucun effet
 **La contrainte qui décide de toute la forme** : le processus qui répond au `GET` d'après n'est ni celui qui a reçu le
 `POST`, ni même le même binaire — la bascule est passée entre les deux. Un registre de tâches, un `BackgroundTasks`,
 un dictionnaire sur `app.state` : tous rendraient « inconnu » exactement au moment où l'utilisateur attend son verdict.
@@ -306,7 +316,7 @@ valide peut être un lien symbolique posé là par autre chose). Les deux renden
 « mal formé » d'« absent » renseignerait sur ce qui existe.
 
 ## stage_wheel() / list_wheels() / prune_wheels() — l'aire de dépôt, et sa politique déclarée
-`src/forgemaster/update.py:778` · appelés par `routes/update` et `cli_dispatch` · écriture bornée, purge à l'écriture
+`src/forgemaster/update.py:798` · appelés par `routes/update` et `cli_dispatch` · écriture bornée, purge à l'écriture
 
 **Pourquoi cette aire existe.** `preflight` ne pose que le fichier qu'on lui **désigne** — la CLI a un système de
 fichiers, elle passe un chemin. **HTTP n'en a pas** : un utilisateur distribué a son wheel dans son navigateur, pas
@@ -354,7 +364,7 @@ s'applique », jamais « elle vaut 3 ».
 
 **Asymétrie CLI/HTTP, voulue.** On **dépose** par la route, jamais en CLI : l'aire existe parce que HTTP n'a pas de
 système de fichiers, et `--wheel <chemin>` suffit déjà à qui en a un. Ce que la CLI gagne est une **vue en lecture**,
-`forgemaster update wheels` (`_cli_wheels`, `src/forgemaster/update.py:1103`) — parce qu'une politique de rétention qui
+`forgemaster update wheels` (`_cli_wheels`, `src/forgemaster/update.py:1123`) — parce qu'une politique de rétention qui
 n'existe que dans le code n'est pas une politique déclarée.
 
 ## make_update_router() — la surface HTTP, et pourquoi elle est plus étroite que la CLI
@@ -407,13 +417,13 @@ contre-témoin sur l'origine du dev). Le jour où l'instance écoutera autre cho
 la première à devoir une authentification.
 
 ## follow() — détaché ne veut pas dire aveugle
-`src/forgemaster/update.py:615` · appelé par `launch` · retourne le rc lu dans `result.json`
+`src/forgemaster/update.py:635` · appelé par `launch` · retourne le rc lu dans `result.json`
 Suit `journal.log` en flux jusqu'à ce que `result.json` apparaisse. Un suivi interrompu (délai `FOLLOW_TIMEOUT`,
 `update.py:51`, 15 min) ne conclut **pas** à l'échec : il dit où regarder, et le script continue. La supervision se
 fait par **fichier de verdict**, pas par le tuyau ssh — c'est ce qui la rend valable depuis un banc distant.
 
 ## survey_authority() / survey_in_flight() — dégrader honnêtement plutôt que bloquer sur ce qu'on ignore
-`src/forgemaster/update.py:1001` · appelés par `cli_dispatch` et par `routes/update._plan` · retournent les verdicts, ou `[]`
+`src/forgemaster/update.py:1021` · appelés par `cli_dispatch` et par `routes/update._plan` · retournent les verdicts, ou `[]`
 N'ouvrent la base **que si elle existe déjà** : un préflight qui refuse ne doit pas avoir créé la base de son refus.
 Une base d'un schéma qu'on ne lit pas rend « je ne sais pas » — ce module ne bloque que sur ce qu'il **sait**. Un refus
 qui se déclencherait sur une base illisible interdirait la MAJ des instances qu'il faut justement mettre à jour.
@@ -422,7 +432,7 @@ Remontées hors de l'en-tête « CLI » le 2026-08-06, et renommées en public �
 aussi, et une fonction que deux vues partagent n'est pas un détail d'implémentation de l'une d'elles.
 
 ## cli_dispatch() — `apply` et `rollback` suivent la MÊME séquence
-`src/forgemaster/update.py:1044` · appelé par `cli._h_update` (routé par `_HANDLERS`) · retourne le code de sortie
+`src/forgemaster/update.py:1064` · appelé par `cli._h_update` (routé par `_HANDLERS`) · retourne le code de sortie
 Préflight qui refuse avant tout effet → description → (`--dry-run` : on s'arrête là) → lancement détaché. La symétrie
 est structurelle et pas cosmétique : c'est elle qui garantit qu'on ne découvre pas le chemin du retour le jour où il
 compte.
