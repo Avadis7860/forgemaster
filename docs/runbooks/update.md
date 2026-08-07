@@ -25,8 +25,10 @@ rend en `✗ … refusé(e) — rien n'a été touché` et rc 1. Son pendant cô
 ## preflight() — tout ce qui doit être vérifié avant que la moindre chose bouge
 `src/forgemaster/update.py:105` · appelé par `cli_dispatch` · retourne le plan (chemins + URL de sonde) · lève `UpdateRefused`
 Vérifie le wheel (existe, suffixe `.whl` — aucune résolution, aucun réseau : ce verbe ne pose que le fichier désigné),
-délègue le socle de service à `_preflight_service`, puis refuse sur le travail non commité et sur un dispatch en cours.
-Les **trois** connaissances extérieures — `authority` (verdicts par projet), `in_flight` (jobs `running`), `sessions`
+délègue le socle de service à `_preflight_service`, puis refuse sur le travail non commité, sur un dispatch en cours,
+et sur un **geste de MAJ déjà en vol**.
+Les **quatre** connaissances extérieures — `authority` (verdicts par projet), `in_flight` (jobs `running`),
+`updates_in_flight` (runs de MAJ `running`), `sessions`
 (shells PTY vivants) — sont **calculées par l'appelant** et passées en argument (injection explicite) : ce module ne va
 chercher ni connexion DB ni registre tout seul, et un préflight qui refuse ne doit pas avoir ouvert quoi que ce soit en
 écriture. `sessions` n'est connu que du daemon (le registre vit sur `app.state`) : il ne bloque rien, il se **dit**.
@@ -195,6 +197,45 @@ marque `killed`, et sa task retombe `todo`. Les jetons déjà dépensés sont pe
 Décision B §1 (non-interruption fail-closed) : le consentement porte sur *appliquer la MAJ*, jamais sur *perdre le
 travail en cours*. Le refus vit dans le **préflight partagé** et non dans la route, parce que la CLI arrête exactement
 le même service : elle doit en hériter. La route n'apporte que la **connaissance** (`survey_in_flight`), pas la règle.
+
+## _refuse_busy_update() — le septième refus : deux gestes de MAJ ne peuvent pas être en vol ensemble
+`src/forgemaster/update.py:214` · appelé par `preflight` et `preflight_rollback` · consomme `survey_updates_in_flight`
+(`src/forgemaster/update.py:1098`)
+**Mesuré sur VM 9311 le 2026-08-07**, pas déduit : `POST /rollback` (202) puis `POST /apply` **deux secondes** plus
+tard (202) ont lancé deux applicateurs hors-processus **simultanés**, et écrit deux verdicts de succès qui se
+contredisent (« retour arrière effectué — a1eb7ef sert » / « MAJ posée — 69118b7 sert »). L'un restaurait des données
+pendant que l'autre arrêtait le service, prenait un instantané à froid et basculait le lien. L'instance a survécu **par
+l'ordre d'arrivée**, pas par une garde.
+
+Ce qui existait ne couvrait pas ce cas : `spawn` refuse la collision d'horodatage **à la seconde**
+(`run_dir.mkdir(exist_ok=False)`). Élargir cette fenêtre n'aurait rien réglé — une fenêtre plus large reste une
+fenêtre. Ce qu'il fallait est un refus qui **lit l'état**.
+
+**`running` bloque ; `unknown` ne bloque JAMAIS**, et c'est l'arbitrage de fond. `unknown` est un **aveu** (verdict
+absent, unité non sondée), pas une conclusion : le tenir pour « en vol » ferait qu'un seul run mort sans verdict
+condamnerait le produit **pour toujours**, sans autre sortie qu'un terminal — c'est-à-dire exactement ce que ce cycle
+existe pour supprimer. Une garde qui ne sait pas ne refuse pas.
+
+`survey_updates_in_flight` n'a **qu'un seul tri gratuit** : un `result.json` présent ⇒ le run a conclu. Tout le reste
+se tranche par la **sonde**, et se fier à la présence d'un journal serait un piège — trouvé en review : entre le 202
+rendu par `spawn` et la première ligne de l'applicateur, le dossier est **nu alors que l'unité tourne déjà**, et c'est
+exactement l'instant du double-clic impatient.
+
+Un dossier nu dont l'unité n'a **jamais** démarré (systemd a refusé l'enregistrement) se reconnaît à ce que la sonde
+en dit — `never_started` : il ne bloque pas, et la recherche **remonte derrière lui**, sinon un seul lancement raté,
+jamais purgé, laisserait la garde aveugle pour toujours. Un `interrupted`, lui, **arrête** la remontée : il a vécu, il
+ne tourne plus, rien de plus ancien n'a de raison de tourner. En pratique : **une sonde, deux au plus** — même
+doctrine de coût que `list_runs` (ce relevé est appelé par `GET /plan`, que le panneau ouvre à chaque
+prévisualisation, et un gestionnaire systemd coincé ne doit pas faire attendre une requête HTTP autant de fois qu'il
+y a de runs sans verdict).
+
+Dégradation honnête, même contrat que `survey_authority` : `<home>/updates` absent ou illisible ⇒ `[]`. Ce module ne
+bloque que sur ce qu'il **sait**.
+
+Côté surface, `UpdatePanel` désarme ses deux affordances tant qu'un geste est en vol, sur le **run le plus récent**
+(celui sur lequel `list_runs` a dépensé sa sonde) et sur `running` **strictement** — jamais sur `enVol()`, qui vaut
+aussi `unknown` et figerait le panneau pour toujours. Le 409 du serveur reste la vérité ; le désarmement est la
+courtoisie.
 
 ## spawn() — le cœur du lancement, sans une ligne de parole
 `src/forgemaster/update.py:530` · appelé par `launch` et par `routes/update._lance` · rend `{run, unit, ok, detail}`

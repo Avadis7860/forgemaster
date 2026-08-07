@@ -304,6 +304,54 @@ def test_un_DISPATCH_en_cours_bloque_la_route_en_409(instance):
     assert not (settings.home / update.UPDATES).exists(), "un refus a quand même créé un dossier de run"
 
 
+def _run_parti(settings: Settings, nom: str, *, mode: str = "rollback") -> Path:
+    """Un run tel qu'il existe une fois PARTI : l'intention écrite par `spawn`, et le journal que l'unité
+    ouvre en démarrant. Posé à la main plutôt que par un vrai `POST` — sinon les deux gestes tomberaient
+    dans la MÊME seconde et c'est la collision d'horodatage qui répondrait, pas la garde qu'on teste."""
+    run_dir = settings.home / update.UPDATES / nom
+    run_dir.mkdir(parents=True)
+    (run_dir / update.RUN_META).write_text(json.dumps(
+        {"mode": mode, "unit": f"fm-u-{nom}", "scope": "user", "started_at": "2026-08-07T12:04:38Z"}),
+        encoding="utf-8")
+    (run_dir / update.RUN_JOURNAL).write_text("parti\n", encoding="utf-8")
+    return run_dir
+
+
+def test_un_geste_EN_VOL_bloque_le_second_en_409_sans_creer_de_run(instance, monkeypatch):
+    """**Le défaut mesuré sur VM 9311 le 2026-08-07**, rejoué à la table : `rollback` puis `apply` à deux
+    secondes d'écart rendaient 202 tous les deux — deux applicateurs simultanés, deux verdicts de succès
+    contradictoires. La collision de `spawn` ne couvre que la MÊME seconde ; celle-ci lit l'ÉTAT."""
+    client, settings, wheel = instance
+    _pas_de_vrai_systemd(monkeypatch)
+    _run_parti(settings, "2026-08-07T12-04-38Z")
+    monkeypatch.setattr(update, "systemd_is_active", lambda *_a, **_k: lambda _u, _s: True)
+
+    r = client.post("/api/update/apply", json={"wheel": str(wheel)})
+
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    # Le motif AUTANT que le code : la collision d'horodatage rend elle aussi 409 en citant un nom de run.
+    # Sans cette assertion, le test passerait pour la mauvaise raison le jour où la garde disparaîtrait.
+    assert "EN VOL" in detail and "retour arrière" in detail, f"ce n'est pas le refus attendu : {detail}"
+    assert "2026-08-07T12-04-38Z" in detail, "le refus ne nomme pas le geste en vol"
+    assert [p.name for p in (settings.home / update.UPDATES).iterdir()] == ["2026-08-07T12-04-38Z"], (
+        "un refus a quand même créé un dossier de run")
+
+
+def test_un_run_MORT_sans_verdict_ne_condamne_pas_la_route(instance, monkeypatch):
+    """L'arbitrage de fond, vu du réseau : un run parti et mort sans verdict rend `unknown`, et `unknown` ne
+    bloque JAMAIS. Le tenir pour en vol laisserait une instance sans autre sortie qu'un terminal — ce que ce
+    cycle existe précisément pour supprimer."""
+    client, settings, wheel = instance
+    _pas_de_vrai_systemd(monkeypatch)
+    _run_parti(settings, "2026-08-07T12-04-38Z")
+    monkeypatch.setattr(update, "systemd_is_active", lambda *_a, **_k: lambda _u, _s: False)
+
+    r = client.post("/api/update/apply", json={"wheel": str(wheel)})
+
+    assert r.status_code == 202, "un run mort a condamné l'instance"
+
+
 # --- l'aire de dépôt, vue du réseau ---------------------------------------------------------------------
 
 def test_le_depot_rend_ce_quil_faut_pour_POSER(instance):

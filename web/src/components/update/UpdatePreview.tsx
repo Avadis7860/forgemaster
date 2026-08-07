@@ -9,14 +9,22 @@ import { useUpdatePlan } from '@/lib/queries'
  *  Un **409** n'est pas une panne, c'est une RÉPONSE : l'instance refuse dans son état, et son texte
  *  intégral s'affiche. Dans ce cas le bouton de pose **disparaît** — laisser une action armée sous un refus
  *  serait inviter à forcer une porte que le daemon vient de fermer. */
-export function UpdatePreview({ mode, cible, onLancer, enCours }: {
+export function UpdatePreview({ mode, cible, onLancer, enCours, bloque = null }: {
   mode: 'apply' | 'rollback'
   cible: string                        // le chemin déposé (apply) ou '' (rollback : le daemon choisit)
   onLancer: () => void
   enCours: boolean
+  /** Motif d'un blocage que la PAGE connaît déjà (un geste en vol), donc avant même de demander le plan.
+   *  Le serveur refuserait de toute façon (409) : ceci ne remplace pas sa vérité, ça évite d'armer une
+   *  action qu'on sait morte — et ça le dit tout de suite plutôt qu'après un aller-retour. */
+  bloque?: string | null
 }) {
-  const plan = useUpdatePlan(mode, cible, true)
+  const plan = useUpdatePlan(mode, cible, bloque === null)
   const verbe = mode === 'apply' ? 'Mettre à jour l\'instance' : 'Revenir en arrière'
+
+  if (bloque !== null) {
+    return <Alert tone="warn" title="Un geste est déjà en cours"><p>{bloque}</p></Alert>
+  }
 
   if (plan.isPending) return <LoadingState label="Lecture de ce qui se passerait…" />
 

@@ -104,12 +104,14 @@ class UpdateRefused(Exception):
 
 def preflight(settings: Settings, *, wheel: str, unit: str | None, scope: str,
               authority: list[dict] | None = None, in_flight: list[dict] | None = None,
+              updates_in_flight: list[dict] | None = None,
               sessions: list[str] | None = None) -> dict:
     """Vérifie tout ce qui doit l'être avant que la moindre chose bouge, et rend le plan (chemins + URL de
     sonde). Lève `UpdateRefused` avec ce qu'il faut faire — jamais un « impossible » nu.
 
     `authority` (verdict par projet, `projects.authority.survey`), `in_flight` (jobs `running`,
-    `dispatch.jobs.running`) et `sessions` (shells PTY vivants) sont **calculés par l'appelant** et passés
+    `dispatch.jobs.running`), `updates_in_flight` (runs de MAJ `running`, `survey_updates_in_flight`) et
+    `sessions` (shells PTY vivants) sont **calculés par l'appelant** et passés
     ici : ce module ne va pas chercher une connexion DB ni un registre tout seul (injection explicite), et un
     preflight ne doit rien ouvrir en écriture avant d'avoir le droit de refuser. `sessions` n'est connu que
     du daemon — la CLI est un autre processus et ne le voit pas ; il ne **bloque** donc rien, il se **dit**.
@@ -123,6 +125,7 @@ def preflight(settings: Settings, *, wheel: str, unit: str | None, scope: str,
     socle = _preflight_service(settings, unit=unit, scope=scope)
     _refuse_uncommitted_work(authority or [], geste="cette MAJ")
     _refuse_busy_dispatch(in_flight or [], geste="cette MAJ")
+    _refuse_busy_update(updates_in_flight or [], geste="cette MAJ")
     return {**socle, "wheel": whl, "authority": authority or [], "sessions": sessions or []}
 
 
@@ -208,8 +211,40 @@ def _refuse_busy_dispatch(jobs: list[dict], *, geste: str) -> None:
         f"  → attends la fin, ou `forgemaster abort <projet>` pour les arrêter proprement, puis relance")
 
 
+def _refuse_busy_update(runs: list[dict], *, geste: str) -> None:
+    """Le refus de **concurrence** : un geste de MAJ est déjà en vol, et celui qu'on demande toucherait le
+    même service, le même lien stable et le même venv.
+
+    Le motif est mesuré, pas prudentiel (VM 9311, 2026-08-07) : un `rollback` et un `apply` acceptés à 2 s
+    d'écart ont lancé DEUX applicateurs hors-processus simultanés, et écrit deux verdicts de succès qui se
+    contredisent — l'un restaurant des données pendant que l'autre arrêtait le service, prenait un instantané
+    à froid et basculait le lien. L'instance a survécu par l'ORDRE D'ARRIVÉE, pas par une garde.
+
+    Ce qui existait ne couvrait pas ce cas : `spawn` refuse la collision d'horodatage **à la seconde**
+    (`run_dir.mkdir(exist_ok=False)`), donc rien à 2 s. Une fenêtre plus large resterait une fenêtre : ce
+    qu'il faut est un refus qui LIT L'ÉTAT, et c'est celui-ci.
+
+    Il vit ici, dans le préflight partagé, pour la même raison que les deux autres : la CLI arrête exactement
+    le même service que la route, elle doit hériter du même refus."""
+    if not runs:
+        return
+    # Le mode se DIT en français : c'est un message d'utilisateur, et `rollback` au milieu d'une phrase
+    # française oblige à traduire de tête ce que le produit sait déjà nommer.
+    quoi = {"apply": "MAJ", "rollback": "retour arrière"}
+    details = "\n  ".join(
+        f"{r.get('run', '?')} — {quoi.get(str(r.get('mode')), 'geste')} parti à {r.get('started_at', '?')}"
+        for r in runs)
+    raise UpdateRefused(
+        f"un geste de mise à jour est déjà EN VOL, et {geste} toucherait le même service, le même lien "
+        f"stable et le même venv : les deux applicateurs travailleraient en même temps et écriraient deux "
+        f"verdicts contradictoires.\n"
+        f"  {details}\n"
+        f"  → attends son verdict (il s'écrit tout seul), puis relance")
+
+
 def preflight_rollback(settings: Settings, *, snapshot: str | None, unit: str | None, scope: str,
                        authority: list[dict] | None = None, in_flight: list[dict] | None = None,
+                       updates_in_flight: list[dict] | None = None,
                        sessions: list[str] | None = None) -> dict:
     """Le préflight du retour **volontaire**. Même socle de service que l'aller, même refus d'autorité, plus
     la **résolution de la cible** : quel instantané remettre, et vers quel venv rebasculer.
@@ -223,6 +258,7 @@ def preflight_rollback(settings: Settings, *, snapshot: str | None, unit: str | 
     socle = _preflight_service(settings, unit=unit, scope=scope)
     _refuse_uncommitted_work(authority or [], geste="ce retour arrière")
     _refuse_busy_dispatch(in_flight or [], geste="ce retour arrière")
+    _refuse_busy_update(updates_in_flight or [], geste="ce retour arrière")
 
     snaps = snap_mod.list_snapshots(settings)
     if not snaps:
@@ -1059,6 +1095,50 @@ def survey_in_flight(settings: Settings) -> list[dict]:
         conn.close()
 
 
+def survey_updates_in_flight(settings: Settings,
+                             is_active: Callable[[str, str], bool] | None = None) -> list[dict]:
+    """Les runs de MAJ **en vol**, pour `_refuse_busy_update`. Rend `[run_state]` ou `[]` — jamais plus d'un,
+    parce qu'il n'en faut qu'un pour refuser et que chaque sonde coûte jusqu'à `ACTIVE_TIMEOUT`.
+
+    **Un seul tri gratuit** : un run qui porte un `result.json` a conclu, il ne tourne plus. Tout le reste se
+    tranche par la SONDE, et c'est délibéré — la présence d'un journal ne peut pas servir de discriminant.
+    Entre le 202 rendu par `spawn` et la première ligne que l'applicateur écrit, il existe un instant où le
+    dossier est nu alors que l'unité tourne déjà : un second geste tombé là serait passé. Or c'est
+    exactement l'instant du double-clic impatient, c'est-à-dire le cas réel.
+
+    **Le dossier nu qui n'est PAS un run vivant** — celui d'un lancement que systemd a refusé
+    d'enregistrer — se reconnaît par ce que la sonde en dit : `never_started`. Il ne bloque pas, et on
+    regarde DERRIÈRE lui. Sans ça un seul enregistrement raté, jamais purgé, laisserait la garde aveugle
+    pour toujours ; un `interrupted`, lui, arrête la remontée (il a bien démarré, il ne tourne plus, et rien
+    de plus ancien n'a de raison de tourner). La boucle s'arrête donc au premier run qui a VÉCU — en
+    pratique une sonde, deux au plus.
+
+    **`running` bloque ; `unknown` ne bloque JAMAIS.** C'est la raison d'être de l'état `unknown`
+    (cf. `run_state`) : un run mort sans verdict condamnerait sinon le produit POUR TOUJOURS, et la seule
+    sortie serait un terminal — précisément ce que ce cycle existe pour supprimer. Une garde qui ne sait pas
+    ne refuse pas ; elle laisse passer et le dit au runbook.
+
+    Dégradation honnête, même contrat que `survey_authority` : dossier absent ou illisible ⇒ `[]`. Ce module
+    ne bloque que sur ce qu'il SAIT."""
+    base = runs_dir(settings)
+    try:
+        noms = sorted((p.name for p in base.iterdir() if p.is_dir() and RUN_ID_RE.match(p.name)),
+                      reverse=True)
+    except OSError:
+        return []
+    sonde = is_active or systemd_is_active()
+    for nom in noms:
+        run_dir = base / nom
+        if (run_dir / RUN_RESULT).is_file():
+            continue                     # conclu : il a son verdict, il ne tourne plus
+        etat = run_state(run_dir, is_active=sonde, tail=0)
+        if etat["state"] == "running":
+            return [etat]
+        if etat["state"] != "never_started":
+            return []                    # il a vécu et ne tourne plus : rien derrière lui ne tourne
+    return []
+
+
 # --- CLI ------------------------------------------------------------------------------------------------
 
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
@@ -1076,10 +1156,12 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     try:
         plan = (preflight(settings, wheel=args.wheel, unit=args.unit, scope=scope,
                           authority=survey_authority(settings),
-                          in_flight=survey_in_flight(settings)) if aller else
+                          in_flight=survey_in_flight(settings),
+                          updates_in_flight=survey_updates_in_flight(settings)) if aller else
                 preflight_rollback(settings, snapshot=args.snapshot, unit=args.unit, scope=scope,
                                    authority=survey_authority(settings),
-                                   in_flight=survey_in_flight(settings)))
+                                   in_flight=survey_in_flight(settings),
+                                   updates_in_flight=survey_updates_in_flight(settings)))
     except UpdateRefused as exc:
         print(f"✗ {quoi} refusé(e) — rien n'a été touché.\n  {exc}", file=sys.stderr)
         return 1

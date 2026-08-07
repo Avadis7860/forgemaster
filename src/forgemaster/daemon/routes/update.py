@@ -76,6 +76,10 @@ def make_update_router() -> APIRouter:
         settings = deps.settings
         authority = update.survey_authority(settings)
         in_flight = update.survey_in_flight(settings)
+        # Le refus de CONCURRENCE, depuis le 2026-08-07 : deux gestes mutants acceptés à 2 s d'écart
+        # lançaient deux applicateurs simultanés. La sonde systemd vit dans le relevé, pas ici — la route
+        # ne fait que le calculer et le passer, comme les deux autres.
+        updates_in_flight = update.survey_updates_in_flight(settings)
         sessions = _sessions(request)
         try:
             if mode == "apply":
@@ -83,9 +87,11 @@ def make_update_router() -> APIRouter:
                     raise ValueError("`wheel` est requis pour une MAJ — ce verbe ne pose que le fichier "
                                      "qu'on lui désigne")
                 return update.preflight(settings, wheel=wheel, unit=None, scope=scope,
-                                        authority=authority, in_flight=in_flight, sessions=sessions)
+                                        authority=authority, in_flight=in_flight,
+                                        updates_in_flight=updates_in_flight, sessions=sessions)
             return update.preflight_rollback(settings, snapshot=snapshot, unit=None, scope=scope,
                                              authority=authority, in_flight=in_flight,
+                                             updates_in_flight=updates_in_flight,
                                              sessions=sessions)
         except update.UpdateRefused as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc

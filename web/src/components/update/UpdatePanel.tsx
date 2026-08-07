@@ -59,6 +59,23 @@ export function UpdatePanel() {
   // geste ancien dans l'historique rendrait « en vol » un run terminé depuis longtemps — et un silence du
   // daemon passerait alors pour une bascule.
   const attendLeLance = lance !== null && runId === lance && run.data?.run !== lance
+
+  // CE QUI DÉSARME, et c'est un AUTRE signal que celui qui explique un silence. Deux différences, chacune
+  // pour une panne vécue :
+  //  — le run le plus RÉCENT, jamais celui qu'on REGARDE : ouvrir un vieux geste dans l'historique ne doit
+  //    pas figer les affordances, et un geste en vol qu'on n'a pas ouvert doit quand même les figer ;
+  //  — `running` STRICTEMENT, jamais `enVol` (qui vaut aussi `unknown`) : `unknown` est un AVEU, et un run
+  //    mort sans verdict condamnerait le panneau pour toujours. C'est la symétrie exacte du refus serveur
+  //    (`_refuse_busy_update` : `running` bloque, `unknown` non).
+  // La liste dépense sa seule sonde systemd sur ce run-là — son `running` est donc mesuré, pas supposé.
+  const dernier = runs.data?.runs[0] ?? null
+  const gesteEnVol = dernier?.state === 'running' || attendLeLance
+  const motifEnVol = gesteEnVol
+    ? `Un geste de mise à jour est en vol${dernier && dernier.state === 'running'
+        ? ` (${dernier.mode === 'rollback' ? 'retour arrière' : 'MAJ'} ${dernier.run})` : ''}` +
+      ' — les deux toucheraient le même service et le même lien. L\'instance le refuserait ; ' +
+      'ça rouvrira tout seul quand son verdict sera écrit.'
+    : null
   const lien = liaison({
     muette,
     // En vol tant que le disque n'a pas parlé de CE run-là, puis tant que son état n'est pas tranché.
@@ -177,6 +194,7 @@ export function UpdatePanel() {
             cible={choisi ?? ''}
             onLancer={() => lancer('apply')}
             enCours={poser.isPending}
+            bloque={motifEnVol}
           />
         )}
       </div>
@@ -184,7 +202,12 @@ export function UpdatePanel() {
       <div className="space-y-4 border-t border-border pt-5">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="space-y-1">
-            {socleRefuse ? (
+            {gesteEnVol ? (
+              // Un geste en vol prime sur tout le reste de ce bloc : l'aptitude qu'on afficherait ici
+              // (« vers tel instantané ») a été mesurée AVANT le geste et peut déjà être fausse. Dire ce
+              // qui bloque MAINTENANT vaut mieux que promettre une cible d'hier.
+              <p className="text-sm text-muted">{motifEnVol}</p>
+            ) : socleRefuse ? (
               // `reversible.ok` vaut `null` ici : rien n'a été mesuré. On pointe la cause, on ne la
               // ré-écrit pas — un seul refus, une seule réparation à chercher.
               <p className="text-sm text-muted">
@@ -202,7 +225,7 @@ export function UpdatePanel() {
             )}
             {/* « Dire tôt » vaut dans les deux sens : savoir qu'on PEUT revenir, et VERS QUOI, avant d'en
                 avoir besoin. Sans ça la surface ne parlerait que pour refuser. */}
-            {retour?.ok && retour.target && (
+            {!gesteEnVol && retour?.ok && retour.target && (
               <p className="text-xs text-faint">
                 Vers <span className="font-mono">{retour.target.snapshot}</span>, par le binaire{' '}
                 <span className="font-mono">{retour.target.venv}</span>
@@ -210,8 +233,10 @@ export function UpdatePanel() {
             )}
           </div>
           {/* Désarmé, pas grisé-mais-cliquable : la doctrine de la 3a·3b (un bouton actif sous un refus
-              invite à forcer une porte que le daemon vient de fermer), appliquée AVANT le clic cette fois. */}
-          {!desarme && (
+              invite à forcer une porte que le daemon vient de fermer), appliquée AVANT le clic cette fois.
+              Depuis le 2026-08-07 elle couvre aussi la CONCURRENCE : c'est cette affordance-là, restée
+              armée pendant un retour arrière EN VOL, qui a fait ouvrir le défaut. */}
+          {!desarme && !gesteEnVol && (
             <Button variant="secondary" size="sm" onClick={() => setApercu('rollback')}>
               Voir le retour arrière
             </Button>
@@ -223,6 +248,7 @@ export function UpdatePanel() {
             cible=""
             onLancer={() => lancer('rollback')}
             enCours={revenir.isPending}
+            bloque={motifEnVol}
           />
         )}
       </div>
