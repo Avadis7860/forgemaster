@@ -226,9 +226,7 @@ def preflight_rollback(settings: Settings, *, snapshot: str | None, unit: str | 
 
     snaps = snap_mod.list_snapshots(settings)
     if not snaps:
-        raise UpdateRefused(
-            f"aucun instantané sous {snap_mod.snapshots_dir(settings)} — il n'y a rien vers quoi revenir. "
-            f"Un instantané est pris automatiquement avant chaque `forgemaster update apply`.")
+        raise UpdateRefused(_aucun_instantane(settings))
 
     from forgemaster import restore
 
@@ -245,23 +243,46 @@ def preflight_rollback(settings: Settings, *, snapshot: str | None, unit: str | 
         if venv is None:
             raise UpdateRefused(f"{cible['name']} : {refus}\n{_PISTES}")
     else:
-        # On PARCOURT, on ne prend pas le premier `restaurable` : le plus récent est souvent l'instantané de
-        # sûreté d'un retour arrière déjà fait, qui ramène vers la version qu'on venait de quitter. Chercher
-        # la première cible qui ramène VRAIMENT en arrière évite ce va-et-vient.
-        venv, cible = None, None
-        motifs: list[str] = []
-        for info in snaps:
-            venv, refus = _cible_utilisable(settings, info, actuel=actuel, lu_courant=lu_courant)
-            if venv is not None:
-                cible = info
-                break
-            motifs.append(f"{info['name']} — {refus}")
+        cible, venv, motif = _resolution_cible(settings, snaps=snaps, actuel=actuel,
+                                               lu_courant=lu_courant)
         if venv is None or cible is None:
-            detail = "\n  ".join(motifs[:5])
-            raise UpdateRefused(f"aucun instantané ne ramènerait en arrière :\n  {detail}\n{_PISTES}")
+            raise UpdateRefused(motif)
 
     return {**socle, "snapshot": Path(cible["path"]), "snapshot_name": cible["name"],
             "target_venv": venv, "authority": authority or [], "sessions": sessions or []}
+
+
+def _resolution_cible(settings: Settings, *, snaps: list[dict], actuel: Path,
+                      lu_courant: int | None) -> tuple[dict | None, Path | None, str]:
+    """`(cible, venv, motif)` — la première prise qui ramène **vraiment** en arrière, ou le motif agrégé du
+    refus. Le motif est vide quand une cible est trouvée.
+
+    On PARCOURT, on ne prend pas le premier `restaurable` : le plus récent est souvent l'instantané de
+    sûreté d'un retour arrière déjà fait, qui ramène vers la version qu'on venait de quitter. Chercher la
+    première cible qui ramène VRAIMENT en arrière évite ce va-et-vient.
+
+    Extrait de `preflight_rollback` le 2026-08-07 en écrivant `aptitude` — qui pose exactement la même
+    question sans avoir le droit de lever. Le laisser inline aurait produit deux parcours, donc deux
+    réponses possibles à *« vers quoi reviendrait-on ? »* : c'est le défaut que la 2a‴ a réparé entre
+    `snapshot list` et le verbe, et il n'y a aucune raison de le ré-ouvrir par une troisième marche."""
+    if not snaps:
+        return None, None, _aucun_instantane(settings)
+    motifs: list[str] = []
+    for info in snaps:
+        venv, refus = _cible_utilisable(settings, info, actuel=actuel, lu_courant=lu_courant)
+        if venv is not None:
+            return info, venv, ""
+        motifs.append(f"{info['name']} — {refus}")
+    detail = "\n  ".join(motifs[:5])
+    return None, None, f"aucun instantané ne ramènerait en arrière :\n  {detail}\n{_PISTES}"
+
+
+def _aucun_instantane(settings: Settings) -> str:
+    """Le seul cas où il n'y a même pas de motif à agréger. Une phrase, deux lecteurs (le verbe qui lève,
+    l'aptitude qui rend un état) — la dupliquer les ferait diverger au premier remaniement."""
+    from forgemaster import snapshot as snap_mod
+    return (f"aucun instantané sous {snap_mod.snapshots_dir(settings)} — il n'y a rien vers quoi revenir. "
+            f"Un instantané est pris automatiquement avant chaque `forgemaster update apply`.")
 
 
 _PISTES = ("  → `forgemaster snapshot list` dit pour chacun ce qu'il ramènerait vraiment\n"
@@ -338,6 +359,73 @@ def _venv_pour(settings: Settings, snapshot_dir: Path) -> Path | None:
     if voulu is None:
         return None
     return snap_mod.venv_for_schema(settings, voulu, snapshot_dir=snapshot_dir)
+
+
+# --- l'APTITUDE : ce que l'instance sait faire, dit AVANT qu'on le demande ------------------------------
+#
+# Deux questions distinctes, et les confondre est le piège de cette surface :
+#
+#   APTITUDE (ici)      — STRUCTUREL : le lanceur, la portée, l'unité, le lien stable, l'unité qui passe
+#                         PAR ce lien, et l'existence d'une cible qui ramènerait vraiment en arrière.
+#                         « Cette instance sait-elle revenir ? » Ça ne change que par un ACTE.
+#   DISPONIBILITÉ       — TRANSITOIRE : du travail non commité, un dispatch en vol. « Peut-elle le faire
+#   (les préflights)      MAINTENANT ? » Ça reste dans les préflights, et ça n'entre pas ici : un worker
+#                         qui tourne n'est pas « je ne sais pas revenir », c'est « pas maintenant ».
+#                         L'afficher au repos comme une aptitude serait un mensonge d'une autre espèce —
+#                         et il vieillirait en secondes sur une page qu'on ne relit pas.
+
+def aptitude(settings: Settings, *, unit: str | None = None, scope: str = "user") -> dict:
+    """Ce que cette instance sait faire — **sans jamais lever**. Un refus est un ÉTAT, pas une erreur : le
+    409 reste la réponse de `/plan`, qui prévisualise une ACTION.
+
+    Trois lectures partagent ce cœur (la route en 200 toujours, `forgemaster update aptitude` en rc 0
+    toujours, le panneau au repos) et aucune n'a le droit d'en avoir une variante : c'est la même règle que
+    `_preflight_service`, extrait pour que l'aller et le retour ne se mettent pas à refuser avec deux jeux
+    de messages qui divergent.
+
+    **`reversible.ok` vaut `None` quand le socle refuse, jamais `False`.** `_preflight_service` est ce qui
+    donne le venv courant (`socle["venv"]`) ; sans lui on ne peut pas mesurer vers quoi on reviendrait, et
+    « je n'ai pas pu mesurer » n'est pas « non ». C'est l'idiome que le module tient déjà ailleurs :
+    `impact: null` sur un run sans verdict, l'état `unknown` de `run_state`, `restore.python_schema` qui
+    rend `None`. Répondre `False` affirmerait une mesure non faite — et ferait afficher deux fois le même
+    refus, celui du socle.
+
+    Pas de champ `remedy` : les cinq refus de `_preflight_service` **nomment déjà** la commande qui répare
+    (`forgemaster install-service`, `systemctl daemon-reload`). Un second champ obligerait à les ré-écrire
+    ailleurs, donc à les laisser diverger.
+
+    `target` ne porte pas de numéro de schéma : il ne veut rien dire pour qui lit cette réponse dans un
+    panneau, et le lire coûterait une sonde de plus. *Vers quoi* on reviendrait, c'est un instantané et un
+    binaire."""
+    try:
+        socle = _preflight_service(settings, unit=unit, scope=scope)
+    except UpdateRefused as exc:
+        return {
+            "deployable": {"ok": False, "reason": str(exc)},
+            "reversible": {"ok": None, "target": None,
+                           "reason": "indéterminé tant que le socle de déploiement n'est pas en place — "
+                                     "sans lien stable ni unité qui passe par lui, il n'y a pas de "
+                                     "« binaire actif » depuis lequel mesurer un retour. Ce n'est pas "
+                                     "« non » : c'est une question qui n'a pas encore de sens ici."},
+        }
+
+    from forgemaster import restore
+    from forgemaster import snapshot as snap_mod
+
+    deployable = {"ok": True,
+                  "reason": f"l'unité {socle['unit']} lance le lien stable {socle['link']} : la bascule "
+                            f"bleu/vert a prise sur ce service"}
+    actuel = socle["venv"].resolve()
+    lu_courant = restore.python_schema(socle["venv"] / "bin" / "python")
+    cible, venv, motif = _resolution_cible(settings, snaps=snap_mod.list_snapshots(settings),
+                                           actuel=actuel, lu_courant=lu_courant)
+    if cible is None or venv is None:
+        return {"deployable": deployable,
+                "reversible": {"ok": False, "target": None, "reason": motif}}
+    return {"deployable": deployable,
+            "reversible": {"ok": True, "reason": "",
+                           "target": {"snapshot": cible["name"], "path": cible["path"],
+                                      "venv": str(venv)}}}
 
 
 def parse_exec_start(unit_text: str) -> tuple[str, str, int]:
@@ -961,6 +1049,8 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     if args.action == "wheels":
         return _cli_wheels(settings)
     scope = "system" if getattr(args, "system", False) else "user"
+    if args.action == "aptitude":
+        return _cli_aptitude(settings, unit=args.unit, scope=scope)
     aller = args.action == "apply"
     quoi = "MAJ" if aller else "retour arrière"
     try:
@@ -981,6 +1071,33 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     print()
     return launch(settings, plan, systemctl=args.systemctl, service=args.service, detach=args.detach,
                   mode="apply" if aller else "rollback")
+
+
+def _cli_aptitude(settings: Settings, *, unit: str | None, scope: str) -> int:
+    """`forgemaster update aptitude` — ce que cette instance sait faire, **avant** qu'on lui demande quoi
+    que ce soit. Parité stricte avec `GET /api/update/aptitude`, même cœur, aucune règle en double.
+
+    **Toujours rc 0**, et c'est la parité exacte du 200 de la route : lire un état n'est pas une panne.
+    Même doctrine que `update wheels` (« lire une aire vide n'est pas une panne »). Ce qui échoue avec un
+    rc, c'est un GESTE — `apply`, `rollback` — pas une question."""
+    vue = aptitude(settings, unit=unit, scope=scope)
+    dep, rev = vue["deployable"], vue["reversible"]
+
+    print(f"{'✓' if dep['ok'] else '✗'} déployable — {dep['reason']}")
+    # `?` et non `✗` : le socle refusé rend la réversibilité NON MESURÉE, pas fausse. Afficher une croix
+    # ferait lire un second refus là où il n'y en a qu'un.
+    marque = "?" if rev["ok"] is None else ("✓" if rev["ok"] else "✗")
+    if rev["ok"]:
+        cible = rev["target"]
+        print(f"{marque} réversible — vers {cible['snapshot']}, par le binaire {cible['venv']}")
+    else:
+        print(f"{marque} réversible — {rev['reason']}")
+
+    if dep["ok"] and rev["ok"]:
+        print("\n`forgemaster update rollback` peut encore refuser dans l'instant (travail non commité, "
+              "dispatch en vol) :\n  c'est la DISPONIBILITÉ, pas l'aptitude. Elle se mesure au moment du "
+              "geste, pas ici.")
+    return 0
 
 
 def _cli_wheels(settings: Settings) -> int:

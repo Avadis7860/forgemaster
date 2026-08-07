@@ -590,3 +590,152 @@ def test_revenir_vers_un_wheel_SANS_contrat_dinterface_reste_possible(
     assert rc == 0, verdict
     assert "ne déclare pas de contrat d'interface" in verdict, "la dégradation doit être DITE, pas tue"
     assert details["impact"] == "revenu à l'état de l'instantané (venv + données)"
+
+
+# --- 7. l'APTITUDE — la même question, posée AVANT qu'on demande le geste --------------------------------
+#
+# Elle ne lève jamais : c'est ce qui la rend lisible par une surface au repos. Ces tests gardent donc
+# d'abord CETTE propriété, puis la frontière qui la définit (structurel ≠ transitoire), puis le couplage —
+# une troisième marche qui répondrait autrement que le verbe ré-ouvrirait exactement le défaut de 2a‴.
+
+def _aptitude(settings: Settings, tmp: Path, **over):
+    return update.aptitude(settings, unit=str(_unite(settings, tmp)), scope="user", **over)
+
+
+def test_l_aptitude_ne_LEVE_JAMAIS_sur_les_refus_de_SOCLE(apres_maj: Settings, tmp_path: Path,
+                                                          monkeypatch):
+    """Chacun des refus structurels rend un ÉTAT avec son texte, et aucun ne remonte d'exception. C'est la
+    propriété qui autorise une surface à lire cette réponse **au repos** : si un seul cas levait, le
+    panneau devrait traiter un état normal du produit comme une panne."""
+    unite = _unite(apres_maj, tmp_path)
+
+    # ① l'unité lance un venv EN DUR — LE cas de la fiche : une instance jamais migrée vers le lien stable
+    dur = apres_maj.home / snapshot.VENVS / "2026-08-01T00-00-00Z" / "bin" / "forgemaster"
+    unite.write_text(f"[Service]\nExecStart={dur} serve --host 127.0.0.1 --port 8700\n", encoding="utf-8")
+    vue = update.aptitude(apres_maj, unit=str(unite), scope="user")
+    assert vue["deployable"]["ok"] is False
+    assert "un venv EN DUR" in vue["deployable"]["reason"]
+    assert "install-service" in vue["deployable"]["reason"], "le refus porte DÉJÀ sa réparation"
+
+    # ② aucune unité du tout
+    vue = update.aptitude(apres_maj, unit=str(tmp_path / "absente.service"), scope="user")
+    assert vue["deployable"]["ok"] is False and "aucune unité systemd" in vue["deployable"]["reason"]
+
+    # ③ pas de lien stable
+    (apres_maj.home / "current").unlink()
+    vue = _aptitude(apres_maj, tmp_path)
+    assert vue["deployable"]["ok"] is False and "lien stable" in vue["deployable"]["reason"]
+
+    # ④ le lanceur manque — sans lui l'applicateur mourrait dans le cgroup de son lanceur
+    monkeypatch.setattr(update.shutil, "which", lambda _n: None)
+    vue = _aptitude(apres_maj, tmp_path)
+    assert vue["deployable"]["ok"] is False and update.RUNNER in vue["deployable"]["reason"]
+
+
+def test_un_SOCLE_refuse_rend_la_reversibilite_INDETERMINEE_et_pas_FAUSSE(apres_maj: Settings,
+                                                                         tmp_path: Path):
+    """`None`, jamais `False`. Le venv courant vient du socle ; quand le socle refuse, on n'a mesuré aucun
+    retour — et « je n'ai pas pu mesurer » n'est pas « non ». Le module tient déjà cet idiome ailleurs
+    (`impact: null`, l'état `unknown`, `python_schema` qui rend `None`), et il a été ajouté pour ça.
+
+    Conséquence de surface, qui est le vrai enjeu : la page affiche UN refus, pas deux."""
+    vue = update.aptitude(apres_maj, unit=str(tmp_path / "absente.service"), scope="user")
+
+    assert vue["reversible"]["ok"] is None, "un socle refusé ne rend pas le retour IMPOSSIBLE, il le rend "\
+                                            "non mesurable"
+    assert vue["reversible"]["target"] is None
+    assert "indéterminé" in vue["reversible"]["reason"]
+
+
+def test_le_TRANSITOIRE_ne_change_PAS_l_aptitude_et_son_contre_temoin_le_prouve(apres_maj: Settings,
+                                                                               tmp_path: Path):
+    """LA frontière de cette phase. Un dispatch en vol et du travail non commité refusent le GESTE — ils ne
+    disent rien de ce que l'instance SAIT faire. Les afficher au repos comme une aptitude serait un mensonge
+    d'une autre espèce, et il vieillirait en secondes sur une page qu'on ne relit pas.
+
+    Le contre-témoin est la moitié qui compte : sans lui, ce test passerait aussi si les deux refus avaient
+    simplement cessé d'exister."""
+    jobs = [{"project": "atelier-fictif", "feature": "f", "task": "t", "job_id": 7,
+             "started_at": "2026-08-07T00:00:00Z"}]
+    sale = [{"slug": "atelier-fictif", "state": update.auth.BLOCKING, "detail": "2 fichiers non commités"}]
+
+    vue = _aptitude(apres_maj, tmp_path)
+    assert vue["deployable"]["ok"] is True and vue["reversible"]["ok"] is True
+
+    # contre-témoin : les MÊMES entrées, sur le verbe, refusent bel et bien
+    with pytest.raises(UpdateRefused) as exc:
+        _plan(apres_maj, tmp_path, in_flight=jobs)
+    assert "dispatch en cours" in str(exc.value)
+    with pytest.raises(UpdateRefused) as exc:
+        _plan(apres_maj, tmp_path, authority=sale)
+    assert "NON COMMITÉ" in str(exc.value)
+
+
+def test_les_TROIS_marches_designent_la_MEME_cible(apres_maj: Settings, tmp_path: Path):
+    """L'acquis de 2a‴, re-tenu à l'arrivée d'un troisième lecteur. `snapshot list` (l'état), le verbe (la
+    résolution) et l'aptitude (l'annonce au repos) consultent le même `_cible_utilisable` — sinon la
+    surface promettrait un retour que le verbe ne ferait pas, ce qui est pire que ne rien promettre."""
+    vue = _aptitude(apres_maj, tmp_path)
+    plan = _plan(apres_maj, tmp_path)
+
+    assert vue["reversible"]["ok"] is True
+    assert vue["reversible"]["target"]["venv"] == str(plan["target_venv"])
+    assert vue["reversible"]["target"]["snapshot"] == plan["snapshot_name"]
+    (lu,) = [s for s in snapshot.list_snapshots(apres_maj)
+             if s["name"] == vue["reversible"]["target"]["snapshot"]]
+    assert lu["state"] == "restaurable"
+
+
+def test_apres_une_MAJ_NON_MIGRANTE_l_aptitude_nomme_le_venv_D_AVANT(apres_maj: Settings, tmp_path: Path):
+    """La 5a et la 5b se prouvent l'une l'autre : sans le départage, l'aptitude annoncerait au repos, en
+    permanence et sur toute instance à une MAJ non migrante d'écart, qu'elle ne sait pas revenir. C'est
+    exactement le faux négatif que la coupe 5a/5b existe pour ne pas industrialiser."""
+    snap, ancien, _ = _maj_non_migrante(apres_maj)
+
+    vue = _aptitude(apres_maj, tmp_path)
+
+    assert vue["reversible"]["ok"] is True
+    assert vue["reversible"]["target"]["venv"] == str(ancien)
+    assert vue["reversible"]["target"]["path"] == str(snap)
+
+
+def test_sans_aucun_instantane_l_aptitude_dit_NON_avec_LE_MOTIF_DU_VERBE(apres_maj: Settings,
+                                                                        tmp_path: Path):
+    """Une phrase, deux lecteurs. Le verbe lève ce motif, l'aptitude le rend — les laisser diverger ferait
+    lire deux diagnostics différents sur une seule instance, ce qui est le défaut que `_preflight_service`
+    a été extrait pour empêcher côté socle."""
+    for d in snapshot.snapshots_dir(apres_maj).iterdir():
+        for f in sorted(d.rglob("*"), reverse=True):
+            f.unlink() if f.is_file() else f.rmdir()
+        d.rmdir()
+
+    vue = _aptitude(apres_maj, tmp_path)
+    with pytest.raises(UpdateRefused) as exc:
+        _plan(apres_maj, tmp_path)
+
+    assert vue["deployable"]["ok"] is True, "l'instance sait se DÉPLOYER : c'est le retour qui n'a pas de "\
+                                            "cible"
+    assert vue["reversible"]["ok"] is False
+    assert vue["reversible"]["reason"] == str(exc.value)
+
+
+def test_le_verbe_aptitude_rend_TOUJOURS_0_meme_quand_tout_refuse(apres_maj: Settings, tmp_path: Path,
+                                                                  capsys):
+    """La parité CLI du 200 de la route : lire un état n'est pas une panne. Ce qui sort en rc 1, c'est un
+    GESTE refusé — `apply`, `rollback` — jamais une question."""
+    args = _args_aptitude(unit=str(tmp_path / "absente.service"))
+    assert update.cli_dispatch(apres_maj, args) == 0
+    sortie = capsys.readouterr().out
+    assert "✗ déployable" in sortie
+    assert "? réversible" in sortie, "le socle refusé rend un `?`, pas une croix : rien n'a été mesuré"
+
+    args = _args_aptitude(unit=str(_unite(apres_maj, tmp_path)))
+    assert update.cli_dispatch(apres_maj, args) == 0
+    sortie = capsys.readouterr().out
+    assert "✓ réversible — vers " in sortie and "2026-08-01T00-00-00Z" in sortie
+    assert "DISPONIBILITÉ" in sortie, "la frontière se dit à l'utilisateur, pas seulement au code"
+
+
+def _args_aptitude(*, unit: str):
+    import argparse
+    return argparse.Namespace(action="aptitude", unit=unit, system=False)

@@ -56,6 +56,7 @@ import {
   RoadmapCheckSchema,
   InspireResultSchema,
   UploadResultSchema,
+  UpdateAptitudeSchema,
   UpdatePlanSchema,
   UpdateLaunchSchema,
   UpdateRunSchema,
@@ -531,6 +532,10 @@ export const api = {
   rollbackUpdate: (snapshot?: string) =>
     request('/api/update/rollback', UpdateLaunchSchema,
       { method: 'POST', body: JSON.stringify(snapshot ? { snapshot } : {}) }),
+
+  // Ce que l'instance sait faire, AVANT qu'on le lui demande. **200 même quand tout refuse** — donc
+  // aucun `catch` d'état ici : un refus arrive par le corps, pas par une exception.
+  updateAptitude: () => request('/api/update/aptitude', UpdateAptitudeSchema),
 
   listUpdateRuns: () => request('/api/update/runs', UpdateRunsListSchema),
   getUpdateRun: (run: string) =>
