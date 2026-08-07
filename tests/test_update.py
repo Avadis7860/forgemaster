@@ -1069,6 +1069,132 @@ def test_les_shells_du_terminal_web_sont_DITS_et_ne_bloquent_pas(live: Settings,
     assert "2 shell(s)" in dit and "atelier-fictif" in dit
 
 
+# --- le septième refus : deux gestes de MAJ en vol ensemble (2026-08-07) --------------------------------
+#
+# MESURÉ sur VM 9311, pas déduit : `POST /rollback` (202) puis `POST /apply` DEUX SECONDES plus tard (202)
+# ont lancé deux applicateurs simultanés, qui ont écrit deux verdicts de succès CONTRADICTOIRES. L'instance
+# a survécu par l'ordre d'arrivée. La collision d'horodatage de `spawn` ne couvre que la même seconde.
+
+def _run_demarre(live: Settings, nom: str, *, mode: str = "apply", conclu: bool = False) -> Path:
+    """Un dossier de run tel que `spawn` le laisse : l'intention écrite, et le journal que l'applicateur
+    ouvre en démarrant. `conclu` y pose en plus le verdict."""
+    run_dir = live.home / "updates" / nom
+    run_dir.mkdir(parents=True)
+    jour, heure = nom.rstrip("Z").split("T")
+    (run_dir / "run.json").write_text(json.dumps(
+        {"mode": mode, "unit": f"fm-u-{nom}", "scope": "user",
+         "started_at": f"{jour}T{heure.replace('-', ':')}Z"}), encoding="utf-8")
+    (run_dir / "journal.log").write_text("parti\n", encoding="utf-8")
+    if conclu:
+        (run_dir / "result.json").write_text(json.dumps({"rc": 0, "verdict": "fini"}), encoding="utf-8")
+    return run_dir
+
+
+def test_un_geste_de_MAJ_en_vol_BLOQUE_les_deux_gestes_et_le_NOMME(live: Settings, tmp_path: Path):
+    """Le refus qui manquait. Il vit dans le préflight PARTAGÉ : les deux gestes touchent le même service,
+    le même lien stable et le même venv, donc l'aller doit refuser sous un retour en vol autant que
+    l'inverse."""
+    whl = tmp_path / "c.whl"
+    whl.write_bytes(b"")
+    _unit(tmp_path / "u", str(live.home / "current" / "bin" / "forgemaster"))
+    en_vol = [{"run": "2026-08-07T12-04-38Z", "mode": "rollback", "started_at": "2026-08-07T12:04:38Z"}]
+
+    for geste in ("apply", "rollback"):
+        with pytest.raises(UpdateRefused) as exc:
+            if geste == "apply":
+                update.preflight(live, wheel=str(whl), unit=str(tmp_path / "u"), scope="user",
+                                 updates_in_flight=en_vol)
+            else:
+                update.preflight_rollback(live, snapshot=None, unit=str(tmp_path / "u"), scope="user",
+                                          updates_in_flight=en_vol)
+        assert "2026-08-07T12-04-38Z" in str(exc.value), "le refus ne nomme pas le geste en vol"
+        assert "retour arrière" in str(exc.value), "le refus ne dit pas QUEL geste est en vol"
+        assert "attends son verdict" in str(exc.value), "le refus ne dit pas comment il se lève"
+
+
+def test_sans_geste_en_vol_RIEN_ne_change(live: Settings, tmp_path: Path):
+    """La contre-épreuve, et elle n'est pas décorative : une garde qui s'allume sur ce qui est NORMAL est
+    une garde défaillante. Un run CONCLU n'est pas un geste en vol — et le tri est GRATUIT, aucune sonde."""
+    whl = tmp_path / "c.whl"
+    whl.write_bytes(b"")
+    _unit(tmp_path / "u", str(live.home / "current" / "bin" / "forgemaster"))
+    _run_demarre(live, "2026-08-07T10-00-00Z", conclu=True)
+
+    def jamais(_unit: str, _scope: str) -> bool:
+        raise AssertionError("une sonde a été dépensée sur un run qui porte déjà son verdict")
+
+    assert update.survey_updates_in_flight(live, is_active=jamais) == []
+    update.preflight(live, wheel=str(whl), unit=str(tmp_path / "u"), scope="user",
+                     updates_in_flight=update.survey_updates_in_flight(live, is_active=jamais))
+
+
+def test_un_run_qui_VIENT_de_partir_compte_MEME_SANS_journal(live: Settings):
+    """LE trou que la première version de ce relevé laissait, trouvé en review. Entre le 202 rendu par
+    `spawn` et la première ligne de l'applicateur, le dossier est NU alors que l'unité tourne déjà. Se fier
+    au journal aurait laissé passer un second geste tombé pile là — c'est-à-dire au double-clic impatient,
+    le cas réel. C'est la SONDE qui tranche, jamais la présence d'un fichier."""
+    nu = live.home / "updates" / "2026-08-07T12-04-38Z"
+    nu.mkdir(parents=True)
+    (nu / "run.json").write_text(json.dumps({"mode": "apply", "unit": "fm-u-nu", "scope": "user"}),
+                                 encoding="utf-8")
+
+    en_vol = update.survey_updates_in_flight(live, is_active=lambda _u, _s: True)
+
+    assert [r["run"] for r in en_vol] == ["2026-08-07T12-04-38Z"]
+
+
+def test_un_lancement_JAMAIS_ENREGISTRE_ne_masque_pas_le_run_qui_tourne(live: Settings):
+    """Le symétrique, et il compte autant : un dossier nu dont l'unité n'a JAMAIS démarré (systemd a refusé
+    l'enregistrement) ne doit pas devenir un écran permanent. Il ne bloque pas, et on regarde DERRIÈRE lui —
+    sinon un seul lancement raté, jamais purgé, rendrait la garde aveugle pour toujours."""
+    _run_demarre(live, "2026-08-07T12-04-38Z", mode="rollback")            # celui qui tourne
+    rate = live.home / "updates" / "2026-08-07T12-05-00Z"                  # plus récent, jamais enregistré
+    rate.mkdir(parents=True)
+    (rate / "run.json").write_text(json.dumps({"mode": "apply", "unit": "fm-u-rate", "scope": "user"}),
+                                   encoding="utf-8")
+
+    en_vol = update.survey_updates_in_flight(live, is_active=lambda u, _s: u == "fm-u-2026-08-07T12-04-38Z")
+
+    assert [r["run"] for r in en_vol] == ["2026-08-07T12-04-38Z"], "le dossier nu a masqué le run vivant"
+
+
+def test_le_releve_ne_bloque_que_sur_RUNNING_jamais_sur_un_run_MORT(live: Settings):
+    """L'arbitrage de fond. `running` bloque — c'est mesuré par la sonde. Un run parti et mort sans verdict
+    ne bloque PAS : le tenir pour en vol condamnerait le produit POUR TOUJOURS, et la seule sortie serait un
+    terminal, c'est-à-dire exactement ce que ce cycle existe pour supprimer."""
+    _run_demarre(live, "2026-08-07T12-04-38Z", mode="rollback")
+
+    vivant = update.survey_updates_in_flight(live, is_active=lambda _u, _s: True)
+    assert [(r["run"], r["mode"], r["state"]) for r in vivant] == [
+        ("2026-08-07T12-04-38Z", "rollback", "running")]
+
+    mort = update.survey_updates_in_flight(live, is_active=lambda _u, _s: False)
+    assert mort == [], "un run parti et mort sans verdict ne doit pas condamner l'instance"
+
+
+def test_le_releve_ne_REMONTE_pas_derriere_un_run_qui_a_vecu(live: Settings):
+    """La borne de la remontée, et donc du coût. Un run qui a DÉMARRÉ et ne tourne plus (`interrupted`)
+    arrête la recherche : rien de plus ancien n'a de raison de tourner, et sonder toute l'histoire ferait
+    payer `limit × ACTIVE_TIMEOUT` à un `GET /plan` le jour où le gestionnaire systemd est coincé — le jour
+    où l'on regarde justement cette page. Même doctrine que `list_runs`."""
+    _run_demarre(live, "2026-08-07T09-00-00Z")
+    _run_demarre(live, "2026-08-07T12-04-38Z")
+    sondes: list[str] = []
+
+    def sonde(unit: str, _scope: str) -> bool:
+        sondes.append(unit)
+        return False
+
+    assert update.survey_updates_in_flight(live, is_active=sonde) == []
+    assert sondes == ["fm-u-2026-08-07T12-04-38Z"], "la remontée est allée derrière un run qui a vécu"
+
+
+def test_un_dossier_updates_absent_ne_BLOQUE_pas(tmp_path: Path):
+    """Dégradation honnête, même contrat que `survey_authority` : « je ne sais pas » n'est pas « non »."""
+    vierge = Settings.resolve(home=tmp_path / "vide", projects_root=tmp_path / "p")
+    assert update.survey_updates_in_flight(vierge, is_active=lambda _u, _s: True) == []
+
+
 # --- l'aire de dépôt ------------------------------------------------------------------------------------
 #
 # Elle existe pour une raison sèche : `apply` ne pose que le fichier qu'on lui désigne, et HTTP n'a pas de

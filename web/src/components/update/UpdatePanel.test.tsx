@@ -124,6 +124,56 @@ describe('UpdatePanel — l\'aptitude, DITE AU REPOS', () => {
   })
 })
 
+describe('UpdatePanel — un geste EN VOL désarme les deux affordances', () => {
+  // D'OÙ VIENT CE BLOC : la capture `H-running` de la phase 3a·6 — un retour arrière en vol sur VM 9311, et
+  // le bouton « Voir le retour arrière » TOUJOURS ARMÉ. La mesure a suivi : deux gestes acceptés à 2 s
+  // d'écart, deux applicateurs simultanés, deux verdicts de succès contradictoires.
+  beforeEach(() => {
+    h.runsError = null; h.run = null; h.runError = null; h.contact = Date.now(); h.aptitude = apte()
+  })
+
+  it('retire l\'affordance de retour arrière et DIT pourquoi', () => {
+    h.runs = { runs: [run({ state: 'running', mode: 'apply' })], total: 1, truncated: false,
+               follow_timeout: 900 }
+
+    render(<UpdatePanel />)
+
+    expect(screen.queryByRole('button', { name: /Voir le retour arrière/ })).not.toBeInTheDocument()
+    expect(screen.getByText(/geste de mise à jour est en vol/)).toBeInTheDocument()
+    expect(screen.getByText(/2026-08-07T10-00-00Z/)).toBeInTheDocument()
+    // La cible d'aptitude a été mesurée AVANT le geste : la promettre pendant qu'il bascule serait promettre
+    // un état d'hier. Elle se tait le temps du geste, elle ne ment pas.
+    expect(screen.queryByText('/h/venvs/2026-08-01T00-00-00Z')).not.toBeInTheDocument()
+  })
+
+  it('ne désarme PAS sur un run mort sans verdict', () => {
+    // L'arbitrage, côté surface : `unknown` est un AVEU, pas un geste en vol. Désarmer dessus figerait le
+    // panneau POUR TOUJOURS après un run mort — symétrie exacte du refus serveur, qui ne bloque que sur
+    // `running`. C'est le contre-témoin qui empêche le désarmement de devenir une prison.
+    h.runs = { runs: [run({ state: 'unknown' })], total: 1, truncated: false, follow_timeout: 900 }
+
+    render(<UpdatePanel />)
+
+    expect(screen.getByRole('button', { name: /Voir le retour arrière/ })).toBeInTheDocument()
+    expect(screen.queryByText(/geste de mise à jour est en vol/)).not.toBeInTheDocument()
+  })
+
+  it('désarme sur le run LE PLUS RÉCENT, même si on en regarde un autre', () => {
+    // Le piège que le premier jet aurait posé : le panneau suit le run qu'on OUVRE. Se fier à celui-là
+    // laisserait les affordances armées dès qu'on consulte un vieux geste dans l'historique — c'est-à-dire
+    // exactement pendant qu'on attend le verdict du geste en cours.
+    h.runs = { runs: [run({ run: '2026-08-07T12-04-38Z', state: 'running', mode: 'rollback' }),
+                      run({ run: '2026-08-06T09-00-00Z', state: 'done', rc: 0 })],
+               total: 2, truncated: false, follow_timeout: 900 }
+    h.run = run({ run: '2026-08-06T09-00-00Z', state: 'done', rc: 0, verdict: 'MAJ posée' })
+
+    render(<UpdatePanel />)
+
+    expect(screen.queryByRole('button', { name: /Voir le retour arrière/ })).not.toBeInTheDocument()
+    expect(screen.getByText(/retour arrière 2026-08-07T12-04-38Z/)).toBeInTheDocument()
+  })
+})
+
 describe('UpdatePanel — ce qui est montré quand le backend meurt en plein geste', () => {
   it("appelle ATTENDU le silence qui suit un geste, et n'affiche AUCUN échec", () => {
     // Le cœur du sujet. Le daemon qu'on vient de charger de se remplacer ne répond plus : c'est l'issue
