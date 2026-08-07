@@ -16,6 +16,7 @@ La chaîne réelle (vrai wheel, vrai venv, vrai daemon, vrai systemd-like) est j
 from __future__ import annotations
 
 import ast
+import hashlib
 import io
 import json
 import os
@@ -1032,3 +1033,172 @@ def test_les_shells_du_terminal_web_sont_DITS_et_ne_bloquent_pas(live: Settings,
 
     dit = "\n".join(update.describe(plan))
     assert "2 shell(s)" in dit and "atelier-fictif" in dit
+
+
+# --- l'aire de dépôt ------------------------------------------------------------------------------------
+#
+# Elle existe pour une raison sèche : `apply` ne pose que le fichier qu'on lui désigne, et HTTP n'a pas de
+# système de fichiers. Ce qui se garde ici, c'est que la réception soit BORNÉE avant d'être utile.
+
+def _stamps(settings: Settings) -> list[str]:
+    base = update.wheels_dir(settings)
+    return sorted(p.name for p in base.iterdir()) if base.is_dir() else []
+
+
+def test_un_depot_range_lartefact_et_MESURE_ce_quil_recoit(live: Settings):
+    """La provenance qu'on annonce se vérifie (leçon 3a·2a) : le `sha256` rendu est celui des octets reçus,
+    pas une étiquette. Il est mesuré PENDANT le flux — le relire après coup mesurerait autre chose."""
+    octets = b"PK\x03\x04" + b"z" * 5000
+
+    depot = update.stage_wheel(live, filename="forgemaster-0.1.0-py3-none-any.whl",
+                               chunks=[octets[:100], octets[100:]])
+
+    assert Path(depot["path"]).read_bytes() == octets
+    assert depot["size"] == len(octets)
+    assert depot["sha256"] == hashlib.sha256(octets).hexdigest()
+    assert depot["path"].endswith(f"/{depot['stamp']}/forgemaster-0.1.0-py3-none-any.whl")
+    assert depot["pruned"] == []
+
+
+def test_le_NOM_se_juge_avant_la_taille(live: Settings):
+    """L'ordre des gardes porte du sens. Un artefact hostile de 100 Mo visant `../` doit être refusé POUR
+    SON NOM : le rejeter pour son poids laisserait croire qu'un plus petit passerait, et on ne saurait
+    jamais qu'il visait ailleurs. La preuve que la taille n'a pas eu son mot à dire : aucun octet n'est lu
+    (le générateur n'est jamais tiré)."""
+    tire = []
+
+    def _flux():
+        tire.append(1)
+        yield b"x" * (update.WHEEL_MAX_BYTES + 1)
+
+    with pytest.raises(update.UploadRejected, match="path-traversal") as vu:
+        update.stage_wheel(live, filename="../evil.whl", chunks=_flux())
+
+    assert not isinstance(vu.value, update.UploadTooLarge)
+    assert tire == []
+    assert _stamps(live) == []
+
+
+def test_un_octet_de_controle_dans_le_nom_se_refuse_ICI(live: Settings):
+    """Il passerait les gardes de forme et ferait lever `open()` deux couches plus bas — un `ValueError` de
+    la stdlib, rendu tel quel au réseau. « embedded null byte » n'est pas un message pour un utilisateur ;
+    un refus qui laisse fuiter l'erreur de quelqu'un d'autre n'a pas fait son travail."""
+    with pytest.raises(update.UploadRejected, match="contrôle"):
+        update.stage_wheel(live, filename="a\x00b.whl", chunks=[b"PK"])
+
+    assert _stamps(live) == []
+
+
+def test_un_type_hors_whl_se_refuse_et_ne_range_RIEN(live: Settings):
+    """415, distinct du 400 : « ce n'est pas le bon genre de fichier » n'est pas « ton nom est invalide ».
+    Et la distinction n'est pas cosmétique — ce sont deux corrections différentes pour l'utilisateur."""
+    with pytest.raises(update.UploadTypeRejected, match=r"\.whl"):
+        update.stage_wheel(live, filename="notes.txt", chunks=[b"PK"])
+
+    assert _stamps(live) == []
+
+
+def test_le_cap_sarrete_EN_FLUX_et_nabandonne_aucun_reste(live: Settings, monkeypatch):
+    """Deux propriétés en une mesure. (1) Le cap tranche PENDANT la réception : le générateur n'est pas
+    consommé jusqu'au bout, donc un corps immense ne se matérialise pas pour être rejeté ensuite. (2) Rien
+    de tronqué ne survit : le `.part` ET son dossier disparaissent — un demi-wheel sur le disque serait la
+    pire des traces, parce qu'il ressemble à un wheel."""
+    monkeypatch.setattr(update, "WHEEL_MAX_BYTES", 1000)
+    monkeypatch.setattr(update, "WHEEL_CHUNK", 100)
+    tires = []
+
+    def _flux():
+        for i in range(100):
+            tires.append(i)
+            yield b"x" * 100
+
+    with pytest.raises(update.UploadTooLarge, match="WHEEL_MAX_BYTES"):
+        update.stage_wheel(live, filename="gros.whl", chunks=_flux())
+
+    assert len(tires) == 11                      # 10 morceaux tenaient, le 11ᵉ dépasse : on s'arrête là
+    assert _stamps(live) == []
+
+
+def test_un_depot_vide_se_refuse(live: Settings):
+    """Il n'y a pas de wheel de zéro octet. Le laisser passer donnerait un artefact que `apply` accepterait
+    (le préflight ne juge que l'extension et la présence) pour échouer plus tard, hors de portée du refus."""
+    with pytest.raises(update.UploadRejected, match="vide"):
+        update.stage_wheel(live, filename="rien.whl", chunks=[])
+
+    assert _stamps(live) == []
+
+
+def test_deux_depots_dans_la_MEME_seconde_se_refusent(live: Settings, monkeypatch):
+    """Même contrat que `spawn`, et pour la même raison : l'horodatage est à la seconde et le handler est
+    servi par un fil du pool. Le second refuse au lieu d'écraser — et le premier est intact quand il sort."""
+    premier = update.stage_wheel(live, filename="a.whl", chunks=[b"PK\x03\x04"])
+    monkeypatch.setattr(update, "RUN_STAMP", premier["stamp"])
+
+    with pytest.raises(UpdateRefused, match="horodatage"):
+        update.stage_wheel(live, filename="b.whl", chunks=[b"AUTRE"])
+
+    assert Path(premier["path"]).read_bytes() == b"PK\x03\x04"
+    assert _stamps(live) == [premier["stamp"]]
+
+
+def test_la_retention_garde_les_plus_recents_et_DIT_ce_quelle_purge(live: Settings, monkeypatch):
+    """Une purge muette, c'est un cap silencieux avec un autre nom. Elle s'applique À L'ÉCRITURE : une
+    politique qui dépend d'un minuteur ne tient pas sur une instance qu'on éteint."""
+    poses = []
+    for i in range(update.KEEP_WHEELS + 2):
+        monkeypatch.setattr(update, "RUN_STAMP", f"2026-08-07T10-00-0{i}Z")
+        poses.append(update.stage_wheel(live, filename=f"w{i}.whl", chunks=[b"PK"]))
+
+    # La purge se fait à CHAQUE dépôt : le 4ᵉ a déjà retiré le 1ᵉʳ, le 5ᵉ retire le 2ᵉ. C'est le contrat —
+    # une rétention appliquée à l'écriture ne laisse jamais s'accumuler un lot à purger d'un coup.
+    assert poses[-1]["pruned"] == ["2026-08-07T10-00-01Z"]
+    assert _stamps(live) == [p["stamp"] for p in poses[2:]]
+    assert [w["name"] for w in update.list_wheels(live)["wheels"]] == ["w4.whl", "w3.whl", "w2.whl"]
+
+
+def test_la_retention_EPARGNE_le_wheel_dun_run_SANS_verdict(live: Settings, monkeypatch):
+    """Le couplage que la poche 2a‴ signale pour `<home>/updates`, tenu ici dès le premier jour : une
+    rétention qui ignore ses références casse ce qu'elle croit ranger. Purger le wheel d'un run en vol le
+    ferait échouer en plein `pip install` — et le motif du run serait introuvable après coup."""
+    monkeypatch.setattr(update, "RUN_STAMP", "2026-08-07T09-00-00Z")
+    vieux = update.stage_wheel(live, filename="en-vol.whl", chunks=[b"PK"])
+    run = update.runs_dir(live) / "2026-08-07T09-00-30Z"
+    run.mkdir(parents=True)
+    (run / update.RUN_META).write_text(json.dumps({"mode": "apply", "wheel": vieux["path"]}))
+
+    for i in range(update.KEEP_WHEELS):
+        monkeypatch.setattr(update, "RUN_STAMP", f"2026-08-07T11-00-0{i}Z")
+        dernier = update.stage_wheel(live, filename=f"n{i}.whl", chunks=[b"PK"])
+
+    # Le vieux est le seul hors des `KEEP_WHEELS` plus récents — il DEVRAIT tomber, il est épargné. Et un
+    # dépôt épargné ne décale pas la fenêtre : il s'ajoute à ce qui reste.
+    assert dernier["pruned"] == []
+    assert vieux["stamp"] in _stamps(live)
+    assert [w["in_use"] for w in update.list_wheels(live)["wheels"]] == [False, False, False, True]
+
+    # Le verdict écrit lève l'exception : le run ne le nomme plus « en vol », il tombe au dépôt suivant.
+    (run / update.RUN_RESULT).write_text(json.dumps({"rc": 0, "verdict": "ok"}))
+    monkeypatch.setattr(update, "RUN_STAMP", "2026-08-07T12-00-00Z")
+    assert vieux["stamp"] in update.stage_wheel(live, filename="z.whl", chunks=[b"PK"])["pruned"]
+
+
+def test_la_liste_trie_par_NOM_jamais_par_mtime(live: Settings, monkeypatch):
+    """Le nom EST l'horodatage. Le mtime, lui, est réécrit par une copie, une restauration, un `touch` —
+    invariant du dépôt : la fraîcheur ne se lit jamais dessus."""
+    monkeypatch.setattr(update, "RUN_STAMP", "2026-08-07T08-00-00Z")
+    vieux = update.stage_wheel(live, filename="vieux.whl", chunks=[b"PK"])
+    monkeypatch.setattr(update, "RUN_STAMP", "2026-08-07T09-00-00Z")
+    update.stage_wheel(live, filename="neuf.whl", chunks=[b"PK"])
+    os.utime(vieux["path"], (time.time() + 3600, time.time() + 3600))
+
+    assert [w["name"] for w in update.list_wheels(live)["wheels"]] == ["neuf.whl", "vieux.whl"]
+
+
+def test_un_depot_a_moitie_monte_nest_ni_liste_ni_posable(live: Settings):
+    """L'écriture est atomique (`.part` + `os.replace`). Un `.part` laissé par une coupure de courant n'est
+    ni listé ni nommable — il ne ressemble pas à un wheel pour qui cherche des wheels."""
+    depot = update.wheels_dir(live) / "2026-08-07T07-00-00Z"
+    depot.mkdir(parents=True)
+    (depot / "a-moitie.whl.part").write_bytes(b"PK")
+
+    assert update.list_wheels(live)["wheels"] == []

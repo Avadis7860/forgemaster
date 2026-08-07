@@ -359,6 +359,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_up_rb.add_argument("--unit", help="chemin de l'unité systemd (défaut : celle de la portée)")
     p_up_rb.add_argument("--service", default="forgemaster", help="nom de l'unité à arrêter/relancer")
     p_up_rb.add_argument("--systemctl", default="systemctl", help="binaire systemctl (injectable)")
+    # Vue en LECTURE sur l'aire de dépôt. Pas de `stage` en CLI, et l'asymétrie est voulue : l'aire existe
+    # parce que HTTP n'a pas de système de fichiers ; la CLI en a un, `--wheel <chemin>` lui suffit déjà.
+    p_up_sub.add_parser("wheels", parents=[common],
+                        help="ce que la route a déposé, et ce que la rétention en garde")
 
     # -- doctor -------------------------------------------------------------------------------------
     sub.add_parser("doctor", parents=[common],

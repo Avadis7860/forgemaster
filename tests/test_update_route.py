@@ -9,6 +9,7 @@ prend sur vrai systemd, VM 9311, par l'acte `route` du banc — là où le binai
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -301,3 +302,81 @@ def test_un_DISPATCH_en_cours_bloque_la_route_en_409(instance):
     assert r.status_code == 409
     assert "atelier-fictif/f-fictive/t-fictive" in r.json()["detail"]
     assert not (settings.home / update.UPDATES).exists(), "un refus a quand même créé un dossier de run"
+
+
+# --- l'aire de dépôt, vue du réseau ---------------------------------------------------------------------
+
+def test_le_depot_rend_ce_quil_faut_pour_POSER(instance):
+    """Le contrat de bout en bout de cette phase tient en une ligne : le `path` rendu par le dépôt se
+    repasse **tel quel** au préflight. Le chaînage est donc un test, pas une intention — sans lui, la route
+    de dépôt serait une belle boîte qui ne branche sur rien."""
+    client, settings, _ = instance
+    octets = b"PK\x03\x04" + b"y" * 2048
+
+    r = client.post("/api/update/wheels", files={"file": ("forgemaster-9.9.9.whl", octets)})
+
+    assert r.status_code == 201, r.text
+    corps = r.json()
+    assert corps["size"] == len(octets)
+    assert corps["sha256"] == hashlib.sha256(octets).hexdigest()
+    assert corps["pruned"] == []
+    assert Path(corps["path"]).read_bytes() == octets
+
+    plan = client.get("/api/update/plan", params={"wheel": corps["path"]})
+    assert plan.status_code == 200, plan.text
+    assert corps["path"] in "\n".join(plan.json()["describe"])
+
+
+def test_les_trois_refus_portent_leur_CODE_et_ne_rangent_rien(instance):
+    """400/413/415 sont trois corrections différentes pour l'utilisateur, pas trois façons de dire non. Et
+    dans les trois cas l'aire reste **vide** : un refus qui laisserait une trace serait un demi-dépôt."""
+    client, settings, _ = instance
+
+    traversant = client.post("/api/update/wheels", files={"file": ("../evil.whl", b"PK")})
+    mauvais_type = client.post("/api/update/wheels", files={"file": ("notes.txt", b"PK")})
+
+    assert traversant.status_code == 400 and "path-traversal" in traversant.json()["detail"]
+    assert mauvais_type.status_code == 415 and ".whl" in mauvais_type.json()["detail"]
+    assert update.list_wheels(settings)["wheels"] == []
+
+
+def test_au_dela_de_la_borne_le_reseau_recoit_413(instance, monkeypatch):
+    """La borne est déplacée pour le test, pas contournée : ce qui se mesure est le comportement AU bord,
+    et poster 64 Mo à travers un client de test mesurerait la patience de la suite."""
+    client, settings, _ = instance
+    monkeypatch.setattr(update, "WHEEL_MAX_BYTES", 256)
+    monkeypatch.setattr(update, "WHEEL_CHUNK", 64)
+
+    r = client.post("/api/update/wheels", files={"file": ("gros.whl", b"x" * 4096)})
+
+    assert r.status_code == 413 and "WHEEL_MAX_BYTES" in r.json()["detail"]
+    # L'aire elle-même peut exister (elle a été créée pour recevoir) ; ce qui ne doit pas exister, c'est un
+    # DÉPÔT — ni entier, ni à moitié. C'est la propriété qui compte, pas la présence du dossier racine.
+    assert update.list_wheels(settings)["wheels"] == []
+    assert list((settings.home / update.WHEELS).iterdir()) == []
+
+
+def test_deux_depots_dans_la_meme_seconde_rendent_409(instance, monkeypatch):
+    """Même code que la collision de `spawn`, et le même motif : un conflit TRANSITOIRE, rien n'a été
+    touché. Un 500 enverrait chercher une panne là où il n'y a qu'une seconde partagée."""
+    client, _, _ = instance
+    premier = client.post("/api/update/wheels", files={"file": ("a.whl", b"PK")}).json()
+    monkeypatch.setattr(update, "RUN_STAMP", premier["stamp"])
+
+    r = client.post("/api/update/wheels", files={"file": ("b.whl", b"AUTRE")})
+
+    assert r.status_code == 409 and "horodatage" in r.json()["detail"]
+    assert Path(premier["path"]).read_bytes() == b"PK"
+
+
+def test_la_liste_DIT_sa_politique_de_retention(instance):
+    """`keep` voyage avec la liste. Une rétention qu'il faut lire dans le code n'est pas déclarée — et une
+    aire qui rendrait 3 dépôts sans dire pourquoi se lit « c'est tout ce qui a été déposé »."""
+    client, _, _ = instance
+    client.post("/api/update/wheels", files={"file": ("a.whl", b"PK")})
+
+    vue = client.get("/api/update/wheels").json()
+
+    assert vue["keep"] == update.KEEP_WHEELS
+    assert [w["name"] for w in vue["wheels"]] == ["a.whl"]
+    assert vue["wheels"][0]["in_use"] is False
