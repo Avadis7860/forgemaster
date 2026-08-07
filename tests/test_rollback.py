@@ -739,3 +739,34 @@ def test_le_verbe_aptitude_rend_TOUJOURS_0_meme_quand_tout_refuse(apres_maj: Set
 def _args_aptitude(*, unit: str):
     import argparse
     return argparse.Namespace(action="aptitude", unit=unit, system=False)
+
+
+def test_l_aptitude_ne_DESIGNE_JAMAIS_ce_que_le_verbe_REFUSE(apres_maj: Settings, tmp_path: Path):
+    """Le CONTRE-TÉMOIN du couplage, sur le seul décor où une aptitude naïve divergerait — et le test
+    précédent ne l'attrape pas, parce que chez lui « le premier restaurable » et la bonne réponse tombent
+    d'accord.
+
+    Après un retour, la prise de SÛRETÉ est l'instantané le plus récent **et** `restaurable`. Une aptitude
+    qui prendrait le premier de la liste l'annoncerait au repos comme la cible du prochain retour, pendant
+    que le verbe la refuse — et cette fois le mensonge serait affiché en permanence, sans qu'on ait cliqué.
+    C'est exactement la raison pour laquelle le parcours est extrait au lieu d'être ré-écrit."""
+    _, ancien, neuf = _maj_non_migrante(apres_maj)
+    surete = snapshot.create(apres_maj)
+    (apres_maj.home / "current").unlink()
+    os.symlink(ancien, apres_maj.home / "current")
+    run = apres_maj.home / "updates" / "2026-08-10T00-00-00Z"
+    run.mkdir(parents=True)
+    (run / "result.json").write_text(
+        json.dumps({"rc": 0, "mode": "rollback", "venv_avant": str(neuf),
+                    "instantane_surete": str(surete)}), encoding="utf-8")
+
+    vue = _aptitude(apres_maj, tmp_path)
+    with pytest.raises(UpdateRefused) as exc:
+        _plan(apres_maj, tmp_path)
+
+    # la liste la marque `restaurable` : c'est bien le décor où le naïf se tromperait
+    (lue,) = [s for s in snapshot.list_snapshots(apres_maj) if s["path"] == str(surete)]
+    assert lue["state"] == "restaurable"
+    assert vue["reversible"]["ok"] is False, "aucune cible ne ramène en arrière — et la surface doit le dire"
+    assert vue["reversible"]["target"] is None, "elle ne DÉSIGNE surtout pas la prise de sûreté"
+    assert vue["reversible"]["reason"] == str(exc.value), "un seul parcours, donc un seul motif"
