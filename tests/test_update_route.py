@@ -380,3 +380,52 @@ def test_la_liste_DIT_sa_politique_de_retention(instance):
     assert vue["keep"] == update.KEEP_WHEELS
     assert [w["name"] for w in vue["wheels"]] == ["a.whl"]
     assert vue["wheels"][0]["in_use"] is False
+
+
+# --- l'aptitude, vue du réseau : un refus est un ÉTAT ---------------------------------------------------
+
+def test_l_aptitude_rend_200_MEME_QUAND_TOUT_REFUSE(instance):
+    """La propriété de cette route, et la seule qui compte. Un refus d'aptitude est un ÉTAT : la requête
+    est bien formée, l'instance répond, et sa réponse est « non ». Le 409 reste la réponse de `/plan`, qui
+    prévisualise une ACTION.
+
+    Rendre 409 ici obligerait la surface qui l'affiche AU REPOS à traiter un état normal du produit comme
+    une panne — et elle ne pourrait plus distinguer « je ne sais pas revenir » de « je n'ai pas pu te
+    répondre », ce qui est exactement l'écart que `lib/updateLiaison` existe pour tenir."""
+    client, settings, _wheel = instance
+    # l'unité lance un venv EN DUR : LE cas de la fiche, une instance jamais migrée vers le lien stable
+    unite = Path(os.environ["HOME"]) / ".config/systemd/user/forgemaster.service"
+    unite.write_text(f"[Service]\nExecStart={settings.home}/venvs/dur/bin/forgemaster serve "
+                     f"--host 127.0.0.1 --port 8700\n", encoding="utf-8")
+
+    r = client.get("/api/update/aptitude")
+
+    assert r.status_code == 200, r.text
+    corps = r.json()
+    assert corps["deployable"]["ok"] is False
+    assert "un venv EN DUR" in corps["deployable"]["reason"]
+    assert corps["reversible"]["ok"] is None, "non mesuré n'est pas non — sinon la page affiche DEUX refus"
+
+
+def test_l_aptitude_ne_dit_RIEN_du_transitoire_la_ou_le_plan_refuse(instance):
+    """La frontière, vue des deux surfaces à la fois. Un dispatch en vol fait 409 sur `/plan` — c'est
+    « pas maintenant ». L'aptitude, elle, n'en sait rien et n'a pas à en savoir : elle répond « cette
+    instance sait-elle revenir ? », une question dont la réponse ne vieillit pas en secondes."""
+    from forgemaster.dispatch import jobs
+    from forgemaster.projects import registry
+    from forgemaster.roadmap import model
+
+    client, settings, _wheel = instance
+    conn = store.open_db(settings)
+    registry.create_project(conn, settings, slug="atelier-fictif")
+    model.add_feature(conn, project_slug="atelier-fictif", slug="f-fictive")
+    tache = model.add_task(conn, feature_ref="atelier-fictif/f-fictive", slug="t-fictive")
+    jobs.record_start(conn, task_id=tache["id"], worktree="/tmp/wt", session_id="s-fictive")
+    conn.close()
+
+    plan = client.get("/api/update/plan", params={"mode": "rollback"})
+    r = client.get("/api/update/aptitude")
+
+    assert plan.status_code == 409 and "dispatch en cours" in plan.json()["detail"]
+    assert r.status_code == 200
+    assert "dispatch" not in json.dumps(r.json()), "le transitoire n'a rien à faire dans une aptitude"

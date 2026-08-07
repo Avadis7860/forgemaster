@@ -9,6 +9,30 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### L'instance dit ce qu'elle sait faire, avant qu'on le lui demande
+
+Jusqu'ici, « sais-tu revenir ? » n'avait de réponse **qu'au moment où l'on tentait de revenir** : un 409
+derrière un clic. Une instance qui ne sait pas revenir — parce que son unité systemd lance un venv **en dur**
+au lieu du lien stable, l'état d'une install jamais migrée — ne le disait qu'à qui essayait déjà.
+
+- **`GET /api/update/aptitude`** (nouvelle route, **200 toujours**), **`forgemaster update aptitude`**
+  (nouveau verbe, **rc 0 toujours**), et la même réponse affichée **au repos** dans le panneau *Mise à jour*
+  de `/settings` : le socle refusé s'y annonce en tête, l'affordance de retour est **désarmée**, et quand
+  tout va bien la surface dit **vers quoi** on reviendrait (instantané + binaire). « Dire tôt » vaut dans les
+  deux sens.
+- **Un refus est un état, pas une erreur** — d'où le 200 et le rc 0. Le 409 reste la réponse de `GET /plan`,
+  qui prévisualise une **action**. Rendre 409 ici obligerait chaque lecteur à traiter un état normal du
+  produit comme une panne.
+- **Aptitude ≠ disponibilité**, et les confondre était le piège. L'aptitude est *structurelle* (lanceur,
+  portée, unité, lien stable, existence d'une cible utilisable) et ne change que par un **acte** ; le travail
+  non commité et les dispatches en vol répondent à « peut-elle le faire **maintenant** ? », vieillissent en
+  secondes, et restent dans les préflights.
+- **`reversible` peut valoir `null`**, et ce n'est pas `false` : quand le socle refuse, il n'y a pas de
+  binaire actif depuis lequel mesurer un retour, donc rien n'a été mesuré. Même idiome que `impact: null` sur
+  un run sans verdict. La surface affiche ainsi **un** refus, donc une seule réparation à chercher.
+- Le parcours qui choisit la cible est **extrait et partagé** (`_resolution_cible`) : l'état affiché, le verbe
+  et l'aptitude ne peuvent pas répondre différemment sur la même instance.
+
 ### Le retour arrière sait défaire une MAJ qui n'a pas migré la base
 
 `forgemaster update rollback` refusait **tout** après une mise à jour non migrante — « il correspond au venv

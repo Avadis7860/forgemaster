@@ -363,6 +363,13 @@ def build_parser() -> argparse.ArgumentParser:
     # parce que HTTP n'a pas de système de fichiers ; la CLI en a un, `--wheel <chemin>` lui suffit déjà.
     p_up_sub.add_parser("wheels", parents=[common],
                         help="ce que la route a déposé, et ce que la rétention en garde")
+    # Une QUESTION, pas un geste : toujours rc 0, comme la route rend toujours 200. Les deux drapeaux sont
+    # ceux des gestes, par parité — ce sont des points d'injection (test, opérateur), pas une surface.
+    p_up_ai = p_up_sub.add_parser(
+        "aptitude", parents=[common],
+        help="ce que cette instance sait faire — se déployer, revenir — AVANT qu'on le lui demande")
+    p_up_ai.add_argument("--system", action="store_true", help="unité systemd système (exige root)")
+    p_up_ai.add_argument("--unit", help="chemin de l'unité systemd (défaut : celle de la portée)")
 
     # -- doctor -------------------------------------------------------------------------------------
     sub.add_parser("doctor", parents=[common],

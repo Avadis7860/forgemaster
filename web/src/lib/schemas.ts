@@ -1213,6 +1213,26 @@ export const UpdatePlanSchema = z.object({
 })
 export type UpdatePlan = z.infer<typeof UpdatePlanSchema>
 
+// L'APTITUDE (`GET /aptitude`, **200 toujours**) — ce que l'instance sait faire, avant qu'on le demande.
+//
+// `reversible.ok` est un booléen **nullable**, et le `null` n'est pas une commodité de typage : quand le
+// socle de déploiement refuse, le venv courant n'existe pas, donc rien n'a été MESURÉ. « Je n'ai pas pu
+// mesurer » n'est pas « non » — même idiome que `impact: null` sur un run sans verdict, juste au-dessus.
+// C'est ce qui permet au panneau d'afficher UN refus (celui du socle) au lieu de deux.
+//
+// Ce qui n'est PAS ici, et c'est la frontière de la surface : le travail non commité et les dispatches en
+// vol. Ils répondent à « peut-elle le faire MAINTENANT ? », ça vieillit en secondes, et ça reste dans le
+// 409 de `/plan` — au moment du geste, pas sur une page qu'on ne relit pas.
+export const UpdateAptitudeSchema = z.object({
+  deployable: z.object({ ok: z.boolean(), reason: z.string() }),
+  reversible: z.object({
+    ok: z.boolean().nullable(),
+    reason: z.string(),
+    target: z.object({ snapshot: z.string(), path: z.string(), venv: z.string() }).nullable(),
+  }),
+})
+export type UpdateAptitude = z.infer<typeof UpdateAptitudeSchema>
+
 // Réponse du geste (202) : accepté et parti, PAS fini. `run` est la seule chose dont l'appelant a besoin
 // pour retrouver le verdict de l'autre côté de la bascule.
 export const UpdateLaunchSchema = z.object({

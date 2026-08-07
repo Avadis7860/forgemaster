@@ -102,6 +102,22 @@ def make_update_router() -> APIRouter:
         lines = update.describe(plan) if mode == "apply" else update.describe_rollback(plan)
         return {"mode": mode, "scope": scope, "describe": lines, "plan": _public(plan)}
 
+    @router.get("/aptitude")
+    def aptitude_route(scope: Scope = DEFAULT_SCOPE, deps: Deps = Depends(get_deps)) -> dict:
+        """Ce que cette instance sait faire — se déployer, revenir — **avant** qu'on le lui demande.
+
+        **200 toujours, y compris quand tout refuse.** Un refus d'aptitude est un ÉTAT, pas une erreur :
+        la requête est bien formée, l'instance répond, et sa réponse est « non ». Le 409 reste la réponse
+        de `/plan`, qui prévisualise une ACTION — là, refuser veut dire « ce que tu me demandes de faire
+        n'aura pas lieu ». Rendre 409 ici obligerait chaque lecteur à traiter un état normal comme une
+        panne, et la surface qui l'affiche au repos ne pourrait plus distinguer « je ne sais pas revenir »
+        de « je n'ai pas pu te répondre ».
+
+        Elle ne porte **que** le structurel. Le travail non commité et les dispatches en vol restent dans
+        les préflights : ils répondent à « peut-elle le faire maintenant ? », qui vieillit en secondes et
+        n'a rien à faire sur une page qu'on ne relit pas."""
+        return update.aptitude(deps.settings, unit=None, scope=scope)
+
     @router.post("/apply", status_code=202)
     def apply_route(body: ApplyRequest, request: Request, deps: Deps = Depends(get_deps)) -> dict:
         """Pose un wheel local, en bleu/vert, avec retour arrière automatique s'il ne sert pas. **202** :

@@ -55,6 +55,7 @@ export const qk = {
   alerts: ['alerts'] as const,
   version: ['version'] as const,
   wheels: ['update-wheels'] as const,
+  updateAptitude: ['update-aptitude'] as const,
   updateRuns: ['update-runs'] as const,
   updateRun: (run: string) => ['update-run', run] as const,
   updatePlan: (mode: string, target: string) => ['update-plan', mode, target] as const,
@@ -739,6 +740,24 @@ export function useUpdatePlan(mode: 'apply' | 'rollback', target: string, enable
     retry: false,
     staleTime: 0,
   })
+}
+
+/** Ce que l'instance sait faire, lu AU REPOS — sans clic, sans geste, avant qu'on en ait besoin.
+ *
+ *  **Aucun `refetchInterval`, et ce n'est pas un oubli.** Deux raisons, la seconde étant décisive :
+ *  ① une aptitude est STRUCTURELLE — ce qui la change est un acte (`install-service` + `daemon-reload`,
+ *  une MAJ, un retour), jamais le temps qui passe ; ② elle COÛTE : côté daemon, `snapshot.venv_schemas`
+ *  lance un interpréteur python **par venv candidat** pour lire son schéma. Battre toutes les 5 s ferait
+ *  payer ~3 processus par onglet ouvert sur une page de réglages que personne ne regarde.
+ *
+ *  Elle se rafraîchit donc sur ÉVÉNEMENT : le panneau l'invalide quand un run atteint son verdict, seul
+ *  moment où le produit lui-même a pu déplacer la réponse. Un rechargement de page la relit aussi — comme
+ *  tout le reste ici, elle ne retient rien.
+ *
+ *  `retry: false` : la route rend **200 même quand tout refuse**, donc une erreur ici est un vrai silence
+ *  réseau, pas un refus — et un silence se montre (`lib/updateLiaison`), il ne se martèle pas. */
+export function useUpdateAptitude() {
+  return useQuery({ queryKey: qk.updateAptitude, queryFn: api.updateAptitude, retry: false })
 }
 
 /** La liste des runs — la SEULE source par laquelle le panneau redécouvre un geste en vol au montage.

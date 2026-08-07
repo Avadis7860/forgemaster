@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Alert, Badge, Button, Card, Collapsible, SectionTitle } from '@/components/ui'
 import { ApiError } from '@/lib/api'
 import {
-  useApplyUpdate, useRollbackUpdate, useUpdateRun, useUpdateRuns, useVersion,
+  useApplyUpdate, useRollbackUpdate, useUpdateAptitude, useUpdateRun, useUpdateRuns, useVersion,
 } from '@/lib/queries'
 import { enVol, liaison } from '@/lib/updateLiaison'
 import { RunFollow, RunRow } from './RunFollow'
@@ -22,6 +22,7 @@ import { WheelDepot } from './WheelDepot'
 export function UpdatePanel() {
   const runs = useUpdateRuns()
   const version = useVersion()
+  const aptitude = useUpdateAptitude()
   const poser = useApplyUpdate()
   const revenir = useRollbackUpdate()
 
@@ -79,6 +80,23 @@ export function UpdatePanel() {
     else if (mode === 'rollback') revenir.mutate(undefined, suivre)
   }
 
+  // L'aptitude ne bat pas (cf. `useUpdateAptitude`) : elle se relit quand le PRODUIT a pu la déplacer,
+  // c'est-à-dire quand un geste atteint son verdict. C'est le seul événement du panneau qui change une
+  // réponse structurelle — un instantané de plus, un venv de moins, un lien qui a bougé.
+  const relireAptitude = aptitude.refetch
+  const tranche = run.data && !enVol(run.data.state) ? run.data.run : null
+  useEffect(() => { if (tranche) relireAptitude() }, [tranche, relireAptitude])
+
+  const socle = aptitude.data?.deployable
+  const retour = aptitude.data?.reversible
+  // Trois cas, et le troisième est le piège : `reversible.ok === null` veut dire NON MESURÉ (le socle a
+  // refusé, il n'y a pas de « binaire actif » depuis lequel mesurer un retour). On désarme alors comme
+  // pour un refus — mais on n'ÉCRIT pas de second motif : celui du socle est déjà en tête, et afficher
+  // deux refus pour une seule cause ferait chercher deux réparations.
+  const socleRefuse = socle?.ok === false
+  const retourRefuse = retour?.ok === false
+  const desarme = socleRefuse || retourRefuse
+
   const sha = version.data?.sha
   const bascule = Boolean(shaAvant && sha && shaAvant !== sha)
   const echecLancement = poser.error ?? revenir.error
@@ -110,6 +128,18 @@ export function UpdatePanel() {
           </Badge>
         )}
       </div>
+
+      {/* L'aptitude, DITE AU REPOS — sans clic, avant qu'on en ait besoin. Elle vit ici, à côté de la
+          provenance, parce qu'elle qualifie l'INSTANCE et non un geste : `_preflight_service` est le socle
+          de l'aller ET du retour, donc son refus se dit UNE fois, en tête, et pas une fois par bloc. */}
+      {socleRefuse && (
+        <Alert tone="warn" title="Cette instance ne sait pas se mettre à jour">
+          {/* Le texte intégral du refus, tel que le daemon l'écrit : il NOMME déjà la commande qui répare
+              (`forgemaster install-service`, `systemctl daemon-reload`). Le reformuler ici en ferait une
+              seconde version à maintenir, qui divergerait au premier remaniement du préflight. */}
+          <p className="whitespace-pre-wrap">{socle?.reason}</p>
+        </Alert>
+      )}
 
       {/* Le transitoire est un `status`, JAMAIS un `<Alert role="alert">` : le marteler à chaque battement
           de sonde hurlerait dans un lecteur d'écran. Les états terminaux, eux, restent des Alert. */}
@@ -152,13 +182,40 @@ export function UpdatePanel() {
       </div>
 
       <div className="space-y-4 border-t border-border pt-5">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm text-muted">
-            Revenir en arrière — binaire <em>et</em> données, ou rien.
-          </p>
-          <Button variant="secondary" size="sm" onClick={() => setApercu('rollback')}>
-            Voir le retour arrière
-          </Button>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="space-y-1">
+            {socleRefuse ? (
+              // `reversible.ok` vaut `null` ici : rien n'a été mesuré. On pointe la cause, on ne la
+              // ré-écrit pas — un seul refus, une seule réparation à chercher.
+              <p className="text-sm text-muted">
+                Retour arrière indisponible tant que le socle de déploiement n'est pas en place (voir
+                ci-dessus).
+              </p>
+            ) : retourRefuse ? (
+              // Le motif RÉEL remplace la phrase générique. Dire « binaire et données, ou rien » au-dessus
+              // d'un bouton mort promettrait une capacité que l'instance n'a pas.
+              <p className="whitespace-pre-wrap text-sm text-muted">{retour?.reason}</p>
+            ) : (
+              <p className="text-sm text-muted">
+                Revenir en arrière — binaire <em>et</em> données, ou rien.
+              </p>
+            )}
+            {/* « Dire tôt » vaut dans les deux sens : savoir qu'on PEUT revenir, et VERS QUOI, avant d'en
+                avoir besoin. Sans ça la surface ne parlerait que pour refuser. */}
+            {retour?.ok && retour.target && (
+              <p className="text-xs text-faint">
+                Vers <span className="font-mono">{retour.target.snapshot}</span>, par le binaire{' '}
+                <span className="font-mono">{retour.target.venv}</span>
+              </p>
+            )}
+          </div>
+          {/* Désarmé, pas grisé-mais-cliquable : la doctrine de la 3a·3b (un bouton actif sous un refus
+              invite à forcer une porte que le daemon vient de fermer), appliquée AVANT le clic cette fois. */}
+          {!desarme && (
+            <Button variant="secondary" size="sm" onClick={() => setApercu('rollback')}>
+              Voir le retour arrière
+            </Button>
+          )}
         </div>
         {apercu === 'rollback' && (
           <UpdatePreview
