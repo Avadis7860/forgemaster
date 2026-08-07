@@ -100,7 +100,12 @@ def _report_runner(settings: Settings) -> bool:
     """Le runner Playwright du gate Tier-1.5 (`forgemaster gate verify`) doit être présent, sinon `verify`
     fail-close (jamais de faux-vert, mais toute vérif visuelle échoue). Défaut
     `$FORGEMASTER_HOME/runners/render_check.js` (semé par `provision-ct.sh`) ou override
-    `FORGEMASTER_VERIFY_RUNNER`."""
+    `FORGEMASTER_VERIFY_RUNNER`.
+
+    **Second consommateur depuis le 2026-08-07** : la MAJ s'en sert pour refuser un wheel dont l'interface
+    ne s'affiche pas (`apply_update.check_ui`). Elle, en revanche, **dégrade** au lieu de fail-close — un
+    juge absent ne casse rien, il rend moins sûr — et elle sait se replier sur le runner embarqué dans le
+    wheel. Ce 🔴 reste donc celui du gate ; pour la MAJ c'est un avertissement de critère amoindri."""
     from forgemaster.gate.verify import runner_path
     runner = runner_path(settings)
     if runner.is_file():

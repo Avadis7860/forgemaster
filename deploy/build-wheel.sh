@@ -57,7 +57,7 @@ rm -f dist/forgemaster-*-py3-none-any.whl
 python3 -m pip wheel --no-deps . -w dist/
 whl="$(ls -t dist/forgemaster-*-py3-none-any.whl | head -1)"
 
-echo "→ [4/4] garde-fou : UI + code-map + taskmap + leur attribution DOIVENT être embarqués (sinon écran blanc / Flow mort / daemon mort / artefact composite sans NOTICE)"
+echo "→ [4/4] garde-fou : UI + contrat d'interface + code-map + taskmap + leur attribution DOIVENT être embarqués (sinon écran blanc / détecteur aveugle / Flow mort / daemon mort / artefact composite sans NOTICE)"
 python3 - "$whl" <<'PY'
 import sys, zipfile
 whl = sys.argv[1]
@@ -70,6 +70,10 @@ assert "taskmap/__init__.py" in names and "taskmap/core/__init__.py" in names, \
     f"taskmap absent du wheel {whl} — build/vendor/taskmap non embarqué (daemon mort : No module named taskmap)"
 assert "forgemaster/_verify_runner/render_check.js" in names, \
     f"runner verify absent du wheel {whl} — build/vendor/verify-runner non embarqué (gate verify mort côté cible)"
+assert "forgemaster/_ui_contract.json" in names, \
+    f"contrat d'interface absent du wheel {whl} — sans lui l'applicateur ne peut PAS juger si la page " \
+    f"s'affiche : il dégraderait honnêtement sur /health + SHA, donc ce wheel-ci pourrait poser un écran " \
+    f"blanc sans que rien ne le voie. C'est exactement le faux-vert que le détecteur de panne ferme."
 assert "forgemaster/_build.json" in names, \
     f"provenance de build absente du wheel {whl} — src/forgemaster/_build.json non embarqué (le signal de " \
     f"fraîcheur serait aveugle : c'est le faux-vert qu'on corrige)"

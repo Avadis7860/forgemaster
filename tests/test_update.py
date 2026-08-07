@@ -20,6 +20,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -1245,3 +1246,336 @@ def test_un_depot_a_moitie_monte_nest_ni_liste_ni_posable(live: Settings):
     (depot / "a-moitie.whl.part").write_bytes(b"PK")
 
     assert update.list_wheels(live)["wheels"] == []
+
+
+# --- 8. le détecteur de panne : la page rend-elle ? ----------------------------------------------------
+#
+# La ligne que ces tests gardent est celle qui décide de tout : **absence n'est pas panne**. Pas de Node,
+# pas de runner, pas de contrat → on dégrade et on le DIT. Le juge présent qui ne peut pas juger, ou la page
+# qui ne rend pas → échec. Confondre les deux rendrait soit le produit inutilisable là où il marche
+# aujourd'hui, soit le critère « ça sert » aussi creux qu'avant.
+
+def _faux_venv(racine: Path, *, contrat: dict | None = None) -> Path:
+    """Un venv de test dont le `bin/python` répond ce que répond un vrai : où il a posé le paquet. C'est le
+    SEUL contrat que `package_dir` exige — il ne devine jamais `lib/python3.X/site-packages`."""
+    pkg = racine / "site-packages" / "forgemaster"
+    pkg.mkdir(parents=True)
+    if contrat is not None:
+        (pkg / apply_update.UI_CONTRACT).write_text(json.dumps(contrat), encoding="utf-8")
+    venv = racine / "venv"
+    (venv / "bin").mkdir(parents=True)
+    py = venv / "bin" / "python"
+    py.write_text(f"#!/bin/sh\nprintf '%s\\n' {str(pkg)!r}\n", encoding="utf-8")
+    py.chmod(0o755)
+    return venv
+
+
+def _runner_seme(home: Path, *, avec_dep: bool = True) -> Path:
+    """Ce que `provision-ct.sh seed_verify_runner` laisse : le `.js` ET son `node_modules`. Le second n'est
+    pas un détail de décor — c'est lui qui distingue un runner d'un fichier qui porte son nom."""
+    rdir = home / "runners"
+    rdir.mkdir(parents=True, exist_ok=True)
+    js = rdir / apply_update.RENDER_CHECK
+    js.write_text("// runner de l'hôte\n", encoding="utf-8")
+    if avec_dep:
+        (rdir / "node_modules" / "playwright-core").mkdir(parents=True, exist_ok=True)
+    return js
+
+
+def _faux_node(chemin: Path, *, sortie: str = "", rc: int = 0) -> Path:
+    """Un `node` qui rend ce qu'on lui dit — le vrai n'a rien à faire dans un test unitaire (il faudrait un
+    Chromium). Ce qui est mesuré ici, c'est la LECTURE du verdict, pas le rendu lui-même : celui-là se
+    prouve sur VM, et il n'y a pas de demi-preuve à en prendre au passage."""
+    chemin.write_text(f"#!/bin/sh\ncat <<'FIN'\n{sortie}\nFIN\nexit {rc}\n", encoding="utf-8")
+    chemin.chmod(0o755)
+    return chemin
+
+
+CONTRAT = {"path": "/", "markers": ["forgemaster", "Réglages"], "timeout_ms": 1000}
+
+
+def _contrat_du_produit() -> dict:
+    return json.loads((Path(__file__).resolve().parents[1] / "src" / "forgemaster" / apply_update.UI_CONTRACT)
+                      .read_text(encoding="utf-8"))
+
+
+def test_ui_contract_marqueurs_viennent_du_shell():
+    """LOCKSTEP. Le contrat déclare des libellés que le shell rend ; si quelqu'un renomme « Réglages » sans
+    toucher au contrat, TOUTE MAJ future échouerait en isolation — un faux-rouge fatal, découvert par un
+    utilisateur et pas par nous. Ce test est le seul lien qui rende ce renommage impossible en silence."""
+    racine = Path(__file__).resolve().parents[1]
+    contrat = _contrat_du_produit()
+    shell = "".join((racine / "web" / "src" / f).read_text(encoding="utf-8")
+                    for f in ("App.tsx", "components/ProjectRail.tsx"))
+
+    assert contrat["markers"], "un contrat sans marqueur ne prouve rien"
+    for marqueur in contrat["markers"]:
+        assert marqueur in shell, (f"« {marqueur} » n'est plus rendu par le shell — le contrat d'UI et le "
+                                   f"shell ont divergé, la prochaine MAJ échouerait en isolation")
+
+
+def test_aucun_marqueur_ne_vit_sous_une_TRANSFORMATION_de_casse():
+    """DEUXIÈME PIÈGE MESURÉ SUR VM LE 2026-08-07, même famille que le précédent. `innerText` rend le texte
+    **tel que le navigateur l'affiche**, transformations CSS comprises : « Espace de travail » sous
+    `<Eyebrow>` (qui porte `uppercase`) arrive au runner en « ESPACE DE TRAVAIL », et la comparaison
+    `includes` échoue. Un wheel parfaitement SAIN a été refusé pour ça — un faux-rouge coûte aussi cher
+    qu'un faux-vert, il rendrait toute MAJ impossible.
+
+    La règle qui reste, et qui vaut au-delà de ce test : **un marqueur doit être ce que le navigateur REND**,
+    ni le titre statique, ni le source non transformé. Ce garde-là est une heuristique (il lit la ligne, pas
+    l'arbre de rendu) — il ne remplace pas le passage sur VM, il empêche de refaire CE piège-ci."""
+    racine = Path(__file__).resolve().parents[1]
+    for f in ("App.tsx", "components/ProjectRail.tsx"):
+        for num, ligne in enumerate((racine / "web" / "src" / f).read_text(encoding="utf-8").splitlines(), 1):
+            for marqueur in _contrat_du_produit()["markers"]:
+                if marqueur in ligne and re.search(r"Eyebrow|uppercase|capitalize", ligne):
+                    raise AssertionError(
+                        f"« {marqueur} » est rendu sous une transformation de casse ({f}:{num}) : le "
+                        f"navigateur l'affichera autrement, et le détecteur refuserait un wheel sain")
+
+
+def test_aucun_marqueur_ne_survit_dans_le_TITRE_de_la_page():
+    """TROUVÉ SUR VM LE 2026-08-07, pas en relecture. Le runner cherche ses marqueurs dans
+    `title + body.innerText` (`render_check.js` : `const hay = ...`). Or `<title>forgemaster</title>` est
+    servi par l'`index.html` STATIQUE : il survit intact à une page dont React n'a jamais monté. Le premier
+    contrat déclarait « forgemaster » — mesuré sur un wheel réellement blanc, ce marqueur-là a été trouvé.
+    Il n'a pas fait passer le wheel parce qu'un SECOND marqueur, lui, vivait dans le corps.
+
+    Un marqueur qui survit exactement à la panne qu'il doit attraper n'est pas un marqueur. Ce test interdit
+    d'en réintroduire un — c'est-à-dire de refermer le détecteur sur lui-même."""
+    racine = Path(__file__).resolve().parents[1]
+    titre = re.search(r"<title>(.*?)</title>", (racine / "web" / "index.html").read_text(encoding="utf-8"))
+    assert titre, "web/index.html n'a plus de <title> — re-mesurer ce que le runner voit avant de conclure"
+
+    for marqueur in _contrat_du_produit()["markers"]:
+        assert marqueur not in titre.group(1), (
+            f"« {marqueur} » apparaît dans le <title> ({titre.group(1)!r}), qui est servi même quand la SPA "
+            f"ne monte pas : ce marqueur passerait sur une page blanche")
+
+
+def test_un_wheel_sans_contrat_degrade_au_lieu_de_bloquer(tmp_path: Path):
+    """Le cas d'un wheel antérieur à cette vérification — donc de toute cible de retour arrière un peu
+    ancienne. Refuser dessus interdirait de revenir, ce qui est exactement l'inverse du but."""
+    venv = _faux_venv(tmp_path)
+
+    etat, dit = apply_update.check_ui("http://127.0.0.1:1", venv, tmp_path / "home",
+                                      tmp_path / "shot.png", lambda _m: None)
+
+    assert etat == apply_update.NON_MESURE
+    assert "ne déclare pas de contrat" in dit and "/health + SHA" in dit
+
+
+def test_un_contrat_sans_marqueur_vaut_absence(tmp_path: Path):
+    """Une liste vide passerait toutes les vérifications sans en faire aucune. On ne se déclare pas vert
+    sur rien : c'est traité comme un wheel qui ne déclare pas d'interface."""
+    venv = _faux_venv(tmp_path, contrat={"path": "/", "markers": []})
+
+    etat, _dit = apply_update.check_ui("http://127.0.0.1:1", venv, tmp_path / "home",
+                                       tmp_path / "shot.png", lambda _m: None)
+
+    assert etat == apply_update.NON_MESURE
+
+
+def test_sans_node_on_degrade_et_on_le_dit(tmp_path: Path, monkeypatch):
+    """Le cas d'une install turnkey (« l'utilisateur n'installe que Python »). La MAJ reste possible, le
+    critère baisse — et il l'annonce, ce qui est la différence entre une dégradation et un cap silencieux."""
+    monkeypatch.setattr(apply_update.shutil, "which", lambda _n: None)
+    venv = _faux_venv(tmp_path, contrat=CONTRAT)
+    _runner_seme(tmp_path / "home")
+
+    etat, dit = apply_update.check_ui("http://127.0.0.1:1", venv, tmp_path / "home",
+                                      tmp_path / "shot.png", lambda _m: None)
+
+    assert etat == apply_update.NON_MESURE
+    assert "Node introuvable" in dit
+
+
+def test_sans_aucun_runner_on_degrade_et_on_le_dit(tmp_path: Path, monkeypatch):
+    """Node est là, mais rien à lancer — ni `<home>/runners`, ni runner embarqué (cas d'un checkout
+    éditable, où le hook de packaging n'embarque rien)."""
+    monkeypatch.setattr(apply_update.shutil, "which", lambda _n: "/usr/bin/node")
+    venv = _faux_venv(tmp_path, contrat=CONTRAT)
+
+    etat, dit = apply_update.check_ui("http://127.0.0.1:1", venv, tmp_path / "home",
+                                      tmp_path / "shot.png", lambda _m: None)
+
+    assert etat == apply_update.NON_MESURE
+    assert "aucun runner de rendu" in dit
+
+
+def test_un_runner_SANS_sa_dependance_nest_pas_un_runner(tmp_path: Path, monkeypatch):
+    """MESURÉ le 2026-08-07, pas relu : `deploy/runners/node_modules` est gitignoré, donc le runner
+    EMBARQUÉ dans le wheel arrive sans `playwright-core` — le lancer lève au `require`. Un juge qui plante
+    est un ÉCHEC (`RATE`), donc compter présent un runner amputé aurait transformé une dégradation annoncée
+    en MAJ refusée. On exige la dépendance, et sans elle on dégrade — le côté sûr de cette frontière."""
+    monkeypatch.setattr(apply_update.shutil, "which", lambda _n: "/usr/bin/node")
+    home = tmp_path / "home"
+    js = _runner_seme(home, avec_dep=False)
+
+    _n, runner, provenance = apply_update.verificateur(home)
+    assert runner == "" and "playwright-core" in provenance
+
+    (js.parent / "node_modules" / "playwright-core").mkdir(parents=True)
+    _n, runner, provenance = apply_update.verificateur(home)
+    assert runner == str(js) and provenance == "runner de l'hôte"
+
+
+def test_lenv_prime_sur_tout_comme_pour_le_gate(tmp_path: Path, monkeypatch):
+    """`FORGEMASTER_VERIFY_RUNNER` est l'override du gate Tier-1.5 ; la MAJ obéit au MÊME, pas à un second.
+    Deux variables pour une seule question, c'est une divergence programmée."""
+    monkeypatch.setattr(apply_update.shutil, "which", lambda _n: "/usr/bin/node")
+    ailleurs = tmp_path / "ailleurs.js"
+    ailleurs.write_text("// runner choisi à la main\n")
+    (tmp_path / "node_modules" / "playwright-core").mkdir(parents=True)
+    monkeypatch.setenv(apply_update.ENV_RUNNER, str(ailleurs))
+    _runner_seme(tmp_path / "home")
+
+    _n, runner, provenance = apply_update.verificateur(tmp_path / "home")
+
+    assert runner == str(ailleurs) and apply_update.ENV_RUNNER in provenance
+
+
+def test_les_marqueurs_absents_font_rater(tmp_path: Path, monkeypatch):
+    """La panne qu'on cherchait : le daemon répond, la page ne rend pas. Le message NOMME ce qui manque —
+    « ça a échoué » n'aide personne à savoir si c'est son wheel ou son navigateur."""
+    node = _faux_node(tmp_path / "node", sortie=json.dumps({"ok": False, "missing": ["Réglages"]}))
+    monkeypatch.setattr(apply_update.shutil, "which", lambda _n: str(node))
+    venv = _faux_venv(tmp_path, contrat=CONTRAT)
+    _runner_seme(tmp_path / "home")
+
+    etat, dit = apply_update.check_ui("http://127.0.0.1:1", venv, tmp_path / "home",
+                                      tmp_path / "shot.png", lambda _m: None)
+
+    assert etat == apply_update.RATE
+    assert "Réglages" in dit and "ne s'affiche pas" in dit
+
+
+def test_un_juge_present_qui_ne_rend_aucun_verdict_est_un_echec(tmp_path: Path, monkeypatch):
+    """« Jamais blanchi » : on avait de quoi mesurer et la mesure n'a pas été prise. La traiter comme une
+    absence rendrait le détecteur contournable par n'importe quelle panne du détecteur lui-même."""
+    node = _faux_node(tmp_path / "node", sortie="SyntaxError: Unexpected token", rc=1)
+    monkeypatch.setattr(apply_update.shutil, "which", lambda _n: str(node))
+    venv = _faux_venv(tmp_path, contrat=CONTRAT)
+    _runner_seme(tmp_path / "home")
+
+    etat, dit = apply_update.check_ui("http://127.0.0.1:1", venv, tmp_path / "home",
+                                      tmp_path / "shot.png", lambda _m: None)
+
+    assert etat == apply_update.RATE
+    assert "aucun verdict lisible" in dit and "SyntaxError" in dit
+
+
+def test_un_verdict_precede_de_bruit_reste_lisible(tmp_path: Path, monkeypatch):
+    """Node écrit parfois un avertissement de dépréciation sur stdout AVANT le JSON. Le lire comme « pas de
+    verdict » ferait échouer des MAJ saines — un faux-rouge est aussi coûteux qu'un faux-vert, ici."""
+    node = _faux_node(tmp_path / "node",
+                      sortie="(node:12) Warning: bidule\n" + json.dumps({"ok": True, "missing": []}))
+    monkeypatch.setattr(apply_update.shutil, "which", lambda _n: str(node))
+    venv = _faux_venv(tmp_path, contrat=CONTRAT)
+    _runner_seme(tmp_path / "home")
+
+    etat, dit = apply_update.check_ui("http://127.0.0.1:1", venv, tmp_path / "home",
+                                      tmp_path / "shot.png", lambda _m: None)
+
+    assert etat == apply_update.VU and "interface vérifiée" in dit
+
+
+class _ProcBidon:
+    """Un `Popen` de papier : la sonde en isolation n'a pas besoin d'un vrai daemon pour qu'on mesure ce
+    qu'elle fait du verdict d'interface."""
+
+    def poll(self):
+        return None
+
+    def terminate(self):
+        return None
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def test_une_interface_blanche_meurt_en_isolation(tmp_path: Path, monkeypatch):
+    """LE test de la phase. Le wheel répond, il déclare la bonne identité — et sa page est blanche. Il doit
+    mourir ICI, là où le vivant n'a encore rien subi : un refus à cette étape coûte un venv jetable, le même
+    refus trois étapes plus loin coûte un arrêt de service, un instantané et un retour arrière."""
+    monkeypatch.setattr(apply_update.subprocess, "Popen", lambda *_a, **_k: _ProcBidon())
+    monkeypatch.setattr(apply_update, "_wait_health", lambda *_a, **_k: (True, ""))
+    monkeypatch.setattr(apply_update, "_get_json", lambda *_a, **_k: {"version": "9.9", "sha": "beef"})
+    monkeypatch.setattr(apply_update, "check_ui",
+                        lambda *_a, **_k: (apply_update.RATE, "« Réglages » introuvable"))
+
+    with pytest.raises(apply_update.UpdateFailed) as exc:
+        apply_update.probe_isolated(tmp_path / "venv" / "bin" / "forgemaster", tmp_path / "sandbox",
+                                    lambda _m: None, home=tmp_path / "home", shot=tmp_path / "s.png")
+
+    assert "interface ne s'affiche pas" in str(exc.value)
+
+
+def test_une_interface_blanche_EN_VIVANT_fait_echouer_la_verification(tmp_path: Path, monkeypatch):
+    """L'autre moitié de la DoD. La sonde en isolation juge le BUILD sur un home vierge ; une interface qui
+    ne tombe que sur la vraie base ne se voit qu'ici — et ce `False` est exactement celui que le retour
+    arrière automatique attend depuis le premier jour (aucune ligne neuve pour ça)."""
+    monkeypatch.setattr(apply_update, "_wait_health", lambda *_a, **_k: (True, ""))
+    monkeypatch.setattr(apply_update, "_get_json", lambda *_a, **_k: {"version": "9.9", "sha": "beef"})
+    monkeypatch.setattr(apply_update, "check_ui",
+                        lambda *_a, **_k: (apply_update.RATE, "« Réglages » introuvable"))
+
+    ok, why = apply_update._verify_live("http://127.0.0.1:1", {"version": "9.9", "sha": "beef"}, 1,
+                                        lambda _m: None, venv_dir=tmp_path / "venv",
+                                        home=tmp_path / "home", shot=tmp_path / "s.png")
+
+    assert ok is False and "Réglages" in why
+
+
+def test_le_vivant_non_mesure_sert_quand_meme_et_le_verdict_le_porte(tmp_path: Path, monkeypatch):
+    """La dégradation ne bloque pas — et elle ne se tait pas : la phrase remonte dans le verdict du run,
+    donc jusqu'au panneau. C'est ce qui distingue « posée » de « posée sans qu'on sache si ça s'affiche »."""
+    monkeypatch.setattr(apply_update, "_wait_health", lambda *_a, **_k: (True, ""))
+    monkeypatch.setattr(apply_update, "_get_json", lambda *_a, **_k: {"version": "9.9", "sha": "beef"})
+    monkeypatch.setattr(apply_update, "check_ui",
+                        lambda *_a, **_k: (apply_update.NON_MESURE, "interface non vérifiée : Node absent"))
+
+    ok, why = apply_update._verify_live("http://127.0.0.1:1", {"version": "9.9", "sha": "beef"}, 1,
+                                        lambda _m: None, venv_dir=tmp_path / "venv",
+                                        home=tmp_path / "home", shot=tmp_path / "s.png")
+
+    assert ok is True and "interface non vérifiée" in why
+
+
+def test_lannonce_dit_dabord_ce_quon_ne_pourra_pas_verifier(tmp_path: Path, monkeypatch):
+    """Ce que `describe` met dans le plan — donc ce que le panneau affiche AVANT le geste. Une MAJ qui se
+    posera sans regarder la page doit le dire pendant qu'on peut encore ne pas la lancer."""
+    monkeypatch.setattr(apply_update.shutil, "which", lambda _n: None)
+
+    dit = apply_update.annonce_verification(tmp_path / "home")
+
+    assert "INDISPONIBLE" in dit and "interface blanche passerait" in dit
+
+
+def test_le_plan_annonce_la_verification_dinterface_donc_le_panneau_aussi(live: Settings, tmp_path: Path):
+    """La chaîne entière, en un test : `preflight` calcule ce qu'on saura dire de l'interface, `describe`
+    le rend, et le panneau `/settings` affiche `describe` tel quel dans sa prévisualisation. C'est pour ça
+    que cette phase n'ajoute AUCUNE ligne de front — la surface de la 3a·3b portait déjà la place."""
+    whl = tmp_path / "c.whl"
+    whl.write_bytes(b"")
+    unit = _unit(tmp_path / "forgemaster.service", str(live.home / "current" / "bin" / "forgemaster"))
+
+    plan = update.preflight(live, wheel=str(whl), unit=str(unit), scope="user")
+
+    assert plan["ui_check"].startswith("vérification UI :")
+    assert plan["ui_check"] in update.describe(plan)
+    assert "" not in update.describe(plan), "une ligne vide dans le plan serait du bruit rendu à l'écran"
+
+
+def test_un_contrat_mal_type_degrade_au_lieu_de_faire_PLANTER_lapplicateur(tmp_path: Path):
+    """TROUVÉ EN REVOYANT MON PROPRE DIFF. Ce fichier vient d'un wheel qu'on n'a pas écrit : un
+    `timeout_ms` non numérique y aurait levé un `ValueError` — pas une `UpdateFailed`, donc rien ne le
+    rattrape — et l'applicateur serait mort AVANT d'écrire son `result.json`. Un run sans verdict, donc
+    `interrupted`, pour une virgule dans un JSON. Tout ce module tient sur l'inverse : ce qu'on ne sait pas
+    lire se dégrade sur un défaut."""
+    venv = _faux_venv(tmp_path, contrat={"path": {"pas": "une chaîne"}, "markers": ["Réglages"],
+                                         "timeout_ms": "vingt secondes"})
+
+    contrat = apply_update.ui_contract(apply_update.package_dir(venv))
+
+    assert contrat == {"path": "/", "markers": ["Réglages"], "timeout_ms": 20_000}

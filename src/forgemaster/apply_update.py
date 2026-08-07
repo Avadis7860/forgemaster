@@ -24,9 +24,11 @@ Quatre choix portent tout le reste :
   en arrière coûte alors le même geste, dans l'autre sens — donc le retour arrière est aussi simple que
   l'aller, ce qui est la seule façon qu'il soit fiable.
 
-Ce que la sonde en isolation prouve : *le wheel démarre et sert*. Ce qu'elle ne prouve **pas** : que ta
-configuration et ta base tiennent encore — son `FORGEMASTER_HOME` est vierge. C'est la vérification EN VIVANT
-(étape 6) qui couvre ça, et son échec est précisément ce qui déclenche le retour arrière.
+Ce que la sonde en isolation prouve : *le wheel démarre, sert **et s'affiche*** — depuis le 2026-08-07 elle
+charge la page dans un vrai navigateur et exige que le wheel y rende les marqueurs qu'il déclare lui-même,
+parce que `/health` 200 + le bon SHA ne disent rien d'une interface blanche. Ce qu'elle ne prouve **pas** :
+que ta configuration et ta base tiennent encore — son `FORGEMASTER_HOME` est vierge. C'est la vérification EN
+VIVANT (étape 6) qui couvre ça, et son échec est précisément ce qui déclenche le retour arrière.
 
 Usage (le verbe `forgemaster update apply` le lance ; ceci est aussi le chemin manuel) :
 
@@ -63,6 +65,13 @@ PROBE_TIMEOUT = 60.0    # démarrage d'un daemon FastAPI, venv froid inclus
 RESTORE = "restore.py"
 FORCE_FLAG = "--allow-unverified-binary"
 
+# Le détecteur de panne (cf. la section « la page rend-elle ? »).
+UI_CONTRACT = "_ui_contract.json"           # ce que le WHEEL déclare de sa propre interface
+RENDER_CHECK = "render_check.js"            # le runner Playwright, même nom que celui du gate Tier-1.5
+ENV_RUNNER = "FORGEMASTER_VERIFY_RUNNER"    # UN seul override pour le gate et pour la MAJ
+RENDER_TIMEOUT = 120.0                      # lancer Chromium + charger la SPA ; large, ce n'est pas un banc
+VU, NON_MESURE, RATE = "vu", "non-mesuré", "raté"
+
 
 class UpdateFailed(Exception):
     """Échec ARRÊTÉ avant la bascule : l'instance vivante n'a rien subi."""
@@ -85,11 +94,17 @@ def build_blue(python: str, venv_dir: Path, wheel: Path, log) -> Path:
     return forgemaster
 
 
-def probe_isolated(forgemaster: str | Path, sandbox: Path, log, *, step: str = "3/6") -> dict:
+def probe_isolated(forgemaster: str | Path, sandbox: Path, log, *, step: str = "3/6",
+                   home: Path, shot: Path) -> dict:
     """Fait servir la nouvelle version sur un port et un `FORGEMASTER_HOME` JETABLES, et retourne l'identité
     de
     build qu'elle déclare (`/api/version`). C'est cette identité qui deviendra l'attendu du vivant : aucun
-    manifeste servi, aucune signature, aucun réseau — le wheel est sa propre référence."""
+    manifeste servi, aucune signature, aucun réseau — le wheel est sa propre référence.
+
+    **Et on regarde la page.** C'est ici que le wheel à interface blanche doit mourir : le `FORGEMASTER_HOME`
+    est vierge, donc ce qui est jugé est le **build** et rien d'autre — et surtout, le vivant n'a encore rien
+    subi. Un refus à cette étape coûte un venv jetable ; le même refus trois étapes plus loin coûte un arrêt
+    de service, un instantané et un retour arrière."""
     port = _free_port()
     env = {**os.environ,
            "FORGEMASTER_HOME": str(sandbox / "home"),
@@ -107,6 +122,9 @@ def probe_isolated(forgemaster: str | Path, sandbox: Path, log, *, step: str = "
             tail = "\n      ".join((sandbox / "serve.log").read_text(errors="replace").splitlines()[-15:])
             raise UpdateFailed(f"la nouvelle version ne sert pas en isolation — {why}.\n      {tail}")
         identity = _identity(_get_json(base, "/api/version"))
+        etat, dit = check_ui(base, Path(forgemaster).parent.parent, home, shot, log)
+        if etat == RATE:
+            raise UpdateFailed(f"la nouvelle version répond mais son interface ne s'affiche pas — {dit}")
     finally:
         proc.terminate()
         try:
@@ -115,6 +133,7 @@ def probe_isolated(forgemaster: str | Path, sandbox: Path, log, *, step: str = "
             proc.kill()
         out.close()
     log(f"      ✓ elle sert — forgemaster {identity['version']} ({identity['sha'] or 'build non tamponné'})")
+    log(f"      {'✓' if etat == VU else '⚠'} {dit}")
     return identity
 
 
@@ -166,6 +185,175 @@ def matches(expected: dict, live: dict) -> tuple[bool, str]:
     return True, f"forgemaster {live['version']} ({live['sha'][:12]}) sert"
 
 
+# --- le détecteur de panne : la page rend-elle ? -------------------------------------------------------
+#
+# `/health` 200 + la bonne identité de build ne disent RIEN de l'interface. Un wheel dont la SPA est cassée
+# (`_web_dist` vide, bundle tronqué, erreur JS avant le mount) répond 200, déclare le bon SHA et **passe** :
+# l'utilisateur reçoit une page blanche et une MAJ déclarée réussie. C'est le faux-vert que le gate de merge
+# a tranché il y a longtemps (`docs/specs/feature-verified-gate.md`) et dont le cycle de MAJ n'avait jamais
+# hérité.
+#
+# Trois règles portent tout ce qui suit :
+#
+# - **Le contrat d'interface voyage avec le WHEEL**, jamais en dur ici. `update.spawn` copie
+#   l'`apply_update.py` de la version INSTALLÉE : c'est donc le VIEUX script qui juge le NOUVEAU wheel.
+#   Épingler un libellé ici ferait échouer toute MAJ qui le renomme demain.
+# - **Le juge vient de l'HÔTE**, jamais du wheel qu'il juge (`<home>/runners`, semé par `provision-ct.sh` ;
+#   même cascade et même override que le gate Tier-1.5). Le runner embarqué dans le wheel a été envisagé en
+#   repli puis écarté sur MESURE — cf. `verificateur`.
+# - **Absence n'est pas panne.** Pas de Node, pas de runner, pas de contrat → on retombe sur `/health` + SHA
+#   et on l'ANNONCE (au plan avant le geste, au verdict après). Les six refus de ce module sont réservés à ce
+#   qui CASSERAIT ; un juge absent ne casse rien, il rend moins sûr — et ce dépôt DÉCLARE ce qu'il n'a pas pu
+#   observer (`comparable=false`, `run_state: unknown`, `impact: null`) au lieu de bloquer dessus. En
+#   revanche un juge PRÉSENT qui plante est un ÉCHEC : on avait la mesure, elle n'a pas été prise, on ne
+#   conclut pas au vert.
+
+def package_dir(venv_dir: Path) -> Path | None:
+    """Où ce venv a posé le paquet `forgemaster` — **demandé à son propre python**, jamais deviné. Composer
+    `lib/python3.X/site-packages` à la main marcherait aujourd'hui et casserait au prochain interpréteur ;
+    c'est déjà le geste de `provision-ct.sh` pour tirer le runner du wheel installé."""
+    try:
+        proc = subprocess.run(  # noqa: S603 (argv construit ici, pas de shell)
+            [str(venv_dir / "bin" / "python"), "-c",
+             "import forgemaster,pathlib;print(pathlib.Path(forgemaster.__file__).parent)"],
+            capture_output=True, text=True, check=False, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    sortie = proc.stdout.strip()
+    return Path(sortie) if proc.returncode == 0 and sortie else None
+
+
+def ui_contract(pkg: Path) -> dict | None:
+    """Ce que ce wheel déclare de sa propre interface, ou `None` s'il n'en déclare rien — cas **normal**
+    d'un wheel antérieur à cette vérification, donc de toute cible de retour arrière un peu ancienne.
+    Un contrat sans marqueur exploitable vaut absence : on ne se déclare pas vert sur une liste vide.
+
+    **Tout ce qui n'est pas exploitable retombe sur un défaut, rien ne lève.** Ce fichier vient d'un wheel
+    qu'on n'a pas écrit ; un `timeout_ms` mal typé y ferait planter l'applicateur AVANT qu'il n'écrive son
+    verdict — un run sans `result.json`, donc `interrupted`, pour une virgule dans un JSON. Le module entier
+    tient sur l'inverse : ce qu'on ne sait pas lire se dégrade, il ne casse pas."""
+    try:
+        contrat = json.loads((pkg / UI_CONTRACT).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(contrat, dict):
+        return None
+    marqueurs = [m.strip() for m in contrat.get("markers", [])
+                 if isinstance(m, str) and m.strip()]
+    if not marqueurs:
+        return None
+    chemin = contrat.get("path")
+    delai = contrat.get("timeout_ms")
+    return {"path": chemin if isinstance(chemin, str) and chemin.startswith("/") else "/",
+            "markers": marqueurs,
+            "timeout_ms": int(delai) if isinstance(delai, int) and delai > 0 else 20_000}
+
+
+def verificateur(home: Path) -> tuple[str, str, str]:
+    """`(node, runner, provenance)` — chaînes vides quand il n'y en a pas, et `provenance` dit **d'où vient
+    le juge** ou **pourquoi il n'y en a pas**. Exactement la cascade de `gate.verify.runner_path`, qu'on ne
+    peut pas importer (ce script est stdlib-pur par contrat) : un seul override pour les deux usages.
+
+    **Le runner EMBARQUÉ dans le wheel n'est pas un candidat, et ce n'est pas un oubli.** Il a d'abord été
+    écrit comme repli, puis MESURÉ : `deploy/runners/node_modules` est gitignoré, donc absent d'un checkout
+    propre, donc le wheel n'emporte que `render_check.js` et son `package.json`. Ce fichier-là ne s'exécute
+    pas — `require('playwright-core')` lève. Le retenir comme candidat aurait transformé une **dégradation
+    annoncée** en **échec de MAJ**, c'est-à-dire exactement l'inverse du but. Et même complété, il resterait
+    inutile sans le Chromium de ~150 Mo, qui n'est dans aucun wheel. Le runner embarqué est une **source**,
+    que `provision-ct.sh` tire pour semer `<home>/runners` — pas un exécutable.
+
+    D'où la vérification de `playwright-core` **à côté** du runner : un runner sans sa dépendance n'est pas
+    un runner. Le compter présent ferait planter le juge, et un juge qui plante est un échec (`RATE`) — on
+    préfère dégrader honnêtement, ce qui est toujours le côté sûr de cette frontière."""
+    node = shutil.which("node") or ""
+    if not node:
+        local = home / "tools" / "bin" / "node"      # ce que pose `forgemaster toolchain install`
+        node = str(local) if local.is_file() else ""
+    if not node:
+        return "", "", "Node introuvable (ni au PATH, ni dans <home>/tools/bin)"
+    override = os.environ.get(ENV_RUNNER, "").strip()
+    candidats: list[tuple[Path, str]] = [(Path(override), f"runner de ${ENV_RUNNER}")] if override else []
+    candidats.append((home / "runners" / RENDER_CHECK, "runner de l'hôte"))
+    for chemin, provenance in candidats:
+        if chemin.is_file() and (chemin.parent / "node_modules" / "playwright-core").is_dir():
+            return node, str(chemin), provenance
+    return node, "", (f"aucun runner de rendu utilisable ({home / 'runners' / RENDER_CHECK} avec son "
+                      f"`node_modules/playwright-core`) — `provision-ct.sh` le sème")
+
+
+def render_ok(base: str, contrat: dict, *, node: str, runner: str, shot: Path) -> tuple[str, str]:
+    """Charge la page dans un vrai navigateur et regarde si les marqueurs du wheel y sont. Rend
+    `(VU|RATE, phrase)` — jamais `NON_MESURE` : arrivé ici, le juge est là, donc son silence est un échec."""
+    runner_path = Path(runner)
+    # `wait_for_text` sur le PREMIER marqueur : le runner sonde le DOM jusqu'à le voir au lieu de conclure
+    # à `networkidle`. Ça n'affaiblit rien — une page blanche épuise le délai puis rend le marqueur manquant
+    # — et ça retire le seul faux-rouge possible ici : une SPA qui monte une seconde trop tard.
+    charge = json.dumps({"url": base.rstrip("/") + contrat["path"], "markers": contrat["markers"],
+                         "screenshot": str(shot), "timeout_ms": contrat["timeout_ms"],
+                         "wait_for_text": contrat["markers"][0],
+                         "wait_timeout_ms": contrat["timeout_ms"]}, ensure_ascii=False)
+    try:
+        proc = subprocess.run(  # noqa: S603 (argv construit ici, pas de shell)
+            [node, str(runner_path), charge], capture_output=True, text=True, check=False,
+            timeout=RENDER_TIMEOUT, cwd=str(runner_path.parent))
+    except subprocess.TimeoutExpired:
+        return RATE, f"le vérificateur d'interface n'a pas rendu la main en {RENDER_TIMEOUT:.0f} s"
+    except OSError as exc:
+        return RATE, f"le vérificateur d'interface n'a pas pu être lancé : {exc}"
+    verdict = _dernier_json(proc.stdout)
+    if verdict is None:
+        bruit = "\n      ".join(((proc.stderr or proc.stdout or "").strip().splitlines() or ["(muet)"])[-8:])
+        return RATE, (f"le vérificateur d'interface n'a rendu aucun verdict lisible (rc={proc.returncode}) :"
+                      f"\n      {bruit}")
+    if verdict.get("ok"):
+        return VU, f"interface vérifiée — « {' », « '.join(contrat['markers'])} » lus dans la page"
+    manquants = ", ".join(verdict.get("missing") or []) or "aucun marqueur"
+    detail = f" — {verdict['error']}" if verdict.get("error") else ""
+    capture = f" (capture : {shot})" if shot.is_file() else ""
+    return RATE, (f"l'interface ne s'affiche pas : {manquants} introuvable(s) sur "
+                  f"{contrat['path']}{detail}{capture}")
+
+
+def check_ui(base: str, venv_dir: Path, home: Path, shot: Path, log) -> tuple[str, str]:
+    """« Est-ce que la page rend ? », posée là où on peut y répondre. Trois issues, et la différence entre
+    les deux premières est TOUTE la doctrine : `NON_MESURE` = on n'avait pas de quoi juger (on le dit, on ne
+    bloque pas) ; `RATE` = on avait de quoi juger et la page ne rend pas — ou le juge n'a pas pu juger."""
+    pkg = package_dir(venv_dir)
+    contrat = ui_contract(pkg) if pkg is not None else None
+    if pkg is None or contrat is None:
+        return NON_MESURE, ("interface non vérifiée : ce wheel ne déclare pas de contrat d'interface — "
+                            "jugé sur /health + SHA seuls")
+    node, runner, provenance = verificateur(home)
+    if not node or not runner:
+        return NON_MESURE, f"interface non vérifiée : {provenance} — jugé sur /health + SHA seuls"
+    log(f"      regard sur l'interface ({provenance}) : « {' », « '.join(contrat['markers'])} »")
+    return render_ok(base, contrat, node=node, runner=runner, shot=shot)
+
+
+def _dernier_json(sortie: str) -> dict | None:
+    """Le verdict du runner, tolérant à ce que Node aurait écrit avant lui (un warning de dépréciation sur
+    stdout ne doit pas se lire comme « pas de verdict »). Objet entier d'abord, dernière ligne ensuite."""
+    for candidat in (sortie.strip(), *reversed(sortie.strip().splitlines())):
+        try:
+            charge = json.loads(candidat)
+        except ValueError:
+            continue
+        if isinstance(charge, dict):
+            return charge
+    return None
+
+
+def annonce_verification(home: Path) -> str:
+    """Ce qu'on saura dire de l'interface, **dit avant le geste** : `describe` le met dans le plan, donc le
+    panneau l'affiche dans sa prévisualisation — sans une ligne de front. Une dégradation annoncée n'est pas
+    un cap silencieux ; c'est une dégradation tue qui en serait un."""
+    node, runner, provenance = verificateur(home)
+    if node and runner:
+        return f"vérification UI : {provenance} ({runner})"
+    return (f"vérification UI : INDISPONIBLE ici — {provenance}. La MAJ sera jugée sur /health + SHA seuls, "
+            f"donc un wheel à interface blanche passerait")
+
+
 # --- orchestration ------------------------------------------------------------------------------------
 
 def apply(args: argparse.Namespace, log) -> tuple[int, str, dict]:
@@ -182,7 +370,8 @@ def apply(args: argparse.Namespace, log) -> tuple[int, str, dict]:
 
     try:
         forgemaster = build_blue(sys.executable, blue, wheel, log)
-        expected = probe_isolated(forgemaster, run_dir / "sandbox", log)
+        expected = probe_isolated(forgemaster, run_dir / "sandbox", log,
+                                  home=home, shot=run_dir / "ui-isolation.png")
     except UpdateFailed as exc:
         return 1, f"MAJ refusée — {exc}", {**details, "impact": "aucun : le service n'a pas été touché"}
     details["attendu"] = expected
@@ -201,7 +390,8 @@ def apply(args: argparse.Namespace, log) -> tuple[int, str, dict]:
     _systemctl(args, "start", log)
 
     log("[6/6] vérification EN VIVANT (c'est ici que la configuration et la base réelles sont jugées)")
-    live_ok, why = _verify_live(args.base_url, expected, args.timeout, log)
+    live_ok, why = _verify_live(args.base_url, expected, args.timeout, log,
+                                venv_dir=blue, home=home, shot=run_dir / "ui-live.png")
     if live_ok:
         log(f"      ✓ {why}")
         _purge_venvs(blue.parent, keep={blue, old_venv}, log=log)
@@ -255,7 +445,12 @@ def rollback(args: argparse.Namespace, log) -> tuple[int, str, dict]:
         # On prouve le binaire cible AVANT de toucher au vivant. Double effet : c'est l'`expected` de la
         # vérification finale, et ça prouve du même coup que l'ancien binaire sert encore — s'il ne sert
         # plus, revenir vers lui n'aurait aucun sens et rien n'a bougé.
-        expected = probe_isolated(cible_venv / "bin" / "forgemaster", run_dir / "sandbox", log, step="1/5")
+        # Le contrat d'interface lu est celui de LA CIBLE. Un wheel antérieur à cette vérification n'en
+        # porte pas — et son absence ne bloque JAMAIS un retour : *on exige la preuve pour avancer, pas
+        # pour revenir*. Une cible qui, elle, en porte un et ne s'affiche pas est refusée comme l'est déjà
+        # une cible qui ne sert pas : revenir vers une version inutilisable n'aide personne, rien n'a bougé.
+        expected = probe_isolated(cible_venv / "bin" / "forgemaster", run_dir / "sandbox", log, step="1/5",
+                                  home=home, shot=run_dir / "ui-isolation.png")
     except UpdateFailed as exc:
         return 1, f"retour arrière refusé — {exc}", intact
     details["attendu"] = expected
@@ -303,7 +498,8 @@ def rollback(args: argparse.Namespace, log) -> tuple[int, str, dict]:
     _systemctl(args, "start", log)
 
     log("[5/5] vérification EN VIVANT contre l'identité prouvée à l'étape 1")
-    live_ok, why = _verify_live(args.base_url, expected, args.timeout, log)
+    live_ok, why = _verify_live(args.base_url, expected, args.timeout, log,
+                                venv_dir=cible_venv, home=home, shot=run_dir / "ui-live.png")
     if live_ok:
         log(f"      ✓ {why}")
         return 0, f"retour arrière effectué — {why}", \
@@ -429,7 +625,12 @@ def _supports_flag(script: Path, flag: str) -> bool:
         return False
 
 
-def _verify_live(base: str, expected: dict, timeout: float, log) -> tuple[bool, str]:
+def _verify_live(base: str, expected: dict, timeout: float, log, *,
+                 venv_dir: Path, home: Path, shot: Path) -> tuple[bool, str]:
+    """Le vivant sert-il, et **s'affiche-t-il** ? La sonde en isolation a jugé le build sur un HOME vierge ;
+    ici c'est la **rencontre** du binaire et des données réelles qui est jugée — une interface qui tombe sur
+    la vraie base ne se voit qu'ici. Et c'est ce `False`-là qui déclenche le retour arrière automatique :
+    aucune ligne neuve pour ça, le chemin existe depuis le premier jour."""
     ready, why = _wait_health(base, timeout)
     if not ready:
         return False, why
@@ -437,7 +638,13 @@ def _verify_live(base: str, expected: dict, timeout: float, log) -> tuple[bool, 
         live = _identity(_get_json(base, "/api/version"))
     except (urllib.error.URLError, OSError, ValueError) as exc:
         return False, f"/api/version illisible sur le vivant : {exc}"
-    return matches(expected, live)
+    ok, why = matches(expected, live)
+    if not ok:
+        return False, why
+    etat, dit = check_ui(base, venv_dir, home, shot, log)
+    if etat == RATE:
+        return False, f"{why}, mais {dit}"
+    return True, f"{why} — {dit}"
 
 
 def _wait_health(base: str, timeout: float,
