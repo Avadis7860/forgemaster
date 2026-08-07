@@ -870,6 +870,32 @@ def test_un_run_qui_a_ECHOUE_est_distinct_dun_run_qui_a_REUSSI(live: Settings):
     assert etat["state"] == "failed" and etat["rc"] == 3 and "ne sert pas" in etat["verdict"]
 
 
+def test_le_PERIMETRE_de_ce_qui_a_bouge_voyage_avec_le_verdict(live: Settings):
+    """`impact` répond à une question que le verdict laisse ouverte : « MAJ refusée — <motif> » ne dit PAS
+    si le service a été touché. L'applicateur l'écrit exprès ; le jeter ici obligerait qui n'a pas de
+    terminal à le déduire d'une prose française."""
+    run_dir = _run_sur_disque(live, **{
+        update.RUN_RESULT: '{"rc": 1, "verdict": "MAJ refusée — le vivant ne sert pas",'
+                           ' "impact": "aucun : le service n\'a pas été touché"}'})
+
+    etat = update.run_state(run_dir)
+
+    assert etat["state"] == "failed"
+    assert etat["impact"] == "aucun : le service n'a pas été touché"
+
+
+def test_un_run_SANS_verdict_ne_PRETEND_rien_sur_ce_qui_a_bouge(live: Settings):
+    """Le contre-témoin du précédent, et il compte plus que lui : `impact` n'existe qu'avec un verdict. Le
+    rendre absent (`None`) est un aveu ; le rendre à vide se lirait « rien n'a bougé » — la pire des
+    réponses pour un run parti et jamais conclu."""
+    run_dir = _run_sur_disque(live, **{update.RUN_LAUNCH: "Running as unit …\n"})
+
+    etat = update.run_state(run_dir, is_active=lambda _u, _s: False)
+
+    assert etat["state"] == "interrupted"
+    assert etat["impact"] is None, "un run sans verdict a prétendu savoir ce qui avait bougé"
+
+
 def test_sans_sonde_un_run_SANS_verdict_avoue_au_lieu_de_conclure(live: Settings):
     """Le garde-fou de l'économie de sonde. Sans avoir demandé au gestionnaire, on ne peut PAS conclure à
     `interrupted` : ce serait annoncer une mort qu'on n'a pas vérifiée — et c'est exactement ce qu'un appelant
@@ -928,6 +954,13 @@ def test_la_liste_des_runs_DIT_sa_borne_au_lieu_de_la_taire(live: Settings):
     assert [r["run"] for r in vue["runs"]] == ["2026-08-04T10-00-00Z", "2026-08-03T10-00-00Z"]
     assert vue["total"] == 4 and vue["truncated"] is True
     assert all(r["journal"] == "" for r in vue["runs"]), "la liste porte des journaux qu'elle n'affiche pas"
+
+
+def test_la_liste_des_runs_DIT_aussi_jusquou_le_produit_attend(live: Settings):
+    """`follow_timeout` est la borne au-delà de laquelle le produit lui-même cesse d'attendre un run. Une
+    surface qui dit « elle aurait dû revenir » a besoin de ce chiffre — le recopier chez elle le ferait
+    diverger le jour où il bouge, exactement comme un `keep` épinglé à 3."""
+    assert update.list_runs(live)["follow_timeout"] == update.FOLLOW_TIMEOUT
 
 
 def test_la_liste_ne_depense_QU_UNE_sonde_systemd(live: Settings):
@@ -1192,6 +1225,16 @@ def test_la_liste_trie_par_NOM_jamais_par_mtime(live: Settings, monkeypatch):
     os.utime(vieux["path"], (time.time() + 3600, time.time() + 3600))
 
     assert [w["name"] for w in update.list_wheels(live)["wheels"]] == ["neuf.whl", "vieux.whl"]
+
+
+def test_la_liste_rend_les_DEUX_bornes_de_laire_pas_seulement_la_retention(live: Settings):
+    """`keep` dit combien de dépôts survivent, `max_bytes` dit lequel est refusé à l'entrée. Une surface
+    qui n'obtiendrait que le premier devrait ré-écrire le second à la main — et un chiffre recopié dérive
+    silencieusement le jour où la borne bouge."""
+    vue = update.list_wheels(live)
+
+    assert vue["keep"] == update.KEEP_WHEELS
+    assert vue["max_bytes"] == update.WHEEL_MAX_BYTES
 
 
 def test_un_depot_a_moitie_monte_nest_ni_liste_ni_posable(live: Settings):

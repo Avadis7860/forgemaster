@@ -220,6 +220,18 @@ allers-retours au gestionnaire sur une vue de liste, et ce plafond tomberait sur
 gestionnaire est coincé — c'est-à-dire le jour où l'on regarde justement cette page. Les autres rendent `unknown`, et
 leur adresse propre sonde, elle.
 
+Elle rend enfin `follow_timeout` (= `FOLLOW_TIMEOUT`, 900 s), la borne au-delà de laquelle le produit **lui-même**
+cesse d'attendre un run. Une surface qui dit « elle aurait dû revenir » a besoin de ce chiffre ; le recopier chez elle
+le ferait diverger le jour où il bouge. Règle uniforme avec `keep`/`max_bytes` : **une borne annoncée vient de la
+borne qui s'applique**.
+
+**Le verdict dit ce qui s'est passé, `impact` dit jusqu'où ça a été.** Les deux ne se déduisent pas l'un de l'autre :
+« MAJ refusée — le vivant ne sert pas » ne renseigne pas sur l'état du service, et c'est exactement la question de
+quelqu'un qui n'a pas de terminal pour aller voir. `apply_update` écrit la phrase (`src/forgemaster/apply_update.py:181`
+et ses trois issues) ; `run_state` la propage telle quelle. Elle n'existe **qu'avec** un verdict : partout ailleurs
+`impact` vaut `null`, qui se lit « je n'en sais rien » — la rendre à vide se lirait « rien n'a bougé », la pire des
+réponses pour un run parti et jamais conclu.
+
 `runs_dir` est la seule adresse du dossier (`<home>/updates`) : trois marches le nommaient déjà séparément, et une
 adresse recopiée trois fois est une adresse qui divergera. `run_dir_for` pose **deux gardes**, parce qu'aucune ne
 suffit seule : la FORME (`RUN_ID_RE` — un identifiant qui
@@ -267,6 +279,12 @@ ses références casse ce qu'elle croit ranger : purger le wheel d'un run en vol
 provenance de dépôt, et la relire à chaque affichage coûterait une relecture complète de l'aire. Un dossier posé à la
 main n'en a pas — il est listé quand même, avec `sha256: null`, parce que « je n'ai pas mesuré » n'est pas « il n'y a
 rien ».
+
+Il rend les **deux** bornes qui régissent l'aire, pas seulement la rétention : `keep` (combien de dépôts survivent) et
+`max_bytes` (lequel est refusé à l'entrée). Une surface qui n'obtiendrait que la première devrait ré-écrire la seconde
+à la main — et un chiffre recopié dérive en silence le jour où la borne bouge. C'est la leçon que le banc de la 3a·3a a
+déjà apprise en épinglant `3` au lieu de lire `keep` : ce qui se mesure est « la borne déclarée est celle qui
+s'applique », jamais « elle vaut 3 ».
 
 **Asymétrie CLI/HTTP, voulue.** On **dépose** par la route, jamais en CLI : l'aire existe parce que HTTP n'a pas de
 système de fichiers, et `--wheel <chemin>` suffit déjà à qui en a un. Ce que la CLI gagne est une **vue en lecture**,

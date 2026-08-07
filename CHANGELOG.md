@@ -9,6 +9,29 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Le cycle de MAJ depuis le produit — et ce qu'il montre quand son backend meurt (web + 3 champs additifs)
+
+Panneau **Mise à jour** en tête de `/settings` : déposer → prévisualiser → poser → suivre → revenir, sans
+jamais ouvrir un terminal. Il consomme les sept routes de `/api/update` et n'en invente aucune.
+
+- **Rien ne vit dans le navigateur** — pas de `localStorage`, pas de machine à états, pas d'identifiant de run
+  gardé entre deux vies de la page : au montage, le panneau **redécouvre** le geste en cours par
+  `GET /api/update/runs`. C'est la symétrie exacte du serveur, qui relit tout du disque pour la même raison —
+  le daemon qui sert cette page est celui que la MAJ arrête et remplace.
+- **Le silence du daemon n'est pas une erreur, c'est un état — avec un âge.** `lib/updateLiaison` (pur, testé
+  à la table) rend quatre états : `servie` · `bascule` (« c'est attendu », un geste est en vol) · `perdue`
+  (au-delà de la borne du produit, on l'**avoue** au lieu de faire tourner un sablier sans fin) ·
+  `injoignable` (aucun geste parti — un daemon muet reste un daemon muet, **jamais** maquillé en bascule).
+  La reconnexion n'a pas de code : `refetchInterval` continue de battre pendant qu'une requête est en erreur.
+- **La prévisualisation EST le consentement** : pas de modale, le geste mutant est gardé par un `GET`
+  idempotent (même doctrine que `git/sync` → `reconcile`). Un **409** affiche son texte **intégral** et
+  **désarme** le bouton.
+- **Trois champs additifs**, tous pour la même raison — *une borne annoncée vient de la borne qui s'applique*,
+  et une surface ne re-déclare pas ce que le cœur déclare : `GET /runs/{id}` rend **`impact`** (jusqu'où ça a
+  été, distinct du verdict qui dit ce qui s'est passé ; `null` tant qu'aucun verdict n'est écrit) ·
+  `GET /runs` rend **`follow_timeout`** · `GET /wheels` rend **`max_bytes`**. Additifs → aucun bump de
+  `SCHEMA_VERSION`.
+
 ### L'artefact arrive par la route, et l'aire de dépôt a une politique (routes neuves, aucun schéma touché)
 
 `POST /api/update/wheels` (multipart) → **201** `{stamp, name, path, size, sha256, staged_at, pruned}` ·

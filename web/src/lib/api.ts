@@ -56,6 +56,13 @@ import {
   RoadmapCheckSchema,
   InspireResultSchema,
   UploadResultSchema,
+  UpdatePlanSchema,
+  UpdateLaunchSchema,
+  UpdateRunSchema,
+  UpdateRunsListSchema,
+  VersionSchema,
+  WheelsListSchema,
+  WheelStagedSchema,
   ReconcileSocleResultSchema,
   RefixResultSchema,
   TemplatesListSchema,
@@ -491,4 +498,41 @@ export const api = {
   markOutcome: (slug: string, input: { feature: string; outcome: string; note?: string; sha?: string }) =>
     request(`/api/reliability/${encodeURIComponent(slug)}/mark`, ReliabilityFeatureSchema,
       { method: 'POST', body: JSON.stringify(input) }),
+
+  // --- cycle de mise à jour ----------------------------------------------------------------------------
+  //
+  // Provenance de build de l'instance. Le SHA est ce qui change à une bascule (la version de paquet, non) :
+  // c'est donc la preuve que le binaire qui répond n'est plus celui qui a reçu le geste.
+  version: () => request('/api/version', VersionSchema),
+
+  // Dépôt d'un artefact — multipart, via `requestForm` : c'est déjà la couture (pas de content-type forcé,
+  // le navigateur pose le boundary). Bornes du daemon → ApiError (400 nom, 415 type, 413 taille, 409
+  // collision), chaque `detail` étant une phrase complète qu'on affiche TELLE QUELLE.
+  stageWheel: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return requestForm('/api/update/wheels', WheelStagedSchema, form)
+  },
+  listWheels: () => request('/api/update/wheels', WheelsListSchema),
+
+  // Prévisualisation : GET idempotent, aucun dossier de run créé. Un **409** est une RÉPONSE (l'instance
+  // refuse dans son état), pas une panne — il porte le texte intégral du refus.
+  updatePlan: (params: { mode: 'apply' | 'rollback'; wheel?: string; snapshot?: string }) => {
+    const q = new URLSearchParams({ mode: params.mode })
+    if (params.wheel) q.set('wheel', params.wheel)
+    if (params.snapshot) q.set('snapshot', params.snapshot)
+    return request(`/api/update/plan?${q.toString()}`, UpdatePlanSchema)
+  },
+
+  // Les deux gestes mutants → **202** : accepté et parti, pas fini. Le daemon va mourir puis revenir ; tout
+  // ce qui suit se relit par `getUpdateRun`, jamais d'une mémoire de ce client.
+  applyUpdate: (wheel: string) =>
+    request('/api/update/apply', UpdateLaunchSchema, { method: 'POST', body: JSON.stringify({ wheel }) }),
+  rollbackUpdate: (snapshot?: string) =>
+    request('/api/update/rollback', UpdateLaunchSchema,
+      { method: 'POST', body: JSON.stringify(snapshot ? { snapshot } : {}) }),
+
+  listUpdateRuns: () => request('/api/update/runs', UpdateRunsListSchema),
+  getUpdateRun: (run: string) =>
+    request(`/api/update/runs/${encodeURIComponent(run)}`, UpdateRunSchema),
 }

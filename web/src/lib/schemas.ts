@@ -1144,3 +1144,115 @@ export const ReliabilitySchema = ReliabilityTallySchema.extend({
   projects: z.array(ReliabilityTallySchema.extend({ project: z.string() })).optional(),   // scope 'global'
 })
 export type Reliability = z.infer<typeof ReliabilitySchema>
+
+// --- cycle de mise à jour (3a·2b + 3a·3a) --------------------------------------------------------------
+//
+// Miroir exact de `routes/update`. Deux formes portent une INTENTION du daemon qu'il ne faut pas aplatir :
+// un champ nullable y dit « je n'ai pas mesuré », JAMAIS « c'est vide ». `sha256:null` = dépôt posé à la
+// main, `rc:null` = pas de verdict, `impact:null` = on ne sait pas ce qui a bougé. Les rendre optionnels
+// (ou defaultés) effacerait précisément l'aveu.
+
+// Provenance de BUILD de l'instance. Consommée ici pour son IDENTITÉ seule (`version`/`sha`/`committed_at`)
+// : la version de paquet ne bouge pas d'un wheel à l'autre, le SHA de build si — c'est donc lui qui prouve
+// qu'une bascule a eu lieu. Les champs de FRAÎCHEUR (`comparable`/`stale`/`behind_by`/`missing_types`) sont
+// typés mais **non consommés** : ils appartiennent à la surface de disponibilité (phase 3b), qui héritera de
+// ce hook au lieu de le réécrire.
+export const VersionSchema = z.object({
+  version: z.string(),
+  sha: z.string().nullable(),               // checkout éditable : wheel non tamponné → provenance inconnue
+  committed_at: z.string().nullable(),
+  comparable: z.boolean(),
+  stale: z.boolean().nullable(),
+  behind_by: z.number().nullable(),
+  missing_types: z.array(z.string()),
+})
+export type Version = z.infer<typeof VersionSchema>
+
+// Un artefact déposé dans `<home>/wheels`. `path` est la SEULE chose à repasser à `plan`/`apply` — le front
+// ne recompose jamais un chemin (il n'a pas de système de fichiers, c'est tout le sujet de cette aire).
+export const WheelDepositSchema = z.object({
+  stamp: z.string(),
+  name: z.string(),
+  path: z.string(),
+  size: z.number(),
+  sha256: z.string().nullable(),
+  in_use: z.boolean(),                      // un run SANS verdict le nomme encore → la rétention l'épargne
+})
+export type WheelDeposit = z.infer<typeof WheelDepositSchema>
+
+// `keep` ET `max_bytes` viennent de la route : les deux bornes de l'aire sont DITES, jamais recopiées ici.
+export const WheelsListSchema = z.object({
+  wheels: z.array(WheelDepositSchema),
+  total: z.number(),
+  keep: z.number(),
+  max_bytes: z.number(),
+})
+export type WheelsList = z.infer<typeof WheelsListSchema>
+
+// Réponse du dépôt (201). `pruned` = les horodatages que la rétention vient d'effacer : le POST le DIT, et
+// l'UI aussi — une purge muette est un cap silencieux avec un autre nom.
+export const WheelStagedSchema = z.object({
+  stamp: z.string(),
+  name: z.string(),
+  path: z.string(),
+  size: z.number(),
+  sha256: z.string(),
+  staged_at: z.string(),
+  pruned: z.array(z.string()),
+})
+export type WheelStaged = z.infer<typeof WheelStagedSchema>
+
+// Prévisualisation (`GET /plan`, idempotent). `describe` = les lignes que la CLI imprime avant d'agir, à
+// rendre TELLES QUELLES : les ré-écrire perdrait le soin mis à les écrire côté daemon. `plan` est un sac de
+// chaînes déjà distillé par la route (`_public`), d'où le record ouvert.
+export const UpdatePlanSchema = z.object({
+  mode: z.enum(['apply', 'rollback']),
+  scope: z.string(),
+  describe: z.array(z.string()),
+  plan: z.record(z.string(), z.string()),
+})
+export type UpdatePlan = z.infer<typeof UpdatePlanSchema>
+
+// Réponse du geste (202) : accepté et parti, PAS fini. `run` est la seule chose dont l'appelant a besoin
+// pour retrouver le verdict de l'autre côté de la bascule.
+export const UpdateLaunchSchema = z.object({
+  run: z.string(),
+  unit: z.string(),
+  mode: z.enum(['apply', 'rollback']),
+  state: z.string(),
+})
+export type UpdateLaunch = z.infer<typeof UpdateLaunchSchema>
+
+// Les cinq états d'un run, relus du DISQUE à chaque requête. `unknown` est un AVEU (verdict absent, unité
+// non sondée), pas une conclusion — la liste n'en sonde qu'une seule et avoue pour les autres.
+export const RunStateSchema = z.enum([
+  'done', 'failed', 'unknown', 'running', 'interrupted', 'never_started',
+])
+export type RunState = z.infer<typeof RunStateSchema>
+
+export const UpdateRunSchema = z.object({
+  run: z.string(),
+  mode: z.string().nullable(),
+  scope: z.string(),
+  unit: z.string(),
+  started_at: z.string().nullable(),
+  target: z.string().nullable(),            // le wheel posé, ou l'instantané visé
+  state: RunStateSchema,
+  rc: z.number().nullable(),
+  verdict: z.string(),                      // CE QUI s'est passé
+  impact: z.string().nullable(),            // JUSQU'OÙ ça a été — null tant qu'aucun verdict n'est écrit
+  journal: z.string(),                      // queue du journal ; vide dans la vue de liste (tail=0)
+})
+export type UpdateRun = z.infer<typeof UpdateRunSchema>
+
+// `truncated` + `total` : la borne est DITE. Une liste tronquée en silence se lit « c'est tout ».
+// `follow_timeout` (secondes) est la borne au-delà de laquelle le produit LUI-MÊME cesse d'attendre un run :
+// c'est elle qui autorise le panneau à passer de « c'est attendu » à « elle aurait dû revenir ». Elle vient
+// d'ici et n'est jamais recopiée côté front — un chiffre recopié dérive en silence.
+export const UpdateRunsListSchema = z.object({
+  runs: z.array(UpdateRunSchema),
+  total: z.number(),
+  truncated: z.boolean(),
+  follow_timeout: z.number(),
+})
+export type UpdateRunsList = z.infer<typeof UpdateRunsListSchema>

@@ -52,6 +52,11 @@ export const qk = {
   onboarding: ['onboarding'] as const,
   bootstrap: ['bootstrap'] as const,
   alerts: ['alerts'] as const,
+  version: ['version'] as const,
+  wheels: ['update-wheels'] as const,
+  updateRuns: ['update-runs'] as const,
+  updateRun: (run: string) => ['update-run', run] as const,
+  updatePlan: (mode: string, target: string) => ['update-plan', mode, target] as const,
 }
 
 export function useHealth() {
@@ -687,5 +692,89 @@ export function useMarkOutcome(project: string) {
     mutationFn: (input: { feature: string; outcome: string; note?: string; sha?: string }) =>
       api.markOutcome(project, input),
     onSettled: () => qc.invalidateQueries({ queryKey: qk.reliability(project) }),
+  })
+}
+
+// --- cycle de mise à jour ------------------------------------------------------------------------------
+//
+// PROPRIÉTÉ QUI DÉCIDE DE TOUTES LES CADENCES ICI : le daemon qui sert cette page est celui que la MAJ
+// arrête et remplace. Rien de l'état d'un run ne vit donc côté client — ni `localStorage`, ni machine à
+// états — exactement comme rien n'en vit côté serveur. On REDÉCOUVRE le run en cours par la liste, et un
+// rechargement de page pendant la bascule ne perd rien : il n'y avait rien à perdre.
+//
+// `retry: false` partout : une erreur réseau ici n'est pas un incident à re-tenter en rafale, c'est un
+// ÉTAT à afficher (`lib/updateLiaison`). Et `refetchInterval` continue de battre pendant qu'une requête est
+// en erreur (c'est un `setInterval` nu, cf. query-core `queryObserver#updateRefetchInterval`) — c'est
+// littéralement le mécanisme de reconnexion : pas de bouton, pas de code de reprise.
+
+/** Provenance de build de l'instance qui répond MAINTENANT. Poll court : c'est la manière la plus honnête de
+ *  voir arriver la bascule (le SHA change ; la version de paquet, elle, ne bouge pas d'un wheel à l'autre). */
+export function useVersion() {
+  return useQuery({ queryKey: qk.version, queryFn: api.version, refetchInterval: 10_000, retry: false })
+}
+
+/** L'aire de dépôt + ses deux bornes (`keep`, `max_bytes`), lues de la route et jamais recopiées côté UI. */
+export function useWheels() {
+  return useQuery({ queryKey: qk.wheels, queryFn: api.listWheels, retry: false })
+}
+
+/** Dépôt d'un artefact. Invalide l'aire au settle : la rétention a pu purger, et ce qu'elle a purgé est DIT
+ *  par la réponse — l'UI doit refléter l'aire réelle, pas celle d'avant le dépôt. */
+export function useStageWheel() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (file: File) => api.stageWheel(file),
+    onSettled: () => qc.invalidateQueries({ queryKey: qk.wheels }),
+  })
+}
+
+/** Prévisualisation d'un geste mutant par un GET idempotent — c'est LUI le consentement, pas une modale.
+ *  `enabled` sur une cible choisie ; un 409 est une réponse (le refus intégral), donc jamais re-tenté. */
+export function useUpdatePlan(mode: 'apply' | 'rollback', target: string, enabled: boolean) {
+  return useQuery({
+    queryKey: qk.updatePlan(mode, target),
+    queryFn: () => api.updatePlan(mode === 'apply' ? { mode, wheel: target } : { mode }),
+    enabled,
+    retry: false,
+    staleTime: 0,
+  })
+}
+
+/** La liste des runs — la SEULE source par laquelle le panneau redécouvre un geste en vol au montage.
+ *  Poll court, parce qu'un run peut naître d'un autre onglet ou d'un terminal, jamais seulement d'ici. */
+export function useUpdateRuns() {
+  return useQuery({
+    queryKey: qk.updateRuns, queryFn: api.listUpdateRuns, refetchInterval: 5_000, retry: false,
+  })
+}
+
+/** L'état d'un run précis, relu du disque à chaque requête. Le poll s'ARRÊTE sur un verdict : marteler un
+ *  `result.json` figé ne dirait rien de neuf. Tant qu'il n'y en a pas, il bat — y compris pendant que le
+ *  daemon est mort, ce qui est exactement le moment où on en a besoin. */
+export function useUpdateRun(run: string | null) {
+  return useQuery({
+    queryKey: qk.updateRun(run ?? ''),
+    queryFn: () => api.getUpdateRun(run as string),
+    enabled: Boolean(run),
+    retry: false,
+    refetchInterval: (q) => (q.state.data?.rc === null || q.state.data === undefined ? 2_000 : false),
+  })
+}
+
+/** Les deux gestes mutants. Aucun `onSuccess` optimiste : ce que rend le POST (202 + l'identifiant du run)
+ *  n'est pas un état, c'est une ADRESSE — tout le reste se relit du disque de l'autre côté de la bascule. */
+export function useApplyUpdate() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (wheel: string) => api.applyUpdate(wheel),
+    onSettled: () => qc.invalidateQueries({ queryKey: qk.updateRuns }),
+  })
+}
+
+export function useRollbackUpdate() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (snapshot?: string) => api.rollbackUpdate(snapshot),
+    onSettled: () => qc.invalidateQueries({ queryKey: qk.updateRuns }),
   })
 }

@@ -363,8 +363,14 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   &wheel=&snapshot=&scope=` (préflight complet + `describe` — **ce qui se passerait**, strictement idempotent,
   aucun dossier de run créé) · `POST /api/update/apply` `{wheel, scope?}` · `POST /api/update/rollback`
   `{snapshot?, scope?}` (**202** `{run, unit, mode, state}` — accepté et parti, pas fini : le daemon va mourir
-  puis revenir) · `GET /api/update/runs` (`{runs, total, truncated}`, récents d'abord, borne **dite**) ·
-  `GET /api/update/runs/{id}` (`{run, mode, scope, unit, started_at, target, state, rc, verdict, journal}`).
+  puis revenir) · `GET /api/update/runs` (`{runs, total, truncated, follow_timeout}`, récents d'abord, bornes
+  **dites** — `follow_timeout` = jusqu'où le produit lui-même attend un run, pour qu'une surface n'ait pas à
+  recopier ce chiffre) ·
+  `GET /api/update/runs/{id}` (`{run, mode, scope, unit, started_at, target, state, rc, verdict, impact,
+  journal}`). `verdict` dit **ce qui s'est passé**, `impact` dit **jusqu'où ça a été** (« aucun : le service
+  n'a pas été touché », « revenu à l'état d'avant (venv + données) ») — les deux ne se déduisent pas l'un de
+  l'autre, et `impact` vaut `null` tant qu'aucun verdict n'est écrit (« je n'en sais rien », jamais « rien n'a
+  bougé »).
   **L'état d'un run se relit du DISQUE**, jamais d'une mémoire : le processus qui répond au `GET` d'après
   n'est ni celui qui a reçu le `POST`, ni même le même binaire. Cinq états, tranchés dans cet ordre —
   `done`/`failed` (`result.json` écrit) · `unknown` (verdict absent, unité non sondée : la liste n'en sonde
@@ -380,7 +386,8 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   `<home>/updates`), **400** = `wheel` manquant en `mode=apply`.
   **L'artefact arrive par `POST /api/update/wheels`** (multipart, champ `file`) → **201**
   `{stamp, name, path, size, sha256, staged_at, pruned}` ; le `path` rendu se repasse **tel quel** à `GET /plan`
-  puis `POST /apply`. `GET /api/update/wheels` → `{wheels, total, keep}`, récents d'abord, chaque dépôt portant
+  puis `POST /apply`. `GET /api/update/wheels` → `{wheels, total, keep, max_bytes}` — les **deux** bornes qui
+  régissent l'aire, pour qu'une surface n'ait jamais à en ré-écrire une à la main — récents d'abord, chaque dépôt portant
   `in_use` (un run **sans verdict** le nomme encore). Elle existe parce que **HTTP n'a pas de système de
   fichiers** ; `apply` n'est **pas** confiné à ce qui en vient — le canal servi déposera ailleurs, confiner
   obligerait à ré-ouvrir. Quatre gardes **ordonnées**, et l'ordre porte du sens (un nom traversant se juge avant
