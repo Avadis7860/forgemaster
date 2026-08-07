@@ -1565,3 +1565,17 @@ def test_le_plan_annonce_la_verification_dinterface_donc_le_panneau_aussi(live: 
     assert plan["ui_check"].startswith("vérification UI :")
     assert plan["ui_check"] in update.describe(plan)
     assert "" not in update.describe(plan), "une ligne vide dans le plan serait du bruit rendu à l'écran"
+
+
+def test_un_contrat_mal_type_degrade_au_lieu_de_faire_PLANTER_lapplicateur(tmp_path: Path):
+    """TROUVÉ EN REVOYANT MON PROPRE DIFF. Ce fichier vient d'un wheel qu'on n'a pas écrit : un
+    `timeout_ms` non numérique y aurait levé un `ValueError` — pas une `UpdateFailed`, donc rien ne le
+    rattrape — et l'applicateur serait mort AVANT d'écrire son `result.json`. Un run sans verdict, donc
+    `interrupted`, pour une virgule dans un JSON. Tout ce module tient sur l'inverse : ce qu'on ne sait pas
+    lire se dégrade sur un défaut."""
+    venv = _faux_venv(tmp_path, contrat={"path": {"pas": "une chaîne"}, "markers": ["Réglages"],
+                                         "timeout_ms": "vingt secondes"})
+
+    contrat = apply_update.ui_contract(apply_update.package_dir(venv))
+
+    assert contrat == {"path": "/", "markers": ["Réglages"], "timeout_ms": 20_000}

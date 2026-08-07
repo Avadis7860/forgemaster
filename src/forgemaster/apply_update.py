@@ -226,7 +226,12 @@ def package_dir(venv_dir: Path) -> Path | None:
 def ui_contract(pkg: Path) -> dict | None:
     """Ce que ce wheel déclare de sa propre interface, ou `None` s'il n'en déclare rien — cas **normal**
     d'un wheel antérieur à cette vérification, donc de toute cible de retour arrière un peu ancienne.
-    Un contrat sans marqueur exploitable vaut absence : on ne se déclare pas vert sur une liste vide."""
+    Un contrat sans marqueur exploitable vaut absence : on ne se déclare pas vert sur une liste vide.
+
+    **Tout ce qui n'est pas exploitable retombe sur un défaut, rien ne lève.** Ce fichier vient d'un wheel
+    qu'on n'a pas écrit ; un `timeout_ms` mal typé y ferait planter l'applicateur AVANT qu'il n'écrive son
+    verdict — un run sans `result.json`, donc `interrupted`, pour une virgule dans un JSON. Le module entier
+    tient sur l'inverse : ce qu'on ne sait pas lire se dégrade, il ne casse pas."""
     try:
         contrat = json.loads((pkg / UI_CONTRACT).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -237,8 +242,11 @@ def ui_contract(pkg: Path) -> dict | None:
                  if isinstance(m, str) and m.strip()]
     if not marqueurs:
         return None
-    return {"path": str(contrat.get("path") or "/"), "markers": marqueurs,
-            "timeout_ms": int(contrat.get("timeout_ms") or 20_000)}
+    chemin = contrat.get("path")
+    delai = contrat.get("timeout_ms")
+    return {"path": chemin if isinstance(chemin, str) and chemin.startswith("/") else "/",
+            "markers": marqueurs,
+            "timeout_ms": int(delai) if isinstance(delai, int) and delai > 0 else 20_000}
 
 
 def verificateur(home: Path) -> tuple[str, str, str]:

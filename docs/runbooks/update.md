@@ -372,7 +372,7 @@ Côté `rollback` elle a un **double effet** : elle produit l'attendu final *et*
 — s'il ne servait plus, revenir vers lui n'aurait aucun sens, et rien n'a bougé.
 
 ## check_ui() / render_ok() / verificateur() — le détecteur de panne : la page rend-elle ?
-`src/forgemaster/apply_update.py:309` · appelé par `probe_isolated` et `_verify_live` · retourne `(état, phrase)`
+`src/forgemaster/apply_update.py:317` · appelé par `probe_isolated` et `_verify_live` · retourne `(état, phrase)`
 `/health` 200 + le bon SHA sont de la **plomberie** : un wheel dont la SPA est cassée les satisfait tous les deux et
 sert une page blanche. Depuis le 2026-08-07, les deux vérifications chargent la page dans Chromium et exigent que le
 wheel y rende les marqueurs **qu'il déclare lui-même**.
@@ -440,7 +440,7 @@ comparaison est **impossible** — elle le dit et ne vérifie que la version, au
 égalité.
 
 ## apply() — le geste complet, trois issues toutes explicites
-`src/forgemaster/apply_update.py:351` · appelé par `main` · retourne `(rc, verdict, détails)`
+`src/forgemaster/apply_update.py:359` · appelé par `main` · retourne `(rc, verdict, détails)`
 Six étapes : venv neuf → sonde en isolation → **arrêt + instantané à froid** → bascule du lien + redémarrage →
 vérification en vivant → retour arrière automatique si elle échoue. Trois issues : **posée** (rc 0), **refusée avant
 bascule** (rc 1, rien n'a bougé), **revenue en arrière** (rc 1, l'instance est telle qu'avant). Le retour automatique
@@ -448,7 +448,7 @@ rebascule le lien puis restaure ; si la restauration échoue, il **re-bascule EN
 lire ces données-là, et un binaire ancien sur des données neuves est le seul état interdit.
 
 ## rollback() — le symétrique de l'aller, pas un second mécanisme
-`src/forgemaster/apply_update.py:417` · appelé par `main` · retourne `(rc, verdict, détails)`
+`src/forgemaster/apply_update.py:425` · appelé par `main` · retourne `(rc, verdict, détails)`
 Cinq étapes, chacune réutilisant une fonction que `apply` exerce déjà. **L'ordre est contraint et non négociable : le
 lien D'ABORD, la restauration ENSUITE** — `restore` interroge `<home>/current` pour savoir quel schéma le binaire en
 place sait lire ; inversé, il verrait le binaire neuf et refuserait une restauration pourtant légitime.
@@ -459,14 +459,14 @@ est déjà sur le binaire le plus haut), mais l'échec se **dit**. Un retour arr
 l'aller est un chemin qu'on ne joue qu'en catastrophe, donc jamais joué pour de vrai avant le jour où il compte.
 
 ## _refuse_if_target_would_be_purged() — la prise de sûreté peut détruire sa propre cible
-`src/forgemaster/apply_update.py:523` · appelé par `rollback` (étape 1/5) · lève `UpdateFailed`
+`src/forgemaster/apply_update.py:531` · appelé par `rollback` (étape 1/5) · lève `UpdateFailed`
 Prendre l'instantané de sûreté consomme un cran de rétention et déclenche la purge. On refuse **avant le premier
 geste** plutôt que de le découvrir entre les deux moitiés : un refus coûte une relance, une cible détruite ne se
 rattrape pas. La cible survit si, et seulement si, moins de `KEEP_SNAPSHOTS - 1` instantanés complets lui sont
 postérieurs. L'étape [3/5] **re-vérifie** ensuite l'existence de la cible, la prise ayant eu lieu entre-temps.
 
 ## _restore() — rendre `False` plutôt qu'avaler l'échec
-`src/forgemaster/apply_update.py:581` · appelé par `apply` et `rollback` · retourne un booléen
+`src/forgemaster/apply_update.py:589` · appelé par `apply` et `rollback` · retourne un booléen
 Restaure par le script **figé dans l'instantané** — celui écrit en même temps que son manifeste, donc celui qui le
 comprend ; c'est aussi le chemin de secours manuel, donc on exerce ici ce qu'on documente. Elle loggait un `⚠` et
 rendait `None` : ses trois appelants concluaient « restauré » sur un échec et laissaient l'unique moitié que
@@ -479,10 +479,10 @@ donc le seul état que le garde pourrait rendre est *indéterminable* ; le refus
 reste absolu.
 
 ## _verify_live() / _wait_health() — trois issues, pas deux
-`src/forgemaster/apply_update.py:620` · `src/forgemaster/apply_update.py:642` · appelés par `apply`, `rollback`, `probe_isolated`
+`src/forgemaster/apply_update.py:628` · `src/forgemaster/apply_update.py:650` · appelés par `apply`, `rollback`, `probe_isolated`
 `200` l'instance sert · **`503` portant `ready:false`** échec **immédiat, avec son motif** · rien d'autre → on attend.
 Attendre la fin du délai pour conclure « ne répond pas » transformerait une réponse claire en silence, et c'est ce
-silence qui remonterait à l'utilisateur comme diagnostic. `_unservable_detail` (`apply_update.py:673`) exige la forme
+silence qui remonterait à l'utilisateur comme diagnostic. `_unservable_detail` (`apply_update.py:681`) exige la forme
 complète : un 503 de proxy ou d'un autre service sur ce port ne doit pas se faire passer pour un verdict de
 l'instance. Si le processus sondé meurt, on n'attend pas non plus — un échec rapide vaut mieux qu'un long silence.
 
@@ -495,7 +495,7 @@ valeurs effectives sont inchangées — mais que « jusqu'où on sait revenir »
 deux rétentions s'accordent au lieu de coïncider.
 
 ## _purge_venvs() — une garde qui ne sait pas répondre se tait
-`src/forgemaster/apply_update.py:714` · appelé par `apply` (seulement après un vivant vert) · aucun retour
+`src/forgemaster/apply_update.py:722` · appelé par `apply` (seulement après un vivant vert) · aucun retour
 Le **seul geste irréversible** d'une MAJ réussie. `keep` **est** la liste des venvs joignables : l'appelant vient de
 faire la bascule, il la connaît. On ne re-devine plus par date de création — « le plus récent » et « le cran d'avant »
 sont deux ordres différents qui ne coïncident qu'à `DEPTH = 1`, et au-delà l'ancienne formulation promouvait
@@ -515,7 +515,7 @@ de `<home>/venvs/`, il échappe à `_purge_venvs`.
 
 ## Zones non détaillées
 
-- **`main()`** (`apply_update.py:547`) — point d'entrée du script figé : ouvre `journal.log`, route vers `apply` ou
+- **`main()`** (`apply_update.py:555`) — point d'entrée du script figé : ouvre `journal.log`, route vers `apply` ou
   `rollback` selon `--mode`, et écrit `result.json` **quoi qu'il arrive** (une exception inattendue devient un verdict
   rc 2, jamais une trace nue). C'est ce fichier que `follow` attend.
 - **`_parse`, `_write_json`, `_run`, `_free_port`, `_systemctl`, `_get_json`, `_identity`** (`apply_update.py:546`,
