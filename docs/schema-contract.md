@@ -378,6 +378,17 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   n'a pas enregistré l'unité (machinerie indisponible, pas un refus ; l'identifiant du run voyage quand même),
   **404** = run inconnu ou identifiant hors forme (deux gardes : forme, puis confinement du chemin résolu sous
   `<home>/updates`), **400** = `wheel` manquant en `mode=apply`.
+  **L'artefact arrive par `POST /api/update/wheels`** (multipart, champ `file`) → **201**
+  `{stamp, name, path, size, sha256, staged_at, pruned}` ; le `path` rendu se repasse **tel quel** à `GET /plan`
+  puis `POST /apply`. `GET /api/update/wheels` → `{wheels, total, keep}`, récents d'abord, chaque dépôt portant
+  `in_use` (un run **sans verdict** le nomme encore). Elle existe parce que **HTTP n'a pas de système de
+  fichiers** ; `apply` n'est **pas** confiné à ce qui en vient — le canal servi déposera ailleurs, confiner
+  obligerait à ré-ouvrir. Quatre gardes **ordonnées**, et l'ordre porte du sens (un nom traversant se juge avant
+  la taille) : nom nu → **400** · extension hors `.whl` → **415** · chemin résolu hors `<home>/wheels` → **400** ·
+  au-delà de `WHEEL_MAX_BYTES` (64 Mo), mesuré **pendant** le flux → **413** ; deux dépôts dans la même seconde →
+  **409**. Écriture **atomique** (`.part` + `os.replace`), tout échec efface le dépôt entier. Rétention
+  **déclarée** et appliquée à l'écriture (`KEEP_WHEELS` = 3, `keep` voyage avec la liste), qui **épargne** tout
+  dépôt nommé par un run sans verdict et **dit** ce qu'elle purge (`pruned`) — jamais de cap silencieux.
   *Additif (routes neuves, aucun schéma touché) → CHANGELOG, pas de bump `SCHEMA_VERSION`.*
 - **bootstrap** — `GET /api/bootstrap` (aperçu **idempotent** de l'amorçage des outils du framework :
   `{available, tools:[{slug, source_url, kind, adopted}], adopted, total}` ; manifeste absent →

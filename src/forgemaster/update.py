@@ -37,10 +37,16 @@ Six refus, tous explicites, jamais un devinage :
 Ce module porte aussi la **lecture d'état d'un run** (`run_state`, `list_runs`) — et elle se fait entièrement
 **sur le disque**. C'est ce qui permet à la route HTTP d'exister : le processus qui répond au `GET` d'après
 n'est ni celui qui a reçu le `POST`, ni même le même binaire. Rien de cet état ne peut donc vivre en mémoire.
+
+Et il porte l'**aire de dépôt** (`stage_wheel`, `list_wheels`, `prune_wheels`). Elle existe pour une raison
+sèche : `apply` ne pose que le fichier qu'on lui désigne, et **HTTP n'a pas de système de fichiers**. La CLI,
+elle, en a un — d'où une asymétrie voulue : on **dépose** par la route, on ne dépose pas en CLI, et la CLI
+gagne seulement de quoi **voir** ce qui est déposé et ce que la rétention garde.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -50,11 +56,12 @@ import sqlite3
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 
 from forgemaster.config import Settings
+from forgemaster.content.upload import UploadRejected, UploadTooLarge, UploadTypeRejected
 from forgemaster.projects import authority as auth
 from forgemaster.service import stable_link, unit_path
 
@@ -75,6 +82,19 @@ RUN_STAMP = "%Y-%m-%dT%H-%M-%SZ"
 # qu'aucune des deux seule ne suffit (une forme valide peut être un lien symbolique).
 RUN_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z$")
 MAX_RUNS = 50                # borne DITE (`truncated`), jamais un cap silencieux
+
+WHEELS = "wheels"            # l'aire de dépôt : le système de fichiers que HTTP n'a pas
+DEPOT_META = "deposit.json"  # ce qu'on a mesuré EN recevant (taille, sha256) — ne se re-dérive pas après
+# `KEEP_WHEELS` ne dérive PAS de `ROLLBACK_DEPTH`, et c'est délibéré : un wheel déposé n'est pas un barreau
+# de l'échelle de retour. Une fois posé, c'est le VENV qui porte le binaire ; le fichier ne sert plus qu'à
+# reposer ou comparer. Le coupler à la profondeur de retour serait une fausse parenté.
+KEEP_WHEELS = 3
+# Mesuré, pas choisi au doigt — et la mesure a demandé deux passes : un wheel bâti d'un arbre propre pèse
+# **1,7 Mo** (front vendoré compris), celui du checkout principal **4,7 Mo**, l'écart venant d'un résidu de
+# staging embarqué par accident (fiché côté vault, hors de ce module). La borne couvre les deux avec un
+# ordre de grandeur de marge — ce canal reçoit un artefact, il ne transfère pas des données.
+WHEEL_MAX_BYTES = 64 * 1024 * 1024
+WHEEL_CHUNK = 1024 * 1024
 
 
 class UpdateRefused(Exception):
@@ -612,6 +632,159 @@ def systemd_is_active(systemctl: str = "systemctl") -> Callable[[str, str], bool
     return _probe
 
 
+# --- l'aire de dépôt d'un artefact --------------------------------------------------------------------
+#
+# `preflight` ne pose que le fichier qu'on lui DÉSIGNE — la CLI a un système de fichiers, elle passe un
+# chemin. HTTP n'en a pas : un utilisateur distribué a son wheel dans son navigateur, pas sur le disque de
+# son instance. Cette aire est ce chaînon-là, et rien de plus : elle reçoit, elle borne, elle range. Le
+# chemin qu'elle rend se repasse tel quel à `apply` — qui, lui, continue d'accepter n'importe quel wheel
+# local (le canal servi de la phase 5 en déposera ailleurs ; confiner ici obligerait à ré-ouvrir là-bas).
+
+def wheels_dir(settings: Settings) -> Path:
+    """Le dossier qui porte les artefacts déposés par la route."""
+    return settings.home / WHEELS
+
+
+def stage_wheel(settings: Settings, *, filename: str, chunks: Iterable[bytes]) -> dict:
+    """Range un artefact reçu **en flux** sous `<home>/wheels/<stamp>/<nom>.whl`, et rend ce qu'il faut pour
+    le poser : `{stamp, name, path, size, sha256, pruned}`.
+
+    `chunks` est n'importe quel itérable de `bytes` — ce cœur ne connaît ni HTTP ni `UploadFile` (injection
+    explicite), donc il se teste avec une liste. **Quatre gardes, dans cet ordre**, et l'ordre porte du
+    sens : un nom traversant se juge AVANT la taille, sinon un fichier hostile de 100 Mo serait rejeté pour
+    son poids et on ne saurait jamais qu'il visait `../`.
+
+    | # | garde | rejet |
+    |---|---|---|
+    | 1 | nom **nu** (ni vide, ni séparateur, ni `..`, ni chemin absolu) | `UploadRejected` → 400 |
+    | 2 | extension `.whl`, rien d'autre | `UploadTypeRejected` → 415 |
+    | 3 | confinement du chemin résolu sous `<home>/wheels` | `UploadRejected` → 400 |
+    | 4 | taille, **pendant** le flux | `UploadTooLarge` → 413 |
+
+    Les trois exceptions sont celles de `content.upload` : les handlers globaux du daemon les mappent déjà
+    400/413/415 par la MRO. C'est le point de couture du patron d'upload — on reprend la couture, pas la
+    pièce (`write_project_upload` écrit sous `docs/design/`, ce n'est pas le même sujet).
+
+    Écriture **atomique** (`.part` + `os.replace`) : un dépôt à moitié monté n'est jamais listé ni posable.
+    Tout échec efface le dossier entier — rien de tronqué ne survit, symétrie avec « jamais de troncature ».
+    Deux dépôts dans la même seconde → `UpdateRefused` (409) : l'horodatage est à la seconde et le handler
+    est servi par un fil du pool, exactement comme `spawn`."""
+    nom = _valide_nom_de_wheel(filename)
+    base = wheels_dir(settings)
+    stamp = datetime.now(UTC).strftime(RUN_STAMP)
+    depot = base / stamp
+    cible = depot / nom
+    if not cible.resolve().is_relative_to(base.resolve()):        # défense en profondeur (garde 3)
+        raise UploadRejected(f"chemin hors de l'aire de dépôt : {filename!r}")
+    try:
+        depot.mkdir(parents=True, exist_ok=False)
+    except FileExistsError as exc:
+        raise UpdateRefused(
+            f"un dépôt porte déjà l'horodatage {stamp} — un autre artefact vient d'arriver dans la même "
+            f"seconde. Rien n'a été touché ; réessaie.") from exc
+    part = depot / (nom + ".part")
+    total, digest = 0, hashlib.sha256()
+    try:
+        with part.open("wb") as fh:
+            for chunk in chunks:
+                total += len(chunk)
+                if total > WHEEL_MAX_BYTES:
+                    raise UploadTooLarge(
+                        f"artefact trop volumineux : plus de {WHEEL_MAX_BYTES} o (borne WHEEL_MAX_BYTES). "
+                        f"Aucune troncature — rien n'a été gardé.")
+                digest.update(chunk)
+                fh.write(chunk)
+        if total == 0:
+            raise UploadRejected("dépôt vide : il n'y a pas de wheel de zéro octet")
+        os.replace(part, cible)
+    except BaseException:
+        shutil.rmtree(depot, ignore_errors=True)
+        raise
+    meta = {"name": nom, "size": total, "sha256": digest.hexdigest(),
+            "staged_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    _write_json(depot / DEPOT_META, meta)
+    return {"stamp": stamp, "path": str(cible), "pruned": prune_wheels(settings), **meta}
+
+
+def _valide_nom_de_wheel(filename: str) -> str:
+    """Le nom reçu, validé comme **nom nu** puis comme wheel. Un identifiant qui vient du réseau n'est pas
+    un nom de fichier : il se juge par sa forme avant de toucher au disque."""
+    nom = filename.strip()
+    if not nom:
+        raise UploadRejected("nom de fichier vide")
+    if nom in (".", "..") or "/" in nom or "\\" in nom or nom != Path(nom).name:
+        raise UploadRejected(f"nom de fichier invalide (path-traversal) : {filename!r}")
+    # Un octet de contrôle (dont le `\0`) passerait les gardes de forme et ferait lever `open()` — un
+    # `ValueError` de la stdlib, rendu tel quel en 400. Le refuser ici, c'est dire ce qui ne va pas plutôt
+    # que laisser fuiter « embedded null byte » depuis deux couches plus bas.
+    if any(c < " " or c == "\x7f" for c in nom):
+        raise UploadRejected(f"nom de fichier invalide (caractère de contrôle) : {filename!r}")
+    if Path(nom).suffix.lower() != ".whl":
+        raise UploadTypeRejected(
+            f"type non autorisé : {Path(nom).suffix or '(sans extension)'}. Cette aire ne reçoit que des "
+            f"wheels (.whl) — c'est le seul artefact que `update apply` sait poser.")
+    return nom
+
+
+def list_wheels(settings: Settings, *, keep: int = KEEP_WHEELS) -> dict:
+    """Les artefacts déposés, du plus récent au plus ancien, et la politique qui les garde. Tri par **nom**
+    (le nom EST l'horodatage) — jamais par mtime, qu'une copie ou une restauration réécrit.
+
+    `sha256` et `size` sont ceux **mesurés à la réception** (`deposit.json`), pas recalculés à la lecture :
+    c'est une provenance de dépôt, et la relire à chaque affichage coûterait une relecture complète de
+    l'aire. Un dossier posé à la main n'en a pas — il est listé quand même, avec `sha256: null`, parce que
+    « je n'ai pas mesuré » n'est pas « il n'y a rien »."""
+    base = wheels_dir(settings)
+    stamps = sorted((p.name for p in base.iterdir() if p.is_dir() and RUN_ID_RE.match(p.name)),
+                    reverse=True) if base.is_dir() else []
+    en_vol = wheels_in_use(settings)
+    vue = []
+    for stamp in stamps:
+        whls = sorted((base / stamp).glob("*.whl"))
+        if not whls:
+            continue                     # dépôt sans artefact (échec effacé, ou main humaine) : rien à dire
+        meta = _read_json(base / stamp / DEPOT_META) or {}
+        vue.append({"stamp": stamp, "name": whls[0].name, "path": str(whls[0]),
+                    "size": meta.get("size", whls[0].stat().st_size), "sha256": meta.get("sha256"),
+                    "in_use": str(whls[0]) in en_vol})
+    return {"wheels": vue, "total": len(vue), "keep": keep}
+
+
+def wheels_in_use(settings: Settings) -> set[str]:
+    """Les artefacts qu'un run **sans verdict** nomme encore dans son `run.json`. Une rétention qui ignore
+    ses références casse ce qu'elle croit ranger : purger le wheel d'un run en vol le ferait échouer en
+    plein pip install. Borné à `MAX_RUNS`, comme la liste des runs."""
+    base = runs_dir(settings)
+    if not base.is_dir():
+        return set()
+    runs = sorted((p for p in base.iterdir() if p.is_dir() and RUN_ID_RE.match(p.name)), reverse=True)
+    return {str(whl) for p in runs[:MAX_RUNS] if not (p / RUN_RESULT).is_file()
+            if (whl := (_read_json(p / RUN_META) or {}).get("wheel"))}
+
+
+def prune_wheels(settings: Settings, *, keep: int = KEEP_WHEELS) -> list[str]:
+    """Applique la rétention **à l'écriture** (pas par un timer : une politique qui dépend d'un minuteur ne
+    tient pas sur une instance qu'on éteint). Garde les `keep` dépôts les plus récents, et **épargne** ceux
+    qu'un run sans verdict nomme — un dépôt épargné ne décale pas la fenêtre, il s'ajoute à ce qui reste.
+
+    Rend les horodatages purgés : l'appelant les **dit**. Une purge muette, c'est un cap silencieux avec un
+    autre nom."""
+    base = wheels_dir(settings)
+    if not base.is_dir():
+        return []
+    stamps = sorted((p.name for p in base.iterdir() if p.is_dir() and RUN_ID_RE.match(p.name)),
+                    reverse=True)
+    en_vol = wheels_in_use(settings)
+    purges = []
+    for stamp in stamps[keep:]:
+        depot = base / stamp
+        if any(str(whl) in en_vol for whl in depot.glob("*.whl")):
+            continue
+        shutil.rmtree(depot, ignore_errors=True)
+        purges.append(stamp)
+    return purges
+
+
 def _read_json(path: Path) -> dict | None:
     """Le contenu d'un JSON de run, ou `None` — présent-mais-illisible se lit comme absent : un fichier
     tronqué par une écriture concurrente ne doit pas faire tomber la lecture d'état de tous les autres."""
@@ -736,7 +909,11 @@ def survey_in_flight(settings: Settings) -> list[dict]:
 
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     """Route `forgemaster update <action>` — `apply` et `rollback` suivent la MÊME séquence : préflight qui
-    refuse avant tout effet, description, puis lancement de l'applicateur détaché."""
+    refuse avant tout effet, description, puis lancement de l'applicateur détaché. `wheels` est une **vue en
+    lecture** sur l'aire de dépôt : on ne dépose pas en CLI (elle a déjà un système de fichiers), mais une
+    politique de rétention qui n'existe que dans le code n'est pas une politique déclarée."""
+    if args.action == "wheels":
+        return _cli_wheels(settings)
     scope = "system" if getattr(args, "system", False) else "user"
     aller = args.action == "apply"
     quoi = "MAJ" if aller else "retour arrière"
@@ -758,3 +935,19 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     print()
     return launch(settings, plan, systemctl=args.systemctl, service=args.service, detach=args.detach,
                   mode="apply" if aller else "rollback")
+
+
+def _cli_wheels(settings: Settings) -> int:
+    """`forgemaster update wheels` — ce que la route a déposé, et ce que la rétention en garde. Toujours
+    rc 0 : lire une aire vide n'est pas une panne, c'est l'état d'une instance qui n'a rien reçu."""
+    vue = list_wheels(settings)
+    print(f"aire de dépôt : {wheels_dir(settings)}")
+    if not vue["wheels"]:
+        print("  (vide — rien n'a été déposé par la route ; `--wheel <chemin>` reste le chemin de la CLI)")
+    for w in vue["wheels"]:
+        sha = (w["sha256"] or "")[:12] or "sha non mesuré"
+        tenu = "  ← retenu : un run sans verdict le nomme" if w["in_use"] else ""
+        print(f"  {w['stamp']}  {w['name']}  {w['size'] / 1024 / 1024:.1f} Mo  {sha}{tenu}")
+    print(f"\nrétention : les {vue['keep']} plus récents sont gardés, plus tout dépôt qu'un run sans verdict "
+          f"nomme encore.\n  la purge se fait au dépôt suivant, et elle dit ce qu'elle a retiré.")
+    return 0

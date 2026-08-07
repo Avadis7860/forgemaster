@@ -13,6 +13,11 @@ idempotent — `GET /api/update/plan` porte le préflight et ce qui va se passer
 `GET .../git/sync` avant `POST .../git/sync/reconcile` (`docs/schema-contract.md` §3). Un `dry_run` dans le
 corps d'un `POST` obligerait à faire confiance à un drapeau pour ne rien casser.
 
+**3. L'artefact arrive par ici, mais `apply` n'est pas confiné à ce qui en vient.** `POST /wheels` donne à
+HTTP le système de fichiers qu'il n'a pas — la CLI, elle, en a un. Confiner `apply` aux seuls dépôts serait
+tentant et faux : le canal servi (phase 5) fera arriver un wheel ailleurs, et il faudrait ré-ouvrir. Le
+dépôt **ajoute une source**, il ne devient pas la seule.
+
 **Surface volontairement plus étroite que la CLI.** Ni `--unit`, ni `--systemctl`, ni `--service` : ce sont
 des points d'injection pour un test ou pour un opérateur devant un terminal, pas des choses qu'on accepte
 d'un corps de requête. La route sert le chemin nominal du produit ; l'unité est celle de la portée.
@@ -25,9 +30,10 @@ l'instance écoutera autre chose que la boucle locale, cette route est la premi�
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, ConfigDict
 
 from forgemaster import update
@@ -129,6 +135,38 @@ def make_update_router() -> APIRouter:
                        f"l'instance. Le dossier de run {issue['run'].name} reste pour la trace.\n"
                        f"{issue['detail']}")
         return {"run": issue["run"].name, "unit": issue["unit"], "mode": mode, "state": "running"}
+
+    @router.post("/wheels", status_code=201)
+    def stage_wheel_route(file: UploadFile = File(...), deps: Deps = Depends(get_deps)) -> dict:
+        """Dépose l'artefact à poser. **201** `{stamp, name, path, size, sha256, staged_at, pruned}` — le
+        `path` rendu se repasse tel quel à `GET /plan` puis `POST /apply` ; c'est tout le rôle de cette
+        route, donner à HTTP le système de fichiers qu'il n'a pas.
+
+        Le corps est lu **en flux** (`WHEEL_CHUNK`), jamais d'un seul `read()` : le patron d'origine
+        (`projects.upload_to_project`) matérialise toute la part avant de la borner, ce qui est tenable sous
+        un cap de 10 Mo et ne l'est pas sur le daemon qui s'apprête à se remplacer lui-même. D'où un handler
+        **synchrone** — FastAPI le joue dans le pool de fils, et le fichier spoolé de la part (`file.file`,
+        rembobiné par le parseur) se lit morceau par morceau, sans générateur asynchrone à recoller.
+
+        Ce que le flux n'achète PAS, et il faut le dire : le parseur multipart a **déjà** déversé la part sur
+        le disque avant que ce handler soit appelé. C'est un autre défaut, fiché, pas maquillé.
+
+        Nom traversant/vide → **400** · extension hors `.whl` → **415** · au-delà de la borne → **413** (les
+        trois par les handlers globaux) · deux dépôts dans la même seconde → **409**."""
+        def _flux() -> Iterator[bytes]:
+            while chunk := file.file.read(update.WHEEL_CHUNK):
+                yield chunk
+        try:
+            return update.stage_wheel(deps.settings, filename=file.filename or "", chunks=_flux())
+        except update.UpdateRefused as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @router.get("/wheels")
+    def wheels_route(deps: Deps = Depends(get_deps)) -> dict:
+        """Les artefacts déposés, récents d'abord, et la politique qui les garde (`keep`). `in_use` dit
+        celui qu'un run sans verdict nomme encore — une rétention qui ne montre pas ses exceptions se lit
+        comme un cap silencieux."""
+        return update.list_wheels(deps.settings)
 
     @router.get("/runs")
     def runs_route(deps: Deps = Depends(get_deps)) -> dict:

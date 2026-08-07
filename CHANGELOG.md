@@ -9,6 +9,29 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### L'artefact arrive par la route, et l'aire de dépôt a une politique (routes neuves, aucun schéma touché)
+
+`POST /api/update/wheels` (multipart) → **201** `{stamp, name, path, size, sha256, staged_at, pruned}` ·
+`GET /api/update/wheels` → `{wheels, total, keep}` · `forgemaster update wheels` (vue CLI en lecture).
+
+- **Pourquoi.** `apply` ne pose que le fichier qu'on lui désigne, et **HTTP n'a pas de système de fichiers** :
+  un utilisateur distribué a son wheel dans son navigateur, pas sur le disque de son instance. Le `path` rendu
+  se repasse tel quel à `GET /plan` puis `POST /apply` — après quoi le cycle est atteignable **sans terminal**.
+- **`apply` n'est PAS confiné à l'aire**, et c'est délibéré : le canal servi fera arriver un wheel ailleurs.
+  Le dépôt **ajoute une source**, il ne devient pas la seule.
+- **Quatre gardes, et l'ordre porte du sens** — nom nu (**400**) · extension `.whl` (**415**) · confinement du
+  chemin résolu (**400**) · taille mesurée **pendant** le flux (**413**). Un artefact hostile de 100 Mo visant
+  `../` est refusé **pour son nom** : le rejeter pour son poids laisserait croire qu'un plus petit passerait.
+  Les trois exceptions sont celles de `content.upload` — les handlers globaux les mappent déjà.
+- **Lecture en flux, handler synchrone.** Le patron d'origine matérialise toute la part avant de la borner :
+  tenable sous 10 Mo, pas sur le daemon qui s'apprête à se remplacer lui-même. Ce que le flux n'achète pas :
+  le parseur multipart a déjà déversé la part sur le disque — autre défaut, fiché, pas maquillé.
+- **Rétention déclarée dès le premier jour** (`KEEP_WHEELS` = 3), appliquée **à l'écriture** et non par un
+  minuteur, qui **épargne** tout dépôt qu'un run **sans verdict** nomme encore et **dit** ce qu'elle purge.
+  Elle ne dérive pas de `ROLLBACK_DEPTH` : un wheel déposé n'est pas un barreau de l'échelle de retour.
+- Écriture **atomique** (`.part` + `os.replace`), tout échec efface le dépôt entier ; deux dépôts dans la même
+  seconde → **409**, même contrat que `spawn`.
+
 ### La route de MAJ, et un état de run qui SURVIT au daemon (routes neuves, aucun schéma touché)
 
 Poser une mise à jour depuis le produit, sans terminal — et retrouver son verdict de l'autre côté de la
