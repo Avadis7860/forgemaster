@@ -25,8 +25,8 @@ vi.mock('@/lib/queries', () => ({
             comparable: false, stale: null, behind_by: null, missing_types: [] },
     error: null, isFetching: false, dataUpdatedAt: h.contact, refetch: vi.fn(),
   }),
-  useApplyUpdate: () => ({ mutate: vi.fn(), isPending: false, error: null }),
-  useRollbackUpdate: () => ({ mutate: vi.fn(), isPending: false, error: null }),
+  useApplyUpdate: () => ({ mutate: vi.fn(), reset: vi.fn(), isPending: false, error: null }),
+  useRollbackUpdate: () => ({ mutate: vi.fn(), reset: vi.fn(), isPending: false, error: null }),
   // Consommés par les enfants — neutralisés ici : ce fichier teste l'orchestration, pas l'aire de dépôt.
   useWheels: () => ({ data: { wheels: [], total: 0, keep: 3, max_bytes: 67108864 }, isPending: false,
                       isError: false, error: null }),

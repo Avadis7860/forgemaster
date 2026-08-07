@@ -54,15 +54,23 @@ export function UpdatePanel() {
   }, [muette])
 
   const etatConnu = run.data?.state ?? null
+  // L'indice de lancement ne vaut que tant qu'on REGARDE le run lancé : sans `runId === lance`, ouvrir un
+  // geste ancien dans l'historique rendrait « en vol » un run terminé depuis longtemps — et un silence du
+  // daemon passerait alors pour une bascule.
+  const attendLeLance = lance !== null && runId === lance && run.data?.run !== lance
   const lien = liaison({
     muette,
     // En vol tant que le disque n'a pas parlé de CE run-là, puis tant que son état n'est pas tranché.
-    gesteEnVol: enVol(etatConnu) || (lance !== null && run.data?.run !== lance),
+    gesteEnVol: enVol(etatConnu) || attendLeLance,
     depuisMs: contact > 0 && maintenant > contact ? maintenant - contact : null,
     borneMs: runs.data ? runs.data.follow_timeout * 1000 : null,
   })
 
   function lancer(mode: 'apply' | 'rollback') {
+    // L'échec de l'autre verbe n'a plus rien à dire : le laisser afficher son alerte pendant qu'un nouveau
+    // geste part montrerait un refus périmé à côté d'un geste vivant.
+    poser.reset()
+    revenir.reset()
     setShaAvant(version.data?.sha ?? null)
     const suivre = {
       onSuccess: (r: { run: string }) => { setLance(r.run); setRunChoisi(r.run); setApercu(null) },
