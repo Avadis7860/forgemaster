@@ -9,6 +9,37 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Le détecteur de panne — un wheel à interface blanche ne passe plus
+
+Le critère « ça sert » d'une MAJ était `/health` **200** + le SHA de `/api/version`. C'est de la **plomberie** :
+un wheel dont la SPA est cassée (`_web_dist` vide, bundle tronqué, erreur JS avant le mount) satisfait les
+deux et sert une page blanche en se déclarant posé. Les deux vérifications de `apply_update` chargent
+désormais la page dans un vrai navigateur.
+
+- **Le contrat d'interface voyage avec le wheel** (`forgemaster/_ui_contract.json`), jamais en dur dans
+  l'applicateur : `update.spawn` copie l'`apply_update.py` de la version **installée**, donc c'est le vieux
+  applicateur qui juge le nouveau wheel — un libellé épinglé dans le script ferait échouer toute MAJ qui le
+  renomme. Le lockstep avec `web/src/App.tsx` est tenu par un test.
+- **Deux endroits, deux questions.** En **isolation** (home vierge) c'est le *build* qui est jugé, et le refus
+  y coûte un venv jetable : le wheel à interface blanche n'atteint jamais le vivant. **En vivant** c'est la
+  *rencontre* du binaire et des données réelles — et cet échec-là déclenche le **retour arrière automatique**,
+  par le chemin qui existe depuis le premier jour.
+- **Le juge vient de l'hôte**, jamais du wheel qu'il juge : la cascade du gate Tier-1.5, telle quelle
+  (`$FORGEMASTER_VERIFY_RUNNER` → `<home>/runners/render_check.js`), et le runner doit avoir son
+  `node_modules/playwright-core` à côté — un runner sans sa dépendance n'est pas un runner. Le runner
+  embarqué dans le wheel a été envisagé en repli puis **écarté sur mesure** : son `node_modules` est
+  gitignoré, donc absent du wheel ; le retenir aurait transformé une dégradation annoncée en MAJ refusée.
+- **Absence n'est pas panne.** Pas de Node, pas de runner, pas de contrat → on retombe sur `/health` + SHA
+  **et on l'annonce** : `describe` porte la ligne, donc le panneau `/settings` l'affiche *avant* le geste, et
+  le verdict la porte après. Les refus de ce module restent réservés à ce qui **casserait**. En revanche un
+  juge présent qui plante, expire ou rend un verdict illisible est un **échec** — jamais blanchi.
+- **Revenir n'exige pas de preuve.** Une cible de retour arrière antérieure à cette vérification ne déclare
+  aucun contrat : son absence ne bloque jamais un rollback.
+- Chaque passage archive sa capture (`ui-isolation.png`, `ui-live.png`) dans le dossier du run.
+- Garde-fou de packaging : `deploy/build-wheel.sh` refuse un wheel sans `forgemaster/_ui_contract.json`.
+
+Aucun changement de schéma (le contrat est un fichier du paquet, pas une surface).
+
 ### Le cycle de MAJ depuis le produit — et ce qu'il montre quand son backend meurt (web + 3 champs additifs)
 
 Panneau **Mise à jour** en tête de `/settings` : déposer → prévisualiser → poser → suivre → revenir, sans

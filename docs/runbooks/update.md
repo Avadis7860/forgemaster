@@ -364,12 +364,50 @@ refusé ici : ce n'est pas un wheel de forgemaster.
 
 ## probe_isolated() — ce qu'elle prouve, et ce qu'elle ne prouve pas
 `src/forgemaster/apply_update.py:88` · appelé par `apply` (étape 3/6) et `rollback` (étape 1/5) · retourne l'identité de build
-Fait servir la version sur un port libre et un `FORGEMASTER_HOME` **jetable**, puis lit `/api/version`. Elle prouve
-que *le wheel démarre et sert* ; elle ne prouve **pas** que ta configuration et ta base tiennent — son home est
-vierge. C'est la vérification en vivant qui couvre ça, et son échec est précisément ce qui déclenche le retour. Le
+Fait servir la version sur un port libre et un `FORGEMASTER_HOME` **jetable**, puis lit `/api/version` **et charge la
+page dans un vrai navigateur** (cf. section suivante). Elle prouve que *le wheel démarre, sert et s'affiche* ; elle ne
+prouve **pas** que ta configuration et ta base tiennent — son home est vierge. C'est la vérification en vivant qui couvre ça, et son échec est précisément ce qui déclenche le retour. Le
 wheel est **sa propre référence** : l'identité relevée ici devient l'attendu du vivant, sans manifeste ni signature.
 Côté `rollback` elle a un **double effet** : elle produit l'attendu final *et* prouve que l'ancien binaire sert encore
 — s'il ne servait plus, revenir vers lui n'aurait aucun sens, et rien n'a bougé.
+
+## check_ui() / render_ok() / verificateur() — le détecteur de panne : la page rend-elle ?
+`src/forgemaster/apply_update.py:283` · appelé par `probe_isolated` et `_verify_live` · retourne `(état, phrase)`
+`/health` 200 + le bon SHA sont de la **plomberie** : un wheel dont la SPA est cassée les satisfait tous les deux et
+sert une page blanche. Depuis le 2026-08-07, les deux vérifications chargent la page dans Chromium et exigent que le
+wheel y rende les marqueurs **qu'il déclare lui-même**.
+
+**Le contrat voyage avec le wheel** (`src/forgemaster/_ui_contract.json`, lu par `ui_contract`), jamais en dur dans le
+script : `spawn` copie l'`apply_update.py` de la version **installée**, donc c'est le **vieux** applicateur qui juge le
+**nouveau** wheel — un libellé épinglé dans le script ferait échouer toute MAJ qui le renomme. Le lockstep entre ce
+contrat et `web/src/App.tsx` est tenu par un test, pas par la vigilance.
+
+**Le juge vient de l'hôte, jamais du wheel qu'il juge.** `verificateur` reprend **exactement** la cascade de
+`gate.verify.runner_path` (`$FORGEMASTER_VERIFY_RUNNER` → `<home>/runners/render_check.js`) : un seul override pour les
+deux usages. Le runner **embarqué dans le wheel** (`forgemaster/_verify_runner/`) a été écrit comme repli puis
+**écarté sur mesure** : `deploy/runners/node_modules` est gitignoré, donc un wheel bâti depuis un checkout propre
+n'emporte que le `.js` et son `package.json` — ce fichier ne s'exécute pas, `require('playwright-core')` lève. Le
+retenir aurait transformé une **dégradation annoncée** en **MAJ refusée**. Même complété il resterait inutile sans le
+Chromium de ~150 Mo, qui n'est dans aucun wheel : le runner embarqué est une **source**, que `provision-ct.sh` tire
+pour semer `<home>/runners`, pas un exécutable. De là vient aussi l'exigence de `node_modules/playwright-core` **à
+côté** du runner : un runner sans sa dépendance n'est pas un runner, et le compter présent ferait planter le juge.
+
+**Trois états, et la frontière entre les deux premiers est toute la doctrine.** `vu` : la page rend. `non-mesuré` : pas
+de Node, pas de runner, ou pas de contrat → on retombe sur `/health` + SHA **et on le dit** (au plan avant le geste,
+au verdict après). `raté` : la page ne rend pas, **ou** le juge était là et n'a pas pu juger (plantage, délai, verdict
+illisible) — jamais blanchi. Les six refus de ce module sont réservés à ce qui **casserait** ; un juge absent ne casse
+rien, il rend moins sûr, et ce dépôt **déclare** ce qu'il n'a pas pu observer (`comparable=false`, `run_state: unknown`,
+`impact: null`) au lieu de bloquer dessus. Exiger ~150 Mo de Chromium pour toute MAJ contredirait par ailleurs la
+promesse turnkey « l'utilisateur final n'installe que Python ».
+
+**Deux endroits, deux questions.** En isolation le home est vierge : ce qui est jugé est le **build**, et un refus y
+coûte un venv jetable au lieu d'un arrêt de service, d'un instantané et d'un retour arrière. En vivant c'est la
+**rencontre** du binaire et des données réelles — une interface qui ne tombe que sur la vraie base ne se voit que là,
+et ce `False` déclenche le retour arrière automatique sans une ligne neuve. Côté `rollback`, l'absence de contrat sur
+la cible **ne bloque jamais** : *on exige la preuve pour avancer, jamais pour revenir*.
+
+Chaque passage archive sa capture (`ui-isolation.png`, `ui-live.png`) dans le dossier du run — une preuve durable,
+relisable après coup.
 
 ## take_snapshot() — pris à FROID, par le forgemaster ANCIEN
 `src/forgemaster/apply_update.py:121` · appelé par `apply` (4/6) et `rollback` (2/5) · retourne le dossier · lève `UpdateFailed`

@@ -60,6 +60,7 @@ from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 
+from forgemaster import apply_update
 from forgemaster.config import Settings
 from forgemaster.content.upload import UploadRejected, UploadTooLarge, UploadTypeRejected
 from forgemaster.projects import authority as auth
@@ -159,7 +160,11 @@ def _preflight_service(settings: Settings, *, unit: str | None, scope: str) -> d
 
     return {"unit": up, "link": link, "venv": link.resolve(),
             "base_url": f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{port}",
-            "scope": scope, "home": settings.home, "projects_root": settings.projects_root}
+            "scope": scope, "home": settings.home, "projects_root": settings.projects_root,
+            # Ce qu'on saura dire de l'INTERFACE, calculé ici pour être DIT avant le geste : le plan le
+            # porte, `describe` l'affiche, donc le panneau le montre dans sa prévisualisation. Une
+            # dégradation annoncée n'est pas un cap silencieux — une dégradation tue en serait un.
+            "ui_check": apply_update.annonce_verification(settings.home)}
 
 
 def _refuse_uncommitted_work(verdicts: list[dict], *, geste: str) -> None:
@@ -341,11 +346,12 @@ def describe(plan: dict) -> list[str]:
         f"unité systemd   : {plan['unit']}  (portée {plan['scope']})",
         f"sonde en vivant : {plan['base_url']}/health (readiness : 503 = elle dit pourquoi) puis "
         f"/api/version",
+        plan.get("ui_check", ""),
         "déroulé         : venv neuf à côté → sonde en isolation → arrêt + instantané à froid → "
         "bascule du lien → vérification en vivant → retour arrière automatique si elle échoue",
     ]
     lines.extend(_a_savoir(plan))
-    return lines
+    return [ln for ln in lines if ln]
 
 
 def _a_savoir(plan: dict) -> list[str]:
@@ -382,11 +388,12 @@ def describe_rollback(plan: dict) -> list[str]:
         f"unité systemd   : {plan['unit']}  (portée {plan['scope']})",
         f"sonde en vivant : {plan['base_url']}/health (readiness : 503 = elle dit pourquoi) puis "
         f"/api/version",
+        plan.get("ui_check", ""),
         "déroulé         : sonde du binaire cible en isolation → arrêt + instantané de SÛRETÉ à froid → "
         "bascule du lien PUIS restauration → vérification en vivant → retour du retour si elle échoue",
     ]
     lines.extend(_a_savoir(plan))
-    return lines
+    return [ln for ln in lines if ln]
 
 
 def spawn(settings: Settings, plan: dict, *, systemctl: str, service: str,

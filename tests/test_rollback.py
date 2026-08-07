@@ -480,3 +480,27 @@ def test__restore_RAPPORTE_un_succes_reel(tmp_path: Path):
     retour arrière RÉUSSI, ce qui le défait aussitôt."""
     assert apply_update._restore(_instantane_dont_le_restore_sort_en(0, tmp_path),
                                  tmp_path / "home", lambda _m: None) is True
+
+
+def test_revenir_vers_un_wheel_SANS_contrat_dinterface_reste_possible(
+        apres_maj: Settings, tmp_path: Path, shim: Path, monkeypatch):
+    """LE CONTRE-TÉMOIN de l'asymétrie posée par le détecteur de panne (2026-08-07) : *on exige la preuve
+    pour AVANCER, jamais pour REVENIR*. Toute cible un peu ancienne est un wheel antérieur à la vérification
+    d'interface — elle ne déclare aucun contrat. Si son absence bloquait, le retour arrière deviendrait
+    impossible exactement au moment où il sert : après une MAJ qui a mal tourné."""
+    snap = next(iter(snapshot.snapshots_dir(apres_maj).iterdir()))
+    cible = apres_maj.home / snapshot.VENVS / "2026-08-01T00-00-00Z"
+    monkeypatch.setattr(apply_update, "take_snapshot", lambda *_a, **_k: snap)
+    monkeypatch.setattr(apply_update, "_restore", lambda *_a, **_k: True)
+    # La cible est un venv de test : son `bin/python` n'existe pas, donc `package_dir` rend None — c'est
+    # LITTÉRALEMENT le cas d'un wheel sans contrat, obtenu sans le simuler.
+    monkeypatch.setattr(apply_update, "_wait_health", lambda *_a, **_k: (True, ""))
+    monkeypatch.setattr(apply_update, "_get_json", lambda *_a, **_k: {"version": "0.1.0", "sha": "abc"})
+    monkeypatch.setattr(apply_update, "probe_isolated", lambda *_a, **_k: {"version": "0.1.0", "sha": "abc"})
+
+    rc, verdict, details = apply_update.rollback(
+        _args_rollback(apres_maj.home, tmp_path, shim, cible, snap), lambda _m: None)
+
+    assert rc == 0, verdict
+    assert "ne déclare pas de contrat d'interface" in verdict, "la dégradation doit être DITE, pas tue"
+    assert details["impact"] == "revenu à l'état de l'instantané (venv + données)"
