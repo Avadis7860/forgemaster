@@ -273,9 +273,15 @@ def _cible_utilisable(settings: Settings, info: dict, *, actuel: Path,
                       lu_courant: int | None) -> tuple[Path | None, str]:
     """`(venv cible, motif de refus)` — le motif est vide quand cette cible ramène **vraiment** en arrière.
 
-    Quatre façons de ne pas en être une, et la quatrième s'est révélée en revue : après un retour arrière,
+    Cinq façons de ne pas en être une. La quatrième s'est révélée en revue : après un retour arrière,
     l'instantané de sûreté est le plus récent et il est `restaurable` — le viser ferait repartir **en avant**
-    vers la version qu'on vient de quitter. « Revenir » a un sens, et ce n'est pas « bouger »."""
+    vers la version qu'on vient de quitter. « Revenir » a un sens, et ce n'est pas « bouger ».
+
+    La cinquième dit la MÊME chose, mais là où la quatrième est aveugle : elle compare les schémas, donc
+    elle est muette quand rien n'a migré — et c'est exactement le cas que le départage du 2026-08-07 a
+    rendu atteignable. Mesuré à la table en écrivant ce correctif : sans elle, un `update rollback` rejoué
+    après un retour NON migrant repartait vers le binaire qu'on venait de quitter. Ce que le journal dit et
+    que le schéma ne dit pas : cet instantané est né d'un `rollback`."""
     from forgemaster import restore
 
     if not info["valid"]:
@@ -283,12 +289,24 @@ def _cible_utilisable(settings: Settings, info: dict, *, actuel: Path,
     if info.get("state") != "restaurable":
         return None, (f"il est `{info.get('state', 'inconnu')}`, pas `restaurable` — "
                       f"{info.get('state_reason', 'état non mesuré')}")
+    if info.get("safety_of_rollback"):
+        return None, ("c'est la prise de SÛRETÉ d'un retour arrière déjà fait — le viser ramènerait à "
+                      "l'état d'avant CE retour, donc à la version qu'on vient de quitter : ce serait "
+                      "avancer")
     venv = _venv_pour(settings, Path(info["path"]))
     if venv is None:
         return None, ("il se dit `restaurable` mais son venv n'a pas été retrouvé — la liste et la "
                       "résolution ne voient pas le même disque, on ne devine pas")
     if venv.resolve() == actuel:
-        return None, f"il correspond au venv DÉJÀ actif ({venv.name}) — il n'y a nulle part où revenir"
+        # Depuis le départage (2026-08-07) ce refus ne peut plus être un artefact de l'ordre par récence :
+        # quand un run nomme cet instantané, la cible est le binaire qui tournait alors, et « déjà actif »
+        # veut vraiment dire « on y est déjà ». Quand PERSONNE ne le nomme, on n'a que l'ordre — et le dire
+        # vaut mieux qu'un refus qui a l'air arbitraire.
+        sans_journal = ("" if info.get("named_by_run") else
+                        ", et aucun journal de MAJ ne dit quel binaire tournait quand il a été pris — "
+                        "il a été pris à la main, ou son run a été effacé")
+        return None, (f"il correspond au venv DÉJÀ actif ({venv.name}) — il n'y a nulle part où "
+                      f"revenir{sans_journal}")
     lu_cible = restore.python_schema(venv / "bin" / "python")
     if lu_courant is not None and lu_cible is not None and lu_cible > lu_courant:
         return None, (f"son binaire lit le schéma {lu_cible} et le tien lit le {lu_courant} : ce serait "
@@ -302,11 +320,16 @@ def _venv_pour(settings: Settings, snapshot_dir: Path) -> Path | None:
     phase 1 nomme `données seules`, et qui n'est pas un retour arrière.
 
     Le **choix** ne se fait pas ici : il vit chez `snapshot.venv_for_schema`, seul endroit qui énumère les
-    candidats et les ordonne. Cette marche parcourait `<home>/venvs` de son côté, comme `_restorability` du
-    sien — deux marches qui choisissent séparément finissent par ne pas choisir pareil, et le troisième refus
-    de `_cible_utilisable` (« la liste et la résolution ne voient pas le même disque ») est précisément ce que
-    ça produisait. Elles lisent désormais la même liste, qui inclut le venv d'**origine**, hors
-    `<home>/venvs` : sans lui, le PREMIER saut d'une install fraîche était sans retour."""
+    candidats, les ordonne et les **apparie**. Cette marche parcourait `<home>/venvs` de son côté, comme
+    `_restorability` du sien — deux marches qui choisissent séparément finissent par ne pas choisir pareil,
+    et le troisième refus de `_cible_utilisable` (« la liste et la résolution ne voient pas le même disque »)
+    est précisément ce que ça produisait. Elles lisent désormais la même liste, qui inclut le venv
+    d'**origine**, hors `<home>/venvs` : sans lui, le PREMIER saut d'une install fraîche était sans retour.
+
+    L'instantané est passé au résolveur, et pas seulement son schéma : c'est ce qui permet de retenir le
+    binaire qui tournait **quand celui-ci a été pris**, plutôt que n'importe lequel qui lit le même
+    schéma. Après une MAJ non migrante il y en a deux, et le plus récent est le venv qu'on cherche
+    justement à quitter."""
     from forgemaster import restore
     from forgemaster import snapshot as snap_mod
 
@@ -314,7 +337,7 @@ def _venv_pour(settings: Settings, snapshot_dir: Path) -> Path | None:
     voulu = restore.snapshot_schema(snapshot_dir, manifest)
     if voulu is None:
         return None
-    return snap_mod.venv_for_schema(settings, voulu)
+    return snap_mod.venv_for_schema(settings, voulu, snapshot_dir=snapshot_dir)
 
 
 def parse_exec_start(unit_text: str) -> tuple[str, str, int]:

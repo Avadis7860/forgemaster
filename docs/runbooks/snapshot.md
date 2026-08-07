@@ -83,7 +83,7 @@ n'est borné par rien : `<home>/updates` n'a pas de rétention, contrairement au
 donc linéaire en **runs**, pas en instantanés.
 
 ## _restorability() — `restaurable`, `données seules`, `irrestaurable` — et le vide honnête
-`src/forgemaster/snapshot.py:315` · appelé par `list_snapshots` · retourne `state` + `state_reason` (+ `state_note`)
+`src/forgemaster/snapshot.py:401` · appelé par `list_snapshots` · retourne `state` + `state_reason` (+ `state_note`)
 - **`restaurable`** — un venv porte **exactement** le schéma de l'instantané : binaire et données reviennent ensemble.
   Le seul état qui tient la promesse du retour arrière. Il porte en plus `state_note` quand ce venv vit **hors** de
   `<home>/venvs` (`racine`, passée par `list_snapshots`) : le retour dépend alors d'un binaire que le cycle de MAJ n'a
@@ -103,14 +103,14 @@ seraient deux façons de le comprendre. Le motif de `restaurable` nomme le venv 
 le venv d'origine s'appelle `forgemaster`, ce qui ne dit pas où il est.
 
 ## venv_schemas() — un schéma indéterminable n'est pas un schéma bas
-`src/forgemaster/snapshot.py:228` · appelé par `list_snapshots` et `venv_for_schema` · retourne `{chemin de venv: schéma}`
+`src/forgemaster/snapshot.py:240` · appelé par `list_snapshots` et `venv_for_schema` · retourne `{chemin de venv: schéma}`
 Sonde chaque **candidat** (`_venvs_candidats`) — l'ensemble des binaires vers lesquels un retour arrière peut basculer,
 donc la seule mesure qui décide de l'état d'un instantané. Un venv qu'on ne sait pas sonder est **absent** du résultat
 plutôt que compté à zéro : un zéro passerait les comparaisons en silence. La clé est un `Path` et non un nom — deux
 venvs de racines différentes peuvent porter le même, et une collision en effacerait un en silence.
 
 ## _venvs_candidats() — et ce que devient le venv d'ORIGINE
-`src/forgemaster/snapshot.py:246` · appelé par `venv_schemas` · retourne les venvs du plus préférable au moins
+`src/forgemaster/snapshot.py:261` · appelé par `venv_schemas` · retourne les venvs du plus préférable au moins
 Les estampillés de `<home>/venvs` du plus récent au plus ancien, **puis** ceux qu'un run de MAJ a nommés et qui vivent
 ailleurs. Ce « ailleurs » est le venv d'**origine** — celui que `pip install` a posé (`~/.venvs/forgemaster` chez un
 utilisateur, `/root/.venvs/forgemaster` chez `provision-ct.sh:32`) et que le lien stable désignait avant la toute
@@ -124,26 +124,61 @@ qu'un marqueur posé au prochain `apply` ne ferait pas. Même doctrine que `upda
 
 **Ce qu'il devient, dit une fois pour toutes** : rien ne le supprime. `apply_update._purge_venvs` ne balaie que
 `<home>/venvs`, et c'est voulu — ce venv appartient à l'utilisateur, pas au cycle de MAJ ; la rétention ne s'applique
-qu'à ce que le produit a créé. À schéma égal il **cède le pas** à un estampillé (`_premier_du_schema`) : viser
-l'origine quand un estampillé équivalent existe ferait remonter plus loin que `ROLLBACK_DEPTH` sans le dire.
+qu'à ce que le produit a créé. À schéma égal, et **quand rien ne l'apparie à l'instantané visé**, il cède le pas à un
+estampillé (`_premier_du_schema`) : viser l'origine quand un estampillé équivalent existe ferait remonter plus loin
+que `ROLLBACK_DEPTH` sans le dire.
+
+## _lecture_des_runs() — un seul passage, trois réponses
+`src/forgemaster/snapshot.py:305` · appelé par `_venvs_candidats`, `venv_for_schema`, `list_snapshots` · retourne
+`(ordre des venv_avant, {instantané → binaire d'alors}, les prises de sûreté)`
+Les journaux `updates/<stamp>/result.json`, du plus récent au plus ancien. Un run interrompu, tronqué, ou antérieur à
+ces clés est **sauté** — ce sont des journaux, et un journal incomplet n'invalide pas les autres. Le même fichier porte
+les trois réponses : l'**ordre** (qui rend joignable le venv d'origine), l'**appariement** (qui départage), et les
+prises de **sûreté** (qui donnent la direction). Les lire deux fois doublerait un coût déjà linéaire en runs — d'où
+`runs=` passé de `list_snapshots` à `venv_schemas`, facultatif et sans effet observable.
+
+Deux clés valent appariement : `CLE_ALLER` (`instantane`, la prise faite avant la migration) et `CLE_SURETE`
+(`instantane_surete`, celle qu'un `rollback` prend avant de partir). Pour l'**appariement** elles disent exactement la
+même chose — voici l'instantané, voici le binaire d'alors. Pour la **direction**, non : viser la sûreté d'un retour
+déjà fait, c'est revenir à l'état d'avant ce retour, donc **avancer** vers la version qu'on venait de quitter. Le
+schéma ne peut pas le dire quand rien n'a migré ; le journal, si (cf. `update.md#_cible_utilisable`).
 
 ## _premier_du_schema() / venv_for_schema() — UNE règle de choix, pour les deux marches
-`src/forgemaster/snapshot.py:300` · appelé par `_restorability` et `update._venv_pour` · retourne le venv ou `None`
-Le premier candidat qui lit **exactement** ce schéma, dans l'ordre de préférence. L'état et la résolution parcouraient
-chacun `<home>/venvs` de leur côté : deux marches qui choisissent séparément finissent par ne pas choisir pareil, et
-`update._cible_utilisable` porte déjà le refus que ça produit (« la liste et la résolution ne voient pas le même
-disque »). Elles lisent désormais la même liste, dans le même ordre.
+`src/forgemaster/snapshot.py:360` · appelé par `_restorability` et `update._venv_pour` · retourne le venv ou `None`
+**Ce que le résolveur départage, et sur quoi.** La cible d'un retour arrière est le binaire qui tournait **quand
+l'instantané a été pris** ; l'égalité de schéma n'en était qu'une *dérivation*, exacte tant qu'un seul venv la
+satisfaisait. Le run qui a pris l'instantané le nomme dans le même `result.json` — c'est ce qui **choisit**. L'égalité
+de schéma reste la **garde** : un venv apparié absent, non sondable ou d'un autre schéma n'est pas une cible.
+
+**L'appariement promeut, il ne bloque jamais.** Sans lui (instantané pris à la main, journal purgé), l'ordre par
+récence décide comme avant. Refuser à la place priverait d'un retour parfaitement valide — le repli satisfait la même
+égalité, donc le même garde de `restore.check_compatibility` — pour un journal incohérent. Même posture qu'un
+`venv_avant` disparu, qui « retombe honnêtement sur ce qui reste ».
+
+**Ce que ça a réparé** (mesuré sur vrai systemd le 2026-08-07, VM 9311) : après une MAJ **qui ne migre pas la base**,
+les deux venvs lisent le même schéma, le neuf est le plus récent, il gagnait — puis `update._cible_utilisable`
+refusait « il correspond au venv DÉJÀ actif ». La plupart des MAJ ne migrant pas, l'obligation 4 était défaite dans le
+cas le plus courant, et aucun banc ne pouvait le voir : ils rollbackent tous après une MAJ migrante.
+
+L'état et la résolution parcouraient chacun `<home>/venvs` de leur côté : deux marches qui choisissent séparément
+finissent par ne pas choisir pareil, et `update._cible_utilisable` porte déjà le refus que ça produit (« la liste et
+la résolution ne voient pas le même disque »). Elles lisent désormais la même liste **et le même appariement**.
 
 ## cli_dispatch() — les états qui trompent se disent, ligne à ligne
-`src/forgemaster/snapshot.py:394` · appelé par `cli._h_snapshot` (routé par `_HANDLERS`) · retourne le code de sortie
+`src/forgemaster/snapshot.py:481` · appelé par `cli._h_snapshot` (routé par `_HANDLERS`) · retourne le code de sortie
 Route `create` / `restore` / la liste. `données seules` et `irrestaurable` portent chacun leur motif complet sous leur
 ligne, et `restaurable` **aussi** quand il porte `state_note` — c'est-à-dire quand son binaire vit hors de
 `<home>/venvs` : ça, il faut le lire AVANT de faire le ménage. Un `restaurable` ordinaire n'a rien à ajouter, et
 `inconnu` se dit **une fois** en pied de liste : le répéter noierait ceux qui comptent. Les marqueurs viennent de
 `MARQUEURS` (`snapshot.py:52`).
 
+Une prise de **sûreté** (`safety_of_rollback`) porte sa ligne elle aussi, bien qu'elle soit `restaurable` : c'est le
+seul instantané que `update rollback` refuse de viser. Les deux marches ne divergent pas — elles répondent à deux
+questions (« remettre ces données ? » n'est pas « revenir en arrière ? ») — mais le taire laisserait croire que c'est
+la cible du prochain retour, alors que c'est la version qu'on vient de quitter.
+
 ## _launch_restore() — on LANCE le script figé, on ne le réimplémente pas
-`src/forgemaster/snapshot.py:428` · appelé par `cli_dispatch` · retourne le rc du sous-processus
+`src/forgemaster/snapshot.py:522` · appelé par `cli_dispatch` · retourne le rc du sous-processus
 De préférence la copie **figée dans l'instantané** : elle a été écrite avec son manifeste, donc elle le comprend — et
 le chemin de secours (lancer le script à la main) devient exactement celui qu'on exerce ici, au lieu d'un jumeau
 jamais joué. `--allow-unverified-binary` n'est ajouté **que s'il est demandé** : une copie d'avant ce drapeau ferait
@@ -151,7 +186,7 @@ sortir argparse en usage, et casserait la restauration des instantanés anciens 
 jour où ça compte.
 
 ## _describe() — dit à la prise, pas à la restauration
-`src/forgemaster/snapshot.py:453` · appelé par `cli_dispatch` (`create`) · retourne les lignes à afficher
+`src/forgemaster/snapshot.py:547` · appelé par `cli_dispatch` (`create`) · retourne les lignes à afficher
 Ce qui a été pris, ce qui manquait, ce qui reste dehors. Le moment de dire ce qu'un instantané ne couvre pas est celui
 où on le prend, pas celui où on découvre le manque.
 
