@@ -1,7 +1,8 @@
 // queries — hooks TanStack Query au-dessus du client `api`. Clés centralisées (qk) pour l'invalidation.
 // V1 : projets (+ santé). Roadmap/next exposés (stables, consommés dès V2). Dispatch/gate/merge : leurs vagues.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from './api'
+import { api, ApiError } from './api'
+import { enVol } from './updateLiaison'
 import type { BootstrapRunInput, CredentialLinkInput, CreateProjectInput, McpWireInput, MergeInput } from './schemas'
 
 export const qk = {
@@ -748,16 +749,28 @@ export function useUpdateRuns() {
   })
 }
 
-/** L'état d'un run précis, relu du disque à chaque requête. Le poll s'ARRÊTE sur un verdict : marteler un
- *  `result.json` figé ne dirait rien de neuf. Tant qu'il n'y en a pas, il bat — y compris pendant que le
- *  daemon est mort, ce qui est exactement le moment où on en a besoin. */
+/** L'état d'un run précis, relu du disque à chaque requête.
+ *
+ *  Le battement s'arrête dès que le serveur a TRANCHÉ — verdict écrit, run interrompu, run jamais parti :
+ *  marteler un état qui ne changera plus ne dirait rien de neuf. Il continue tant qu'on attend encore
+ *  quelque chose (`enVol`), **y compris pendant que le daemon est mort**, ce qui est précisément le moment
+ *  où on en a besoin : c'est ce battement-là qui ramène la page toute seule.
+ *
+ *  Sans donnée du tout, on distingue les deux silences : un `fetch` qui n'aboutit pas (statut 0) est un
+ *  état transitoire → on continue de frapper ; une VRAIE réponse d'erreur (404, 500) est une réponse → on
+ *  s'arrête, la re-demander en boucle ne changerait rien. */
 export function useUpdateRun(run: string | null) {
   return useQuery({
     queryKey: qk.updateRun(run ?? ''),
     queryFn: () => api.getUpdateRun(run as string),
     enabled: Boolean(run),
     retry: false,
-    refetchInterval: (q) => (q.state.data?.rc === null || q.state.data === undefined ? 2_000 : false),
+    refetchInterval: (q) => {
+      const etat = q.state.data
+      if (etat) return enVol(etat.state) ? 2_000 : false
+      const err = q.state.error
+      return err && !(err instanceof ApiError && err.status === 0) ? false : 2_000
+    },
   })
 }
 
