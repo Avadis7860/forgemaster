@@ -199,13 +199,25 @@ def list_snapshots(settings: Settings) -> list[dict]:
     root = snapshots_dir(settings)
     if not root.is_dir():
         return []
-    venvs = venv_schemas(settings)
+    # UNE passe sur les runs, deux lectures : l'ordre des venvs joignables, et l'appariement
+    # instantané → binaire d'alors. Les deux sortent du même `result.json` ; les lire deux fois
+    # doublerait un coût déjà linéaire en runs pour rien.
+    runs = _lecture_des_runs(settings)
+    venvs = venv_schemas(settings, runs=runs)
     out: list[dict] = []
     for d in sorted((p for p in root.iterdir() if p.is_dir()), reverse=True):
+        resolu = _resolu(d)
+        apparie = runs[1].get(resolu)
         info, raw = _read_manifest(d / MANIFEST)
         if raw is not None:
-            info |= _restorability(d, raw, venvs, settings.home / VENVS)
-        out.append({"path": str(d), "name": d.name, **info})
+            info |= _restorability(d, raw, venvs, settings.home / VENVS, apparie=apparie)
+        # Deux faits que seul le journal porte, mesurés ici une fois pour tous les instantanés plutôt que
+        # re-dérivés par cible. `named_by_run` : un instantané qu'aucun run ne nomme ne peut pas être
+        # départagé, et le dire évite un refus qui aurait l'air arbitraire. `safety_of_rollback` : celui-ci
+        # est la prise de sûreté d'un retour déjà fait, donc le viser serait AVANCER — ce que la comparaison
+        # de schémas ne sait pas voir quand rien n'a migré.
+        out.append({"path": str(d), "name": d.name, "named_by_run": apparie is not None,
+                    "safety_of_rollback": resolu in runs[2], **info})
     return out
 
 
@@ -225,25 +237,28 @@ def _read_manifest(path: Path) -> tuple[dict, dict | None]:
             data)
 
 
-def venv_schemas(settings: Settings) -> dict[Path, int]:
+def venv_schemas(settings: Settings, *, runs: _Runs | None = None) -> dict[Path, int]:
     """Le schéma que sait lire **chaque** venv vers lequel un retour arrière peut basculer — donc la seule
     mesure qui décide de l'état d'un instantané. Ordonné par **préférence** (cf. `_venvs_candidats`), et
-    l'ordre EST le contrat : `_premier_du_schema` s'en sert pour choisir.
+    l'ordre EST le contrat : `_premier_du_schema` s'en sert quand rien ne l'apparie mieux.
 
     Un venv qu'on ne sait pas sonder est **absent** du résultat plutôt que compté à zéro : un schéma
     indéterminable n'est pas un schéma bas (même raison que `restore._user_version`).
 
     Clé = `Path` et non plus le nom : deux venvs de racines différentes peuvent porter le même nom (le venv
-    d'origine s'appelle typiquement `forgemaster`), et une collision de clés en effacerait un en silence."""
+    d'origine s'appelle typiquement `forgemaster`), et une collision de clés en effacerait un en silence.
+
+    `runs` est une lecture des journaux **déjà faite** par l'appelant, passée pour ne pas la refaire.
+    Facultatif et sans effet observable : sans elle, cette fonction la fait elle-même."""
     found: dict[Path, int] = {}
-    for venv in _venvs_candidats(settings):
+    for venv in _venvs_candidats(settings, runs=runs):
         readable = python_schema(venv / "bin" / "python")
         if readable is not None:
             found[venv] = readable
     return found
 
 
-def _venvs_candidats(settings: Settings) -> list[Path]:
+def _venvs_candidats(settings: Settings, *, runs: _Runs | None = None) -> list[Path]:
     """Les venvs posés, du **plus préférable au moins** : les estampillés de `<home>/venvs` du plus récent au
     plus ancien, puis ceux qu'un run de MAJ a nommés et qui vivent **ailleurs**.
 
@@ -261,14 +276,15 @@ def _venvs_candidats(settings: Settings) -> list[Path]:
     Ce venv-là n'est jamais **purgé** non plus (`apply_update._purge_venvs` ne balaie que `<home>/venvs`), et
     c'est voulu : il appartient à l'utilisateur, pas au cycle de MAJ. La rétention ne s'applique qu'à ce que
     le produit a créé."""
+    ordre = (runs or _lecture_des_runs(settings))[0]
     root = settings.home / VENVS
     estampilles = sorted((p for p in root.iterdir() if p.is_dir()), reverse=True) if root.is_dir() else []
     vus = {p.resolve() for p in estampilles}
     ailleurs: list[Path] = []
-    for avant in _venvs_nommes_par_les_runs(settings):
+    for avant in ordre:
         if not avant.is_dir():          # purgé, ou l'utilisateur l'a effacé : on ne devine pas, on l'ignore
             continue
-        resolu = avant.resolve()
+        resolu = _resolu(avant)
         if resolu in vus:               # run N ≥ 2 : `venv_avant` est un estampillé, déjà dans la liste
             continue
         vus.add(resolu)
@@ -276,43 +292,114 @@ def _venvs_candidats(settings: Settings) -> list[Path]:
     return estampilles + ailleurs
 
 
-def _venvs_nommes_par_les_runs(settings: Settings) -> list[Path]:
-    """Les `venv_avant` écrits par les runs de MAJ, du **plus récent au plus ancien**. Un run sans verdict
-    (interrompu), au JSON illisible, ou d'une version antérieure à cette clé, est **sauté** — pas une erreur :
-    ces dossiers sont des journaux, et un journal incomplet n'invalide pas les autres."""
+# `(ordre des venv_avant, {instantané → le venv qui tournait quand il a été pris}, les prises de SÛRETÉ)` —
+# les trois lectures que porte un même `result.json`, rendues en UNE passe.
+_Runs = tuple[list[Path], dict[Path, Path], set[Path]]
+
+# Les deux clés sous lesquelles l'applicateur écrit « l'instantané que ce run a pris ». Deux, parce qu'il
+# distingue la prise de l'ALLER (avant la migration) de celle de SÛRETÉ (avant un retour arrière). Pour
+# l'APPARIEMENT elles disent exactement la même chose ; pour la DIRECTION, non — d'où le troisième retour.
+CLE_ALLER, CLE_SURETE = "instantane", "instantane_surete"
+
+
+def _lecture_des_runs(settings: Settings) -> _Runs:
+    """Les journaux de MAJ, lus **une fois**, du plus récent au plus ancien. Un run sans verdict
+    (interrompu), au JSON illisible, ou d'une version antérieure à ces clés, est **sauté** — pas une erreur :
+    ces dossiers sont des journaux, et un journal incomplet n'invalide pas les autres.
+
+    Deux sorties, du même fichier :
+
+    - l'**ordre** des `venv_avant`, qui rend joignable le venv d'ORIGINE posé par `pip`, hors de
+      `<home>/venvs` (sans lui, le premier saut d'une install fraîche était sans retour) ;
+    - l'**appariement** `instantané → binaire d'alors`, qui départage quand plusieurs venvs lisent le même
+      schéma. Le premier run rencontré gagne : c'est le plus récent, donc celui qui a réellement pris cet
+      instantané si un journal plus ancien le nommait par accident ;
+    - les prises de **sûreté** — celles qu'un `rollback` prend avant de partir. Elles sont des instantanés
+      valides et restaurables, mais viser la sûreté d'un retour déjà fait, c'est **avancer** vers la version
+      qu'on venait de quitter. Le schéma ne le dit pas quand rien n'a migré ; le journal, si."""
     from forgemaster.update import UPDATES  # tardif, comme `update` importe `snapshot` : pas de cycle
 
+    ordre: list[Path] = []
+    par_instantane: dict[Path, Path] = {}
+    suretes: set[Path] = set()
     root = settings.home / UPDATES
     if not root.is_dir():
-        return []
-    out: list[Path] = []
+        return ordre, par_instantane, suretes
     for run in sorted((p for p in root.iterdir() if p.is_dir()), reverse=True):
         try:
             data = json.loads((run / "result.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        avant = data.get("venv_avant") if isinstance(data, dict) else None
-        if avant:
-            out.append(Path(str(avant)))
-    return out
+        if not isinstance(data, dict):
+            continue
+        avant = data.get("venv_avant")
+        if not avant:
+            continue
+        chemin = Path(str(avant))
+        ordre.append(chemin)
+        for cle in (CLE_ALLER, CLE_SURETE):
+            pris = data.get(cle)
+            if not pris:
+                continue
+            resolu = _resolu(Path(str(pris)))
+            par_instantane.setdefault(resolu, chemin)
+            if cle == CLE_SURETE:
+                suretes.add(resolu)
+    return ordre, par_instantane, suretes
 
 
-def _premier_du_schema(venvs: dict[Path, int], voulu: int) -> Path | None:
-    """Le venv qui lit **exactement** ce schéma, pris dans l'ordre de préférence de `venv_schemas`.
+def _resolu(chemin: Path) -> Path:
+    """`resolve()` qui ne lève pas sur un chemin dont un parent a disparu — ces journaux nomment des
+    dossiers qui peuvent avoir été effacés entre-temps, et une comparaison n'est pas un accès."""
+    try:
+        return chemin.resolve()
+    except OSError:
+        return chemin
+
+
+def _premier_du_schema(venvs: dict[Path, int], voulu: int, *, apparie: Path | None = None) -> Path | None:
+    """Le venv qui lit **exactement** ce schéma — celui que le run a **apparié** à cet instantané s'il en
+    existe un, sinon le premier dans l'ordre de préférence de `venv_schemas`.
+
+    **L'appariement PROMEUT, il ne bloque jamais.** La cible d'un retour arrière, c'est le binaire qui
+    tournait quand l'instantané a été pris ; l'égalité de schéma n'en était qu'une *dérivation*, exacte tant
+    qu'un seul venv la satisfaisait. Elle cesse d'être le sélecteur, elle reste la **garde** : un venv
+    apparié absent, non sondable, ou qui ne lit pas exactement ce schéma n'est pas une cible — et on
+    retombe alors sur l'ordre, comme un `venv_avant` disparu retombe déjà « honnêtement sur ce qui reste ».
+    Refuser à la place priverait d'un retour arrière parfaitement valide (le repli satisfait la même
+    égalité, donc le même garde de `restore.check_compatibility`) pour un journal incohérent.
+
+    Sans appariement, l'ordre par récence décide comme avant — mais il ne peut plus, à lui seul, désigner
+    le venv qu'on vient d'installer : après une MAJ **non migrante**, le venv neuf lit le même schéma que
+    l'ancien, il est le plus récent, il gagnait, et `update._cible_utilisable` refusait ensuite « il
+    correspond au venv DÉJÀ actif ». Mesuré sur vrai systemd le 2026-08-07 ; la plupart des MAJ ne migrent
+    pas, donc c'était le cas le plus courant.
 
     **Une seule** règle de choix, appelée par les deux marches — l'état (`_restorability`) et la résolution
     (`update._venv_pour`). Elles parcouraient chacune `<home>/venvs` de leur côté : deux marches qui
     choisissent séparément finissent par ne pas choisir pareil, et `update._cible_utilisable` porte déjà le
     refus que ça produit (« la liste et la résolution ne voient pas le même disque »)."""
+    if apparie is not None:
+        vise = _resolu(apparie)
+        promu = next((v for v, lu in venvs.items() if lu == voulu and _resolu(v) == vise), None)
+        if promu is not None:
+            return promu
     return next((v for v, s in venvs.items() if s == voulu), None)
 
 
-def venv_for_schema(settings: Settings, voulu: int) -> Path | None:
-    """`_premier_du_schema` depuis les réglages — la porte d'entrée de `update._venv_pour`."""
-    return _premier_du_schema(venv_schemas(settings), voulu)
+def venv_for_schema(settings: Settings, voulu: int, *, snapshot_dir: Path | None = None) -> Path | None:
+    """`_premier_du_schema` depuis les réglages — la porte d'entrée de `update._venv_pour`.
+
+    `snapshot_dir` est l'instantané qu'on cherche à remettre : le donner permet le **départage** par le run
+    qui l'a pris. Sans lui la question posée n'est plus « vers quoi revenir depuis CET instantané ? » mais
+    « quel binaire lit ce schéma ? », et l'ordre par récence y répond seul."""
+    runs = _lecture_des_runs(settings)
+    apparie = runs[1].get(_resolu(snapshot_dir)) if snapshot_dir is not None else None
+    return _premier_du_schema(venv_schemas(settings, runs=runs), voulu, apparie=apparie)
 
 
-def _restorability(snapshot_dir: Path, manifest: dict, venvs: dict[Path, int], racine: Path) -> dict:
+def _restorability(snapshot_dir: Path, manifest: dict, venvs: dict[Path, int], racine: Path,
+                   *, apparie: Path | None = None) -> dict:
     """Les **trois états** d'un instantané, face aux binaires réellement disponibles. Ils reprennent le
     vocabulaire du garde de `restore.check_compatibility` — deux formulations du même invariant seraient
     deux façons de le comprendre :
@@ -346,7 +433,7 @@ def _restorability(snapshot_dir: Path, manifest: dict, venvs: dict[Path, int], r
                 "state_reason": f"aucun venv sondable — ni sous <home>/{VENVS}, ni parmi ceux qu'un run de "
                                 f"MAJ a nommés : cette instance n'a pas été posée par le cycle de MAJ, "
                                 f"l'état ne se mesure pas ici"}
-    exact = _premier_du_schema(venvs, snap)
+    exact = _premier_du_schema(venvs, snap, apparie=apparie)
     if exact is not None:
         # Le CHEMIN, pas le nom : le venv d'origine s'appelle `forgemaster`, ce qui ne dit pas où il est —
         # et ce motif est exactement ce qu'on relit quand un retour arrière se discute.
@@ -419,6 +506,13 @@ def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
         # se dit une fois en pied de liste : le répéter noierait ceux qui comptent.
         if etat in ("données seules", "irrestaurable") or snap.get("state_note"):
             print(f"    → {etat.upper()} — {snap['state_reason']}")
+        # Restaurable ET pourtant jamais choisi par `update rollback` : les deux marches ne divergent pas,
+        # elles répondent à deux questions (« remettre ces données ? » n'est pas « revenir en arrière ? »).
+        # Le taire laisserait croire que c'est la cible du prochain retour — c'est la version qu'on vient
+        # de quitter.
+        if snap.get("safety_of_rollback"):
+            print("    → prise de SÛRETÉ d'un retour arrière : `update rollback` ne la vise pas (ce serait "
+                  "avancer)")
     if any(s.get("state") == "inconnu" for s in snaps):
         print(f"\n· état de restauration non mesuré : aucun venv sondable, ni sous <home>/{VENVS} ni parmi "
               f"ceux qu'un run de MAJ a nommés — cette instance n'a pas été posée par le cycle de MAJ")

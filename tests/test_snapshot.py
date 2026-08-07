@@ -248,14 +248,23 @@ def _venv_factice(home: Path, nom: str, schema_lu: int) -> Path:
     return _venv_a(home / snapshot.VENVS / nom, schema_lu)
 
 
-def _run_de_maj(home: Path, stamp: str, venv_avant: Path | str | None) -> Path:
-    """Le journal que `update.launch` laisse derrière lui. Seul `result.json:venv_avant` est lu ici —
-    `venv_avant=None` fige le cas d'une instance ANTÉRIEURE à cette clé, qui ne doit rien casser."""
+def _run_de_maj(home: Path, stamp: str, venv_avant: Path | str | None,
+                instantane: Path | str | None = None, cle: str = "instantane") -> Path:
+    """Le journal que `update.launch` laisse derrière lui. Deux clés de `result.json` sont lues ici, et
+    elles ne servent pas à la même chose : `venv_avant` seul énumère les venvs joignables (le premier
+    saut) ; la PAIRE `instantane` + `venv_avant` dit *quel binaire tournait quand CET instantané a été
+    pris* — c'est elle qui départage.
+
+    `venv_avant=None` fige le cas d'une instance ANTÉRIEURE à cette clé, qui ne doit rien casser ;
+    `instantane=None` fige celui d'un run qui n'a pas atteint la prise. `cle="instantane_surete"` est la
+    paire symétrique qu'écrit un run de RETOUR arrière."""
     run = home / "updates" / stamp
     run.mkdir(parents=True)
     verdict: dict[str, object] = {"rc": 0, "verdict": "MAJ posée"}
     if venv_avant is not None:
         verdict["venv_avant"] = str(venv_avant)
+    if instantane is not None:
+        verdict[cle] = str(instantane)
     (run / "result.json").write_text(json.dumps(verdict), encoding="utf-8")
     return run
 
@@ -386,6 +395,106 @@ def test_un_venv_avant_DISPARU_est_ignore_au_lieu_d_etre_compte(live: Settings, 
     (lu,) = snapshot.list_snapshots(live)
     assert lu["state"] == "données seules"
     assert snapshot.venv_for_schema(live, schema.SCHEMA_VERSION) is None
+
+
+# --- le départage : à schéma égal, LEQUEL ramène vraiment en arrière ? --------------------------------
+#
+# Mesuré sur VRAI SYSTEMD le 2026-08-07 (VM 9311, portée `user`), en jouant l'acte `blindui` : après une
+# MAJ qui NE MIGRE PAS la base, `update rollback` refusait TOUT — « il correspond au venv DÉJÀ actif ».
+# Le venv neuf lit alors le même schéma que l'ancien, il est le plus récent, il gagne le choix par
+# égalité de schéma, et le garde constate qu'il est déjà actif.
+#
+# Or l'égalité de schéma n'a jamais été la DÉFINITION de la cible : c'en était une dérivation, exacte tant
+# qu'un seul venv la satisfaisait. La définition est écrite sur le disque depuis toujours — le run qui a
+# pris cet instantané dit, dans le MÊME `result.json`, quel binaire tournait à ce moment-là.
+#
+# Portée du défaut : la plupart des MAJ ne migrent pas. Aucun banc ne pouvait le voir, ils rollbackent
+# tous après une MAJ migrante — un banc doit varier son ORDRE, pas seulement ses entrées (acquis 2a‴).
+
+def test_apres_une_MAJ_NON_MIGRANTE_la_cible_est_le_venv_D_AVANT_pas_l_actif(live: Settings):
+    """LE défaut, reproduit à la table. Deux venvs de même schéma, et un instantané que le run nomme :
+    la cible est celui qui tournait quand il a été pris, jamais le plus récent du disque."""
+    from forgemaster import update
+
+    avant = _venv_factice(live.home, "2026-08-06T00-00-00Z", schema.SCHEMA_VERSION)
+    neuf = _venv_factice(live.home, "2026-08-07T00-00-00Z", schema.SCHEMA_VERSION)
+    snap = snapshot.create(live)
+    _run_de_maj(live.home, "2026-08-07T00-00-00Z", avant, instantane=snap)
+
+    (lu,) = snapshot.list_snapshots(live)
+    assert lu["state"] == "restaurable"
+    assert str(avant) in lu["state_reason"] and str(neuf) not in lu["state_reason"]
+    assert update._venv_pour(live, Path(lu["path"])) == avant
+
+
+def test_un_run_de_RETOUR_arriere_apparie_son_instantane_de_surete(live: Settings):
+    """La paire symétrique : un `rollback` écrit `instantane_surete` + `venv_avant`. Même sens exactement
+    — voici l'instantané, voici le binaire qui tournait quand il a été pris. Deux clés parce que
+    l'applicateur distingue déjà les deux prises ; une seule règle de lecture."""
+    from forgemaster import update
+
+    avant = _venv_factice(live.home, "2026-08-06T00-00-00Z", schema.SCHEMA_VERSION)
+    _venv_factice(live.home, "2026-08-07T00-00-00Z", schema.SCHEMA_VERSION)
+    surete = snapshot.create(live)
+    _run_de_maj(live.home, "2026-08-07T00-00-00Z", avant, instantane=surete, cle="instantane_surete")
+
+    assert update._venv_pour(live, surete) == avant
+
+
+def test_l_egalite_de_schema_reste_la_GARDE_du_venv_apparie(live: Settings, tmp_path: Path):
+    """L'appariement CHOISIT, il n'autorise pas. Un venv nommé par le run mais qui ne lit pas exactement
+    le schéma de l'instantané n'est pas une cible : le remettre rendrait la base illisible (binaire
+    ancien sur données neuves), le seul état que l'invariant de première classe interdit."""
+    from forgemaster import update
+
+    trop_vieux = _venv_a(tmp_path / "vieux", schema.SCHEMA_VERSION - 1)
+    bon = _venv_factice(live.home, "2026-08-07T00-00-00Z", schema.SCHEMA_VERSION)
+    snap = snapshot.create(live)
+    _run_de_maj(live.home, "2026-08-07T00-00-00Z", trop_vieux, instantane=snap)
+
+    assert update._venv_pour(live, snap) == bon
+
+
+def test_un_venv_apparie_DISPARU_retombe_sur_l_ordre_au_lieu_de_rendre_vide(live: Settings, tmp_path: Path):
+    """Le venv apparié a été effacé à la main. On ne devine pas et on ne rend pas vide non plus : il
+    reste un binaire du bon schéma sur le disque, et un retour arrière vers lui vaut mieux qu'un refus."""
+    from forgemaster import update
+
+    reste = _venv_factice(live.home, "2026-08-07T00-00-00Z", schema.SCHEMA_VERSION)
+    snap = snapshot.create(live)
+    _run_de_maj(live.home, "2026-08-07T00-00-00Z", tmp_path / "efface", instantane=snap)
+
+    assert update._venv_pour(live, snap) == reste
+
+
+def test_un_instantane_que_PERSONNE_ne_nomme_garde_l_ordre_par_recence(live: Settings):
+    """Le résidu, dit et non deviné : un instantané pris à la main par `snapshot create` n'a aucun run qui
+    dise quel binaire tournait. On retombe sur l'ordre d'aujourd'hui — et c'est le refus de
+    `update._cible_utilisable` qui devra dire POURQUOI il ne sait pas mieux."""
+    from forgemaster import update
+
+    _venv_factice(live.home, "2026-08-06T00-00-00Z", schema.SCHEMA_VERSION)
+    recent = _venv_factice(live.home, "2026-08-07T00-00-00Z", schema.SCHEMA_VERSION)
+    snap = snapshot.create(live)
+
+    assert update._venv_pour(live, snap) == recent
+
+
+def test_le_premier_saut_n_est_PAS_re_casse_par_le_departage(live: Settings, tmp_path: Path):
+    """Non-régression 2a‴, jouée à travers le départage : sur une install fraîche, le venv d'origine vit
+    hors de `<home>/venvs` et le run le nomme. L'appariement le désigne DIRECTEMENT — il ne dépend plus de
+    l'ordre par récence qui l'avait rendu joignable, ce qui rend le premier saut plus solide, pas moins."""
+    from forgemaster import update
+
+    origine = _venv_a(tmp_path / ".venvs" / "forgemaster", schema.SCHEMA_VERSION)
+    _venv_factice(live.home, "2026-08-07T00-00-00Z", schema.SCHEMA_VERSION + 1)
+    snap = snapshot.create(live)
+    _run_de_maj(live.home, "2026-08-07T00-00-00Z", origine, instantane=snap)
+
+    (lu,) = snapshot.list_snapshots(live)
+    assert lu["state"] == "restaurable"
+    assert lu["state_note"] is True                    # hors <home>/venvs : ni compté ni protégé, et dit
+    assert update._venv_pour(live, snap) == origine
 
 
 def test_un_journal_de_run_INCOMPLET_ne_fait_pas_tomber_la_liste(live: Settings, tmp_path: Path):

@@ -144,6 +144,92 @@ def test_revenir_vers_le_venv_DEJA_actif_est_refuse(apres_maj: Settings, tmp_pat
     assert "snapshot restore" in str(exc.value)
 
 
+def _maj_non_migrante(settings: Settings) -> tuple[Path, Path, Path]:
+    """L'état que laisse une MAJ **qui ne migre pas la base** — le cas le plus courant, et celui qu'aucun
+    banc ne jouait : deux venvs qui lisent le MÊME schéma, un instantané pris avant la bascule, et le
+    journal du run qui dit lequel des deux tournait à ce moment-là.
+
+    Rend `(instantané, venv d'avant, venv neuf)`."""
+    ancien = settings.home / snapshot.VENVS / "2026-08-01T00-00-00Z"
+    neuf = _venv(settings.home, "2026-08-09T00-00-00Z", schema.SCHEMA_VERSION)   # même schéma que l'ancien
+    (settings.home / "current").unlink()
+    os.symlink(neuf, settings.home / "current")
+    (snap,) = sorted(snapshot.snapshots_dir(settings).iterdir())
+    run = settings.home / "updates" / "2026-08-09T00-00-00Z"
+    run.mkdir(parents=True)
+    (run / "result.json").write_text(
+        json.dumps({"rc": 0, "verdict": "MAJ posée", "venv_avant": str(ancien), "instantane": str(snap)}),
+        encoding="utf-8")
+    return snap, ancien, neuf
+
+
+def test_apres_une_MAJ_NON_MIGRANTE_le_verbe_sait_encore_revenir(apres_maj: Settings, tmp_path: Path):
+    """LE défaut de [[rollback-blind-to-non-migrating-update]], vu du verbe. Les deux venvs lisent le même
+    schéma que l'instantané ; sans départage, la résolution retenait le plus RÉCENT — c'est-à-dire celui
+    qu'on cherche à quitter — et le refus « il correspond au venv DÉJÀ actif » tombait sur les trois
+    instantanés d'affilée. Mesuré sur vrai systemd le 2026-08-07, jamais relu."""
+    _, ancien, neuf = _maj_non_migrante(apres_maj)
+
+    plan = _plan(apres_maj, tmp_path)
+
+    assert plan["target_venv"] == ancien, "la cible est le binaire qui tournait quand l'instantané a été pris"
+    assert plan["venv"].resolve() == neuf.resolve()
+
+
+def test_les_DEUX_marches_designent_le_meme_venv_apres_une_MAJ_non_migrante(apres_maj: Settings):
+    """Le couplage de 2a‴, re-joué sur le cas non migrant : `snapshot list` et la résolution ne peuvent pas
+    répondre différemment. Avant le départage, la liste disait `restaurable` ✔ **et** le verbe refusait —
+    deux marches, deux réponses, sur la même instance."""
+    snap, ancien, _ = _maj_non_migrante(apres_maj)
+
+    (lu,) = [s for s in snapshot.list_snapshots(apres_maj) if s["path"] == str(snap)]
+    assert lu["state"] == "restaurable" and str(ancien) in lu["state_reason"]
+    assert update._venv_pour(apres_maj, snap) == ancien
+
+
+def test_le_retour_REJOUE_ne_repart_pas_en_avant_quand_RIEN_n_a_migre(apres_maj: Settings, tmp_path: Path):
+    """Le va-et-vient, que le garde de direction ne savait pas voir sans migration. Après un retour, la
+    prise de SÛRETÉ est l'instantané le plus récent et son binaire apparié est celui qu'on vient de
+    quitter : la viser, c'est **avancer**. Le garde existant compare les schémas — muet quand ils sont
+    égaux, c'est-à-dire précisément dans le cas que le départage vient d'ouvrir.
+
+    Ce que le run dit et que le schéma ne dit pas : cet instantané est né d'un `rollback`."""
+    _, ancien, neuf = _maj_non_migrante(apres_maj)
+    # l'état exact que laisse un retour arrière : lien revenu sur l'ancien, prise de sûreté sous le neuf
+    surete = snapshot.create(apres_maj)
+    (apres_maj.home / "current").unlink()
+    os.symlink(ancien, apres_maj.home / "current")
+    run = apres_maj.home / "updates" / "2026-08-10T00-00-00Z"
+    run.mkdir(parents=True)
+    (run / "result.json").write_text(
+        json.dumps({"rc": 0, "mode": "rollback", "venv_avant": str(neuf),
+                    "instantane_surete": str(surete)}), encoding="utf-8")
+
+    with pytest.raises(UpdateRefused) as exc:
+        _plan(apres_maj, tmp_path)
+
+    assert "retour arrière" in str(exc.value), "le motif doit nommer ce qu'est cet instantané"
+    assert "snapshot list" in str(exc.value)
+    # Et la liste ne peut pas le présenter comme la cible du prochain retour : les deux marches répondent
+    # à deux questions différentes, ce qui n'autorise pas l'une à laisser croire ce que l'autre refuse.
+    (vue,) = [s for s in snapshot.list_snapshots(apres_maj) if s["path"] == str(surete)]
+    assert vue["state"] == "restaurable" and vue["safety_of_rollback"] is True
+
+
+def test_un_instantane_que_PERSONNE_ne_nomme_le_DIT_dans_son_refus(apres_maj: Settings, tmp_path: Path):
+    """Le résidu : sans journal, on n'a que l'ordre par récence, et le refus qui en découle aurait l'air
+    arbitraire. Il nomme donc ce qui manque, au lieu de laisser croire qu'il n'y a rien sur le disque."""
+    _maj_non_migrante(apres_maj)
+    for run in (apres_maj.home / "updates").iterdir():
+        (run / "result.json").unlink()
+
+    with pytest.raises(UpdateRefused) as exc:
+        _plan(apres_maj, tmp_path)
+
+    assert "DÉJÀ actif" in str(exc.value)
+    assert "aucun journal de MAJ ne dit quel binaire tournait" in str(exc.value)
+
+
 # --- 2. le refus d'autorité, enfin câblé sur le RETOUR --------------------------------------------------
 
 def test_du_travail_non_commite_bloque_AUSSI_le_retour_arriere(apres_maj: Settings, tmp_path: Path):

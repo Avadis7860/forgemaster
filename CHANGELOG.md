@@ -9,6 +9,33 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Le retour arrière sait défaire une MAJ qui n'a pas migré la base
+
+`forgemaster update rollback` refusait **tout** après une mise à jour non migrante — « il correspond au venv
+DÉJÀ actif », sur chaque instantané d'affilée. La plupart des MAJ ne migrent pas : l'obligation « revenir
+d'un geste » était donc défaite dans le cas le **plus courant**, et invisible pour tous nos bancs, qui
+reviennent tous après une MAJ migrante. Mesuré sur vrai systemd le 2026-08-07, jamais relu.
+
+- **Ce que le résolveur départage, et sur quoi.** La cible d'un retour est le binaire qui tournait **quand
+  l'instantané a été pris**. L'égalité de schéma n'en était qu'une *dérivation*, exacte tant qu'un seul venv
+  la satisfaisait ; quand rien n'a migré ils sont deux, et le plus récent est celui qu'on cherche à quitter.
+  Le run qui a pris l'instantané le nomme dans le même `result.json` (`instantane` / `instantane_surete` +
+  `venv_avant`) : c'est ce qui **choisit** désormais. Aucun état nouveau, `SCHEMA` inchangé, et ça vaut pour
+  les instantanés **déjà pris**.
+- **L'égalité de schéma reste la garde**, et **l'appariement promeut sans jamais bloquer** : un venv apparié
+  absent, non sondable ou d'un autre schéma n'est pas une cible, et on retombe alors sur l'ordre par récence.
+  Refuser à la place priverait d'un retour parfaitement valide — le repli satisfait le même garde de
+  `restore.check_compatibility` — pour un journal incohérent.
+- **Une règle, deux marches.** `snapshot list` disait `restaurable` ✔ pendant que le verbe refusait : l'état
+  et la résolution consultent maintenant le même appariement, comme elles lisent déjà la même liste.
+- **Le refus qui reste dit ce qu'il n'a pas pu départager** : quand aucun journal ne nomme l'instantané (pris
+  à la main, run effacé), il le dit, au lieu d'avoir l'air arbitraire.
+- **Un cinquième refus, ouvert par le correctif lui-même et mesuré à la table** : le garde qui empêchait le
+  va-et-vient comparait les schémas, donc il était muet quand rien n'a migré — un `update rollback` rejoué
+  après un retour non migrant serait reparti vers le binaire qu'on venait de quitter. Un instantané né d'un
+  `rollback` (sa prise de sûreté) n'est plus jamais une cible, et `snapshot list` le dit sous sa ligne : il
+  reste `restaurable`, mais ce n'est pas la cible du prochain retour.
+
 ### Le détecteur de panne — un wheel à interface blanche ne passe plus
 
 Le critère « ça sert » d'une MAJ était `/health` **200** + le SHA de `/api/version`. C'est de la **plomberie** :
