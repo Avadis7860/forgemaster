@@ -136,6 +136,19 @@ export function reconcileTone(action: string): Tone {
   return GIT_RECONCILE_TONE[action] ?? 'neutral'
 }
 
+/** État d'un run de mise à jour (`update.run_state`, cinq états relus du DISQUE) → Tone. Les états qui
+ *  n'affirment rien restent **non verts** : `unknown` est un aveu du serveur (« je n'ai pas sondé »),
+ *  `interrupted` un run parti sans conclure — les peindre en vert serait le faux-vert que tout ce cycle
+ *  existe pour éviter. `never_started` est neutre et non alarmant : « rien n'a bougé » est exactement vrai. */
+export const UPDATE_RUN_TONE: Record<string, Tone> = {
+  done: 'ok',
+  failed: 'danger',
+  running: 'info',
+  unknown: 'warn',
+  interrupted: 'warn',
+  never_started: 'neutral',
+}
+
 /** Résout une valeur métier en Tone via une map, avec repli neutre. */
 export function toneFor(map: Record<string, Tone>, value: string | null | undefined): Tone {
   return (value && map[value]) || 'neutral'

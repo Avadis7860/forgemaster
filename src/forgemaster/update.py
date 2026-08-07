@@ -574,11 +574,17 @@ def run_state(run_dir: Path, *, is_active: Callable[[str, str], bool] | None = N
     etat = {"run": run_dir.name, "mode": meta.get("mode"), "scope": portee, "unit": unite,
             "started_at": meta.get("started_at"),
             "target": meta.get("wheel") or meta.get("snapshot_name") or meta.get("snapshot"),
-            "journal": _tail(journal, tail)}
+            "journal": _tail(journal, tail),
+            # `impact` = le PÉRIMÈTRE de ce qui a bougé, distinct du verdict qui dit ce qui s'est passé.
+            # `apply_update` l'écrit exprès pour les cas où le verdict seul laisse la question ouverte
+            # (« MAJ refusée — <motif> » ne dit PAS si le service a été touché ; « aucun : le service n'a
+            # pas été touché » le dit). Il n'existe qu'avec un verdict, donc `None` partout ailleurs — et
+            # `None` se lit « je n'en sais rien », jamais « rien n'a bougé ».
+            "impact": None}
     if result is not None:
         rc = int(result.get("rc", 2))
         return {**etat, "state": "done" if rc == 0 else "failed", "rc": rc,
-                "verdict": result.get("verdict", "")}
+                "verdict": result.get("verdict", ""), "impact": result.get("impact")}
     if is_active is None:
         return {**etat, "state": "unknown", "rc": None,
                 "verdict": "verdict pas encore écrit, et l'unité n'a pas été sondée — demande l'adresse de "
@@ -603,7 +609,12 @@ def list_runs(settings: Settings, *, is_active: Callable[[str, str], bool] | Non
     — c'est-à-dire le jour où l'on regarde justement cette page.
 
     Les runs sans verdict plus anciens rendent donc `unknown`, jamais `interrupted` : la liste **avoue** au
-    lieu de conclure, et leur adresse propre (`GET /runs/{id}`) sonde, elle."""
+    lieu de conclure, et leur adresse propre (`GET /runs/{id}`) sonde, elle.
+
+    Rend aussi `follow_timeout` — la borne au-delà de laquelle le produit LUI-MÊME cesse d'attendre un run
+    (`FOLLOW_TIMEOUT`, ce que suit la CLI). Une surface qui dit « elle aurait dû revenir » a besoin de ce
+    chiffre, et le recopier chez elle le ferait diverger le jour où il bouge. Même raison que `keep` et
+    `max_bytes` sur l'aire de dépôt : **une borne annoncée vient de la borne qui s'applique**."""
     base = runs_dir(settings)
     noms = sorted((p.name for p in base.iterdir() if p.is_dir() and RUN_ID_RE.match(p.name)),
                   reverse=True) if base.is_dir() else []
@@ -615,7 +626,8 @@ def list_runs(settings: Settings, *, is_active: Callable[[str, str], bool] | Non
         vue.append(run_state(run_dir, is_active=None if conclu else sonde, tail=0))
         if not conclu:
             sonde = None                     # budget épuisé : les suivants avouent au lieu de conclure
-    return {"runs": vue, "total": len(noms), "truncated": len(noms) > len(gardes)}
+    return {"runs": vue, "total": len(noms), "truncated": len(noms) > len(gardes),
+            "follow_timeout": FOLLOW_TIMEOUT}
 
 
 def systemd_is_active(systemctl: str = "systemctl") -> Callable[[str, str], bool]:
@@ -733,7 +745,11 @@ def list_wheels(settings: Settings, *, keep: int = KEEP_WHEELS) -> dict:
     `sha256` et `size` sont ceux **mesurés à la réception** (`deposit.json`), pas recalculés à la lecture :
     c'est une provenance de dépôt, et la relire à chaque affichage coûterait une relecture complète de
     l'aire. Un dossier posé à la main n'en a pas — il est listé quand même, avec `sha256: null`, parce que
-    « je n'ai pas mesuré » n'est pas « il n'y a rien »."""
+    « je n'ai pas mesuré » n'est pas « il n'y a rien ».
+
+    Rend les DEUX bornes qui régissent l'aire (`keep`, `max_bytes`), pas seulement la rétention : une surface
+    qui annoncerait « 64 Mo max » sans les lire ré-écrirait à la main un chiffre qu'elle ne connaît pas —
+    leçon déjà apprise par le banc de la 3a·3a, qui épinglait `3` au lieu de lire `keep`."""
     base = wheels_dir(settings)
     stamps = sorted((p.name for p in base.iterdir() if p.is_dir() and RUN_ID_RE.match(p.name)),
                     reverse=True) if base.is_dir() else []
@@ -747,7 +763,7 @@ def list_wheels(settings: Settings, *, keep: int = KEEP_WHEELS) -> dict:
         vue.append({"stamp": stamp, "name": whls[0].name, "path": str(whls[0]),
                     "size": meta.get("size", whls[0].stat().st_size), "sha256": meta.get("sha256"),
                     "in_use": str(whls[0]) in en_vol})
-    return {"wheels": vue, "total": len(vue), "keep": keep}
+    return {"wheels": vue, "total": len(vue), "keep": keep, "max_bytes": WHEEL_MAX_BYTES}
 
 
 def wheels_in_use(settings: Settings) -> set[str]:

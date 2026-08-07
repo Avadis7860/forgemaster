@@ -3,6 +3,7 @@ import { ApiError } from '@/lib/api'
 import { CredentialForm } from '@/components/credential/CredentialForm'
 import { MirrorForm } from '@/components/credential/MirrorForm'
 import { McpCorpus } from '@/components/mcp/McpCorpus'
+import { UpdatePanel } from '@/components/update/UpdatePanel'
 import { useOnboarding } from '@/lib/queries'
 import type { OnboardingRequirement, SecretStoreHealth } from '@/lib/schemas'
 
@@ -36,6 +37,10 @@ export function SettingsTab() {
         <SectionTitle eyebrow="self-hosted" title="Réglages & onboarding" />
         <RefreshButton onClick={() => refetch()} busy={isFetching} />
       </div>
+
+      {/* En tête : le reste de cette page parle des projets et des secrets, ce bloc parle de la chose qui
+          SERT la page. Et quand un geste est en vol, c'est le seul endroit qui compte. */}
+      <UpdatePanel />
 
       <StoreCard store={data.secret_store} complete={data.complete} />
 

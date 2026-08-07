@@ -162,7 +162,7 @@ lanceur disparu entre le préflight et ici, enregistrement refusé, gestionnaire
 été touché » serait faux puisque le dossier de run existe.
 
 ## _echappement_cgroup() — pourquoi `setsid` ne suffisait pas, et pourquoi pas `KillMode`
-`src/forgemaster/update.py:832` · appelé par `launch` · rend le préfixe `systemd-run` de la commande
+`src/forgemaster/update.py:848` · appelé par `launch` · rend le préfixe `systemd-run` de la commande
 **Le défaut, mesuré sur vrai systemd le 2026-08-06.** `Popen(start_new_session=True)` change la **session**, pas le
 **cgroup**. Lancé par le daemon, l'applicateur restait dans le cgroup de `forgemaster.service` — que le
 `systemctl stop` qu'il émet **lui-même** (`apply_update.py:191`) vide entièrement, `KillMode` valant `control-group`
@@ -220,6 +220,18 @@ allers-retours au gestionnaire sur une vue de liste, et ce plafond tomberait sur
 gestionnaire est coincé — c'est-à-dire le jour où l'on regarde justement cette page. Les autres rendent `unknown`, et
 leur adresse propre sonde, elle.
 
+Elle rend enfin `follow_timeout` (= `FOLLOW_TIMEOUT`, 900 s), la borne au-delà de laquelle le produit **lui-même**
+cesse d'attendre un run. Une surface qui dit « elle aurait dû revenir » a besoin de ce chiffre ; le recopier chez elle
+le ferait diverger le jour où il bouge. Règle uniforme avec `keep`/`max_bytes` : **une borne annoncée vient de la
+borne qui s'applique**.
+
+**Le verdict dit ce qui s'est passé, `impact` dit jusqu'où ça a été.** Les deux ne se déduisent pas l'un de l'autre :
+« MAJ refusée — le vivant ne sert pas » ne renseigne pas sur l'état du service, et c'est exactement la question de
+quelqu'un qui n'a pas de terminal pour aller voir. `apply_update` écrit la phrase (`src/forgemaster/apply_update.py:181`
+et ses trois issues) ; `run_state` la propage telle quelle. Elle n'existe **qu'avec** un verdict : partout ailleurs
+`impact` vaut `null`, qui se lit « je n'en sais rien » — la rendre à vide se lirait « rien n'a bougé », la pire des
+réponses pour un run parti et jamais conclu.
+
 `runs_dir` est la seule adresse du dossier (`<home>/updates`) : trois marches le nommaient déjà séparément, et une
 adresse recopiée trois fois est une adresse qui divergera. `run_dir_for` pose **deux gardes**, parce qu'aucune ne
 suffit seule : la FORME (`RUN_ID_RE` — un identifiant qui
@@ -228,7 +240,7 @@ valide peut être un lien symbolique posé là par autre chose). Les deux renden
 « mal formé » d'« absent » renseignerait sur ce qui existe.
 
 ## stage_wheel() / list_wheels() / prune_wheels() — l'aire de dépôt, et sa politique déclarée
-`src/forgemaster/update.py:648` · appelés par `routes/update` et `cli_dispatch` · écriture bornée, purge à l'écriture
+`src/forgemaster/update.py:660` · appelés par `routes/update` et `cli_dispatch` · écriture bornée, purge à l'écriture
 
 **Pourquoi cette aire existe.** `preflight` ne pose que le fichier qu'on lui **désigne** — la CLI a un système de
 fichiers, elle passe un chemin. **HTTP n'en a pas** : un utilisateur distribué a son wheel dans son navigateur, pas
@@ -268,9 +280,15 @@ provenance de dépôt, et la relire à chaque affichage coûterait une relecture
 main n'en a pas — il est listé quand même, avec `sha256: null`, parce que « je n'ai pas mesuré » n'est pas « il n'y a
 rien ».
 
+Il rend les **deux** bornes qui régissent l'aire, pas seulement la rétention : `keep` (combien de dépôts survivent) et
+`max_bytes` (lequel est refusé à l'entrée). Une surface qui n'obtiendrait que la première devrait ré-écrire la seconde
+à la main — et un chiffre recopié dérive en silence le jour où la borne bouge. C'est la leçon que le banc de la 3a·3a a
+déjà apprise en épinglant `3` au lieu de lire `keep` : ce qui se mesure est « la borne déclarée est celle qui
+s'applique », jamais « elle vaut 3 ».
+
 **Asymétrie CLI/HTTP, voulue.** On **dépose** par la route, jamais en CLI : l'aire existe parce que HTTP n'a pas de
 système de fichiers, et `--wheel <chemin>` suffit déjà à qui en a un. Ce que la CLI gagne est une **vue en lecture**,
-`forgemaster update wheels` (`_cli_wheels`, `src/forgemaster/update.py:940`) — parce qu'une politique de rétention qui
+`forgemaster update wheels` (`_cli_wheels`, `src/forgemaster/update.py:956`) — parce qu'une politique de rétention qui
 n'existe que dans le code n'est pas une politique déclarée.
 
 ## make_update_router() — la surface HTTP, et pourquoi elle est plus étroite que la CLI
@@ -322,7 +340,7 @@ Suit `journal.log` en flux jusqu'à ce que `result.json` apparaisse. Un suivi in
 fait par **fichier de verdict**, pas par le tuyau ssh — c'est ce qui la rend valable depuis un banc distant.
 
 ## survey_authority() / survey_in_flight() — dégrader honnêtement plutôt que bloquer sur ce qu'on ignore
-`src/forgemaster/update.py:867` · appelés par `cli_dispatch` et par `routes/update._plan` · retournent les verdicts, ou `[]`
+`src/forgemaster/update.py:883` · appelés par `cli_dispatch` et par `routes/update._plan` · retournent les verdicts, ou `[]`
 N'ouvrent la base **que si elle existe déjà** : un préflight qui refuse ne doit pas avoir créé la base de son refus.
 Une base d'un schéma qu'on ne lit pas rend « je ne sais pas » — ce module ne bloque que sur ce qu'il **sait**. Un refus
 qui se déclencherait sur une base illisible interdirait la MAJ des instances qu'il faut justement mettre à jour.
@@ -331,7 +349,7 @@ Remontées hors de l'en-tête « CLI » le 2026-08-06, et renommées en public �
 aussi, et une fonction que deux vues partagent n'est pas un détail d'implémentation de l'une d'elles.
 
 ## cli_dispatch() — `apply` et `rollback` suivent la MÊME séquence
-`src/forgemaster/update.py:910` · appelé par `cli._h_update` (routé par `_HANDLERS`) · retourne le code de sortie
+`src/forgemaster/update.py:926` · appelé par `cli._h_update` (routé par `_HANDLERS`) · retourne le code de sortie
 Préflight qui refuse avant tout effet → description → (`--dry-run` : on s'arrête là) → lancement détaché. La symétrie
 est structurelle et pas cosmétique : c'est elle qui garantit qu'on ne découvre pas le chemin du retour le jour où il
 compte.
