@@ -20,6 +20,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -1293,19 +1294,43 @@ def _faux_node(chemin: Path, *, sortie: str = "", rc: int = 0) -> Path:
 CONTRAT = {"path": "/", "markers": ["forgemaster", "Réglages"], "timeout_ms": 1000}
 
 
+def _contrat_du_produit() -> dict:
+    return json.loads((Path(__file__).resolve().parents[1] / "src" / "forgemaster" / apply_update.UI_CONTRACT)
+                      .read_text(encoding="utf-8"))
+
+
 def test_ui_contract_marqueurs_viennent_du_shell():
     """LOCKSTEP. Le contrat déclare des libellés que le shell rend ; si quelqu'un renomme « Réglages » sans
     toucher au contrat, TOUTE MAJ future échouerait en isolation — un faux-rouge fatal, découvert par un
     utilisateur et pas par nous. Ce test est le seul lien qui rende ce renommage impossible en silence."""
     racine = Path(__file__).resolve().parents[1]
-    contrat = json.loads((racine / "src" / "forgemaster" / apply_update.UI_CONTRACT)
-                         .read_text(encoding="utf-8"))
-    shell = (racine / "web" / "src" / "App.tsx").read_text(encoding="utf-8")
+    contrat = _contrat_du_produit()
+    shell = "".join((racine / "web" / "src" / f).read_text(encoding="utf-8")
+                    for f in ("App.tsx", "components/ProjectRail.tsx"))
 
     assert contrat["markers"], "un contrat sans marqueur ne prouve rien"
     for marqueur in contrat["markers"]:
-        assert marqueur in shell, (f"« {marqueur} » n'est plus rendu par web/src/App.tsx — le contrat d'UI "
-                                   f"et le shell ont divergé, la prochaine MAJ échouerait en isolation")
+        assert marqueur in shell, (f"« {marqueur} » n'est plus rendu par le shell — le contrat d'UI et le "
+                                   f"shell ont divergé, la prochaine MAJ échouerait en isolation")
+
+
+def test_aucun_marqueur_ne_survit_dans_le_TITRE_de_la_page():
+    """TROUVÉ SUR VM LE 2026-08-07, pas en relecture. Le runner cherche ses marqueurs dans
+    `title + body.innerText` (`render_check.js` : `const hay = ...`). Or `<title>forgemaster</title>` est
+    servi par l'`index.html` STATIQUE : il survit intact à une page dont React n'a jamais monté. Le premier
+    contrat déclarait « forgemaster » — mesuré sur un wheel réellement blanc, ce marqueur-là a été trouvé.
+    Il n'a pas fait passer le wheel parce qu'un SECOND marqueur, lui, vivait dans le corps.
+
+    Un marqueur qui survit exactement à la panne qu'il doit attraper n'est pas un marqueur. Ce test interdit
+    d'en réintroduire un — c'est-à-dire de refermer le détecteur sur lui-même."""
+    racine = Path(__file__).resolve().parents[1]
+    titre = re.search(r"<title>(.*?)</title>", (racine / "web" / "index.html").read_text(encoding="utf-8"))
+    assert titre, "web/index.html n'a plus de <title> — re-mesurer ce que le runner voit avant de conclure"
+
+    for marqueur in _contrat_du_produit()["markers"]:
+        assert marqueur not in titre.group(1), (
+            f"« {marqueur} » apparaît dans le <title> ({titre.group(1)!r}), qui est servi même quand la SPA "
+            f"ne monte pas : ce marqueur passerait sur une page blanche")
 
 
 def test_un_wheel_sans_contrat_degrade_au_lieu_de_bloquer(tmp_path: Path):

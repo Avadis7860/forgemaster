@@ -1,6 +1,6 @@
 {
   "path": "/",
-  "markers": ["forgemaster", "Réglages"],
+  "markers": ["Réglages", "Espace de travail"],
   "timeout_ms": 20000,
-  "_source": "web/src/App.tsx (shell) — lockstep tenu par test_ui_contract_marqueurs_viennent_du_shell"
+  "_source": "web/src/{App,components/ProjectRail}.tsx — lockstep tenu par tests/test_update.py"
 }
