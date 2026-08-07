@@ -1314,6 +1314,26 @@ def test_ui_contract_marqueurs_viennent_du_shell():
                                    f"shell ont divergé, la prochaine MAJ échouerait en isolation")
 
 
+def test_aucun_marqueur_ne_vit_sous_une_TRANSFORMATION_de_casse():
+    """DEUXIÈME PIÈGE MESURÉ SUR VM LE 2026-08-07, même famille que le précédent. `innerText` rend le texte
+    **tel que le navigateur l'affiche**, transformations CSS comprises : « Espace de travail » sous
+    `<Eyebrow>` (qui porte `uppercase`) arrive au runner en « ESPACE DE TRAVAIL », et la comparaison
+    `includes` échoue. Un wheel parfaitement SAIN a été refusé pour ça — un faux-rouge coûte aussi cher
+    qu'un faux-vert, il rendrait toute MAJ impossible.
+
+    La règle qui reste, et qui vaut au-delà de ce test : **un marqueur doit être ce que le navigateur REND**,
+    ni le titre statique, ni le source non transformé. Ce garde-là est une heuristique (il lit la ligne, pas
+    l'arbre de rendu) — il ne remplace pas le passage sur VM, il empêche de refaire CE piège-ci."""
+    racine = Path(__file__).resolve().parents[1]
+    for f in ("App.tsx", "components/ProjectRail.tsx"):
+        for num, ligne in enumerate((racine / "web" / "src" / f).read_text(encoding="utf-8").splitlines(), 1):
+            for marqueur in _contrat_du_produit()["markers"]:
+                if marqueur in ligne and re.search(r"Eyebrow|uppercase|capitalize", ligne):
+                    raise AssertionError(
+                        f"« {marqueur} » est rendu sous une transformation de casse ({f}:{num}) : le "
+                        f"navigateur l'affichera autrement, et le détecteur refuserait un wheel sain")
+
+
 def test_aucun_marqueur_ne_survit_dans_le_TITRE_de_la_page():
     """TROUVÉ SUR VM LE 2026-08-07, pas en relecture. Le runner cherche ses marqueurs dans
     `title + body.innerText` (`render_check.js` : `const hay = ...`). Or `<title>forgemaster</title>` est

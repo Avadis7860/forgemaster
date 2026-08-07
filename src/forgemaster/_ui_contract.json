@@ -1,6 +1,6 @@
 {
   "path": "/",
-  "markers": ["Réglages", "Espace de travail"],
+  "markers": ["Réglages", "Nouveau projet"],
   "timeout_ms": 20000,
   "_source": "web/src/{App,components/ProjectRail}.tsx — lockstep tenu par tests/test_update.py"
 }
