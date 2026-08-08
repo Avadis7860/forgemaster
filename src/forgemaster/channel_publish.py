@@ -58,6 +58,20 @@ def _member(z: zipfile.ZipFile, nom: str) -> bytes:
             f"assertion ; un wheel qui en manque n'a pas été bâti par lui.") from None
 
 
+def read_stamp(z: zipfile.ZipFile) -> dict:
+    """Le tampon de build `{sha, committed_at}` **du wheel**, refusé en nommant sa cause s'il est illisible.
+
+    Public : `scripts/publish_channel.py` en a besoin **avant** de mesurer la lignée. Un JSON cassé qui
+    remonterait en `ValueError` nue enverrait chercher un défaut de parseur là où il y a un wheel mal bâti."""
+    try:
+        tampon = json.loads(_member(z, WHEEL_STAMP))
+    except ValueError as exc:
+        raise PublishError(f"{WHEEL_STAMP} illisible ({exc}) — wheel non annonçable") from None
+    if not isinstance(tampon, dict):
+        raise PublishError(f"{WHEEL_STAMP} n'est pas un objet JSON — wheel non annonçable")
+    return tampon
+
+
 def _version(z: zipfile.ZipFile) -> str:
     """La version telle que `pip` la lira : le `Version:` du METADATA, jamais le nom du fichier.
 
@@ -94,7 +108,7 @@ def build_announce(wheel: Path, *, lineage: list[str], published_at: str) -> dic
     """
     octets = wheel.read_bytes()
     with zipfile.ZipFile(wheel) as z:
-        tampon = json.loads(_member(z, WHEEL_STAMP))
+        tampon = read_stamp(z)
         version, cartes = _version(z), _maps(z)
     sha = tampon.get("sha")
     if not sha:

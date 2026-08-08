@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """publish_channel.py — produit le `channel.json` signé d'une édition. **Geste de mainteneur.**
 
-Il vit dans `scripts/` et **pas** dans le wheel : ce qu'une édition distribuée sait faire d'un manifeste,
-c'est le vérifier. Le producteur n'a rien à faire chez celui qui reçoit.
+Il vit dans `scripts/`, donc hors du wheel — contrairement au module `channel_publish` qu'il pilote, lequel
+voyage avec le reste et y est **inerte**. Ce qui n'est pas distribué est la **clé**, pas le code : le dire
+autrement serait de la rhétorique, le packaging ne le fait pas.
 
 **La clé privée arrive sur l'entrée standard**, jamais en `argv` (visible dans `ps` de toute la machine),
 jamais en variable d'environnement (héritée par tout ce qu'on lance ensuite), jamais en fichier. Ce script
@@ -22,7 +23,6 @@ Codes de sortie : 0 = écrit et vérifié · 1 = refus (rien n'est écrit) · 2 
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import subprocess
 import sys
@@ -47,8 +47,11 @@ def lignee(sha: str, *, repo: Path, plafond: int) -> list[str]:
 
     `--first-parent` : on suit la ligne de `main`, pas les côtés des merges qui y ont atterri.
     """
+    # `--skip=1` plutôt que `<sha>^` : le premier commit d'un dépôt n'a PAS de parent, et `^` y produirait
+    # un « unknown revision » que le message ci-dessous traduirait en « ce commit est-il dans ce dépôt ? ».
+    # Le cas est exactement celui qu'on ne cesse d'invoquer — le premier jour.
     out = subprocess.run(["git", "-C", str(repo), "rev-list", "--first-parent",
-                          f"-n{plafond}", f"{sha}^"],
+                          "--skip=1", f"-n{plafond}", sha],
                          capture_output=True, text=True)
     if out.returncode != 0:
         raise SystemExit(f"✗ lignée non mesurable ({out.stderr.strip()}) — le commit {sha[:12]} est-il "
@@ -63,11 +66,14 @@ def _privee() -> bytes:
     texte = sys.stdin.read().strip()
     if not texte:
         raise SystemExit("✗ entrée standard vide — le coffre a-t-il rendu quelque chose ?")
+    # Décodage STRICT, par le décodeur du produit et pas par la stdlib nue : `urlsafe_b64decode` **jette**
+    # silencieusement les caractères hors alphabet, donc un secret abîmé par un pipe donnerait 32 octets de
+    # n'importe quoi au lieu d'un refus. C'est la règle 5 de la spec — celle que ce diff cite par ailleurs.
     try:
-        return base64.urlsafe_b64decode(texte.encode("ascii"))
-    except Exception:                                    # noqa: BLE001 — la valeur ne doit PAS fuiter ici
-        raise SystemExit(f"✗ la valeur lue ({len(texte)} caractères) n'est pas du base64url — mauvais "
-                         f"secret, ou un pipe qui a ajouté quelque chose.") from None
+        return update_channel.b64u_decode(texte)
+    except update_channel.ChannelMalformed:              # la valeur ne doit PAS fuiter dans le message
+        raise SystemExit(f"✗ la valeur lue ({len(texte)} caractères) n'est pas du base64url STRICT — "
+                         f"mauvais secret, ou un pipe qui a ajouté quelque chose.") from None
 
 
 def main(argv: list[str]) -> int:
@@ -91,7 +97,15 @@ def main(argv: list[str]) -> int:
                 f"✗ {channel_publish.WHEEL_KEYS} absent du wheel — cette édition n'embarque AUCUNE racine "
                 f"de confiance : elle ne pourra vérifier aucune annonce, y compris celle-ci. Rien publié."
             ) from None
-        sha = json.loads(z.read(channel_publish.WHEEL_STAMP))["sha"]
+        tampon = channel_publish.read_stamp(z)
+
+    # Mesuré AVANT la lignée, et pas après : un tampon absent découvert par `build_announce` ferait d'abord
+    # échouer `lignee()` sur un SHA vide, et le refus parlerait alors de git là où le défaut est le wheel.
+    # L'ordre des contrôles est ce qui rend un message actionnable.
+    sha = tampon["sha"]
+    if not sha:
+        raise SystemExit(f"✗ {channel_publish.WHEEL_STAMP} sans `sha` — ce wheel ne sait pas de quel commit "
+                         f"il est né. Aucune instance ne pourrait se situer par rapport à lui.")
 
     annonce = channel_publish.build_announce(
         args.wheel,

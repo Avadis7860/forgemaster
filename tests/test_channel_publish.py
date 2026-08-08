@@ -133,6 +133,26 @@ def test_le_sha256_annonce_est_celui_du_FICHIER_publie(tmp_path: Path):
     assert a["edition"]["wheel"]["sha256"] == hashlib.sha256(whl.read_bytes()).hexdigest()
 
 
+def test_un_tampon_ILLISIBLE_est_refuse_en_NOMMANT_le_wheel(tmp_path: Path):
+    """Un `ValueError` nu enverrait chercher un défaut de parseur là où il y a un wheel mal bâti — et
+    `scripts/publish_channel.py` lit ce tampon **avant** de mesurer la lignée, précisément pour que le refus
+    parle du wheel et non de git."""
+    whl = tmp_path / "forgemaster-0.0.0-py3-none-any.whl"
+    with zipfile.ZipFile(whl, "w") as z:
+        z.writestr(channel_publish.WHEEL_STAMP, "{ pas du json")
+    with zipfile.ZipFile(whl) as z, pytest.raises(channel_publish.PublishError, match="illisible"):
+        channel_publish.read_stamp(z)
+
+
+def test_l_encodeur_du_producteur_passe_le_decodeur_STRICT_du_client():
+    """Les deux moitiés du codec vivent dans deux modules ; ce test est ce qui les tient ensemble. Le
+    décodeur refuse le padding manquant et les caractères hors alphabet — un encodeur qui dériverait
+    produirait des manifestes que le client refuserait, sans que rien ne le dise ici."""
+    for n in (1, 31, 32, 64):
+        brut = bytes(range(n))
+        assert update_channel.b64u_decode(channel_publish.b64u(brut)) == brut
+
+
 def test_un_wheel_sans_tampon_de_build_n_est_PAS_annoncable(tmp_path: Path):
     whl = _wheel(tmp_path, public=None, stamp={"sha": None, "committed_at": None})
     with pytest.raises(channel_publish.PublishError, match="ne sait pas de quel commit"):

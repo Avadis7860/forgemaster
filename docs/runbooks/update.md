@@ -755,18 +755,18 @@ fait est la façon la plus sûre d'apprendre à ignorer un centre de notificatio
 le producteur ne redéfinit aucune constante : un schéma ou un domaine de signature qui aurait deux valeurs se
 découvrirait le jour où plus **rien** ne vérifie, ce qui ressemble à une clé perdue.
 
-`build_announce` (`channel_publish.py:81`) lit l'annonce **DANS LE WHEEL** — `Version:` du METADATA (pas le nom du
+`build_announce` (`channel_publish.py:100`) lit l'annonce **DANS LE WHEEL** — `Version:` du METADATA (pas le nom du
 fichier, qui se renomme d'un `mv`), tampon `_build.json`, manifeste `_maps/maps.json`, SHA-256 et taille du fichier
 qu'on publiera. Un producteur qui lirait le répertoire de travail pourrait annoncer un commit et publier un autre
 binaire : la signature couvrirait le mensonge, et rien côté client ne saurait le dire.
 
-`sign_envelope` (`channel_publish.py:125`) ne prend **pas** de `key_id` : il le dérive de la publique déduite de la
+`sign_envelope` (`channel_publish.py:144`) ne prend **pas** de `key_id` : il le dérive de la publique déduite de la
 privée qui signe. Le passer en argument rouvrirait exactement le mensonge que la dérivation existe pour rendre
 impossible — une signature qui désigne une clé et vérifie sous une autre. Ce qui est signé est
 `update_channel.signing_message` (`update_channel.py:125`), **un seul foyer partagé avec le vérificateur** : une
 séparation de domaine calculée à deux endroits finira par diverger.
 
-`trust_root_document` (`channel_publish.py:153`) compose `_keys/release-keys.json`. Il vit ici et pas dans la
+`trust_root_document` (`channel_publish.py:172`) compose `_keys/release-keys.json`. Il vit ici et pas dans la
 cérémonie qui fait naître la paire (celle-ci tourne dans le vault, où `key_id` n'existe pas) — et `trust_root()`
 re-dérive de toute façon à chaque lecture, donc une seconde implémentation qui divergerait rendrait l'édition
 inutilisable, pas indulgente.

@@ -148,7 +148,7 @@ def test_un_base64_indulgent_accepterait_deux_textes_pour_les_memes_octets():
     sale = propre[:3] + "\n \t" + propre[3:]
     assert base64.urlsafe_b64decode(sale.encode()) == b"forgemaster", "prémisse du test : l'indulgence"
     with pytest.raises(uc.ChannelMalformed, match="base64url invalide"):
-        uc._b64d(sale)
+        uc.b64u_decode(sale)
 
 
 # --- 2. la vérification : deux conditions, et des refus qu'on ne confond pas ---------------------------
