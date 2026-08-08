@@ -15,6 +15,7 @@ La chaîne réelle (vrai wheel, vrai venv, vrai daemon, vrai systemd-like) est j
 """
 from __future__ import annotations
 
+import argparse
 import ast
 import hashlib
 import io
@@ -635,6 +636,43 @@ def test_apply_ne_depend_de_rien_du_forgemaster():
             modules.add((node.module or "").split(".")[0])
     assert "forgemaster" not in modules
     assert modules <= set(sys.stdlib_module_names), modules - set(sys.stdlib_module_names)
+
+
+def test_le_chemin_d_apply_n_ouvre_AUCUNE_socket(live: Settings, tmp_path: Path, monkeypatch, capsys):
+    """**La garde que la spec réclamait, et qui n'existait pas.** La frontière « aucun réseau dans `update
+    apply` » n'était tenue que par l'ÉTROITESSE de ce que le verbe appelle — une intention, pas une garde.
+    Le test voisin (`test_apply_ne_depend_de_rien_du_forgemaster`) interdit un **import**, ce qui n'interdit
+    pas une **socket** : `urllib` est de la stdlib, il aurait passé.
+
+    Ici la socket elle-même est rendue impossible, et le préflight complet est joué **jusqu'au bout**
+    (rc 0) — pas jusqu'au premier refus, qui ne prouverait rien du reste du chemin.
+
+    Cette frontière n'est pas une élégance : c'est elle qui permet à `update apply` d'être la **voie de
+    secours** quand le canal en ligne est sourd (rotation de clé non suivie, réseau absent). Une voie de
+    secours qui dépendrait du réseau n'en serait pas une."""
+    whl = tmp_path / "forgemaster-0.2.0-py3-none-any.whl"
+    with zipfile.ZipFile(whl, "w") as zf:
+        zf.writestr("forgemaster/cli.py", f"# {apply_update.MAPS_FLAG}\n")
+        zf.writestr(f"forgemaster/{apply_update.EDITION_MANIFEST}", '{"maps": []}')
+    unit = _unit(tmp_path / "forgemaster.service", str(live.home / "current" / "bin" / "forgemaster"))
+    vrai_which = update.shutil.which
+    monkeypatch.setattr(update.shutil, "which",
+                        lambda n, *a, **k: "/usr/bin/systemd-run" if n == update.RUNNER
+                        else vrai_which(n, *a, **k))
+
+    import socket as _socket
+
+    def _interdit(*_a, **_k):
+        raise AssertionError("le chemin de `update apply` a ouvert une SOCKET — la frontière hors-ligne "
+                             "vient de tomber, et avec elle la voie de secours du canal en ligne")
+
+    monkeypatch.setattr(_socket, "socket", _interdit)
+    monkeypatch.setattr(_socket, "create_connection", _interdit)
+
+    args = argparse.Namespace(action="apply", wheel=str(whl), unit=str(unit), system=False, dry_run=True,
+                              detach=False, service="forgemaster", systemctl="systemctl")
+    assert update.cli_dispatch(live, args) == 0, capsys.readouterr().err
+    assert "--dry-run" in capsys.readouterr().out, "le chemin complet n'a pas été parcouru"
 
 
 def _est_popen(func: ast.expr) -> bool:

@@ -86,6 +86,7 @@ def build_app(settings: Settings) -> FastAPI:
         from forgemaster.db import store
         from forgemaster.dispatch import reconcile
         from forgemaster.terminal.registry import PtySessionRegistry, run_reaper
+        from forgemaster.update_channel import run_channel_poll
 
         # Le lifespan est le TROISIÈME chemin qui ouvre la base — après le démarrage et les routes. Sans ce
         # `try`, une base illisible y remonte en « Application startup failed » et uvicorn sort en 3 : le
@@ -114,14 +115,22 @@ def build_app(settings: Settings) -> FastAPI:
         # reaper est une tâche de fond annulée au shutdown.
         _app.state.terminals = PtySessionRegistry()
         reaper = asyncio.create_task(run_reaper(_app.state.terminals))
+
+        # Canal de MAJ : au démarrage PUIS à intervalle (un daemon cockpit vit des semaines — un contrôle au
+        # boot seul ne notifierait jamais rien). Même forme que le reaper, et pour la même raison : une tâche
+        # de fond qu'on annule au shutdown. Son tirage part dans un thread (`asyncio.to_thread`, dans le
+        # module) parce qu'`urllib` est bloquant — sinon la boucle d'événements, donc TOUT le daemon, gèlerait
+        # jusqu'au timeout. Sans racine de confiance embarquée, la tâche tourne sans émettre AUCUNE requête.
+        canal = asyncio.create_task(run_channel_poll(settings))
         try:
             yield
         finally:
             # Moitié shutdown (absente jusqu'ici) : couper le reaper puis tuer toute session PTY vivante ou
             # détachée — pas de shell orphelin ni de PTY fuité quand le daemon s'arrête.
-            reaper.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await reaper
+            for tache in (reaper, canal):
+                tache.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await tache
             _app.state.terminals.close_all()
 
     app = FastAPI(title="forgemaster", version=__version__, lifespan=_lifespan)
