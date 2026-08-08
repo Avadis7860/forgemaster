@@ -84,16 +84,17 @@ function AlertItem({ alert, onGo }: { alert: AlertRow; onGo: () => void }) {
   )
 }
 
-/** LE RAPPEL D'INSTANCE — la DEUXIÈME source que ce centre lit (arbitrage du 2026-08-02, option B).
- *
- *  Pourquoi il n'entre PAS dans la table `alerts` : une alerte y est un objet de TRAVAIL — dédupliquée par
- *  `(project, feature_ref, kind)`, titrée par sa feature, deep-linkée vers elle, et fermée par le succès de
- *  cette feature. « Ton instance est en retard » n'a ni projet ni feature ; l'y loger obligerait à inventer
- *  un projet sentinelle et à casser trois contrats pour en réutiliser un. Le centre agrège deux sources,
- *  `alerts` reste le registre du drain — zéro migration, zéro bump.
- *
- *  Ce n'est pas un ÉVÉNEMENT mais un ÉTAT dérivé : il n'a pas d'`id`, rien à acquitter côté serveur, et il
- *  s'éteint tout seul dès que l'instance n'est plus en retard. */
+// LE RAPPEL D'INSTANCE — la DEUXIÈME source que ce centre lit (arbitrage du 2026-08-02, option B).
+//
+// Pourquoi il n'entre PAS dans la table `alerts` : une alerte y est un objet de TRAVAIL — dédupliquée par
+// `(project, feature_ref, kind)`, titrée par sa feature, deep-linkée vers elle, et fermée par le succès de
+// cette feature. « Ton instance est en retard » n'a ni projet ni feature ; l'y loger obligerait à inventer
+// un projet sentinelle et à casser trois contrats pour en réutiliser un. Le centre agrège deux sources,
+// `alerts` reste le registre du drain — zéro migration, zéro bump.
+//
+// Ce n'est pas un ÉVÉNEMENT mais un ÉTAT dérivé : il n'a pas d'`id`, rien à acquitter côté serveur, et il
+// s'éteint tout seul dès que l'instance n'est plus en retard.
+
 const CLE_IGNORE = 'forgemaster:instance-stale-dismissed'
 
 /** Le SHA de référence rangé au dernier `✕`. Une **préférence de client**, jamais un état de produit — la
