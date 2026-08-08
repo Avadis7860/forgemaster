@@ -683,14 +683,14 @@ C'est ce qui borne le rayon d'explosion d'une clé volée à une **notification 
 c'est ce qui fait de `update apply <wheel>` la **voie de secours** quand le canal est sourd (rotation non suivie,
 réseau absent). *La voie hors-ligne est la voie de secours de la voie en ligne.*
 
-La lecture se fait en quatre temps, et l'**ordre** est le contrat : `parse_envelope` (`:185`) lit l'enveloppe et
-**décode** le payload sans le parser → `verify_envelope` (`:222`) exige que le `key_id` soit dans le jeu embarqué
-**et** que la signature vérifie sous **cette** clé (jamais « essaie toutes les clés ») → `parse_announce` (`:259`)
+La lecture se fait en quatre temps, et l'**ordre** est le contrat : `parse_envelope` (`:194`) lit l'enveloppe et
+**décode** le payload sans le parser → `verify_envelope` (`:231`) exige que le `key_id` soit dans le jeu embarqué
+**et** que la signature vérifie sous **cette** clé (jamais « essaie toutes les clés ») → `parse_announce` (`:268`)
 n'est appelée qu'après. C'est *parse-after-verify* : parser d'abord ferait du parseur la première surface d'attaque.
-`trust_root` (`:138`) **re-dérive** le `key_id` de chaque clé et refuse un fichier qui ment — un identifiant dérivé
+`trust_root` (`:147`) **re-dérive** le `key_id` de chaque clé et refuse un fichier qui ment — un identifiant dérivé
 qu'on ne recalcule pas n'est qu'un nom.
 
-`refresh` (`:386`) orchestre et **ne lève jamais** : un canal muet ne fait pas tomber un daemon. Il **court-circuite
+`refresh` (`:395`) orchestre et **ne lève jamais** : un canal muet ne fait pas tomber un daemon. Il **court-circuite
 avant tout réseau** si la racine de confiance est vide (une édition qui ne peut rien vérifier jetterait la réponse),
 et son état sur disque sépare `last_success` de `last_attempt` — un réseau injoignable fait **vieillir** ce qu'on
 savait, il ne l'efface pas. Sept états, jamais un `error` fourre-tout : `ok`, `unreachable`, `malformed`,
@@ -698,10 +698,10 @@ savait, il ne l'efface pas. Sept états, jamais un `error` fourre-tout : `ok`, `
 `bad-signature` sont **distincts** : le premier est le seul indicateur de compromission — ou de rotation non suivie —
 qu'un système hors-ligne aura jamais.
 
-`run_channel_poll` (`:445`) est l'idiome sleep-loop de `run_reaper`, avec **une** différence structurelle : le tirage
+`run_channel_poll` (`:454`) est l'idiome sleep-loop de `run_reaper`, avec **une** différence structurelle : le tirage
 part dans un thread (`asyncio.to_thread`), parce qu'`urllib` est bloquant et qu'un appel direct gèlerait la boucle
 d'événements — donc tout le daemon — jusqu'au timeout. Le premier tour précède le premier sommeil : un daemon qu'on
-vient de redémarrer est le moment où quelqu'un veut savoir. `cli_check` (`:608`) est le même tirage à la demande, pour
+vient de redémarrer est le moment où quelqu'un veut savoir. `cli_check` (`:617`) est le même tirage à la demande, pour
 l'instance pilotée **uniquement en CLI** ; **rc 0 toujours**, comme `wheels` et `aptitude` — c'est une question.
 
 Le **niveau de log est gradué**, et pas décoratif (`_NIVEAU`) : `bad-signature` sort en **ERROR** — quelqu'un a servi
@@ -712,7 +712,7 @@ un train qui ne passe pas n'est pas une alarme.
 **Non livré, et il faut le dire** : `_keys/release-keys.json` n'existe pas (la paire naît à la cérémonie de
 génération), donc en production le canal **n'émet aucune requête** et le dit.
 
-## verdict() / situer() / channel_volet() — de l'état à ce qu'on en FAIT
+## verdict() / situate() / read_verdict() — de l'état à ce qu'on en FAIT
 `update_channel.py` · volet `channel` de `GET /api/version` · `web/src/lib/channelVerdict.ts` (le rendu)
 
 L'état d'un tour dit ce qui **s'est passé** ; le verdict dit ce qu'on en **fait**. Les fondre condamnerait l'un des
@@ -729,13 +729,13 @@ nouvelle d'hier (laquelle reste rendue à côté, avec son âge) ; puis, sans ri
 silences ; sinon on **situe**, y compris quand le dernier tour a échoué **mollement**. *Un réseau qui tombe fait
 vieillir, une signature qui ment interrompt* — sans cette asymétrie, une panne de wifi produirait une amnésie.
 
-`situer` (**pur**) rend les trois issues qui décident du sort de l'annonce, en cherchant le SHA de build **dans la
+`situate` (**pur**) rend les trois issues qui décident du sort de l'annonce, en cherchant le SHA de build **dans la
 lignée** — c'est ce qui rend la divergence classe B décidable **sans miroir git**, chez qui n'en a pas. Son absence
 est un **AVEU** (« je ne peux pas te situer »), jamais un verdict de divergence : trois causes distinctes la
 produisent — instance plus ancienne que la fenêtre publiée, wheel bâti maison, divergence réelle — et on ne les
 distingue pas, donc on ne choisit pas. C'est aussi pourquoi ce verdict **ne rougit pas**.
 
-`channel_volet` reçoit le `build_sha` en argument, sans défaut : il appartient à `build_provenance`, et la
+`read_verdict` reçoit le `build_sha` en argument, sans défaut : il appartient à `build_provenance`, et la
 composition vit chez l'appelant — la route (`daemon/routes/onboarding.py`) et `cli.py` — pour que les deux modules
 n'aient **aucune arête** entre eux. Un défaut d'argument, lui, ferait rendre « non situable » à une instance
 parfaitement tamponnée dont l'appelant aurait oublié le paramètre.
@@ -745,6 +745,49 @@ notifications : **le canal l'emporte dès qu'il fait autorité** — c'est-à-di
 `available` comme `cannot-situate`. Le miroir local reprend la parole quand le canal est muet, injoignable ou non
 vérifié. Une seule ligne, jamais deux : sur une machine qui a les deux références, en afficher deux pour le même
 fait est la façon la plus sûre d'apprendre à ignorer un centre de notifications.
+
+## channel_publish — le PRODUCTEUR, et ce qui le sépare vraiment du client
+`src/forgemaster/channel_publish.py` · `scripts/publish_channel.py` (**hors** wheel) · spec `docs/specs/update-channel-manifest.md` §Publier
+
+`src/forgemaster/channel_publish.py` produit ce que `update_channel.py` passe sa vie à lire. Les deux sont
+**symétriques et jamais fondus** : le producteur importe le client, et **l'inverse est impossible** — gardé par AST
+(`tests/test_channel_publish.py`), pas par un commentaire. Rien du chemin de mise à jour ne peut donc atteindre le signeur, et
+le producteur ne redéfinit aucune constante : un schéma ou un domaine de signature qui aurait deux valeurs se
+découvrirait le jour où plus **rien** ne vérifie, ce qui ressemble à une clé perdue.
+
+`build_announce` (`channel_publish.py:81`) lit l'annonce **DANS LE WHEEL** — `Version:` du METADATA (pas le nom du
+fichier, qui se renomme d'un `mv`), tampon `_build.json`, manifeste `_maps/maps.json`, SHA-256 et taille du fichier
+qu'on publiera. Un producteur qui lirait le répertoire de travail pourrait annoncer un commit et publier un autre
+binaire : la signature couvrirait le mensonge, et rien côté client ne saurait le dire.
+
+`sign_envelope` (`channel_publish.py:125`) ne prend **pas** de `key_id` : il le dérive de la publique déduite de la
+privée qui signe. Le passer en argument rouvrirait exactement le mensonge que la dérivation existe pour rendre
+impossible — une signature qui désigne une clé et vérifie sous une autre. Ce qui est signé est
+`update_channel.signing_message` (`update_channel.py:125`), **un seul foyer partagé avec le vérificateur** : une
+séparation de domaine calculée à deux endroits finira par diverger.
+
+`trust_root_document` (`channel_publish.py:153`) compose `_keys/release-keys.json`. Il vit ici et pas dans la
+cérémonie qui fait naître la paire (celle-ci tourne dans le vault, où `key_id` n'existe pas) — et `trust_root()`
+re-dérive de toute façon à chaque lecture, donc une seconde implémentation qui divergerait rendrait l'édition
+inutilisable, pas indulgente.
+
+`scripts/publish_channel.py` est le geste de **mainteneur**, hors du wheel : ce qu'une édition distribuée sait faire
+d'un manifeste, c'est le vérifier. La privée arrive sur **l'entrée standard** — jamais `argv` (visible dans le `ps`
+de toute la machine), jamais l'environnement (hérité par tout ce qu'on lance ensuite), jamais un fichier. Le script
+ne résout **aucun** secret : le coffre reste le seul résolveur, et il vit hors de ce dépôt.
+
+```
+.claude/scripts/.venv/bin/python .claude/scripts/bws_secret.py <uuid> --raw \
+  | python scripts/publish_channel.py --wheel dist/forgemaster-<v>-py3-none-any.whl --out channel.json
+```
+
+Avant d'écrire quoi que ce soit, il **relit son propre produit avec le code du client**, sous la racine de confiance
+que **le wheel annoncé embarque**. C'est le seul endroit où les deux moitiés se rencontrent avant l'utilisateur ;
+sans ce contrôle, on peut publier une annonce parfaitement signée que pas une édition au monde n'accepte — et le
+symptôme, chez lui, serait `unverified` : le pire verdict, celui qui apprend à ignorer l'alarme.
+
+`lignee()` mesure l'**ascendance** de l'édition annoncée (`git rev-list --first-parent`), bornée au plafond **à la
+publication** comme elle l'est **à la lecture** : un plafond qu'on ne vérifie que d'un côté n'est pas un plafond.
 
 ## Zones non détaillées
 

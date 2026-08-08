@@ -122,6 +122,15 @@ class ChannelUnreachable(ChannelError):
 # --- lecture pure ------------------------------------------------------------------------------------
 
 
+def signing_message(payload: bytes) -> bytes:
+    """Les octets réellement signés : `<schéma d'enveloppe>\\n<payload>`. **PUR.**
+
+    Un seul foyer, partagé par le vérificateur (ici) et le producteur (`channel_publish.sign_envelope`) :
+    une séparation de domaine calculée à deux endroits est une séparation de domaine qui finira par
+    diverger — et le jour où elle diverge, plus **rien** ne vérifie, ce qui ressemble à une clé perdue."""
+    return _DOMAIN + payload
+
+
 def key_id(public_bytes: bytes) -> str:
     """Le `key_id` d'une clé publique : préfixe du SHA-256 de ses octets BRUTS. **PUR**. Dérivé et non
     attribué — un compteur ou une date pourraient désigner une autre clé que celle qu'ils nomment."""
@@ -237,7 +246,7 @@ def verify_envelope(envelope: dict, keys: list[dict]) -> bytes:
         raise ChannelUnknownKey("cette édition n'embarque aucune racine de confiance — elle ne peut "
                                 "vérifier aucun manifeste, et ne prétend donc rien")
     connues = {k["key_id"]: k["public"] for k in keys}
-    message = _DOMAIN + envelope["payload"]
+    message = signing_message(envelope["payload"])
     inconnus, invalides = [], []
     for s in envelope["signatures"]:
         pub = connues.get(s["key_id"])
