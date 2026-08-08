@@ -46,6 +46,7 @@ Ce que couvre chaque doc (cibles de `docsmap where`) :
   invariants de test) : forge-merge, worktree-cleanup, writeback-creds, task-next DAG, sot-local split,
   feature-verified, tier0-native-toolchain, review-readiness-gate, web-forgemaster-spa, runtime-seed-deploy-config,
   bundle-crash-test, template-ui-application-lifecycle, ws-origin-token-boundary,
+  update-channel-trust-root (contrat à implémenter — la signature du canal de MAJ, avant toute crypto),
   ogame-rogue-like-pve-bundle (superseded — style servi, plus un bundle-type).
 - `docs/schema-contract.md` — SQLite / `roadmap.yaml` / API HTTP, **figés** inter-couches.
 - `docs/weak-points.md` — dettes legacy **refusées** (god-module, couplage proxmox/ssh, monolithe) + refactor.
