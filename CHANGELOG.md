@@ -7,7 +7,12 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 > décrivent des faits qui ont eu lieu sous lui, et un changelog qu'on réécrit n'est plus un changelog.
 > Motif du renommage et périmètre : voir l'entrée du 2026-08-04 ci-dessous.
 
-## [Unreleased]
+## [0.2.0] — 2026-08-08
+
+**Première édition qui sait apprendre qu'une autre existe.** Le numéro bouge de 0.1.0 à 0.2.0 parce que le
+canal est une **capacité neuve**, pas un correctif : une instance de 0.1.0 n'a aucun moyen de savoir qu'une
+version plus récente a été publiée, et 0.2.0 en a un. C'est aussi ce qui rend l'écart **lisible à l'écran**
+sans expliquer un SHA — « installé 0.1.0, une édition plus récente est annoncée : 0.2.0 ».
 
 ### Le canal de mise à jour — l'instance APPREND qu'une version existe, et dit ce qu'il faut en faire (1 champ additif)
 
