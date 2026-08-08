@@ -4,6 +4,9 @@ import { ApiError } from '@/lib/api'
 import type { UpdateRun, Version } from '@/lib/schemas'
 
 const MORT = new ApiError(0, 'daemon injoignable (TypeError: Failed to fetch)')
+const MAPS = ['code-map', 'docs-map', 'front-map']
+const SHA_A = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2'
+const SHA_B = '9f8e7d6c5b4a9f8e7d6c5b4a9f8e7d6c5b4a9f8e'
 
 const h = vi.hoisted(() => ({
   runs: null as unknown,
@@ -61,7 +64,17 @@ function version(over: Partial<Version> = {}): Version {
   return {
     version: '0.1.0', sha: 'abcdef1234', committed_at: '2026-08-07T00:00:00Z',
     comparable: false, stale: null, behind_by: null, missing_types: [],
-    reference: null, head: null, ...over,
+    reference: null, head: null,
+    // Défaut : une instance d'ÉDITION conforme. Chaque bloc qui parle d'édition la repose explicitement.
+    install: { mode: 'edition', reason: null },
+    maps: MAPS.map((name) => ({ name, sha: SHA_A, requested_ref: null, source: 'edition', reason: null })),
+    edition: {
+      edition_dir: '/opt/fm/site-packages/forgemaster/_maps', reason: null, state: 'up-to-date',
+      maps: MAPS.map((name) => ({ name, served: SHA_A, edition: SHA_A, state: 'up-to-date',
+                                  reason: null })),
+    },
+    mcp: { topology: 'none', sha: null, endpoint: null, reason: 'aucun endpoint MCP configuré' },
+    ...over,
   }
 }
 
@@ -240,6 +253,56 @@ describe('UpdatePanel — le verdict de FRAÎCHEUR, sous l\'identité et jamais 
     render(<UpdatePanel />)
 
     expect(screen.queryByText(/À jour|En retard|non comparable/)).toBeNull()
+  })
+})
+
+describe('UpdatePanel — l\'ÉDITION : les 4 pièces, et l\'écart quand il y en a un', () => {
+  // D'OÙ VIENT CE BLOC : phase 4·4. Le verdict de conformité des cartes existait — dans `forgemaster
+  // toolchain check`, c'est-à-dire derrière un terminal. Une instance pouvait servir des cartes qui ne
+  // sont pas celles de son édition sans qu'aucune surface ne le dise à qui n'en a pas.
+  beforeEach(() => { h.runs = CALME; h.runsError = null; h.run = null; h.runError = null; h.aptitude = apte() })
+
+  it('montre les QUATRE pièces avec leur SHA', () => {
+    h.version = version({ sha: 'abcdef1234' })
+
+    render(<UpdatePanel />)
+
+    for (const nom of MAPS) expect(screen.getByText(nom)).toBeInTheDocument()
+    // le wheel est la 4ᵉ pièce, et il est en TÊTE : la question porte sur l'ensemble, pas sur le binaire
+    expect(screen.getByText('forgemaster')).toBeInTheDocument()
+    expect(screen.getAllByText('a1b2c3d')).toHaveLength(3)
+  })
+
+  it('nomme la carte en écart ET le SHA que l\'édition déclare', () => {
+    const base = version()
+    h.version = version({
+      maps: base.maps.map((m) => (m.name === 'code-map' ? { ...m, sha: SHA_B } : m)),
+      edition: {
+        ...base.edition, state: 'differs',
+        maps: base.edition.maps.map((m) => (m.name === 'code-map'
+          ? { ...m, served: SHA_B, edition: SHA_A, state: 'differs' as const } : m)),
+      },
+    })
+
+    render(<UpdatePanel />)
+
+    expect(screen.getByText(/ce n'est pas la carte que cette édition déclare/)).toBeInTheDocument()
+    expect(screen.getByText(/≠ édition a1b2c3d/)).toBeInTheDocument()      // les DEUX SHA, jamais un seul
+    expect(screen.getByText(/toolchain install/)).toBeInTheDocument()      // le geste est NOMMÉ
+  })
+
+  it('n\'annonce JAMAIS « conforme » sur une instance sans édition', () => {
+    // Le faux-vert exact que cette sonde refuse : un checkout n'a rien à quoi se conformer, et le dire
+    // n'est pas un refus. Le mode est MESURÉ, plus déduit de `sha === null`.
+    h.version = version({ sha: null, install: { mode: 'checkout', reason: 'ni tampon ni édition' },
+                          edition: { edition_dir: null, reason: 'pas de _maps', state: 'unknown',
+                                     maps: [] } })
+
+    render(<UpdatePanel />)
+
+    expect(screen.getByText(/rien à quoi ses cartes se conformeraient/)).toBeInTheDocument()
+    expect(screen.getByText(/checkout éditable/)).toBeInTheDocument()
+    expect(screen.queryByText(/cartes conformes/)).toBeNull()
   })
 })
 

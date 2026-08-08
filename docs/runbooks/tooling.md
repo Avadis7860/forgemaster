@@ -9,7 +9,7 @@ même convention forge : seams **purs** testables sans subprocess + exécution i
 en argv.
 
 ## tools.preflight_tools() / install_tools() — gate de présence + provisionnement hôte-niveau
-`src/forgemaster/tools.py:177` (`preflight_tools`) · `src/forgemaster/tools.py:478` (`install_tools`) · appelés par le
+`src/forgemaster/tools.py:177` (`preflight_tools`) · `src/forgemaster/tools.py:486` (`install_tools`) · appelés par le
 gate de dispatch (preflight avant spawn) et `forgemaster toolchain install` (cli_dispatch).
 `preflight_tools` vérifie que tout binaire déclaré par la facette active (`<worktree>/.claude/settings.local.json`)
 résout sur le PATH worker (`tools_env`) et lève `ToolPreflightError` (`:55`) AVANT le spawn — ne gate QUE
@@ -105,9 +105,9 @@ différentes de leur amont à 04:19. La dérive n'attendait pas des semaines —
 heure. C'est cette dérive-là que l'édition ferme.
 
 ## tools.check_tools() — les cartes servies sont-elles celles de l'ÉDITION
-`src/forgemaster/tools.py:559` (`check_tools`) · `src/forgemaster/tools.py:313` (`compare`, PUR) ·
+`src/forgemaster/tools.py:567` (`check_tools`) · `src/forgemaster/tools.py:313` (`compare`, PUR) ·
 `src/forgemaster/tools.py:344` (`read_edition`) · `src/forgemaster/tools.py:337` (`overall_state`, PUR) ·
-`src/forgemaster/tools.py:609` (`_cli_check`) · appelé par `forgemaster toolchain check`.
+`src/forgemaster/tools.py:623` (`_cli_check`) · appelé par `forgemaster toolchain check`.
 
 **La question a changé avec l'épinglage (2026-08-08).** La sonde comparait le commit servi au `main` amont
 (`git ls-remote` par carte). Ce n'est plus la bonne question : les cartes ne suivent plus une réf mobile, donc
@@ -128,6 +128,40 @@ jamais « en retard de N commits »** : deux SHA ne se soustraient pas sans l'hi
 
 `check` **rapporte, ne mute rien**. La remise à niveau reste le geste explicite `forgemaster toolchain install`
 (idempotent, hors-ligne) : une re-sync automatique remplacerait un binaire sous un worker en vol.
+
+**Le même objet est servi par `GET /api/version` depuis le 2026-08-08** (volet `edition`), et c'est
+délibérément le **même** — `build_provenance.provenance` appelle `check_tools` verbatim, il n'y a pas deux
+lectures qui pourraient diverger. Motif du déplacement : un verdict qui ne vit que dans la CLI est hors de
+portée de qui n'a pas de terminal, c'est-à-dire de l'utilisateur distribué pour qui tout le cycle de MAJ
+existe. La sonde HTTP passe `served=` (les cartes qu'elle vient de lire pour son volet `maps`) plutôt que de
+laisser `check_tools` re-parcourir les mêmes `.dist-info` : deux marches, une liste.
+
+`overall_state` rend `unknown` sur une liste **vide** — zéro carte comparée satisfait « aucune ne diffère »
+par vacuité, et le lire comme un vert dirait « conforme » à une instance dont on n'a rien pu lire. Le cas
+était inatteignable tant que `maps_provenance` était le seul fournisseur ; il le devient dès qu'un appelant
+injecte sa liste.
+
+## build_provenance.install_mode() — de quel MODE d'install cette instance vient
+`src/forgemaster/build_provenance.py:89` (`install_mode`, **PUR**) · composé par `provenance` · servi par
+`GET /api/version` (clé `install`).
+
+Deux faits lisibles localement, et leur **conjonction** est le mode : le wheel porte-t-il son tampon
+`_build.json` ? l'édition `forgemaster/_maps/maps.json` est-elle lisible ? Même patron — et même raison — que
+`mcp.local.topology` : **déduit du disque, jamais déclaré**. Une clé d'env `…_MODE` serait un champ qui peut
+mentir, puisque rien ne le re-vérifie après une réinstall.
+
+| tampon | édition | `mode` | ce que ça dit |
+|---|---|---|---|
+| ✓ | ✓ | `edition` | wheel de release portant les cartes qu'il épingle — le mode canonique |
+| ✓ | ✗ | `wheel` | wheel bâti **sans** son édition (d'avant le 2026-08-08, ou build dégradé) |
+| ✗ | ✗ | `checkout` | sibling éditable — mode de **développement**, normal, pas une panne |
+| ✗ | ✓ | `unknown` | paire qu'un même build ne peut pas produire → on avoue, on ne tranche pas |
+
+**Pourquoi ce champ existe alors que `sha is None` « suffisait »** : il ne suffisait que tant qu'un seul
+candidat le satisfaisait. Un wheel bâti sans tampon aurait été annoncé « checkout » — un mode qu'il n'a pas,
+avec une réparation qui n'est pas la sienne. C'est la leçon de la phase 3a·5a : *une dérivation exacte dans
+un cas devient un choix arbitraire dans l'autre*. Le front consommait exactement cette dérivation (« installée
+depuis un checkout, pas un wheel ») ; il lit désormais le champ mesuré.
 
 ## service.install_service() / render_unit() — unité systemd du daemon
 `src/forgemaster/service.py:158` (`install_service`) · `src/forgemaster/service.py:102` (`render_unit`) · appelés par

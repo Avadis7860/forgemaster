@@ -188,6 +188,69 @@ def test_provenance_survives_an_unreadable_toolchain(tmp_path: Path):
     assert p["maps"] == [] and p["sha"] == "abc123"
 
 
+# -- le mode d'install (PUR) : deux faits du disque, quatre issues --------------------------------
+
+def test_install_mode_edition_quand_le_wheel_porte_son_edition():
+    """Le mode canonique : wheel tamponné + cartes épinglées embarquées. Aucune raison à donner — c'est
+    l'état normal d'une release."""
+    assert bp.install_mode("abc123", True) == {"mode": "edition", "reason": None}
+
+
+def test_install_mode_distingue_un_wheel_sans_edition_dun_checkout():
+    """LE cas qui justifie ce champ. Avant, `sha is None` servait de discriminant — il n'était exact que
+    tant qu'un seul candidat le satisfaisait : un wheel bâti SANS édition serait annoncé « checkout »,
+    c'est-à-dire un mode qu'il n'a pas, avec une réparation qui n'est pas la sienne."""
+    wheel = bp.install_mode("abc123", False)
+    checkout = bp.install_mode(None, False)
+    assert wheel["mode"] == "wheel" and checkout["mode"] == "checkout"
+    assert wheel["reason"] != checkout["reason"]
+    assert "build-wheel.sh" in wheel["reason"]                    # le wheel dégradé NOMME ce qui le répare
+
+
+def test_install_mode_avoue_une_paire_incoherente_au_lieu_de_trancher():
+    """Édition lisible sans tampon : les deux artefacts sont posés par le MÊME build, donc cette paire ne
+    devrait pas exister. On ne conclut rien — `unknown` porte l'incohérence."""
+    v = bp.install_mode(None, True)
+    assert v["mode"] == "unknown" and "incohérente" in v["reason"]
+
+
+# -- l'édition DÉCLARÉE, à côté de ce qui est SERVI -------------------------------------------------
+
+def test_provenance_compose_le_mode_et_le_verdict_dedition(tmp_path: Path):
+    """Ce que l'instance SERT (`maps`) et ce que son édition DÉCLARE (`edition`) sont deux questions, et
+    c'est leur ÉCART qui rend lisible une instance montée sans reposer son outillage."""
+    served = [{"name": "code-map", "sha": "a" * 40, "requested_ref": None,
+               "source": "edition", "reason": None}]
+    ed = {"edition_dir": "/opt/x/forgemaster/_maps", "reason": None, "state": "differs",
+          "maps": [{"name": "code-map", "served": "a" * 40, "edition": "b" * 40,
+                    "state": "differs", "reason": None}]}
+    p = bp.provenance(None, installed_types=(), stamp=_stamp_file(tmp_path, "abc123"),
+                      mirror_git_dir=tmp_path / "absent", maps=served, edition=ed)
+    assert p["install"] == {"mode": "edition", "reason": None}     # tampon + édition lue ⇒ mode canonique
+    assert p["edition"]["state"] == "differs"
+    assert p["edition"]["maps"][0]["served"] != p["edition"]["maps"][0]["edition"]   # les DEUX SHA
+
+
+def test_provenance_dit_POURQUOI_quand_aucune_carte_na_pu_etre_lue(tmp_path: Path):
+    """Outillage illisible ⇒ `maps` dégrade en `[]`. L'état reste `unknown` (garde d'`overall_state`), mais
+    sans note il n'aurait AUCUNE raison — l'édition, elle, a pu être lue. Une surface annoncerait alors
+    « au moins une carte n'a pas pu être comparée » en n'en montrant aucune, et on chercherait laquelle."""
+    p = bp.provenance(None, installed_types=(), stamp=_stamp_file(tmp_path, "abc123"),
+                      mirror_git_dir=tmp_path / "absent")
+    assert p["maps"] == [] and p["edition"]["state"] == "unknown"
+    assert p["edition"]["reason"]                                   # jamais un `unknown` muet
+
+
+def test_provenance_sans_edition_lisible_rend_checkout_et_ne_verdit_pas(tmp_path: Path):
+    """Checkout éditable : ni tampon, ni `_maps`. Le mode le DIT (et ce n'est pas une panne), et la
+    conformité reste `unknown` — il n'y a rien à quoi se conformer."""
+    p = bp.provenance(None, installed_types=(), stamp=tmp_path / "absent.json",
+                      mirror_git_dir=tmp_path / "absent")
+    assert p["install"]["mode"] == "checkout" and p["install"]["reason"]
+    assert p["edition"]["state"] == "unknown"                      # jamais `up-to-date` par vacuité
+    assert p["sha"] is None
+
+
 # -- hint de préflight ------------------------------------------------------------------------------
 
 def test_stale_type_hint_fires_on_missing_type():

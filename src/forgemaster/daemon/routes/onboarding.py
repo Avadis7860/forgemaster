@@ -40,10 +40,14 @@ def make_onboarding_router() -> APIRouter:
 
     @router.get("/api/version")
     def version(deps: Deps = Depends(get_deps)) -> dict:
-        """Provenance de build + fraîcheur du wheel installé (`{version, sha, committed_at, comparable,
-        stale, behind_by, missing_types}`). Signal honnête, jamais faux-vert : un forgemaster en retard
-        sur son miroir SoT local se déclare (`stale`, `missing_types`) ; sans provenance/miroir,
-        `comparable=False`. Idempotent, sans secret, I/O-free côté liveness (distinct de `/health`)."""
+        """**Quelle édition tourne ici ?** Provenance de build + fraîcheur du wheel (`{version, sha,
+        committed_at, comparable, stale, behind_by, missing_types, reference, head}`), **mode d'install**
+        (`install`, déduit du disque), les 3 cartes hôte **servies** (`maps`), ce que l'édition installée
+        **déclare** pour elles (`edition`, = `forgemaster toolchain check`) et la topologie du serveur de
+        corpus (`mcp`). Signal honnête, jamais faux-vert : un forgemaster en retard sur son miroir SoT
+        local se déclare (`stale`, `missing_types`) ; sans provenance/miroir, `comparable=False` ; une
+        conformité non vérifiable rend `edition.state = "unknown"`, jamais un vert. Idempotent, sans
+        secret, zéro réseau, I/O-free côté liveness (distinct de `/health`)."""
         return build_provenance.provenance(deps.settings)
 
     @router.post("/api/projects/{project}/credential")

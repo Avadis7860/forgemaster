@@ -5,6 +5,7 @@ import {
   useApplyUpdate, useRollbackUpdate, useUpdateAptitude, useUpdateRun, useUpdateRuns, useVersion,
 } from '@/lib/queries'
 import { fraicheur } from '@/lib/instanceFreshness'
+import { corpus, edition, shaCourt } from '@/lib/instanceEdition'
 import { enVol, liaison } from '@/lib/updateLiaison'
 import { RunFollow, RunRow } from './RunFollow'
 import { UpdatePreview } from './UpdatePreview'
@@ -118,6 +119,8 @@ export function UpdatePanel() {
   const sha = version.data?.sha
   const bascule = Boolean(shaAvant && sha && shaAvant !== sha)
   const etat = version.data ? fraicheur(version.data) : null
+  const ed = version.data ? edition(version.data) : null
+  const corpusMcp = version.data ? corpus(version.data) : null
   const echecLancement = poser.error ?? revenir.error
 
   return (
@@ -134,9 +137,11 @@ export function UpdatePanel() {
             <span className="font-mono text-xs text-fg">{sha.slice(0, 7)}</span>
           </>
         ) : (
-          // Provenance inconnue : on ne PRÉTEND rien. C'est le cas d'un checkout de développement, où le
-          // wheel n'a jamais été tamponné — le dire vaut mieux qu'afficher un tiret.
-          <span>Cette instance sert un build non tamponné (installée depuis un checkout, pas un wheel)</span>
+          // Provenance inconnue : on ne PRÉTEND rien — et on n'en DÉDUIT plus le mode d'install. Cette
+          // phrase disait « installée depuis un checkout, pas un wheel » : exact tant qu'un seul candidat
+          // satisfaisait `sha === null`, faux pour un wheel bâti sans tampon. Le mode est MESURÉ
+          // (`install`, déduit du disque) et il se dit au verdict d'édition, juste dessous.
+          <span>Cette instance sert un build non tamponné</span>
         )}
         {version.data?.committed_at && (
           <span className="text-xs text-faint">du {version.data.committed_at.slice(0, 10)}</span>
@@ -167,6 +172,42 @@ export function UpdatePanel() {
               types apparus depuis : {etat.manquants.join(', ')}
             </p>
           )}
+        </div>
+      )}
+
+      {/* L'ÉDITION — « quelle édition tourne ici ? », pour les QUATRE pièces. Elle vit dans le même bloc
+          d'identité que la fraîcheur, et pas dans une carte à elle : ce sont deux questions sur la MÊME
+          instance, et l'instance ne s'écrit qu'une fois par page. Le verdict se décide dans
+          `lib/instanceEdition` (pur, testé à la table) ; ici on ne fait que le rendre.
+          Jusqu'au 2026-08-08 il n'existait que dans `forgemaster toolchain check` — donc hors de portée de
+          qui n'a pas de terminal, c'est-à-dire de la personne pour qui ce cycle existe. */}
+      {ed && (
+        <div className="-mt-2 space-y-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
+            <Badge tone={ed.ton} dot>{ed.etiquette}</Badge>
+            <span>{ed.titre}</span>
+          </div>
+          {ed.detail && <p className="break-all text-xs text-faint">{ed.detail}</p>}
+          <ul className="space-y-0.5 pt-1 text-xs">
+            {ed.pieces.map((p) => (
+              <li key={p.nom} className="flex flex-wrap items-baseline gap-x-2">
+                <span className="w-24 shrink-0 text-muted">{p.nom}</span>
+                {/* Pas de SHA ⇒ le MOTIF, jamais un tiret : une absence a une raison, et c'est elle qui
+                    dit s'il faut réparer quelque chose ou si c'est l'état normal de cette instance. */}
+                {p.sha
+                  ? <span className="font-mono text-fg">{shaCourt(p.sha)}</span>
+                  : <span className="text-faint">{p.motif ?? 'non lisible'}</span>}
+                {p.attendu && (
+                  <span className="text-warn-500">≠ édition {shaCourt(p.attendu)}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+          {/* Le geste de remise à niveau, NOMMÉ. Il reste explicite et manuel : `update apply` ne touche
+              pas `tools/` (arbitrage du 2026-08-08) — le câbler est une décision de conception, pas un
+              effet de bord de cette surface. */}
+          {ed.remede && <p className="pt-1 text-xs text-muted">{ed.remede}</p>}
+          <p className="break-all pt-1 text-xs text-faint">{corpusMcp}</p>
         </div>
       )}
 
