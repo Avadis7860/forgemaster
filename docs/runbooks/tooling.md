@@ -9,7 +9,7 @@ même convention forge : seams **purs** testables sans subprocess + exécution i
 en argv.
 
 ## tools.preflight_tools() / install_tools() — gate de présence + provisionnement hôte-niveau
-`src/forgemaster/tools.py:177` (`preflight_tools`) · `src/forgemaster/tools.py:475` (`install_tools`) · appelés par le
+`src/forgemaster/tools.py:177` (`preflight_tools`) · `src/forgemaster/tools.py:478` (`install_tools`) · appelés par le
 gate de dispatch (preflight avant spawn) et `forgemaster toolchain install` (cli_dispatch).
 `preflight_tools` vérifie que tout binaire déclaré par la facette active (`<worktree>/.claude/settings.local.json`)
 résout sur le PATH worker (`tools_env`) et lève `ToolPreflightError` (`:55`) AVANT le spawn — ne gate QUE
@@ -105,9 +105,9 @@ différentes de leur amont à 04:19. La dérive n'attendait pas des semaines —
 heure. C'est cette dérive-là que l'édition ferme.
 
 ## tools.check_tools() — les cartes servies sont-elles celles de l'ÉDITION
-`src/forgemaster/tools.py:556` (`check_tools`) · `src/forgemaster/tools.py:313` (`compare`, PUR) ·
+`src/forgemaster/tools.py:559` (`check_tools`) · `src/forgemaster/tools.py:313` (`compare`, PUR) ·
 `src/forgemaster/tools.py:344` (`read_edition`) · `src/forgemaster/tools.py:337` (`overall_state`, PUR) ·
-`src/forgemaster/tools.py:604` (`_cli_check`) · appelé par `forgemaster toolchain check`.
+`src/forgemaster/tools.py:609` (`_cli_check`) · appelé par `forgemaster toolchain check`.
 
 **La question a changé avec l'épinglage (2026-08-08).** La sonde comparait le commit servi au `main` amont
 (`git ls-remote` par carte). Ce n'est plus la bonne question : les cartes ne suivent plus une réf mobile, donc
