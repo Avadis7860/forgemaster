@@ -146,6 +146,9 @@ def provenance(settings: Settings, *, installed_types: tuple[str, ...] | None = 
     try:
         mgd: Path | None = (Path(mirror_git_dir) if mirror_git_dir is not None
                             else _mirror_git_dir(settings))
+        # Le `is not None` n'est PAS redondant : l'annotation `Path | None` (nécessaire — la variable est
+        # réassignée à `None` juste après) élargit le type dès la déclaration, et mypy refuse `.exists()`
+        # sans lui. Mesuré, pas supposé : le retirer sort `union-attr` au gate.
         if mgd is not None and not mgd.exists():
             mgd = None
     except Exception:
