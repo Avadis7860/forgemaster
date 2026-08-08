@@ -715,6 +715,17 @@ export function useVersion() {
   return useQuery({ queryKey: qk.version, queryFn: api.version, refetchInterval: 10_000, retry: false })
 }
 
+/** La MÊME source, à une AUTRE cadence — pour le centre de notifications, monté sur toutes les pages.
+ *
+ *  Même `queryKey` que `useVersion` : un seul cache, une seule entrée, aucune requête en double (les deux
+ *  observateurs partagent la donnée ; seul l'intervalle est propre à chacun). Et il est LENT à dessein :
+ *  la cadence de 10 s ci-dessus existe pour voir arriver une bascule pendant qu'on la regarde. Une
+ *  fraîcheur, elle, ne bouge qu'à un commit de la référence — la sonder 6× par minute depuis n'importe
+ *  quelle page ferait tourner des sous-processus git en continu pour un fait qui change une fois par jour. */
+export function useInstanceFreshness() {
+  return useQuery({ queryKey: qk.version, queryFn: api.version, refetchInterval: 60_000, retry: false })
+}
+
 /** L'aire de dépôt + ses deux bornes (`keep`, `max_bytes`), lues de la route et jamais recopiées côté UI. */
 export function useWheels() {
   return useQuery({ queryKey: qk.wheels, queryFn: api.listWheels, retry: false })

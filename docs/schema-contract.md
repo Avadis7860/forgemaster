@@ -339,11 +339,20 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   réponse = projet avec `credential_ref`, **jamais le token** ; **400** mauvais usage/backend, **404** projet
   absent) · `DELETE /api/projects/{p}/credential` (délie : `credential_ref` → NULL).
 - **version** — `GET /api/version` (provenance de build + **fraîcheur honnête** du wheel installé :
-  `{version, sha, committed_at, comparable, stale, behind_by, missing_types, maps, mcp}`). Le SHA vient du tampon
+  `{version, sha, committed_at, comparable, stale, behind_by, missing_types, reference, head, maps, mcp}`).
+  Le SHA vient du tampon
   `forgemaster/_build.json` embarqué au build (`deploy/build-wheel.sh`, jamais mtime) ; `stale`/`behind_by`/
   `missing_types` se calculent **par SHA** contre le HEAD du miroir SoT **local** de forgemaster — **transport
   local**, zéro réseau. Sans tampon (éditable) ou sans miroir (install publique) → `comparable=false`
   (honnête, jamais faux-vert). Idempotent, sans secret, distinct de `/health` (I/O-free liveness).
+  `reference` = le **chemin du miroir bare** contre lequel la fraîcheur est calculée (`null` = aucun sur ce
+  disque) et `head` = **son SHA** — la réponse DIT donc contre quoi elle compare. Les deux sont rendus sur
+  les **trois** sorties, y compris dégradées : `head` vaut son SHA même quand `comparable=false` (référence
+  lisible, build inconnu), et `reference` reste nommée quand le miroir existe mais n'a pas pu être lu — « il
+  y a bien un miroir là, je n'ai pas su le lire » ≠ « il n'y a pas de miroir ». Motif : ce miroir est
+  **local** et vieillit avec l'instance (wheel ET miroir périmés ⇒ le daemon les voit égaux, donc « frais »),
+  donc un verdict qu'on ne peut pas situer n'est pas jugeable. Une référence **joignable** — qui, elle, ne
+  vieillit pas avec nous — reste hors de cette route.
   `maps` = les **3 cartes hôte servies** par `tools/venv`, `[{name, sha, requested_ref, source, reason}]` lues
   dans `direct_url.json` (PEP 610, posé par pip à l'install) — **transport local** lui aussi. Deuxième moitié
   de l'identité d'une instance, **étiquetée à part** parce qu'elle bouge indépendamment du wheel (les cartes à

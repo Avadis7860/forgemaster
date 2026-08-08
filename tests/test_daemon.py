@@ -989,8 +989,12 @@ def test_api_version_reports_build_provenance(client):
     assert r.status_code == 200
     v = r.json()
     assert "version" in v and "sha" in v and "comparable" in v                 # signal de fraîcheur présent
+    # La route dit aussi CONTRE QUOI elle compare — sans ces deux champs, la surface annonce un verdict dont
+    # personne ne peut juger la portée (le miroir est LOCAL, donc vieillissant lui aussi).
+    assert "reference" in v and "head" in v
     # pas de miroir forgemaster local en test → honnête
     assert v["comparable"] is False
+    assert v["reference"] is None and v["head"] is None
 
     # le bloc `build` doit AUSSI apparaître (additif) dans /api/onboarding, sans casser le reste
     st = c.get("/api/onboarding").json()

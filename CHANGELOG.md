@@ -9,6 +9,29 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### L'instance dit qu'elle est en retard — sans qu'on aille le chercher
+
+Le calcul de fraîcheur existait depuis longtemps (`build_provenance`) et n'était **affiché nulle part** : une
+instance pouvait tourner des dizaines de commits derrière sans un mot dans le produit. Il est maintenant rendu,
+et **poussé**.
+
+- **Panneau *Mise à jour* de `/settings`** — sous l'identité de build, le verdict : *à jour avec ton miroir
+  local* · *en retard de N commits* (+ les types de bundle apparus depuis) · *non comparable* · *build non
+  tamponné*. Le verdict se décide dans un cœur **pur** (`web/src/lib/instanceFreshness.ts`), pas dans le JSX.
+- **Centre de notifications** — une instance en retard y **pousse** une ligne (deep-link *Voir les réglages*)
+  et compte dans le badge. Il lit désormais **deux sources** : `alerts` reste le registre du **travail** —
+  aucune migration, aucun `kind` de plus, aucun bump de schéma. Un fait d'instance n'a ni projet ni feature.
+  La ligne s'**ignore** (`✕`) pour **ce SHA de référence** ; un commit suivant la ramène d'elle-même.
+- **Jamais un « à jour » nu.** `stale=false` veut dire *égal au HEAD de ton miroir **local***, un miroir qui
+  vieillit avec l'instance : la référence est **nommée dans la phrase**. Et un verdict absent ne verdit
+  jamais, même si la réponse s'annonce comparable.
+- **Silence total sur une instance à jour** — ni ligne, ni badge, ni bandeau. Idem quand le produit ne **peut
+  pas** savoir : un centre qui s'allume pour dire qu'il ne sait pas est un centre qu'on apprend à ignorer.
+
+**API HTTP (additif, pas de bump `SCHEMA_VERSION`)** — `GET /api/version` gagne `reference` (chemin du miroir
+bare comparé, `null` s'il n'y en a pas) et `head` (son SHA). Les deux sont rendus sur les trois sorties, y
+compris dégradées : la réponse dit **contre quoi** elle compare, sans quoi le verdict n'est pas jugeable.
+
 ### L'instance dit ce qu'elle sait faire, avant qu'on le lui demande
 
 Jusqu'ici, « sais-tu revenir ? » n'avait de réponse **qu'au moment où l'on tentait de revenir** : un 409

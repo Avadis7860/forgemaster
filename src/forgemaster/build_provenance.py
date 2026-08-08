@@ -65,13 +65,18 @@ def staleness(build_sha: str | None, head: str | None, *, behind_by: int | None 
     remote_types) sont fournis par l'appelant (résolveurs injectables). Verdict honnête, jamais faux-vert :
     - build inconnu OU pas de HEAD → `comparable=False` (on ne prétend rien) ;
     - sinon `stale = build_sha != head`, avec `behind_by`/`missing_types` si disponibles (sinon `None`/`[]`,
-      on n'invente pas ce qu'on n'a pas pu lire)."""
+      on n'invente pas ce qu'on n'a pas pu lire).
+
+    `head` est **rendu tel qu'il a été lu, même quand `comparable=False`** : « je connais la référence mais
+    pas mon propre build » est un état plus honnête que deux `null` — et sans lui, une surface ne peut pas
+    DIRE contre quoi elle compare (ni s'en servir comme clé de rappel). Le verdict, lui, ne change pas d'un
+    iota : c'est toujours `build_sha` ET `head` qui le conditionnent."""
     if not build_sha or not head:
-        return {"comparable": False, "stale": None, "behind_by": None, "missing_types": []}
+        return {"comparable": False, "stale": None, "behind_by": None, "missing_types": [], "head": head}
     stale = build_sha != head
     missing = (sorted(set(remote_types) - set(installed_types))
                if (stale and remote_types is not None) else [])
-    return {"comparable": True, "stale": stale,
+    return {"comparable": True, "stale": stale, "head": head,
             "behind_by": 0 if not stale else behind_by, "missing_types": missing}
 
 
@@ -133,12 +138,24 @@ def provenance(settings: Settings, *, installed_types: tuple[str, ...] | None = 
     SHA ne se lit pas sans requête. Le champ dit lequel des deux, plutôt que de laisser deviner."""
     stampd = read_stamp(stamp)
     build_sha = stampd["sha"]
+    # La RÉFÉRENCE est résolue avant tout le reste et voyage dans `base` : elle doit être dite sur les TROIS
+    # sorties, y compris les deux dégradées. Une surface qui annonce un verdict sans nommer ce qu'elle a
+    # comparé laisse l'utilisateur devant un « à jour » dont il ne peut pas juger la portée — et ce miroir-là
+    # est LOCAL, donc lui-même vieillissant. `None` veut dire « aucune référence sur ce disque », jamais
+    # « je n'ai pas regardé ».
+    try:
+        mgd: Path | None = (Path(mirror_git_dir) if mirror_git_dir is not None
+                            else _mirror_git_dir(settings))
+        if mgd is not None and not mgd.exists():
+            mgd = None
+    except Exception:
+        mgd = None
     base = {"version": __version__, "sha": build_sha, "committed_at": stampd["committed_at"],
+            "reference": str(mgd) if mgd is not None else None,
             "maps": maps if maps is not None else _served_maps(settings),
             "mcp": mcp if mcp is not None else _mcp_topology(settings)}
     try:
-        mgd = Path(mirror_git_dir) if mirror_git_dir is not None else _mirror_git_dir(settings)
-        if not mgd.exists():
+        if mgd is None:
             return {**base, **staleness(build_sha, None)}       # pas de miroir → non comparable, honnête
         g = git or InternalGit()
         head = g.feature_sha(mgd, "HEAD")

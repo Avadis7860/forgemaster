@@ -4,6 +4,7 @@ import { ApiError } from '@/lib/api'
 import {
   useApplyUpdate, useRollbackUpdate, useUpdateAptitude, useUpdateRun, useUpdateRuns, useVersion,
 } from '@/lib/queries'
+import { fraicheur } from '@/lib/instanceFreshness'
 import { enVol, liaison } from '@/lib/updateLiaison'
 import { RunFollow, RunRow } from './RunFollow'
 import { UpdatePreview } from './UpdatePreview'
@@ -116,6 +117,7 @@ export function UpdatePanel() {
 
   const sha = version.data?.sha
   const bascule = Boolean(shaAvant && sha && shaAvant !== sha)
+  const etat = version.data ? fraicheur(version.data) : null
   const echecLancement = poser.error ?? revenir.error
 
   return (
@@ -145,6 +147,28 @@ export function UpdatePanel() {
           </Badge>
         )}
       </div>
+
+      {/* LE VERDICT DE FRAÎCHEUR, sous l'identité et non dans une seconde carte : l'instance ne s'écrit
+          qu'une fois par page. Le verdict lui-même se décide dans `lib/instanceFreshness` (pur, testé à la
+          table) — ici on ne fait que le rendre. Il se tait tant que la réponse n'est pas là : sans donnée,
+          annoncer quoi que ce soit sur la fraîcheur serait inventer. */}
+      {etat && (
+        <div className="-mt-2 space-y-1">
+          {/* Le badge porte l'ÉTAT en deux ou trois mots — au poids de ses voisins de page (« racine
+              prête », « token lié ») ; la phrase qui le qualifie vit à côté, en texte. Une phrase entière
+              dans une pastille pèse comme une alerte et n'en est pas une. */}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
+            <Badge tone={etat.ton} dot>{etat.etiquette}</Badge>
+            <span>{etat.titre}</span>
+          </div>
+          {etat.detail && <p className="break-all text-xs text-faint">{etat.detail}</p>}
+          {etat.manquants.length > 0 && (
+            <p className="text-xs text-muted">
+              types apparus depuis : {etat.manquants.join(', ')}
+            </p>
+          )}
+        </div>
+      )}
 
       {/* L'aptitude, DITE AU REPOS — sans clic, avant qu'on en ait besoin. Elle vit ici, à côté de la
           provenance, parce qu'elle qualifie l'INSTANCE et non un geste : `_preflight_service` est le socle

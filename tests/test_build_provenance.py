@@ -68,7 +68,18 @@ def test_staleness_incomparable_when_sha_or_head_missing():
 
 def test_staleness_fresh_when_equal():
     v = bp.staleness("a1b2", "a1b2")
-    assert v == {"comparable": True, "stale": False, "behind_by": 0, "missing_types": []}
+    assert v == {"comparable": True, "stale": False, "behind_by": 0, "missing_types": [],
+                 "head": "a1b2"}
+
+
+def test_staleness_rend_le_head_MEME_quand_il_ne_peut_pas_comparer():
+    # « Je connais la référence, mais pas mon propre build » est un état, et il vaut mieux que deux `null` :
+    # sans ce champ, une surface ne peut pas DIRE contre quoi elle aurait comparé. Le verdict, lui, ne bouge
+    # pas d'un iota — c'est le contre-témoin qui empêche ce champ de devenir un faux-vert par la bande.
+    v = bp.staleness(None, "a1b2")
+    assert v["head"] == "a1b2"
+    assert v["comparable"] is False and v["stale"] is None
+    assert bp.staleness("a1b2", None)["head"] is None            # rien lu → rien affirmé
 
 
 def test_staleness_stale_names_missing_types():
@@ -121,6 +132,19 @@ def test_provenance_incomparable_without_mirror(tmp_path: Path):
     stamp = _stamp_file(tmp_path, "abc123")
     p = bp.provenance(None, installed_types=(), stamp=stamp, mirror_git_dir=tmp_path / "absent" / "sot.git")
     assert p["comparable"] is False and p["sha"] == "abc123"     # provenance seule, aucun faux-vert
+    # `None` dit « aucune référence sur ce disque », pas « je n'ai pas regardé » — c'est ce qui autorise la
+    # surface à écrire « je ne peux pas savoir » plutôt qu'un tiret muet.
+    assert p["reference"] is None and p["head"] is None
+
+
+def test_provenance_NOMME_la_reference_contre_laquelle_elle_compare(tmp_path: Path):
+    # Le miroir est LOCAL, donc lui-même vieillissant : un verdict qui ne nomme pas ce qu'il a comparé laisse
+    # l'utilisateur sans moyen d'en juger la portée. Les DEUX moitiés — où, et à quel commit.
+    sot, sha1, head = _seed_mirror(tmp_path)
+    p = bp.provenance(None, installed_types=("generic", "cli-tool"),
+                      stamp=_stamp_file(tmp_path, sha1), mirror_git_dir=sot)
+    assert p["reference"] == str(sot)
+    assert p["head"] == head
 
 
 def test_provenance_never_raises_on_broken_mirror(tmp_path: Path):
@@ -129,6 +153,9 @@ def test_provenance_never_raises_on_broken_mirror(tmp_path: Path):
     stamp = _stamp_file(tmp_path, "abc123")
     p = bp.provenance(None, installed_types=(), stamp=stamp, mirror_git_dir=broken)
     assert p["comparable"] is False                             # dégrade honnête, ne lève pas
+    # La référence EXISTE sur le disque et reste nommée — c'est justement ce qui rend le refus lisible :
+    # « il y a bien un miroir là, je n'ai pas su le lire » ≠ « il n'y a pas de miroir ».
+    assert p["reference"] == str(broken) and p["head"] is None
 
 
 # -- cartes hôte servies (la 2e moitié de la provenance d'une instance) ------------------------------
