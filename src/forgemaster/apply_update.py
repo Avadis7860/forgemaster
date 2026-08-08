@@ -6,7 +6,7 @@ suppose que l'utilisateur constate la panne, la diagnostique et trouve le script
 première — elle vérifie AVANT de toucher au vivant, et si le vivant ne répond plus, elle défait ce qu'elle
 a fait sans qu'on le lui demande.
 
-Quatre choix portent tout le reste :
+Cinq choix portent tout le reste :
 
 - **Hors-processus, stdlib pure, zéro import `forgemaster`** (même espèce que `restore.py`). Ce script survit
 à
@@ -23,12 +23,17 @@ Quatre choix portent tout le reste :
 - **La bascule est un lien symbolique remplacé atomiquement**, jamais une réinstallation en place. Revenir
   en arrière coûte alors le même geste, dans l'autre sens — donc le retour arrière est aussi simple que
   l'aller, ce qui est la seule façon qu'il soit fiable.
+- **Une édition monte ENTIÈRE, et redescend entière** (2026-08-08). Le wheel n'est qu'une des quatre pièces
+  épinglées : les 3 cartes hôte montent avec lui, et reviennent avec lui. Sans ça, une instance montée de N à
+  N+1 servirait les cartes de N — et surtout, un retour qui ne les reposerait pas produirait un état que
+  personne n'a jamais eu (vieux binaire, cartes neuves), pire que celui qu'on corrige. Cf. la section « les
+  cartes suivent leur édition ».
 
 Ce que la sonde en isolation prouve : *le wheel démarre, sert **et s'affiche*** — depuis le 2026-08-07 elle
 charge la page dans un vrai navigateur et exige que le wheel y rende les marqueurs qu'il déclare lui-même,
 parce que `/health` 200 + le bon SHA ne disent rien d'une interface blanche. Ce qu'elle ne prouve **pas** :
 que ta configuration et ta base tiennent encore — son `FORGEMASTER_HOME` est vierge. C'est la vérification EN
-VIVANT (étape 6) qui couvre ça, et son échec est précisément ce qui déclenche le retour arrière.
+VIVANT (étape 7) qui couvre ça, et son échec est précisément ce qui déclenche le retour arrière.
 
 Usage (le verbe `forgemaster update apply` le lance ; ceci est aussi le chemin manuel) :
 
@@ -47,6 +52,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -72,6 +78,13 @@ ENV_RUNNER = "FORGEMASTER_VERIFY_RUNNER"    # UN seul override pour le gate et p
 RENDER_TIMEOUT = 120.0                      # lancer Chromium + charger la SPA ; large, ce n'est pas un banc
 VU, NON_MESURE, RATE = "vu", "non-mesuré", "raté"
 
+# Les cartes de l'édition (cf. la section « les cartes suivent leur édition »). Le vocabulaire de sortie est
+# celui de `check_ui` — `NON_MESURE` et `RATE` gardent leur sens EXACT, `POSEES` est le vert de ce geste-ci.
+POSEES = "posées"
+MAPS_FLAG = "--maps-only"                   # la capacité cherchée dans le `cli.py` d'un venv cible
+EDITION_MANIFEST = "_maps/maps.json"        # ce que l'édition installée DÉCLARE, dans le paquet
+MAPS_TIMEOUT = 300.0                        # 3 wheels minuscules posés hors-ligne : borné, fail-loud
+
 
 class UpdateFailed(Exception):
     """Échec ARRÊTÉ avant la bascule : l'instance vivante n'a rien subi."""
@@ -82,9 +95,9 @@ class UpdateFailed(Exception):
 def build_blue(python: str, venv_dir: Path, wheel: Path, log) -> Path:
     """Crée un venv NEUF à côté et y installe le wheel. À côté, jamais en place : un processus ne remplace
     pas le wheel qu'il exécute, et surtout l'ancien venv doit rester intact pour pouvoir y revenir."""
-    log(f"[1/6] venv neuf → {venv_dir}")
+    log(f"[1/7] venv neuf → {venv_dir}")
     _run([python, "-m", "venv", str(venv_dir)], log)
-    log(f"[2/6] installation du wheel → {wheel.name}")
+    log(f"[2/7] installation du wheel → {wheel.name}")
     _run([str(venv_dir / "bin" / "pip"), "install", "--quiet", "--upgrade", str(wheel)], log)
     forgemaster = venv_dir / "bin" / "forgemaster"
     if not forgemaster.is_file():
@@ -94,7 +107,7 @@ def build_blue(python: str, venv_dir: Path, wheel: Path, log) -> Path:
     return forgemaster
 
 
-def probe_isolated(forgemaster: str | Path, sandbox: Path, log, *, step: str = "3/6",
+def probe_isolated(forgemaster: str | Path, sandbox: Path, log, *, step: str = "3/7",
                    home: Path, shot: Path) -> dict:
     """Fait servir la nouvelle version sur un port et un `FORGEMASTER_HOME` JETABLES, et retourne l'identité
     de
@@ -208,15 +221,36 @@ def matches(expected: dict, live: dict) -> tuple[bool, str]:
 #   revanche un juge PRÉSENT qui plante est un ÉCHEC : on avait la mesure, elle n'a pas été prise, on ne
 #   conclut pas au vert.
 
+def env_du_venv(**ajouts: str) -> dict[str, str]:
+    """L'env d'un enfant qu'on lance depuis un venv PRÉCIS, **débarrassé de ce qui pourrait lui faire
+    importer un autre forgemaster**. Un venv trouve son `site-packages` par son `pyvenv.cfg` : il n'a besoin
+    ni de `PYTHONPATH` ni de `PYTHONHOME`, et les hériter fait répondre l'enfant sur le forgemaster de
+    L'APPELANT.
+
+    `restore._probe_env` a payé exactement ce défaut le 2026-08-06, sur sa sonde de schéma — et il a été
+    RE-PRODUIT ici le 2026-08-08, mesuré deux fois de suite : un checkout dans `PYTHONPATH` faisait dire à un
+    venv portant pourtant son édition qu'il « n'embarque pas ses cartes » (`package_dir`), puis faisait poser
+    au venv les cartes d'un AUTRE paquet (`repose_maps`). Ce second cas est le plus grave, parce qu'il ne
+    contredit pas seulement un diagnostic : il contredit la prémisse du geste — *c'est le venv qui pose SES
+    cartes*. Une prémisse tenue par l'absence d'une variable d'environnement n'est pas tenue."""
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
+    env.update(ajouts)
+    return env
+
+
 def package_dir(venv_dir: Path) -> Path | None:
     """Où ce venv a posé le paquet `forgemaster` — **demandé à son propre python**, jamais deviné. Composer
     `lib/python3.X/site-packages` à la main marcherait aujourd'hui et casserait au prochain interpréteur ;
-    c'est déjà le geste de `provision-ct.sh` pour tirer le runner du wheel installé."""
+    c'est déjà le geste de `provision-ct.sh` pour tirer le runner du wheel installé.
+
+    L'env passe par `env_du_venv` : un « demandé à son propre python » qui répond sur un autre paquet ne
+    demande rien du tout."""
+    env = env_du_venv()
     try:
         proc = subprocess.run(  # noqa: S603 (argv construit ici, pas de shell)
             [str(venv_dir / "bin" / "python"), "-c",
              "import forgemaster,pathlib;print(pathlib.Path(forgemaster.__file__).parent)"],
-            capture_output=True, text=True, check=False, timeout=30)
+            capture_output=True, text=True, check=False, timeout=30, env=env)
     except (OSError, subprocess.TimeoutExpired):
         return None
     sortie = proc.stdout.strip()
@@ -343,6 +377,114 @@ def _dernier_json(sortie: str) -> dict | None:
     return None
 
 
+# --- les cartes suivent leur édition ------------------------------------------------------------------
+#
+# Une édition est un jeu de SHA épinglés : le wheel ET les 3 cartes hôte. Jusqu'ici la bascule ne déplaçait
+# que le wheel, et `tools/venv` — partagé, hors instantané, hors bascule — gardait les cartes de l'édition
+# QUITTÉE. Une instance montée de N à N+1 servait donc les cartes de N, sans que rien ne l'ait décidé.
+#
+# Trois choix portent tout ce qui suit :
+#
+# - **C'est le venv qui pose SES cartes**, par sa propre commande (`toolchain install --maps-only`). Rien
+#   n'est composé ici : `tools.edition_maps_dir()` résout `_maps` dans CE paquet-là, donc l'aller pose
+#   l'édition du bleu et le retour celle de la cible — même code, deux sens, aucune logique de retour à
+#   part. Un retour arrière qui ne partagerait pas le code de l'aller est un chemin qu'on ne joue qu'en
+#   catastrophe.
+# - **Un subprocess, pas un import.** Ce module est stdlib-pur par contrat (vérifié par AST) : il ne peut
+#   rien importer de `forgemaster`, et surtout pas d'un venv qu'il est en train de remplacer.
+# - **La frontière zéro-réseau est tenue par l'étroitesse du geste**, pas par une intention : `--maps-only`
+#   ne retient que l'étape `--no-index` du plan. Le verbe entier (qualité py, tarball Node) est réseau et
+#   n'a rien à faire sur le chemin de `apply`.
+#
+# Et la conduite en dégradé est celle que ce module tient déjà partout : **absence n'est pas panne**. Une
+# cible qui n'embarque pas ses cartes, ou qui ne connaît pas le drapeau, est un `NON_MESURE` **motivé** — on
+# exige la preuve pour avancer, pas pour revenir. Une pose TENTÉE qui échoue est un `RATE` : on annonce, et
+# on ne défait PAS une instance qui sert (arbitrage du 2026-08-08). Les cartes vivent dans un venv partagé
+# hors de la bascule — revenir en arrière ne le répare pas, ça ajoute une seconde mutation sur un échec. La
+# dérive, elle, ne se tait pas : `GET /api/version` la porte en permanence (volet `edition`) et
+# `forgemaster toolchain check` rend 🔴 en nommant les deux SHA.
+
+def edition_posable(pkg: Path | None) -> str | None:
+    """`None` si ce paquet sait reposer les cartes de son édition, sinon **le motif** de son incapacité.
+    Deux questions distinctes parce qu'elles n'ont pas le même remède : l'édition embarque-t-elle ses
+    cartes ? ce forgemaster-là connaît-il le geste étroit ?
+
+    La seconde se lit **dans le texte** du `cli.py` posé, comme `_supports_flag` lit un `restore.py` figé :
+    lancer `--help` pour le savoir coûterait un processus au moment le moins opportun, et déduire d'un numéro
+    de version supposerait une correspondance que rien ne garantit."""
+    if pkg is None:
+        return "ce venv n'a pas dit où il avait posé `forgemaster` — il n'y a rien à interroger"
+    if not (pkg / EDITION_MANIFEST).is_file():
+        return (f"cette édition n'embarque pas ses cartes ({EDITION_MANIFEST} absent) — elles ont été posées "
+                f"depuis une réf mobile, il n'y a rien de local à reposer")
+    if not _supports_flag(pkg / "cli.py", MAPS_FLAG):
+        return (f"cette édition ne connaît pas `toolchain install {MAPS_FLAG}` — elle est antérieure au "
+                f"câblage des cartes au cycle de MAJ")
+    return None
+
+
+def repose_maps(venv_dir: Path, home: Path, log, *, step: str) -> tuple[str, str]:
+    """Fait poser à `venv_dir` les cartes de SON édition, hors-ligne. Rend `(état, dit)` — `POSEES`,
+    `NON_MESURE` (+ motif) ou `RATE` (+ motif). **Ne lève jamais** : cette fonction est appelée entre la
+    bascule et le verdict, une exception y laisserait un run sans `result.json`."""
+    log(f"[{step}] repose des cartes de l'édition (hors-ligne, depuis le wheel installé)")
+    motif = edition_posable(package_dir(venv_dir))
+    if motif is not None:
+        log(f"      · non reposées : {motif}")
+        return NON_MESURE, f"cartes de l'édition NON reposées — {motif}"
+    # Le home passe par l'ENV, pas par un drapeau, et c'est mesuré : `--home` est un argument des
+    # SOUS-commandes (il vit dans le parent `common`), donc `forgemaster --home <p> toolchain …` sort en
+    # rc 2 « invalid choice ». `FORGEMASTER_HOME` est en outre l'interface stable — celle du service, et
+    # celle que `probe_isolated` utilise deux fonctions plus haut — alors qu'une forme de CLI peut bouger
+    # d'une édition à l'autre, et c'est précisément une AUTRE édition qu'on lance ici.
+    env = env_du_venv(FORGEMASTER_HOME=str(home))
+    argv = [str(venv_dir / "bin" / "forgemaster"), "toolchain", "install", MAPS_FLAG]
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True,  # noqa: S603 (argv construit ici)
+                              check=False, timeout=MAPS_TIMEOUT, env=env)
+    except subprocess.TimeoutExpired:
+        return RATE, (f"la repose des cartes n'a pas rendu la main en {MAPS_TIMEOUT:.0f} s — cette instance "
+                      f"sert les cartes de l'édition quittée")
+    except OSError as exc:
+        return RATE, f"la repose des cartes n'a pas pu être lancée : {exc}"
+    if proc.returncode != 0:
+        bruit = "\n      ".join(((proc.stderr or proc.stdout or "").strip().splitlines() or ["(muet)"])[-8:])
+        log(f"      ✗ repose rc={proc.returncode}\n      {bruit}")
+        return RATE, (f"la repose des cartes a échoué (rc={proc.returncode}) : cette instance sert les "
+                      f"cartes de l'édition quittée. `forgemaster toolchain install` les repose "
+                      f"(idempotent, hors-ligne) ; `forgemaster toolchain check` dit lesquelles diffèrent")
+    log("      ✓ cartes de l'édition reposées")
+    return POSEES, "cartes de l'édition reposées"
+
+
+def annonce_maps_wheel(wheel: Path) -> str:
+    """Ce qu'on saura faire des cartes, **dit avant le geste** — côté aller, la source est le wheel qu'on va
+    poser. Son index zip répond aux deux mêmes questions qu'`edition_posable`, sans rien installer : une
+    prévisualisation reste strictement idempotente."""
+    try:
+        with zipfile.ZipFile(wheel) as zf:
+            noms = set(zf.namelist())
+            porte = f"forgemaster/{EDITION_MANIFEST}" in noms
+            connait = MAPS_FLAG in zf.read("forgemaster/cli.py").decode("utf-8", "replace") \
+                if "forgemaster/cli.py" in noms else False
+    except (OSError, KeyError, zipfile.BadZipFile) as exc:
+        return f"cartes de l'édition : ILLISIBLES dans {wheel.name} ({exc}) — elles ne seront pas reposées"
+    if porte and connait:
+        return "cartes de l'édition : seront reposées après la bascule (hors-ligne, depuis le wheel)"
+    manque = "elle n'embarque pas ses cartes" if not porte else "elle ne connaît pas le geste étroit"
+    return (f"cartes de l'édition : NE seront PAS reposées — {manque}. L'instance servira les cartes "
+            f"actuelles ; `forgemaster toolchain check` dira si elles divergent")
+
+
+def annonce_maps_venv(venv_dir: Path) -> str:
+    """La même annonce, côté retour : la source est le venv cible, déjà sur le disque."""
+    motif = edition_posable(package_dir(venv_dir))
+    if motif is None:
+        return "cartes de l'édition : seront reposées après la restauration (hors-ligne, depuis la cible)"
+    return (f"cartes de l'édition : NE seront PAS reposées — {motif}. L'instance servira les cartes "
+            f"actuelles ; `forgemaster toolchain check` dira si elles divergent")
+
+
 def annonce_verification(home: Path) -> str:
     """Ce qu'on saura dire de l'interface, **dit avant le geste** : `describe` le met dans le plan, donc le
     panneau l'affiche dans sa prévisualisation — sans une ligne de front. Une dégradation annoncée n'est pas
@@ -376,7 +518,7 @@ def apply(args: argparse.Namespace, log) -> tuple[int, str, dict]:
         return 1, f"MAJ refusée — {exc}", {**details, "impact": "aucun : le service n'a pas été touché"}
     details["attendu"] = expected
 
-    log("[4/6] arrêt du service, puis instantané à froid (protège de la migration avant)")
+    log("[4/7] arrêt du service, puis instantané à froid (protège de la migration avant)")
     _systemctl(args, "stop", log)
     try:
         snap = take_snapshot(old_venv / "bin" / "forgemaster", home, log)
@@ -385,17 +527,34 @@ def apply(args: argparse.Namespace, log) -> tuple[int, str, dict]:
         return 1, f"MAJ refusée — {exc}", {**details, "impact": "aucun : service relancé tel quel"}
     details["instantane"] = str(snap)
 
-    log(f"[5/6] bascule du lien stable {link} → {blue.name}, puis redémarrage")
+    log(f"[5/7] bascule du lien stable {link} → {blue.name}, puis redémarrage")
     swap(link, blue)
     _systemctl(args, "start", log)
 
-    log("[6/6] vérification EN VIVANT (c'est ici que la configuration et la base réelles sont jugées)")
+    # AVANT le verdict, et c'est contraint : le juge de rendu jugerait sinon une instance mi-montée — binaire
+    # neuf, outillage de l'édition quittée. L'état ne bloque JAMAIS ici (arbitrage du 2026-08-08) : il se dit.
+    etat_maps, dit_maps = repose_maps(blue, home, log, step="6/7")
+    details["maps"] = {"state": etat_maps, "detail": dit_maps}
+
+    log("[7/7] vérification EN VIVANT (c'est ici que la configuration et la base réelles sont jugées)")
     live_ok, why = _verify_live(args.base_url, expected, args.timeout, log,
                                 venv_dir=blue, home=home, shot=run_dir / "ui-live.png")
     if live_ok:
         log(f"      ✓ {why}")
         _purge_venvs(blue.parent, keep={blue, old_venv}, log=log)
-        return 0, f"MAJ posée — {why}", details
+        if etat_maps == POSEES:
+            return 0, f"MAJ posée — {why} ; {dit_maps}", details
+        # Le geste a réussi et l'instance sert : ce n'est pas un échec de MAJ. Mais un rc 0 muet serait un
+        # « c'est passé » qui ne l'est pas — le verdict porte donc la réserve, et la dérive reste lisible en
+        # permanence par `GET /api/version` (volet `edition`) et `toolchain check`.
+        # L'`impact` ne bouge QUE sur `RATE`, et la nuance est celle de tout ce module : une pose qu'on n'a
+        # pas pu TENTER laisse le périmètre exactement où il était avant que ce câblage existe — l'inflatter
+        # en anomalie ferait passer un état NORMAL (édition antérieure) pour une panne. Une pose tentée qui
+        # échoue, elle, a bien laissé quelque chose en arrière, et le périmètre doit le dire.
+        if etat_maps == RATE:
+            details["impact"] = ("venv + données montés ; l'outillage hôte (`tools/venv`) est resté celui "
+                                 "de l'édition quittée")
+        return 0, f"MAJ posée — {why}. ⚠ {dit_maps}", details
 
     log(f"      ✗ {why}")
     log("      → RETOUR ARRIÈRE automatique (lien + instantané), sans rien te demander")
@@ -409,11 +568,18 @@ def apply(args: argparse.Namespace, log) -> tuple[int, str, dict]:
             "neuves est le seul état interdit")
         swap(link, blue)
         _systemctl(args, "start", log)
+        # Pas de repose ici : le lien est reparti sur le BLEU, dont les cartes ont déjà été posées à l'étape
+        # 6/7. L'instance est cohérente avec elle-même, c'est la seule chose qui reste à tenir.
         return 2, (f"MAJ échouée ({why}) ET retour arrière incomplet : les données n'ont pas été remises. "
                    f"Le lien est resté sur la version NEUVE, qui sait lire la base. L'instantané est "
                    f"intact : {snap}"),\
             {**details, "impact": "aucune moitié : le lien est revenu sur la version neuve"}
     _systemctl(args, "start", log)
+    # Le lien est revenu sur l'ANCIEN venv : ses cartes doivent revenir avec lui. Sans ça, le retour
+    # automatique produirait l'état INÉDIT que ce câblage existe pour interdire — vieux binaire, cartes
+    # neuves — c'est-à-dire pire que la panne qu'il répare.
+    etat_retour, dit_retour = repose_maps(old_venv, home, log, step="retour")
+    details["maps"] = {"state": etat_retour, "detail": dit_retour}
     back, back_why = _wait_health(args.base_url, args.timeout)
     details["impact"] = "revenu à l'état d'avant (venv + données)"
     if not back:
@@ -449,13 +615,13 @@ def rollback(args: argparse.Namespace, log) -> tuple[int, str, dict]:
         # porte pas — et son absence ne bloque JAMAIS un retour : *on exige la preuve pour avancer, pas
         # pour revenir*. Une cible qui, elle, en porte un et ne s'affiche pas est refusée comme l'est déjà
         # une cible qui ne sert pas : revenir vers une version inutilisable n'aide personne, rien n'a bougé.
-        expected = probe_isolated(cible_venv / "bin" / "forgemaster", run_dir / "sandbox", log, step="1/5",
+        expected = probe_isolated(cible_venv / "bin" / "forgemaster", run_dir / "sandbox", log, step="1/6",
                                   home=home, shot=run_dir / "ui-isolation.png")
     except UpdateFailed as exc:
         return 1, f"retour arrière refusé — {exc}", intact
     details["attendu"] = expected
 
-    log("[2/5] arrêt du service, puis instantané de SÛRETÉ à froid (sans lui, un retour raté serait sans "
+    log("[2/6] arrêt du service, puis instantané de SÛRETÉ à froid (sans lui, un retour raté serait sans "
         "retour)")
     _systemctl(args, "stop", log)
     try:
@@ -465,7 +631,7 @@ def rollback(args: argparse.Namespace, log) -> tuple[int, str, dict]:
         return 1, f"retour arrière refusé — {exc}", {**details, "impact": "aucun : service relancé tel quel"}
     details["instantane_surete"] = str(surete)
 
-    log("[3/5] re-vérification de la cible : la prise de sûreté a consommé un cran de rétention")
+    log("[3/6] re-vérification de la cible : la prise de sûreté a consommé un cran de rétention")
     if not (cible_snap / "manifest.json").is_file():
         _systemctl(args, "start", log)
         return 1, (f"retour arrière refusé — l'instantané cible {cible_snap.name} a disparu pendant la prise "
@@ -476,7 +642,7 @@ def rollback(args: argparse.Namespace, log) -> tuple[int, str, dict]:
     # `<home>/current` pour savoir quel schéma le binaire en place sait lire ; inversé, il verrait le binaire
     # NEUF et refuserait une restauration pourtant légitime. Cf. `tests/test_rollback.py`, qui lit cet ordre
     # dans le code même — le risque n'est pas l'appel d'aujourd'hui, c'est la simplification de demain.
-    log(f"[4/5] bascule du lien {link} → {cible_venv.name}, PUIS restauration de {cible_snap.name}")
+    log(f"[4/6] bascule du lien {link} → {cible_venv.name}, PUIS restauration de {cible_snap.name}")
     try:
         swap(link, cible_venv)
     except OSError as exc:
@@ -492,18 +658,34 @@ def rollback(args: argparse.Namespace, log) -> tuple[int, str, dict]:
             "neuves est le seul état interdit")
         swap(link, venv_courant)
         _systemctl(args, "start", log)
+        # Aucune repose : le lien n'a pas bougé au bilan, les cartes en place sont déjà les siennes.
         return 1, ("retour arrière échoué — les données n'ont pas été remises, et le lien a été RE-basculé "
                    "sur la version courante : elle sait lire cette base. Aucune moitié n'est restée en "
                    "place."), {**details, "impact": "aucune moitié : l'instance est comme avant le geste"}
     _systemctl(args, "start", log)
 
-    log("[5/5] vérification EN VIVANT contre l'identité prouvée à l'étape 1")
+    # Le pendant EXACT de l'étape 6/7 de l'aller, et la moitié qui manquait : revenir sans reposer les cartes
+    # produirait un état que personne n'a jamais eu — vieux binaire, cartes neuves. Une cible qui ne sait pas
+    # les reposer (édition sans `_maps`, ou antérieure au geste étroit) ne BLOQUE pas le retour : on exige la
+    # preuve pour avancer, pas pour revenir. Elle se dit.
+    etat_maps, dit_maps = repose_maps(cible_venv, home, log, step="5/6")
+    details["maps"] = {"state": etat_maps, "detail": dit_maps}
+
+    log("[6/6] vérification EN VIVANT contre l'identité prouvée à l'étape 1")
     live_ok, why = _verify_live(args.base_url, expected, args.timeout, log,
                                 venv_dir=cible_venv, home=home, shot=run_dir / "ui-live.png")
     if live_ok:
         log(f"      ✓ {why}")
-        return 0, f"retour arrière effectué — {why}", \
-            {**details, "impact": "revenu à l'état de l'instantané (venv + données)"}
+        revenu = "revenu à l'état de l'instantané (venv + données)"
+        if etat_maps == POSEES:
+            return 0, f"retour arrière effectué — {why} ; {dit_maps}", {**details, "impact": revenu}
+        # Même nuance que dans `apply` : seule une pose TENTÉE et ratée déplace le périmètre. Une cible qui
+        # ne sait pas reposer ses cartes est un état normal du produit distribué, pas une panne — elle se
+        # dit au verdict, elle ne se maquille pas en incident.
+        if etat_maps == RATE:
+            revenu = ("venv + données revenus ; l'outillage hôte (`tools/venv`) est resté celui de "
+                      "l'édition quittée")
+        return 0, f"retour arrière effectué — {why}. ⚠ {dit_maps}", {**details, "impact": revenu}
 
     log(f"      ✗ {why}")
     log("      → RETOUR DU RETOUR : l'instance est remise telle qu'elle était il y a une minute")
@@ -514,6 +696,10 @@ def rollback(args: argparse.Namespace, log) -> tuple[int, str, dict]:
     # parce que les données ne sont alors pas celles qu'on croit.
     remis = _restore(surete, home, log)
     _systemctl(args, "start", log)
+    # Le lien est reparti sur le venv COURANT : ses cartes reviennent avec lui, sinon le retour du retour
+    # laisserait justement l'état inédit qu'il est censé annuler.
+    etat_retour, dit_retour = repose_maps(venv_courant, home, log, step="retour")
+    details["maps"] = {"state": etat_retour, "detail": dit_retour}
     back, back_why = _wait_health(args.base_url, args.timeout)
     details["impact"] = ("revenu à l'état d'AVANT le retour arrière (venv + données)" if remis else
                          "lien revenu, mais les DONNÉES d'avant le geste n'ont pas pu être remises")

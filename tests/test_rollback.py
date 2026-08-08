@@ -589,7 +589,37 @@ def test_revenir_vers_un_wheel_SANS_contrat_dinterface_reste_possible(
 
     assert rc == 0, verdict
     assert "ne déclare pas de contrat d'interface" in verdict, "la dégradation doit être DITE, pas tue"
-    assert details["impact"] == "revenu à l'état de l'instantané (venv + données)"
+    assert details["impact"] == "revenu à l'état de l'instantané (venv + données)", (
+        "une cible qui ne sait pas reposer ses cartes est un état NORMAL du produit distribué — le "
+        "périmètre ne bouge que si une pose a été TENTÉE et a échoué")
+
+
+def test_le_retour_REPOSE_les_cartes_de_ledition_vers_laquelle_il_ramene(
+        apres_maj: Settings, tmp_path: Path, shim: Path, monkeypatch):
+    """LA moitié qui manquait au cycle de MAJ. Ramener le binaire sans ses cartes produit un état que
+    PERSONNE n'a jamais eu — vieux binaire, cartes neuves — et donc pire que celui qu'on corrige. Le venv
+    cible pose SES cartes lui-même : rien n'est composé à la main, l'édition est celle de ce paquet-là."""
+    from tests.test_update import _venv_editionne
+
+    snap = next(iter(snapshot.snapshots_dir(apres_maj).iterdir()))
+    cible = apres_maj.home / snapshot.VENVS / "2026-08-01T00-00-00Z"
+    appels = tmp_path / "appels-cible"
+    _venv_editionne(cible, rc=0, trace=appels)
+    monkeypatch.setattr(apply_update, "take_snapshot", lambda *_a, **_k: snap)
+    monkeypatch.setattr(apply_update, "_restore", lambda *_a, **_k: True)
+    monkeypatch.setattr(apply_update, "_wait_health", lambda *_a, **_k: (True, ""))
+    monkeypatch.setattr(apply_update, "_get_json", lambda *_a, **_k: {"version": "0.1.0", "sha": "abc"})
+    monkeypatch.setattr(apply_update, "probe_isolated", lambda *_a, **_k: {"version": "0.1.0", "sha": "abc"})
+    monkeypatch.setattr(apply_update, "check_ui", lambda *_a, **_k: (apply_update.NON_MESURE, "sans juge"))
+
+    rc, verdict, details = apply_update.rollback(
+        _args_rollback(apres_maj.home, tmp_path, shim, cible, snap), lambda _m: None)
+
+    assert rc == 0, verdict
+    assert details["maps"]["state"] == apply_update.POSEES
+    assert apply_update.MAPS_FLAG in appels.read_text(encoding="utf-8"), (
+        "le geste ÉTROIT n'a pas été demandé — le verbe entier sortirait sur le réseau")
+    assert "cartes de l'édition reposées" in verdict
 
 
 # --- 7. l'APTITUDE — la même question, posée AVANT qu'on demande le geste --------------------------------

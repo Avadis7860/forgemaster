@@ -279,6 +279,59 @@ def test_install_tools_takes_no_credential_argument(settings):
     assert "token" not in params and "token_ref" not in params
 
 
+# -- le mode ÉTROIT : ce que `update apply`/`rollback` appellent -------------------------------------
+#
+# La frontière est verrouillée : ZÉRO RÉSEAU sur le chemin de `apply`. Le verbe entier ne la respecte pas
+# (qualité py et tarball Node sont réseau) — d'où un mode qui ne retient que l'étape `--no-index`.
+
+def test_maps_only_ne_joue_QUE_letape_hors_ligne(settings, edition):
+    """Le cœur de la frontière. Un mode qui laisserait passer `pip-quality` ou `nodeenv` ferait sortir la MAJ
+    sur le réseau au pire moment — service arrêté, lien déjà basculé."""
+    report = tools.install_tools(settings, runner=_materializing_runner(settings), maps_dir=edition,
+                                 maps_only=True)
+    assert report["ok"] is True
+    assert [s["name"] for s in report["steps"]] == ["venv", tools.MAPS_STEP]
+
+
+def test_maps_only_et_le_verbe_entier_ne_disent_PAS_la_meme_chose(settings, edition):
+    """Contre-témoin du test précédent : sans le mode, les 4 étapes tournent. Sans ce contraste, le test
+    d'au-dessus passerait aussi sur un `maps_only` qui ne filtrerait rien."""
+    report = tools.install_tools(settings, runner=_materializing_runner(settings), maps_dir=edition)
+    assert [s["name"] for s in report["steps"]] == ["venv", tools.MAPS_STEP, "pip-quality", "pip-nodeenv",
+                                                    "nodeenv"]
+
+
+def test_maps_only_ne_juge_que_les_binaires_quil_vient_de_poser(settings, edition):
+    """Le décor est celui d'une instance où Node n'a JAMAIS été provisionné — l'`elif` du runner ne
+    matérialise que les 3 cartes. La boucle de symlinks complète y échouerait sur `ruff` absent et rendrait
+    ROUGE une repose qui a réussi : on ne juge que ce qu'on vient de poser."""
+    report = tools.install_tools(settings, runner=_materializing_runner(settings), maps_dir=edition,
+                                 maps_only=True)
+    assert report["ok"] is True, report.get("error")
+    assert set(report["symlinks"]) == set(tools._MAP_BINS)
+    for name in ("ruff", "node", "npm"):
+        assert not (tools.tools_bin(settings) / name).exists(), f"{name} exposé sans avoir été posé"
+
+
+def test_maps_only_reste_fail_loud_sur_une_edition_non_posable(settings, tmp_path):
+    """Le mode étroit n'assouplit RIEN : une édition absente est un refus, jamais une repose silencieuse de
+    zéro carte. C'est `apply_update.repose_maps` qui décide de ne pas bloquer là-dessus — pas ce verbe."""
+    report = tools.install_tools(settings, runner=_materializing_runner(settings),
+                                 maps_dir=tmp_path / "vide", maps_only=True)
+    assert report["ok"] is False and "ne porte pas les cartes" in report["error"]
+
+
+def test_le_flag_maps_only_existe_DANS_LE_TEXTE_du_cli(settings):
+    """`apply_update.edition_posable` interroge un venv cible en cherchant cette chaîne dans SON `cli.py`.
+    Renommer le drapeau sans le savoir ferait dire à toute cible « édition antérieure au câblage » — un
+    `NON_MESURE` universel et silencieux, c'est-à-dire la panne la moins visible de ce chemin."""
+    from forgemaster import apply_update, cli
+    source = Path(cli.__file__).read_text(encoding="utf-8")
+    assert apply_update.MAPS_FLAG in source, (
+        f"`{apply_update.MAPS_FLAG}` n'est plus dans cli.py — la détection de capacité du cycle de MAJ "
+        f"répondra « non » pour TOUS les venvs")
+
+
 # -- provenance des cartes SERVIES (lecture locale : tampon d'édition, puis PEP 610 ; zéro réseau) -----
 
 _PKG = {"code-map": "codemap", "docs-map": "docsmap", "front-map": "frontmap"}

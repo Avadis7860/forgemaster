@@ -72,12 +72,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_tools_sub = p_tools.add_subparsers(dest="action", required=True, metavar="<action>")
     # Pas de `--token-file` ici : les 3 cartes sont publiques, le clone est anonyme. Le drapeau a été
     # RETIRÉ plutôt qu'accepté-et-ignoré — un appelant qui le passe encore doit l'apprendre bruyamment.
-    p_tools_sub.add_parser("install", parents=[common],
-                           help="installer maps + Node + qualité py sous FORGEMASTER_HOME/tools (anonyme)")
+    p_tools_install = p_tools_sub.add_parser(
+        "install", parents=[common],
+        help="installer maps + Node + qualité py sous FORGEMASTER_HOME/tools (anonyme)")
+    # Le mode ÉTROIT du cycle de MAJ : la SEULE étape hors-ligne du plan (les 3 cartes de l'édition), parce
+    # que `update apply` tient une frontière zéro-réseau que le verbe entier ne respecterait pas. Son
+    # appelant est `apply_update.repose_maps`, pas un humain — et c'est un DRAPEAU, pas un verbe, pour qu'un
+    # venv cible puisse être interrogé sur sa présence dans ce fichier même (`_supports_flag`).
+    p_tools_install.add_argument("--maps-only", action="store_true",
+                                 help="ne (re)poser que les 3 cartes de l'édition installée (hors-ligne)")
     # `check` RAPPORTE, ne mute rien : le geste de remise à niveau reste `install` (idempotent, --upgrade).
-    # Sortie 1 si une carte diffère, 2 si la fraîcheur n'a PAS pu être vérifiée — jamais confondus.
-    p_tools_sub.add_parser("check", parents=[common],
-                           help="comparer les cartes servies à leur amont (exit 1 diffère, 2 non vérifié)")
+    # Sortie 1 si une carte diffère, 2 si la conformité n'a PAS pu être vérifiée — jamais confondus.
+    p_tools_sub.add_parser(
+        "check", parents=[common],
+        help="les cartes servies sont-elles celles de l'ÉDITION ? (exit 1 diffère, 2 non vérifié)")
 
     # -- bundle -------------------------------------------------------------------------------------
     p_bundle = sub.add_parser("bundle", parents=[common],
