@@ -171,9 +171,13 @@ export function NotificationCenter() {
     (a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity],
   )
   const count = (data?.count ?? 0) + (instance ? 1 : 0)
-  // La TONALITÉ ne prend pas l'instance en compte, et c'est délibéré : un fait d'instance ne peut pas rendre
-  // le badge rouge — le rouge est réservé à ce qui BLOQUE le drain. Le compteur agrège, la couleur non.
-  const tone: Tone = alerts.some((a) => a.severity === 'blocker') ? 'danger' : 'warn'
+  // Le compteur agrège les deux sources ; la TEINTE, elle, suit la plus grave — et un fait d'instance ne
+  // peut jamais rendre le badge rouge, le rouge restant réservé à ce qui BLOQUE le drain. Le troisième cas
+  // a été trouvé EN REGARDANT le rendu : sans lui, une instance en retard toute seule allumait un badge
+  // `warn` au-dessus d'une ligne `info` — la pastille criait plus fort que ce qu'elle annonçait.
+  const tone: Tone = alerts.some((a) => a.severity === 'blocker') ? 'danger'
+    : alerts.length > 0 ? 'warn'
+      : 'info'
 
   return (
     <div className="relative">

@@ -134,12 +134,24 @@ describe('NotificationCenter — la DEUXIÈME source : le fait d’instance', ()
   })
 
   it('agrège les deux sources dans le compteur sans TEINTER le badge', () => {
-    // Le compteur agrège, la couleur non : un fait d'instance ne peut pas rendre le badge rouge — le rouge
-    // reste réservé à ce qui BLOQUE le drain. Sinon « en retard de 12 » se lirait comme un gate cassé.
-    h.alerts = [mkAlert({ severity: 'warn' })]
+    // Le compteur agrège, la couleur suit la plus grave : un fait d'instance ne peut pas rendre le badge
+    // rouge — le rouge reste réservé à ce qui BLOQUE le drain. Sinon « en retard de 12 » se lirait comme
+    // un gate cassé.
+    h.alerts = [mkAlert({ severity: 'blocker' })]
     h.version = EN_RETARD
     render(<NotificationCenter />)
     expect(screen.getByLabelText('Alertes (2)')).toBeInTheDocument()
+    expect(document.querySelector('.bg-danger-500\\/15')).not.toBeNull()
+  })
+
+  it('ne crie pas plus fort que ce qu’il annonce quand SEULE l’instance parle', () => {
+    // TROUVÉ EN REGARDANT LE RENDU sur VM 9311, pas en relisant le diff : le badge sortait en `warn`
+    // au-dessus d'une ligne `info`. Une pastille dont la teinte dépasse son motif use la teinte pour
+    // toutes les autres — c'est le même mécanisme que le faux-vert, dans l'autre sens.
+    h.version = EN_RETARD
+    render(<NotificationCenter />)
+    expect(document.querySelector('.bg-info-500\\/15')).not.toBeNull()
+    expect(document.querySelector('.bg-warn-500\\/15')).toBeNull()
   })
 
   it('reste MUET sur une instance à jour — aucune ligne, aucun compteur', () => {
