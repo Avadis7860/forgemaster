@@ -683,14 +683,14 @@ C'est ce qui borne le rayon d'explosion d'une clé volée à une **notification 
 c'est ce qui fait de `update apply <wheel>` la **voie de secours** quand le canal est sourd (rotation non suivie,
 réseau absent). *La voie hors-ligne est la voie de secours de la voie en ligne.*
 
-La lecture se fait en quatre temps, et l'**ordre** est le contrat : `parse_envelope` (`:172`) lit l'enveloppe et
-**décode** le payload sans le parser → `verify_envelope` (`:209`) exige que le `key_id` soit dans le jeu embarqué
-**et** que la signature vérifie sous **cette** clé (jamais « essaie toutes les clés ») → `parse_announce` (`:244`)
+La lecture se fait en quatre temps, et l'**ordre** est le contrat : `parse_envelope` (`:185`) lit l'enveloppe et
+**décode** le payload sans le parser → `verify_envelope` (`:222`) exige que le `key_id` soit dans le jeu embarqué
+**et** que la signature vérifie sous **cette** clé (jamais « essaie toutes les clés ») → `parse_announce` (`:259`)
 n'est appelée qu'après. C'est *parse-after-verify* : parser d'abord ferait du parseur la première surface d'attaque.
-`trust_root` (`:132`) **re-dérive** le `key_id` de chaque clé et refuse un fichier qui ment — un identifiant dérivé
+`trust_root` (`:138`) **re-dérive** le `key_id` de chaque clé et refuse un fichier qui ment — un identifiant dérivé
 qu'on ne recalcule pas n'est qu'un nom.
 
-`refresh` (`:347`) orchestre et **ne lève jamais** : un canal muet ne fait pas tomber un daemon. Il **court-circuite
+`refresh` (`:372`) orchestre et **ne lève jamais** : un canal muet ne fait pas tomber un daemon. Il **court-circuite
 avant tout réseau** si la racine de confiance est vide (une édition qui ne peut rien vérifier jetterait la réponse),
 et son état sur disque sépare `last_success` de `last_attempt` — un réseau injoignable fait **vieillir** ce qu'on
 savait, il ne l'efface pas. Sept états, jamais un `error` fourre-tout : `ok`, `unreachable`, `malformed`,
@@ -698,10 +698,10 @@ savait, il ne l'efface pas. Sept états, jamais un `error` fourre-tout : `ok`, `
 `bad-signature` sont **distincts** : le premier est le seul indicateur de compromission — ou de rotation non suivie —
 qu'un système hors-ligne aura jamais.
 
-`run_channel_poll` (`:404`) est l'idiome sleep-loop de `run_reaper`, avec **une** différence structurelle : le tirage
+`run_channel_poll` (`:430`) est l'idiome sleep-loop de `run_reaper`, avec **une** différence structurelle : le tirage
 part dans un thread (`asyncio.to_thread`), parce qu'`urllib` est bloquant et qu'un appel direct gèlerait la boucle
 d'événements — donc tout le daemon — jusqu'au timeout. Le premier tour précède le premier sommeil : un daemon qu'on
-vient de redémarrer est le moment où quelqu'un veut savoir. `cli_check` (`:434`) est le même tirage à la demande, pour
+vient de redémarrer est le moment où quelqu'un veut savoir. `cli_check` (`:460`) est le même tirage à la demande, pour
 l'instance pilotée **uniquement en CLI** ; **rc 0 toujours**, comme `wheels` et `aptitude` — c'est une question.
 
 **Non livré, et il faut le dire** : `_keys/release-keys.json` n'existe pas (la paire naît à la cérémonie de

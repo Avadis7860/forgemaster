@@ -19,7 +19,7 @@ startup failed » et uvicorn sortait en 3, tuant le daemon qu'on fait démarrer 
 pourquoi il ne sert pas. Réconcilier n'a aucun sens sur une instance qui ne sert rien.
 
 ## health() — la sonde `GET /health` : readiness, pas liveness
-`src/forgemaster/daemon/app.py:146` · appelé par `apply_update._wait_health` et par le front (`useHealth`, 10 s)
+`src/forgemaster/daemon/app.py:160` · appelé par `apply_update._wait_health` et par le front (`useHealth`, 10 s)
 Rend `{status, version, ready, detail}` : **200** si l'instance peut servir, **503** sinon, `detail` portant le
 motif et les gestes qui débloquent (`store.readiness`). Ce n'est pas cosmétique : `apply_update._verify_live`
 tire son verdict de **cette** sonde, donc un 200 sur une instance qui rend 503 partout ailleurs ferait conclure
@@ -40,7 +40,7 @@ est la dépendance FastAPI qui rend le conteneur posé sur `app.state` (`request
 global. Ne tire que `starlette` (transitif de fastapi, pour typer la `Request`), jamais les couches serveur.
 
 ## serve() / _mount_spa() — lancement uvicorn + service du build SPA
-`src/forgemaster/daemon/app.py:304` (`serve`) · `:221` (`_mount_spa`) · `:26` (`web_dist_dir`)
+`src/forgemaster/daemon/app.py:317` (`serve`) · `:234` (`_mount_spa`) · `:26` (`web_dist_dir`)
 `serve()` interroge `startup_readiness()` **avant** uvicorn, imprime le motif sur stderr si l'instance ne peut
 pas servir — puis **démarre quand même**, et c'est délibéré (2026-08-06, revenant sur le refus au démarrage
 posé la veille). Sortir en 1 semblait fail-closed ; mesuré, c'en était le contraire : l'unité porte
@@ -82,5 +82,5 @@ explicite (fail-closed, ex. 422 gate / 403 auth). Spawns longs (`claude -p`) pas
 
 ## Zones non détaillées
 - Les corps individuels des 19 routers (forme identique — factory + endpoints + délégation spine) : voir chaque `routes/<x>.py`.
-- `_mount_missing_ui_placeholder` (`app.py:274`) : dist absente → warning + page d'aide fail-loud à `/`, l'API reste valable.
+- `_mount_missing_ui_placeholder` (`app.py:287`) : dist absente → warning + page d'aide fail-loud à `/`, l'API reste valable.
 - Les Pydantic request models — `ProjectCreate`/`ProjectPatch`, `ReviewBody`/`MergeBody`, `BootstrapRequest`, `CredentialLink`, `McpWire`, `InspireRequest`, `FeatureCreate`, `TaskCreate`, … : DTO locaux d'un router, validés par FastAPI → 400/422. Ce sont des **formes**, pas des mécanismes : nommés ici pour que leur silence soit déclaré, pas subi.
