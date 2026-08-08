@@ -191,8 +191,11 @@ il porte un `credential_ref`) ; `claude_auth` (axe **orthogonal** à `complete` 
 l'install ne travaille qu'après un `claude login` explicite, jamais en héritant en silence l'auth d'un autre) ;
 `mcp` (le corpus privé est-il câblé ? `{wired, endpoint}` via `provision.mcp.wire_state`, **optionnel** — une
 install publique sans corpus reste valide et n'entre donc pas dans `complete`) ; et `build` (provenance +
-fraîcheur du wheel installé — `{version, sha, committed_at, comparable, stale, behind_by, missing_types}`, cf.
-`build_provenance` : un forgemaster en retard sur son SoT local se **déclare**, jamais faux-vert). Plus deux
+fraîcheur du wheel installé — `{version, sha, committed_at, comparable, stale, behind_by, missing_types,
+reference, head}`, cf.
+`build_provenance` : un forgemaster en retard sur son SoT local se **déclare**, jamais faux-vert ; `reference`
++ `head` disent **contre quoi** — le miroir bare local et son SHA — parce que ce miroir vieillit avec
+l'instance et qu'un verdict qu'on ne peut pas situer n'est pas jugeable). Plus deux
 verdicts : `complete` (store prêt ET toutes les exigences satisfaites) et `first_run` (aucun projet créé — le
 wizard doit guider, pas annoncer « complet »), qui distinguent *rien-à-faire-car-réglé* de *rien-encore-réglé*.
 Les axes `claude_auth`/`mcp`/`build` sont **injectables** pour les tests ; à défaut ils sont détectés live.

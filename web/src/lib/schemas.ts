@@ -1165,6 +1165,11 @@ export const VersionSchema = z.object({
   stale: z.boolean().nullable(),
   behind_by: z.number().nullable(),
   missing_types: z.array(z.string()),
+  // CONTRE QUOI la fraîcheur est calculée. Ce miroir est LOCAL et vieillit lui aussi : un verdict qui ne le
+  // nomme pas laisse l'utilisateur sans moyen d'en juger la portée. `head` est rendu même quand la
+  // comparaison échoue (référence connue, build inconnu) — et il sert de clé au rappel qui s'ignore.
+  reference: z.string().nullable(),         // chemin du miroir bare, `null` = aucun sur ce disque
+  head: z.string().nullable(),              // SHA de la référence, `null` = pas lu
 })
 export type Version = z.infer<typeof VersionSchema>
 

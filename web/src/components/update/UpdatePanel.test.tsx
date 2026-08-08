@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/lib/api'
-import type { UpdateRun } from '@/lib/schemas'
+import type { UpdateRun, Version } from '@/lib/schemas'
 
 const MORT = new ApiError(0, 'daemon injoignable (TypeError: Failed to fetch)')
 
@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   runError: null as unknown,
   contact: 0,
   aptitude: null as unknown,
+  version: null as unknown,
 }))
 
 vi.mock('@/lib/queries', () => ({
@@ -22,9 +23,7 @@ vi.mock('@/lib/queries', () => ({
     data: h.run, error: h.runError, isFetching: false, dataUpdatedAt: h.contact, refetch: vi.fn(),
   }),
   useVersion: () => ({
-    data: { version: '0.1.0', sha: 'abcdef1234', committed_at: '2026-08-07T00:00:00Z',
-            comparable: false, stale: null, behind_by: null, missing_types: [] },
-    error: null, isFetching: false, dataUpdatedAt: h.contact, refetch: vi.fn(),
+    data: h.version, error: null, isFetching: false, dataUpdatedAt: h.contact, refetch: vi.fn(),
   }),
   useUpdateAptitude: () => ({ data: h.aptitude, error: null, isPending: false, refetch: vi.fn() }),
   useApplyUpdate: () => ({ mutate: vi.fn(), reset: vi.fn(), isPending: false, error: null }),
@@ -58,7 +57,19 @@ function apte(over: Record<string, unknown> = {}) {
   }
 }
 
+function version(over: Partial<Version> = {}): Version {
+  return {
+    version: '0.1.0', sha: 'abcdef1234', committed_at: '2026-08-07T00:00:00Z',
+    comparable: false, stale: null, behind_by: null, missing_types: [],
+    reference: null, head: null, ...over,
+  }
+}
+
 const CALME = { runs: [], total: 0, truncated: false, follow_timeout: 900 }
+
+// Défaut de TOUS les blocs : une provenance sans référence locale (le cas d'une install publique). Chaque
+// bloc qui parle de fraîcheur la repose explicitement.
+beforeEach(() => { h.version = version() })
 
 describe('UpdatePanel — l\'aptitude, DITE AU REPOS', () => {
   beforeEach(() => {
@@ -171,6 +182,64 @@ describe('UpdatePanel — un geste EN VOL désarme les deux affordances', () => 
 
     expect(screen.queryByRole('button', { name: /Voir le retour arrière/ })).not.toBeInTheDocument()
     expect(screen.getByText(/retour arrière 2026-08-07T12-04-38Z/)).toBeInTheDocument()
+  })
+})
+
+describe('UpdatePanel — le verdict de FRAÎCHEUR, sous l\'identité et jamais à côté', () => {
+  // D'OÙ VIENT CE BLOC : phase 3b. Le calcul existait depuis longtemps (`build_provenance`) et n'était
+  // consommé nulle part ; la 3a·3b a branché le hook en n'en lisant que l'IDENTITÉ, exprès. Ici on lit le
+  // reste. Le verdict vit DANS ce panneau parce que l'instance ne s'écrit qu'une fois par page — une
+  // seconde carte redirait le sha et la date deux lignes plus bas.
+  beforeEach(() => { h.runs = CALME; h.runsError = null; h.run = null; h.runError = null; h.aptitude = apte() })
+
+  it('dit le retard, sa référence et les types apparus depuis', () => {
+    h.version = version({ comparable: true, stale: true, behind_by: 12, missing_types: ['site-vitrine'],
+                          reference: '/home/u/projects/forgemaster/sot.git', head: '9f3c1d2aaa' })
+
+    render(<UpdatePanel />)
+
+    expect(screen.getByText(/En retard de 12 commits/)).toBeInTheDocument()
+    expect(screen.getByText(/sot\.git/)).toBeInTheDocument()
+    expect(screen.getByText(/HEAD 9f3c1d2/)).toBeInTheDocument()
+    expect(screen.getByText(/site-vitrine/)).toBeInTheDocument()
+  })
+
+  it('n\'écrit JAMAIS « à jour » quand il ne peut pas comparer', () => {
+    // L'invariant de tout ce cycle, appliqué à la surface : jamais de faux-vert. C'est aussi l'état NORMAL
+    // d'une install publique — la majorité des instances distribuées, pas un cas de coin.
+    h.version = version()   // comparable: false, aucune référence
+
+    render(<UpdatePanel />)
+
+    // Deux occurrences attendues : l'étiquette du badge et la phrase qui la qualifie.
+    expect(screen.getAllByText(/non comparable/)).toHaveLength(2)
+    // Les DEUX porteurs du verdict, chacun nié : la phrase et l'étiquette du badge. (Un `/à jour/i` nu
+    // attraperait le titre du panneau, « Mise à jour » — et passerait pour une garde alors qu'il en serait
+    // une autre.)
+    expect(screen.queryByText(/^À jour/)).toBeNull()
+    expect(screen.queryByText(/à jour · miroir/)).toBeNull()
+  })
+
+  it('nomme la référence DANS le verdict à jour — un « à jour » nu promettrait plus que mesuré', () => {
+    // `stale=false` veut dire « égal au HEAD de ton miroir LOCAL », et ce miroir vieillit avec l'instance
+    // (angle mort mesuré côté banc : wheel ET miroir périmés → le daemon les voit égaux). La référence
+    // dans la phrase est ce qui rend le verdict jugeable ; une référence joignable est la phase 5.
+    h.version = version({ comparable: true, stale: false, behind_by: 0,
+                          reference: '/home/u/projects/forgemaster/sot.git', head: 'abcdef1234' })
+
+    render(<UpdatePanel />)
+
+    expect(screen.getByText(/À jour avec ton miroir local/)).toBeInTheDocument()
+  })
+
+  it('se tait tant que la réponse n\'est pas là', () => {
+    // Contre-témoin : sans donnée, le panneau ne doit ni rassurer ni alarmer. Il continue de dire ce qu'il
+    // sait (rien), et l'identité reste celle d'avant cette phase.
+    h.version = null
+
+    render(<UpdatePanel />)
+
+    expect(screen.queryByText(/À jour|En retard|non comparable/)).toBeNull()
   })
 })
 
