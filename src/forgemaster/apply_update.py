@@ -83,7 +83,12 @@ VU, NON_MESURE, RATE = "vu", "non-mesuré", "raté"
 POSEES = "posées"
 MAPS_FLAG = "--maps-only"                   # la capacité cherchée dans le `cli.py` d'un venv cible
 EDITION_MANIFEST = "_maps/maps.json"        # ce que l'édition installée DÉCLARE, dans le paquet
-MAPS_TIMEOUT = 300.0                        # 3 wheels minuscules posés hors-ligne : borné, fail-loud
+# Borné, fail-loud — et **délibérément plus large que le délai d'étape de `tools.install_plan` (900 s)**.
+# L'ordre des deux délais n'est pas un détail : si celui-ci coupait le premier, on tuerait le `forgemaster`
+# enfant alors que le `pip` PETIT-ENFANT survivrait (orphelin), et l'échec n'aurait pas de motif. En le
+# laissant expirer d'abord, la couche qui SAIT ce qui a échoué rend un step rouge porteur de sa raison, et
+# ce délai-ci ne sert plus que de filet au cas où l'enfant lui-même se serait figé.
+MAPS_TIMEOUT = 960.0
 
 
 class UpdateFailed(Exception):
