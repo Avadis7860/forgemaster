@@ -122,6 +122,15 @@ class ChannelUnreachable(ChannelError):
 # --- lecture pure ------------------------------------------------------------------------------------
 
 
+def signing_message(payload: bytes) -> bytes:
+    """Les octets réellement signés : `<schéma d'enveloppe>\\n<payload>`. **PUR.**
+
+    Un seul foyer, partagé par le vérificateur (ici) et le producteur (`channel_publish.sign_envelope`) :
+    une séparation de domaine calculée à deux endroits est une séparation de domaine qui finira par
+    diverger — et le jour où elle diverge, plus **rien** ne vérifie, ce qui ressemble à une clé perdue."""
+    return _DOMAIN + payload
+
+
 def key_id(public_bytes: bytes) -> str:
     """Le `key_id` d'une clé publique : préfixe du SHA-256 de ses octets BRUTS. **PUR**. Dérivé et non
     attribué — un compteur ou une date pourraient désigner une autre clé que celle qu'ils nomment."""
@@ -163,7 +172,7 @@ def trust_root(keys_path: Path | None = None) -> list[dict]:
     out: list[dict] = []
     for i, e in enumerate(entries):
         try:
-            declared, pub = e["key_id"], _b64d(e["public"])
+            declared, pub = e["key_id"], b64u_decode(e["public"])
         except (KeyError, TypeError, ChannelMalformed) as exc:
             raise ChannelMalformed(f"{p} : clé #{i} inexploitable ({exc})") from None
         derived = key_id(pub)
@@ -213,10 +222,10 @@ def parse_envelope(raw: bytes) -> dict:
     for i, s in enumerate(sigs):
         if not isinstance(s, dict) or "key_id" not in s or "sig" not in s:
             raise ChannelMalformed(f"signature #{i} incomplète — `key_id` et `sig` sont requis")
-        out_sigs.append({"key_id": s["key_id"], "sig": _b64d(s["sig"])})
+        out_sigs.append({"key_id": s["key_id"], "sig": b64u_decode(s["sig"])})
     if "payload" not in data:
         raise ChannelMalformed("manifeste sans `payload` — il n'y a rien à vérifier")
-    return {"schema": data["schema"], "payload": _b64d(data["payload"]), "signatures": out_sigs}
+    return {"schema": data["schema"], "payload": b64u_decode(data["payload"]), "signatures": out_sigs}
 
 
 def verify_envelope(envelope: dict, keys: list[dict]) -> bytes:
@@ -237,7 +246,7 @@ def verify_envelope(envelope: dict, keys: list[dict]) -> bytes:
         raise ChannelUnknownKey("cette édition n'embarque aucune racine de confiance — elle ne peut "
                                 "vérifier aucun manifeste, et ne prétend donc rien")
     connues = {k["key_id"]: k["public"] for k in keys}
-    message = _DOMAIN + envelope["payload"]
+    message = signing_message(envelope["payload"])
     inconnus, invalides = [], []
     for s in envelope["signatures"]:
         pub = connues.get(s["key_id"])
@@ -650,8 +659,12 @@ def cli_check(settings: Settings, *, build_sha: str | None) -> int:
 _B64URL = bytes.maketrans(b"-_", b"+/")
 
 
-def _b64d(s: object) -> bytes:
-    """base64url **strict** (`validate=True`, padding exigé). L'indulgence par défaut de
+def b64u_decode(s: object) -> bytes:
+    """base64url **strict** (`validate=True`, padding exigé). **Public** (2026-08-08) : le producteur et son
+    script de publication décodent la même chose et doivent le faire de la même façon — un second décodeur
+    indulgent, quelque part dans l'outillage, rouvrirait exactement la latitude fermée ci-dessous.
+
+    L'indulgence par défaut de
     `urlsafe_b64decode` — qui **jette** silencieusement les caractères hors alphabet — donnerait deux textes
     distincts décodant vers les mêmes octets : deux manifestes différents vérifieraient alors sous la même
     signature, et c'est exactement le genre de latitude qu'une signature est censée retirer."""

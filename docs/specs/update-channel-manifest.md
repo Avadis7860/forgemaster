@@ -110,7 +110,7 @@ consigne dans un commentaire.
   "edition": { "version": "…", "sha": "<commit>", "committed_at": "<ISO 8601>",
                "wheel": { "name": "…whl", "sha256": "…", "size": 0 },
                "maps": [ { "name": "code-map", "sha": "…" } ] },
-  "lineage": [ "<sha de l'édition publiée précédente>", "…" ] }
+  "lineage": [ "<sha du commit qui précède, du plus récent au plus ancien>", "…" ] }
 ```
 
 **Pourquoi une lignée et pas seulement la dernière édition.** La divergence « classe B » — *l'édition amont
@@ -119,6 +119,14 @@ précisément ce qui manque à l'utilisateur visé. La lignée le permet : l'ins
 build dedans. Son absence est un **aveu** (« je ne peux pas te situer »), jamais un verdict de divergence :
 trois causes distinctes produisent la même absence — instance plus ancienne que la fenêtre, wheel bâti
 maison depuis un commit jamais publié, ou vraie divergence. On ne les distingue pas, donc on ne choisit pas.
+
+**La lignée est une ASCENDANCE de commits, pas la liste des éditions publiées** — recalé le 2026-08-08 (phase
+5·5), et ce n'est pas une décision neuve : c'est la lecture que les trois causes ci-dessus imposaient déjà.
+« Instance plus ancienne que la **fenêtre** » et « wheel bâti maison depuis un commit **jamais publié** » ne
+veulent rien dire si la lignée ne contient que ce qui a été publié — le second serait alors la règle et non
+l'exception. Une instance exécute un **commit** ; la question posée est *descends-tu de lui ?*. Mesurée par
+`git rev-list --first-parent` depuis l'édition annoncée (exclue : elle n'est pas dans sa propre lignée),
+bornée au plafond **à la publication** comme elle l'est **à la lecture**.
 
 **Pourquoi le manifeste servi est versionné alors que `_maps/maps.json` ne l'est pas.** Le manifeste local
 voyage **dans le même wheel que son lecteur** (`tools.edition_maps_dir()`), donc aucun écart de version
@@ -175,9 +183,39 @@ existe » n'est pas une réponse à *mon dernier contrôle a-t-il abouti ?*. Le 
     personne. Sur une machine qui a les deux références, deux rappels pour le même fait apprennent à ignorer
     le centre de notifications.
 
+## Publier — le producteur, et pourquoi il ne vit pas chez le client
+
+`src/forgemaster/channel_publish.py` produit ce que `update_channel.py` passe sa vie à lire. Les deux sont
+**symétriques et jamais fondus** : le producteur importe le client (schémas, plafond, dérivation de `key_id`,
+message signé) et **l'inverse est impossible**, gardé par AST. Deux propriétés en sortent, qu'aucun
+commentaire ne pourrait tenir — **rien du chemin de mise à jour ne peut atteindre le signeur**, et le
+producteur ne redéfinit aucune constante (un schéma ou un domaine de signature qui aurait deux valeurs se
+découvrirait le jour où plus rien ne vérifie).
+
+Règles verrouillées :
+
+28. **L'annonce est fonction de l'ARTEFACT**, pas du poste qui l'a bâti : `version` (le `Version:` du
+    METADATA, pas le nom du fichier), `sha`, `committed_at` et `maps` sont lus **dans le wheel** ; le
+    SHA-256 et la taille sont ceux du fichier qu'on publiera. Un producteur qui lirait le répertoire de
+    travail pourrait annoncer un commit et publier un autre binaire — et la signature couvrirait le mensonge.
+29. **Le `key_id` est dérivé de la clé qui signe**, jamais passé en argument. Le passer rouvrirait
+    exactement le mensonge que la dérivation existe pour rendre impossible.
+30. **La privée arrive sur l'entrée standard** (`scripts/publish_channel.py`) — jamais `argv` (visible dans
+    `ps`), jamais l'environnement (hérité), jamais un fichier. Le script ne résout aucun secret : le coffre
+    reste le seul résolveur, et il vit hors de ce dépôt.
+31. **L'annonce produite est relue et vérifiée avec le code du CLIENT, sous la racine embarquée dans le
+    wheel annoncé**, avant d'être écrite. Sans ce contrôle, les deux moitiés ne se rencontreraient que chez
+    l'utilisateur — et le symptôme y serait `unverified`, le pire verdict, celui qui apprend à ignorer
+    l'alarme.
+32. **Ce qui n'est PAS distribué est la CLÉ, pas le code.** Le module producteur vit sous
+    `src/forgemaster/` et voyage donc dans le wheel ; seul le point d'entrée mainteneur (`scripts/`) en est
+    exclu. Dire « le producteur n'est pas distribué » serait de la rhétorique : le packaging ne le fait pas.
+    Les deux propriétés qui portent vraiment sont ailleurs — le **graphe d'imports** (rien du chemin de
+    mise à jour ne peut atteindre le signeur) et le fait qu'une privée n'existe **que** dans le coffre. Le
+    module embarqué est inerte sans elle.
+
 ## Ce que cette spec ne décide PAS
 
-- **La cérémonie de génération de la paire** et la publication de la première Release.
 - **La proposition et le consentement** — accepter / différer / refuser est une autre pièce.
 
 ## Invariants de test
@@ -217,3 +255,22 @@ Ce que `tests/test_update_channel.py` garde, et qu'aucune évolution ne doit ren
 - **et, côté `update.py` : le chemin complet de `apply --dry-run` n'ouvre AUCUNE socket** — `socket.socket`
   et `socket.create_connection` rendus impossibles, `rc 0` exigé. C'est la garde que
   `update-channel-trust-root.md` annonçait manquante ; elle existe désormais.
+
+Ce que `tests/test_channel_publish.py` garde en plus, côté **producteur** :
+
+- **l'aller-retour complet** : produire avec `channel_publish`, relire avec `update_channel`. C'est la garde
+  qui vaut le plus — elle échoue le jour où l'un des deux côtés dérive, ce qu'aucun test de forme ne verrait
+  puisque les deux resteraient individuellement corrects ;
+- **la frontière par AST** : `update_channel` n'importe **jamais** `channel_publish` — rien du chemin de mise
+  à jour ne peut atteindre le signeur ; le producteur, lui, ne **redéfinit** aucun schéma ;
+- **la séparation de domaine est porteuse** : signer le payload **nu** produit une enveloppe qui ne vérifie
+  pas — mesuré, pas supposé ;
+- **l'annonce est lue dans le wheel** : un wheel dont le tampon dit autre chose que le dépôt annonce ce que
+  dit le **wheel** ; un wheel sans tampon n'est **pas annonçable** ;
+- **la lignée au-delà du plafond est refusée** (jamais tronquée), et le SHA annoncé ne peut pas figurer dans
+  sa **propre** lignée ;
+- **une privée de 64 octets est refusée en nommant les 32 attendus** — c'est la forme « étendue » d'autres
+  bibliothèques, le cas où un refus muet enverrait chercher un défaut de crypto là où il y a un défaut de
+  pipe ;
+- **`key_id` dérivé** de la clé qui signe, et une enveloppe signée par une autre clé produit un `key_id`
+  **inconnu**, jamais une signature invalide.

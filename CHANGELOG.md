@@ -32,6 +32,17 @@ vieillit pas avec celui qui la lit.
   une machine qui a les deux références, est la façon la plus sûre d'apprendre à ignorer un centre d'alertes.
 - **`_keys/release-keys.json` n'existe pas encore** : sans racine de confiance embarquée, le canal **n'émet
   aucune requête** et le dit. La paire naît à la cérémonie de génération, hors de ce dépôt.
+- **Le producteur existe** (`channel_publish.py` + `scripts/publish_channel.py`). Il importe le client ;
+  **l'inverse est impossible**, gardé par AST — rien du chemin de mise à jour ne peut atteindre le signeur,
+  et aucune constante n'a deux valeurs. Ce qui n'est **pas** distribué est la **clé**, pas le module : il
+  voyage dans le wheel et y est inerte. L'annonce est lue **dans le wheel** (pas dans le répertoire de travail : un
+  producteur qui lirait le dépôt pourrait annoncer un commit et publier un autre binaire, et la signature
+  couvrirait le mensonge). La clé privée arrive sur **l'entrée standard**, jamais en `argv` ni en
+  environnement, et l'annonce produite est **relue avec le code du client** sous la racine que le wheel
+  annoncé embarque — avant d'être écrite.
+- **La lignée est une ascendance de commits**, recalé : les trois causes d'un `cannot-situate` que la spec
+  nommait déjà (« instance plus ancienne que la fenêtre », « wheel bâti maison depuis un commit jamais
+  publié ») ne veulent rien dire si la lignée ne contient que ce qui a été publié.
 
 ### Une édition monte ENTIÈRE, et redescend entière — les cartes suivent le wheel
 
