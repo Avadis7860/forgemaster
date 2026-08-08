@@ -9,6 +9,31 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Le wheel ne dépend plus du poste qui l'a bâti
+
+**Les wheels publiés jusqu'ici embarquaient ~12,7 Mo de `node_modules` mort** — 135 membres sous
+`forgemaster/_verify_runner/`, jamais lus par personne (`seed_verify_runner` n'`install` que `render_check.js`
+et `package.json`, puis lance son propre `npm install` sur la cible). Ils y étaient parce que le développeur
+avait lancé `npm install` dans `deploy/runners` pour éprouver le runner en local : **le contenu de l'artefact
+publié dépendait de l'état du poste de build**. Un artefact de release qui change de contenu sans le dire est
+exactement ce qu'un épinglage par SHA ne peut pas rattraper.
+
+- **Le wheel a deux portes, et une seule filtrait.** Le walk de `packages = ["src/forgemaster"]` applique le
+  `.gitignore` ; `force_include` (le hook de packaging) embarquait le dossier **tel qu'il est sur le disque**.
+  Les trois stagings passent maintenant par `stage_tracked` : ce qui entre est ce que **git suit**, rien
+  d'autre. Une exclusion nommée (`node_modules`) aurait laissé passer le résidu suivant ; la liste positive non.
+- **La garde de build devient une garde d'INVENTAIRE** (`unexpected_wheel_members`). Les asserts de
+  *présence* restent — ils disent « c'est là » ; l'inventaire dit « **et rien d'autre** », ce qu'une garde de
+  présence ne peut pas dire. Liste fermée, tout membre en trop **échoue le build en se nommant**.
+- **Mesuré** : 490 → **355 membres**, 4,77 Mo → **1,68 Mo**. Deux builds du même commit, l'un sur un checkout
+  où `npm install` a tourné et l'autre sur un checkout vierge, produisent désormais un wheel **identique au
+  bit près** (`sha256 c1344758…`) — le critère était l'inventaire, le résultat est plus fort.
+- **Effet de bord fermé au passage** : le staging de `codemap`/`taskmap` copiait aussi le bytecode des
+  siblings (26 et 15 `.pyc`). Le wheel n'en portait pas — mais parce que *hatchling* les écarte, un
+  comportement d'un tiers non épinglé. La propriété est maintenant la nôtre, et la garde la vérifie.
+- Une source vendorée qui n'est **pas** un checkout git fait désormais **échouer** le build : elle produisait
+  jusqu'ici un `_vendored_from.txt` vide — un wheel de release sans provenance, en silence.
+
 ### L'instance dit qu'elle est en retard — sans qu'on aille le chercher
 
 Le calcul de fraîcheur existait depuis longtemps (`build_provenance`) et n'était **affiché nulle part** : une

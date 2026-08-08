@@ -293,3 +293,61 @@ def test_plan_force_includes_warns_when_all_absent(tmp_path: Path):
     force, warnings = hatch_build.plan_force_includes(tmp_path)
     assert force == {}
     assert len(warnings) == 5                                   # SPA+codemap+taskmap+runner+provenance
+
+
+# -- garde d'INVENTAIRE : « et rien d'autre » (ce qu'une garde de présence ne peut pas dire) ---------------
+
+_DECLARE = dict(                                                # ce que `git ls-files` rendrait, en miniature
+    src_files={"cli.py", "daemon/app.py"},
+    codemap_files={"__main__.py", "core/graph.py"},
+    taskmap_files={"__init__.py"},
+    runner_files={"render_check.js", "package.json"},
+)
+_SAIN = [
+    "forgemaster/cli.py",
+    "forgemaster/daemon/app.py",
+    "forgemaster/_build.json",
+    "forgemaster/_web_dist/index.html",
+    "forgemaster/_web_dist/assets/index-D4f2a9.js",             # nom HASHÉ par Vite : admis par préfixe
+    "forgemaster/_verify_runner/render_check.js",
+    "forgemaster/_verify_runner/package.json",
+    "codemap/__main__.py",
+    "codemap/core/graph.py",
+    "codemap/_vendored_from.txt",
+    "taskmap/__init__.py",
+    "taskmap/_vendored_from.txt",
+    "forgemaster-0.1.0.dist-info/METADATA",
+    "forgemaster-0.1.0.dist-info/licenses/NOTICE",
+]
+
+
+def test_inventaire_clos_ne_signale_rien_sur_un_wheel_sain():
+    assert hatch_build.unexpected_wheel_members(list(_SAIN), **_DECLARE) == []
+
+
+def test_inventaire_nomme_le_node_modules_du_poste_de_dev():
+    """La régression MESURÉE le 2026-08-08 : 135 membres partis par `force_include`, jamais lus par
+    personne (`seed_verify_runner` npm-installe sur la CIBLE)."""
+    names = [*_SAIN, "forgemaster/_verify_runner/node_modules/playwright-core/cli.js"]
+    assert hatch_build.unexpected_wheel_members(names, **_DECLARE) == [
+        "forgemaster/_verify_runner/node_modules/playwright-core/cli.js"
+    ]
+
+
+def test_inventaire_nomme_le_bytecode_dun_sibling_vendore():
+    """Le risque LATENT : le staging de codemap/taskmap porte bien des `.pyc` ; aujourd'hui c'est hatchling
+    qui les écarte — un tiers non épinglé. La garde rend la propriété NÔTRE."""
+    names = [*_SAIN, "codemap/__pycache__/cli.cpython-311.pyc"]
+    assert hatch_build.unexpected_wheel_members(names, **_DECLARE) == [
+        "codemap/__pycache__/cli.cpython-311.pyc"
+    ]
+
+
+def test_inventaire_refuse_une_racine_inconnue():
+    names = [*_SAIN, "frontmap/__init__.py"]                    # un 3ᵉ vendoring qu'on n'aurait pas déclaré
+    assert hatch_build.unexpected_wheel_members(names, **_DECLARE) == ["frontmap/__init__.py"]
+
+
+def test_inventaire_nomme_un_module_non_suivi_sous_src():
+    names = [*_SAIN, "forgemaster/scratch.py"]                  # un fichier gitignoré qui passerait le walk
+    assert hatch_build.unexpected_wheel_members(names, **_DECLARE) == ["forgemaster/scratch.py"]

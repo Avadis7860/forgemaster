@@ -14,6 +14,13 @@ copie rien lui-même :
     déjà éditable-installé (sibling), donc les deux stagings sont absents → skip propre.
 Chaque artefact absent → warning clair + wheel dégradé (SPA : `forgemaster setup` la posera ; codemap : Flow
 indisponible tant que non stagé). Ne re-committe jamais ces artefacts dans git.
+
+Ce module porte AUSSI la garde d'**inventaire** (`unexpected_wheel_members`) : le pendant symétrique du
+force-include. Le wheel a **deux portes**, et une seule filtrait — `packages = ["src/forgemaster"]` écarte ce
+que le `.gitignore` écarte, `force_include` embarque le dossier **tel qu'il est sur le disque**. Mesuré le
+2026-08-08 : 135 membres / 12,7 Mo de `node_modules` posés par un `npm install` local du dev partaient dans
+chaque release, et rien ne le disait. La garde referme ça côté sortie : ce que le wheel embarque est une
+**liste fermée**, et tout membre en trop échoue le build en se nommant.
 """
 from __future__ import annotations
 
@@ -94,6 +101,63 @@ def plan_force_includes(root: Path) -> tuple[dict[str, str], list[str]]:
     else:
         warnings.append(_WARN_NO_BUILD)
     return force, warnings
+
+
+def unexpected_wheel_members(
+    names: list[str],
+    *,
+    src_files: set[str],
+    codemap_files: set[str],
+    taskmap_files: set[str],
+    runner_files: set[str],
+) -> list[str]:
+    """Garde d'**inventaire** : les membres du wheel qu'**aucune** règle n'admet.
+
+    Une garde de *présence* (« `render_check.js` est bien là ») ne sait pas dire « **et rien d'autre** » —
+    par construction elle laisse passer tout ce qui s'ajoute. Les deux questions sont complémentaires et le
+    build pose les deux.
+
+    Les quatre ensembles de fichiers **déclarés** sont calculés par `deploy/build-wheel.sh` avec
+    `git ls-files` — un seul foyer de vérité, celui qui décide déjà de ce qui est stagé. La garde ne
+    re-devine rien : elle confronte l'archive à ce que git suit.
+
+    Règles (fermées) :
+      • `forgemaster/_web_dist/…`      — la SPA buildée : noms **hashés** par Vite, donc un préfixe et pas
+                                         une liste littérale (le seul endroit où l'inventaire est ouvert) ;
+      • `forgemaster/_verify_runner/…` — **exactement** `runner_files` (`deploy/runners` suivi) ;
+      • `forgemaster/_build.json`      — le tampon de provenance (gitignoré, force-inclus) ;
+      • `forgemaster/<reste>`          — ssi `<reste>` est suivi sous `src/forgemaster/` ;
+      • `codemap/…` · `taskmap/…`      — ssi suivi chez le sibling, ou le tampon `_vendored_from.txt` ;
+      • `<nom>.dist-info/…`            — métadonnées, exigées par le format wheel ;
+      • toute autre racine             — **rien**.
+
+    Retourne les membres fautifs **triés** (déterminisme du message d'erreur), pas un booléen : un build qui
+    échoue doit nommer ce qu'il refuse, sinon on ne peut pas agir dessus.
+    """
+    vendored = {"codemap": codemap_files, "taskmap": taskmap_files}
+    unexpected: list[str] = []
+    for name in names:
+        if name.endswith("/"):                           # entrée de dossier (rare) : jamais du contenu
+            continue
+        root, _, rest = name.partition("/")
+        if root.endswith(".dist-info"):
+            continue
+        if root in vendored:
+            if rest != "_vendored_from.txt" and rest not in vendored[root]:
+                unexpected.append(name)
+            continue
+        if root == "forgemaster":
+            if rest.startswith("_web_dist/") or rest == "_build.json":
+                continue
+            if rest.startswith("_verify_runner/"):
+                if rest[len("_verify_runner/"):] not in runner_files:
+                    unexpected.append(name)
+                continue
+            if rest not in src_files:
+                unexpected.append(name)
+            continue
+        unexpected.append(name)
+    return sorted(unexpected)
 
 
 class ForgemasterFrontBuildHook(BuildHookInterface):
