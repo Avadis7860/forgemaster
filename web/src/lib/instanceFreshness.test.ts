@@ -6,7 +6,14 @@ function v(over: Partial<Version> = {}): Version {
   return {
     version: '0.1.0', sha: 'ab12345def', committed_at: '2026-08-07T00:00:00Z',
     comparable: true, stale: false, behind_by: 0, missing_types: [],
-    reference: '/home/u/projects/forgemaster/sot.git', head: 'ab12345def', ...over,
+    reference: '/home/u/projects/forgemaster/sot.git', head: 'ab12345def',
+    // Les volets d'ÉDITION ne concernent pas la fraîcheur — ils sont là parce que le contrat les exige, et
+    // c'est exactement le point : `fraicheur` juge le WHEEL contre un miroir, `edition` juge les CARTES
+    // contre ce que l'édition déclare. Deux questions, deux modules, aucun verdict fondu.
+    install: { mode: 'edition', reason: null },
+    maps: [], edition: { edition_dir: null, reason: null, state: 'unknown', maps: [] },
+    mcp: { topology: 'none', sha: null, endpoint: null, reason: null },
+    ...over,
   }
 }
 

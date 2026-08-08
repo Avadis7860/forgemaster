@@ -471,6 +471,26 @@ def test_overall_state_all_verified(settings):
     assert tools.overall_state([{"state": "up-to-date"}] * 3) == "up-to-date"
 
 
+def test_overall_state_sur_une_liste_vide_ne_verdit_pas(settings):
+    """Zéro carte comparée satisfait « aucune ne diffère » par VACUITÉ. Le lire comme un vert dirait
+    « conforme » à une instance dont on n'a rien pu lire — le faux-vert exact que cette sonde répare.
+
+    Le cas était inatteignable tant que `maps_provenance` était le seul fournisseur (il rend une entrée par
+    carte de `MAP_REPOS`, quitte à la marquer inconnue) ; il le devient dès qu'un appelant injecte sa liste,
+    et `build_provenance.provenance` le fait — son lecteur de cartes dégrade en `[]`."""
+    assert tools.overall_state([]) == "unknown"
+
+
+def test_check_tools_accepte_les_cartes_deja_lues_plutot_que_de_les_relire(settings, edition):
+    """`served` injecté = un seul parcours des `.dist-info` pour la sonde `/api/version`, qui les a déjà
+    lues pour son volet `maps`. Deux marches, une liste (acquis 2a‴)."""
+    servies = [{"name": n, "sha": _SHA_A, "requested_ref": None, "source": "edition", "reason": None}
+               for n in tools.MAP_REPOS]
+    report = tools.check_tools(settings, maps_dir=edition, served=servies)
+    # aucune distribution n'est semée sur le disque : si `check_tools` avait relu, tout serait `unknown`
+    assert report["state"] == "up-to-date"
+
+
 # -- conformité à l'édition : la sonde, désormais LOCALE ----------------------------------------------
 
 def test_check_tools_reports_a_map_that_is_not_the_editions(settings, edition):

@@ -338,8 +338,10 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   credential : `token` = voie fichier stockée → réf opaque, `ref` = voie BWS bring-your-own UUID validée ;
   réponse = projet avec `credential_ref`, **jamais le token** ; **400** mauvais usage/backend, **404** projet
   absent) · `DELETE /api/projects/{p}/credential` (délie : `credential_ref` → NULL).
-- **version** — `GET /api/version` (provenance de build + **fraîcheur honnête** du wheel installé :
-  `{version, sha, committed_at, comparable, stale, behind_by, missing_types, reference, head, maps, mcp}`).
+- **version** — `GET /api/version` — **« quelle édition tourne ici ? »** : provenance de build +
+  **fraîcheur honnête** du wheel installé + l'identité des **quatre pièces** et leur conformité à l'édition :
+  `{version, sha, committed_at, comparable, stale, behind_by, missing_types, reference, head, install, maps,
+  edition, mcp}`.
   Le SHA vient du tampon
   `forgemaster/_build.json` embarqué au build (`deploy/build-wheel.sh`, jamais mtime) ; `stale`/`behind_by`/
   `missing_types` se calculent **par SHA** contre le HEAD du miroir SoT **local** de forgemaster — **transport
@@ -363,8 +365,28 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   sibling — le mode canonique depuis le 2026-08-08, SHA lu dans le tampon `_vendored_from.txt` du paquet) ;
   `vcs` = posée depuis `git+…@main`, une réf **mobile** (le mode historique, encore vivant sur toute instance
   provisionnée avant cette date, SHA lu dans `direct_url.json`/PEP 610).
-  Savoir si ces cartes sont celles de l'**édition installée** reste **hors** de cette route
-  (`forgemaster toolchain check` — local et sans réseau depuis le 2026-08-08).
+  `install` = **de quel mode d'install cette instance vient**, `{mode, reason}` avec `mode` ∈ `edition` |
+  `wheel` | `checkout` | `unknown`. **Déduit du disque** — le wheel porte-t-il son tampon `_build.json` ?
+  l'édition `forgemaster/_maps/maps.json` est-elle lisible ? — et **jamais déclaré** par une clé d'env, qui
+  pourrait mentir après une réinstall (même raison que `mcp.topology`). Ce champ ferme le trou « deux modes
+  d'install coexistent et rien ne remonte lequel est actif » : un editable-sibling et un wheel épinglé ne
+  sont plus deux identités sous le même numéro de version. Il ne se **déduit pas** de `sha is None` — cette
+  dérivation n'était exacte que tant qu'un seul candidat la satisfaisait, et un wheel bâti **sans** tampon
+  serait annoncé « checkout », c'est-à-dire un mode qu'il n'a pas avec une réparation qui n'est pas la
+  sienne. `checkout` est un état **normal** (mode de développement), pas une panne ; `unknown` = édition
+  lisible **sans** tampon, une paire que le même build ne peut pas produire — on l'avoue au lieu de trancher.
+  `edition` = ce que l'édition installée **DÉCLARE** pour ses cartes, confronté à ce qui est **servi** :
+  `{edition_dir, reason, state, maps:[{name, served, edition, state, reason}]}`, `state` ∈ `up-to-date` |
+  `differs` | `unknown`. C'est le retour de `tools.check_tools` **verbatim** — donc **le même objet** que
+  `forgemaster toolchain check`, jamais une seconde lecture qui divergerait. Lecture strictement locale,
+  **zéro réseau, zéro subprocess**. `unknown` ne se replie **jamais** sur `up-to-date`, y compris sur une
+  liste **vide** (aucune carte comparée satisfait « aucune ne diffère » par vacuité — le lire comme un vert
+  dirait « conforme » à une instance dont on n'a rien pu lire).
+  *Ce volet était **hors** de cette route jusqu'au 2026-08-08 (« la question du wheel »), et la ligne qui le
+  disait est **réécrite ici avec son motif**, pas retournée en silence : un verdict qui ne vit que dans la
+  CLI est hors de portée de qui n'a pas de terminal — c'est-à-dire de l'utilisateur distribué pour qui tout
+  le cycle de MAJ existe.* Le **geste** de remise à niveau, lui, reste explicite et manuel
+  (`forgemaster toolchain install`) : `update apply` ne touche pas `tools/`.
   `mcp` = la **topologie du serveur de corpus** que cette instance consomme, `{topology, sha, endpoint,
   reason}` — troisième volet de l'identité, étiqueté à part pour la même raison que `maps` (il bouge à
   l'édition, pas à la réinjection). `topology` ∈ `co-installed` | `remote` | `none` | `unknown`, **déduit du
@@ -373,7 +395,8 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   rendu que pour `co-installed` — seul cas où le binaire servi est sur ce disque ; un serveur distant se
   demande (`GET /version` sous JWT), il ne se devine pas. `none` est un **état normal** (instance sans
   corpus à interroger), pas une panne.
-  *Additif (route neuve + champs `build`/`maps` optionnels) → CHANGELOG, pas de bump `SCHEMA_VERSION`.*
+  *Additif (route neuve + champs `build`/`maps`/`install`/`edition` optionnels) → CHANGELOG, pas de bump
+  `SCHEMA_VERSION`.*
 - **update** — le cycle de MAJ **depuis le produit**, sans terminal. `GET /api/update/plan?mode=apply|rollback
   &wheel=&snapshot=&scope=` (préflight complet + `describe` — **ce qui se passerait**, strictement idempotent,
   aucun dossier de run créé) · `POST /api/update/apply` `{wheel, scope?}` · `POST /api/update/rollback`

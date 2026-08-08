@@ -9,6 +9,34 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Une instance répond à « quelle édition tourne ici ? » — et l'écart cesse d'être réservé au terminal
+
+**Deux modes d'install coexistaient et rien ne remontait lequel était actif** : un editable-sibling et un
+wheel épinglé se présentaient sous le même numéro de version. Et le verdict de conformité des cartes ne
+vivait que dans `forgemaster toolchain check` — une commande, donc un terminal, donc hors de portée de la
+personne pour qui tout ce cycle de mise à jour existe.
+
+- **`GET /api/version` porte le mode d'install** (`install: {mode, reason}`, `mode` ∈ `edition` | `wheel` |
+  `checkout` | `unknown`), **déduit du disque** — le wheel porte-t-il son tampon `_build.json` ? l'édition
+  `forgemaster/_maps/maps.json` est-elle lisible ? — et **jamais déclaré** par une clé d'env, qui pourrait
+  mentir après une réinstall. Il ne se déduit **pas** de `sha is None` : cette dérivation n'était exacte que
+  tant qu'un seul candidat la satisfaisait, et un wheel bâti *sans* tampon aurait été annoncé « checkout »,
+  c'est-à-dire un mode qu'il n'a pas, avec une réparation qui n'est pas la sienne. Le front consommait
+  exactement cette dérivation ; il lit désormais le champ mesuré.
+- **`GET /api/version` porte le verdict d'édition** (`edition`), qui confronte les cartes **servies** à
+  celles que l'édition installée **DÉCLARE**. C'est le retour de `tools.check_tools` **verbatim** — le même
+  objet que la CLI, jamais une seconde lecture qui divergerait — lu **sans réseau et sans subprocess**. La
+  ligne du contrat qui plaçait ce verdict *hors* de cette route est réécrite **avec son motif** plutôt que
+  retournée en silence. Le **geste** de remise à niveau, lui, reste explicite (`forgemaster toolchain
+  install`) : `update apply` ne touche pas `tools/`.
+- **Le panneau « Mise à jour » montre les quatre pièces** — le wheel et les 3 cartes, avec leur SHA — et
+  nomme la carte en écart, **les deux SHA**, et le geste qui la repose. Le wheel n'a pas d'état de
+  conformité : il *est* l'édition, il ne peut pas différer de lui-même.
+- **Un faux-vert fermé au passage** : `overall_state([])` rendait `up-to-date`. Zéro carte comparée satisfait
+  « aucune ne diffère » par vacuité — le cas était inatteignable tant que `maps_provenance` était le seul
+  fournisseur, il le devient dès qu'un appelant injecte sa liste, ce que fait la sonde HTTP.
+- **Additif** (`install`, `edition`) → CHANGELOG, **pas** de bump `SCHEMA_VERSION`.
+
 ### Les 3 cartes hôte entrent dans l'édition — la réf mobile est morte
 
 **`forgemaster toolchain install` tirait `code-map`, `docs-map` et `front-map` de `git+https://…@main`.**

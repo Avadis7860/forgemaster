@@ -60,7 +60,13 @@ function mkVersion(over: Partial<Version> = {}): Version {
   return {
     version: '0.1.0', sha: 'ab12345def', committed_at: '2026-08-07T00:00:00Z',
     comparable: true, stale: false, behind_by: 0, missing_types: [],
-    reference: '/home/u/projects/forgemaster/sot.git', head: 'ab12345def', ...over,
+    reference: '/home/u/projects/forgemaster/sot.git', head: 'ab12345def',
+    // Volets d'ÉDITION : le centre de notifications ne pousse que sur la FRAÎCHEUR du wheel — une carte en
+    // écart se répare par un geste local, elle n'a rien à faire dans un rappel qui s'ignore.
+    install: { mode: 'edition', reason: null },
+    maps: [], edition: { edition_dir: null, reason: null, state: 'unknown', maps: [] },
+    mcp: { topology: 'none', sha: null, endpoint: null, reason: null },
+    ...over,
   }
 }
 

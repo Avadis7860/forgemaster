@@ -1001,6 +1001,38 @@ def test_api_version_reports_build_provenance(client):
     assert st["build"]["comparable"] is False and st["complete"] in (True, False)
 
 
+def test_api_version_dit_de_quel_mode_dinstall_elle_vient(client):
+    """« Quelle édition tourne ici ? » — la moitié que la route ne savait pas dire. Un editable-sibling et
+    un wheel épinglé ne sont plus deux identités sous le même numéro de version : le mode est DÉDUIT du
+    disque (tampon de build × édition embarquée), jamais déclaré par une clé d'env qui pourrait mentir."""
+    c, _ = client
+    v = c.get("/api/version").json()
+    assert set(v["install"]) == {"mode", "reason"}
+    assert v["install"]["mode"] in {"edition", "wheel", "checkout", "unknown"}
+    # Tout mode qui n'est PAS le canonique porte sa raison : c'est ce qui distingue un checkout d'un wheel
+    # dégradé, donc ce qui dit s'il y a quelque chose à réparer.
+    assert v["install"]["mode"] == "edition" or v["install"]["reason"]
+    # CE TEST N'ÉPINGLE PAS LA VALEUR, et c'est délibéré : le mode est mesuré sur le DISQUE du checkout, or
+    # `deploy/build-wheel.sh` écrit `src/forgemaster/_build.json` (gitignoré) dans l'arbre source. Un
+    # développeur qui vient de bâtir un wheel rend donc `wheel`, et un checkout frais rend `checkout` — les
+    # deux sont exacts. Épingler l'un ferait dépendre le gate de « ce développeur a-t-il lancé le build ? »,
+    # c'est-à-dire d'une propriété de POSTE DE TRAVAIL : exactement le défaut que la phase 4·0 a retiré du
+    # wheel, et qu'un test ne doit pas réintroduire. Les quatre issues se jouent sur la fonction PURE
+    # (`test_build_provenance.py`), où les deux faits sont injectés au lieu d'être subis.
+
+
+def test_api_version_porte_le_verdict_dedition_sans_jamais_verdir_a_vide(client):
+    """Le verdict de conformité ne vivait que dans `forgemaster toolchain check` — hors de portée de qui
+    n'a pas de terminal. Il est ici, au MÊME format (`tools.check_tools` verbatim), et une conformité non
+    vérifiable rend `unknown` : jamais un vert, jamais un 500."""
+    c, _ = client
+    r = c.get("/api/version")
+    assert r.status_code == 200
+    ed = r.json()["edition"]
+    assert set(ed) == {"edition_dir", "reason", "state", "maps"}
+    assert ed["state"] == "unknown" and ed["reason"] and ed["edition_dir"] is None
+
+
 # -- terminal PTY local ----------------------------------------------------------------------------
 
 def test_resolve_workdir_is_bounded_and_control_parsed(tmp_path):

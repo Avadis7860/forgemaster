@@ -1152,11 +1152,67 @@ export type Reliability = z.infer<typeof ReliabilitySchema>
 // main, `rc:null` = pas de verdict, `impact:null` = on ne sait pas ce qui a bougé. Les rendre optionnels
 // (ou defaultés) effacerait précisément l'aveu.
 
-// Provenance de BUILD de l'instance. Consommée ici pour son IDENTITÉ seule (`version`/`sha`/`committed_at`)
-// : la version de paquet ne bouge pas d'un wheel à l'autre, le SHA de build si — c'est donc lui qui prouve
-// qu'une bascule a eu lieu. Les champs de FRAÎCHEUR (`comparable`/`stale`/`behind_by`/`missing_types`) sont
-// typés mais **non consommés** : ils appartiennent à la surface de disponibilité (phase 3b), qui héritera de
-// ce hook au lieu de le réécrire.
+// UNE pièce de l'édition, telle que l'instance la SERT. `source` discrimine le mode d'install de cette
+// carte-là : `edition` = posée depuis un wheel embarqué au wheel du forgemaster (épinglée), `vcs` = depuis
+// `git+…@main`, une réf MOBILE (le mode d'avant le 2026-08-08). `sha` nul porte TOUJOURS son `reason` — un
+// SHA faux coûte plus cher qu'un SHA manquant, il retire le doute qui aurait déclenché la vérification.
+export const ServedMapSchema = z.object({
+  name: z.string(),
+  sha: z.string().nullable(),
+  requested_ref: z.string().nullable(),
+  source: z.enum(['edition', 'vcs', 'local-dir', 'unknown']),
+  reason: z.string().nullable(),
+})
+export type ServedMap = z.infer<typeof ServedMapSchema>
+
+// Le verdict de conformité d'UNE carte : ce qui est SERVI contre ce que l'édition installée DÉCLARE. Les
+// deux SHA voyagent ensemble — nommer seulement l'écart obligerait à aller chercher l'autre moitié ailleurs.
+// `unknown` n'est JAMAIS un vert : c'est « je n'ai pas pu comparer », et il porte sa raison.
+export const EditionMapSchema = z.object({
+  name: z.string(),
+  served: z.string().nullable(),
+  edition: z.string().nullable(),
+  state: z.enum(['up-to-date', 'differs', 'unknown']),
+  reason: z.string().nullable(),
+})
+
+// Ce que l'édition installée DÉCLARE, confronté à ce qui tourne. Miroir exact de `forgemaster toolchain
+// check` : même objet, donc pas deux vérités qui divergent. `edition_dir` est OÙ le manifeste a été lu
+// (`null` = il ne l'a pas été, et `reason` dit pourquoi).
+export const EditionSchema = z.object({
+  edition_dir: z.string().nullable(),
+  reason: z.string().nullable(),
+  state: z.enum(['up-to-date', 'differs', 'unknown']),
+  maps: z.array(EditionMapSchema),
+})
+export type Edition = z.infer<typeof EditionSchema>
+
+// La topologie du serveur de corpus consommé. DÉDUITE du disque, jamais déclarée par une clé d'env (qui
+// pourrait mentir après un re-câblage). `sha` n'est rendu que pour `co-installed` — seul cas où le binaire
+// servi est sur ce disque ; un serveur distant se DEMANDE, il ne se devine pas.
+export const McpTopologySchema = z.object({
+  topology: z.enum(['co-installed', 'remote', 'none', 'unknown']),
+  sha: z.string().nullable(),
+  endpoint: z.string().nullable(),
+  reason: z.string().nullable(),
+})
+
+// De quel MODE d'install cette instance vient. Déduit du disque (tampon de build × édition embarquée), et
+// c'est ce qui empêche un editable-sibling et un wheel épinglé d'être deux identités sous le même numéro de
+// version. `checkout` n'est pas une panne : c'est le mode de développement.
+export const InstallModeSchema = z.object({
+  mode: z.enum(['edition', 'wheel', 'checkout', 'unknown']),
+  reason: z.string().nullable(),
+})
+
+// Provenance de BUILD de l'instance + l'identité de ses QUATRE pièces. Consommée pour son IDENTITÉ
+// (`version`/`sha`/`committed_at` : la version de paquet ne bouge pas d'un wheel à l'autre, le SHA de build
+// si — c'est donc lui qui prouve qu'une bascule a eu lieu), pour sa FRAÎCHEUR (`comparable`/`stale`/… ,
+// surface de disponibilité) et pour son ÉDITION (`install`/`maps`/`edition`/`mcp`).
+//
+// Les trois volets d'identité sont typés SÉPARÉMENT parce qu'ils vieillissent séparément — le wheel à la
+// réinjection, les cartes à `forgemaster toolchain install`, le serveur MCP à l'édition. Les fondre en un
+// seul verdict mentirait dès que l'un bouge seul.
 export const VersionSchema = z.object({
   version: z.string(),
   sha: z.string().nullable(),               // checkout éditable : wheel non tamponné → provenance inconnue
@@ -1170,6 +1226,10 @@ export const VersionSchema = z.object({
   // comparaison échoue (référence connue, build inconnu) — et il sert de clé au rappel qui s'ignore.
   reference: z.string().nullable(),         // chemin du miroir bare, `null` = aucun sur ce disque
   head: z.string().nullable(),              // SHA de la référence, `null` = pas lu
+  install: InstallModeSchema,               // de quel mode d'install cette instance vient
+  maps: z.array(ServedMapSchema),           // les 3 cartes hôte SERVIES
+  edition: EditionSchema,                   // ce que l'édition installée DÉCLARE pour elles
+  mcp: McpTopologySchema,                   // le serveur de corpus consommé
 })
 export type Version = z.infer<typeof VersionSchema>
 

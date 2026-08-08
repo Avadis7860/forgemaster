@@ -404,7 +404,15 @@ def compare(served: list[dict], attendu: Mapping[str, str | None]) -> list[dict]
 
 def overall_state(entries: list[dict]) -> str:
     """L'état d'ensemble : `differs` dès qu'une carte diffère, sinon `unknown` dès qu'une n'a pas pu être
-    comparée, sinon `up-to-date`. PUR. « Pas pu vérifier » ne se fond JAMAIS dans « à jour »."""
+    comparée, sinon `up-to-date`. PUR. « Pas pu vérifier » ne se fond JAMAIS dans « à jour ».
+
+    **Aucune entrée ⇒ `unknown`**, jamais `up-to-date` : un ensemble vide satisfait « aucune ne diffère »
+    par vacuité, et le lire comme un vert dirait « conforme » à une instance dont on n'a rien pu comparer.
+    Ce cas est INATTEIGNABLE par `maps_provenance` (qui rend une entrée par carte de `MAP_REPOS`, quitte à
+    la marquer inconnue) et il le devient dès qu'un appelant injecte sa propre liste — ce que fait
+    `build_provenance.provenance`, dont le lecteur de cartes dégrade en `[]`."""
+    if not entries:
+        return "unknown"
     states = {e["state"] for e in entries}
     if "differs" in states:
         return "differs"
@@ -556,7 +564,8 @@ def run_step(runner: Runner, step: dict, *, env: Mapping[str, str], steps: list[
     return bool(entry["ok"])
 
 
-def check_tools(settings: Settings, *, maps_dir: Path | None = None) -> dict:
+def check_tools(settings: Settings, *, maps_dir: Path | None = None,
+                served: list[dict] | None = None) -> dict:
     """L'instance sert-elle les cartes de son ÉDITION ? Lecture **strictement locale, zéro réseau, zéro
     subprocess** — **ne lève pas** : une édition illisible devient `unknown` porteur de sa raison, jamais une
     exception ni un vert. Retour `{edition_dir, reason, state, maps:[{name, served, edition, state,
@@ -567,8 +576,13 @@ def check_tools(settings: Settings, *, maps_dir: Path | None = None) -> dict:
     fois les cartes épinglées : « suis-je en retard sur upstream ? » est la question du **wheel** (portée par
     `build_provenance`, puis par le canal servi de la phase 5). Celle qui reste, et qui n'avait aucune
     réponse, est **« mes cartes sont-elles celles de mon édition ? »** — elle se pose exactement quand une
-    instance a monté d'édition sans reposer son outillage, et elle se répond sans réseau."""
-    served = maps_provenance(settings)
+    instance a monté d'édition sans reposer son outillage, et elle se répond sans réseau.
+
+    `served` est **injectable** pour la même raison que `stamp`/`maps` le sont dans `build_provenance` : la
+    sonde `GET /api/version` lit DÉJÀ les cartes servies pour son volet `maps`, et les relire ici ferait
+    deux parcours du même `.dist-info` — le défaut « deux marches, une liste » que la phase 2a‴ a payé une
+    fois."""
+    served = maps_provenance(settings) if served is None else served
     d = Path(maps_dir) if maps_dir is not None else edition_maps_dir()
     attendu: dict[str, str | None] = {}
     note: str | None = None
