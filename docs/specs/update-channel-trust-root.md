@@ -5,8 +5,8 @@
 > implémente la **primitive** (jeu de clés, `key_id` re-dérivé, deux conditions, refus distincts) et
 > `tests/test_update_channel.py` la garde. Le **verdict** l'est aussi depuis le 2026-08-08 — dont la
 > conduite en dégradé de la règle 12, qui n'était jusque-là qu'écrite (cf. `update-channel-manifest.md`
-> §« Le verdict »). Reste **non livrée** : la vraie paire de clés (donc `_keys/release-keys.json`, absent
-> — une édition sans racine ne va pas sur le réseau, cf. §8).
+> §« Le verdict »). La **paire réelle existe depuis le 2026-08-08** et `_keys/release-keys.json` est embarqué
+> (cf. §« La cérémonie, jouée ») : cette spec est **livrée**.
 > Cibles : `update_channel.py` (le canal — **pas** `update.py`, qui est la moitié hors-ligne et n'a aucune
 > référence vers lui), `_keys/` (le jeu de clés embarqué), `build_provenance.py` (`edition`, qui répond déjà
 > « quelle édition tourne ici ? »). Le **format** de ce qui est signé vit dans `update-channel-manifest.md`.
@@ -81,6 +81,36 @@ détiennent toutes deux le secret par droit) ; il est disqualifié dès que le v
       sonde » ; le second dit « ces octets ne sont pas de nous ». Les confondre fait perdre le seul indicateur
       de compromission qu'un système hors-ligne aura jamais.
 
+## La cérémonie, jouée
+
+Le 2026-08-08. Une seule fois — c'est le propre d'une racine de confiance : elle voyage dans **toutes** les
+éditions déjà distribuées, donc elle ne se corrige pas après coup (cf. §8 et la conséquence assumée de §7).
+
+| | |
+|---|---|
+| `key_id` | `a9121c5cdc09abd6` — **dérivé par le produit** (`update_channel.key_id`), jamais saisi |
+| publique | `7uMQX4-dAuA2KIJSgEq82t5FZVz7XM7jjpwF7Yld_vI=`, embarquée en `_keys/release-keys.json` |
+| privée | **le coffre BWS, et rien d'autre** — `VAULT_FORGEMASTER_RELEASE_SIGNING_KEY` |
+
+La paire est née **en mémoire** dans un seul process, qui a poussé la privée droit dans le coffre et n'a
+imprimé que la publique. Elle n'a jamais touché un disque, un `argv`, une variable d'environnement ni un
+runner. Elle n'en sort qu'en **pipe** vers `scripts/publish_channel.py`, sur le poste du mainteneur.
+
+Deux propriétés du geste ne sont pas des intentions mais des gardes du script qui l'a joué :
+
+- **la création est confirmée par une RELECTURE** depuis le coffre suivie d'un aller-retour
+  signature → vérification, jamais par le succès du POST. Un coffre qui accepte une valeur et en rend une
+  autre produirait une racine **orpheline** : une publique embarquée partout, dont la privée n'est nulle
+  part — la seule panne de ce système qu'on ne pourrait plus réparer ;
+- **la cérémonie ne dérive aucun `key_id`.** Elle imprime une publique ; c'est le produit qui en dérive
+  l'identifiant, et `trust_root()` le re-vérifie à chaque lecture (règle 3). Un identifiant dérivé qui aurait
+  deux implémentations n'aurait plus aucune des propriétés pour lesquelles on l'a dérivé.
+
+Côté build, `deploy/build-wheel.sh` **échoue** désormais si `_keys/release-keys.json` manque du wheel. Une
+édition sans racine reste un état honnête — celles d'avant cette date, où `trust_root()` rend `[]` et où le
+canal ne prétend rien. Un wheel bâti **après** et publié sans clé serait, lui, une régression **muette** :
+l'instance cesserait de vérifier sans que rien ne le dise.
+
 ## Rotation et révocation
 
 **Rotation, trois mouvements** — le jeu de clés est **plat** (pas de racine déléguante, pas de chaîne) :
@@ -130,5 +160,6 @@ qu'une clé volée permet.
 L'**hébergement** du manifeste, son **schéma complet** au-delà de l'enveloppe et de la liste de signatures, la
 **lecture périodique** (démarrage puis intervalle, sans jamais bloquer le daemon) et le **verdict d'interface**
 appartiennent aux phases suivantes du canal — **toutes livrées depuis**, et décrites par
-`update-channel-manifest.md`. Reste hors de ces deux specs : la **cérémonie de génération** de la paire, la
-publication de la première Release, et la **proposition/consentement** (accepter, différer, refuser).
+`update-channel-manifest.md`. La **cérémonie de génération** en sortait aussi — elle y est entrée le
+2026-08-08, une fois jouée (§« La cérémonie, jouée ») : ce qui reste hors de ces deux specs est la
+publication de la première Release et la **proposition/consentement** (accepter, différer, refuser).

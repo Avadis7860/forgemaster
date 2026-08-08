@@ -179,6 +179,12 @@ assert "forgemaster/_ui_contract.json" in names, \
 assert "forgemaster/_build.json" in names, \
     f"provenance de build absente du wheel {whl} — src/forgemaster/_build.json non embarqué (le signal de " \
     f"fraîcheur serait aveugle : c'est le faux-vert qu'on corrige)"
+assert "forgemaster/_keys/release-keys.json" in names, \
+    f"racine de confiance absente du wheel {whl} — src/forgemaster/_keys/release-keys.json non embarqué. " \
+    f"Une édition SANS racine reste un état honnête (celles d'avant la cérémonie du 2026-08-08 : " \
+    f"`trust_root()` rend [], le canal ne prétend rien). Un wheel bâti APRÈS elle et publié sans clé, lui, " \
+    f"est une régression MUETTE : l'instance accepterait le canal, n'aurait aucune clé pour vérifier " \
+    f"l'annonce, et ne dirait jamais qu'elle a cessé de vérifier."
 edition = sorted(n for n in names if n.startswith("forgemaster/_maps/"))
 assert "forgemaster/_maps/maps.json" in edition and len(edition) == 4, \
     f"édition des cartes absente ou incomplète dans {whl} : {len(edition)} membre(s) sous " \

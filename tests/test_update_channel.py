@@ -244,6 +244,25 @@ def test_une_racine_presente_mais_vide_nest_pas_une_racine_absente(tmp_path: Pat
         uc.trust_root(vide)
 
 
+def test_la_racine_EMBARQUEE_dans_ce_depot_est_lisible_et_re_derivee():
+    """Les deux tests ci-dessus portent sur des fichiers de `tmp_path` : ils gardent la LECTURE, jamais ce
+    que ce dépôt embarque réellement. Or `_keys/release-keys.json` est le seul fichier du produit qu'on ne
+    peut pas corriger après distribution — il voyage dans chaque édition, et une édition ne se rappelle pas.
+
+    Ce test lit le fichier **committé** (pas une copie) par le chemin de production, `uc.trust_root()` sans
+    argument. Il mord sur exactement la panne qu'une racine ne pardonne pas : un `key_id` retouché à la main
+    (`trust_root` re-dérive et lève), une publique tronquée, un JSON cassé par une édition manuelle. Le
+    garde-fou de `build-wheel.sh` dit que le fichier est DANS le wheel ; celui-ci dit qu'il VAUT quelque
+    chose — et il le dit au commit, pas au build."""
+    keys = uc.trust_root()
+    assert keys, ("aucune racine de confiance embarquée : la cérémonie du 2026-08-08 l'a posée, une édition "
+                  "bâtie d'ici sans elle cesserait de vérifier les annonces SANS le dire")
+    assert len(keys) == 1, f"{len(keys)} clés embarquées — aucune rotation n'a été jouée, une seule est attendue"
+    (k,) = keys
+    assert len(k["public"]) == 32, f"publique de {len(k['public'])} octets — Ed25519 en fait 32"
+    assert k["key_id"] == uc.key_id(k["public"])   # ceinture : `trust_root` l'exige déjà, on ne le suppose pas
+
+
 # --- 4. le tirage : plafond, injoignable, et ce qui n'a PAS été demandé --------------------------------
 
 
