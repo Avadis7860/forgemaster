@@ -39,8 +39,9 @@ from forgemaster.provision import mcp as wiring
 from forgemaster.tools import Runner, anonymous_env, dist_provenance, run_step, venv_site_packages
 
 # Le serveur, ÉPINGLÉ. §3 de la décision d'édition : une pièce de classe « nous » monte AVEC l'édition,
-# jamais seule — l'inverse exact de `tools.MAP_REF = "main"` (réf mobile, dont la mobilité est précisément
-# ce qui a rendu `forgemaster toolchain check` nécessaire). Bump = une entrée CHANGELOG + une édition.
+# jamais seule. C'était ici le SEUL épinglage du produit — les 3 cartes hôte, elles, sortaient d'une réf
+# mobile (`tools.MAP_REF = "main"`, retirée le 2026-08-08 : elles viennent désormais des wheels de
+# l'édition). Bump = une entrée CHANGELOG + une édition.
 SERVER_REPO = "https://github.com/Avadis7860/forgemaster-catalogs.git"
 SERVER_REF = "e216b12fa1a92f1a44a6415b50abe5382dbad6ac"  # + l'offre de source AGPL §13 sur GET /version
 SERVER_DIST = "forgemaster-catalogs"          # nom de DISTRIBUTION (pip), pas de module

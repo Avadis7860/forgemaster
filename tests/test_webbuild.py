@@ -238,6 +238,7 @@ def _stage_all(root: Path) -> None:
     _touch(root / "build" / "vendor" / "codemap" / "__main__.py")
     _touch(root / "build" / "vendor" / "taskmap" / "__init__.py")
     _touch(root / "build" / "vendor" / "verify-runner" / "render_check.js")
+    _touch(root / "build" / "vendor" / "edition-maps" / "maps.json")
     _touch(root / "src" / "forgemaster" / "_build.json")
 
 
@@ -249,9 +250,21 @@ def test_plan_force_includes_embeds_all_when_staged(tmp_path: Path):
         "build/vendor/codemap": "codemap",
         "build/vendor/taskmap": "taskmap",
         "build/vendor/verify-runner": "forgemaster/_verify_runner",
+        "build/vendor/edition-maps": "forgemaster/_maps",
         "src/forgemaster/_build.json": "forgemaster/_build.json",
     }
     assert warnings == []
+
+
+def test_plan_force_includes_warns_when_the_edition_maps_are_absent(tmp_path: Path):
+    """Sans elles, `forgemaster toolchain install` REFUSE de poser (fail-loud, pas de repli git) : l'hôte
+    resterait sans code-map/docsmap/frontmap. Le wheel se bâtit quand même — c'est le cas normal d'un build
+    dev — mais il le DIT."""
+    _stage_all(tmp_path)
+    (tmp_path / "build" / "vendor" / "edition-maps" / "maps.json").unlink()
+    force, warnings = hatch_build.plan_force_includes(tmp_path)
+    assert "build/vendor/edition-maps" not in force
+    assert any("_maps" in w or "cartes" in w for w in warnings)
 
 
 def test_plan_force_includes_warns_when_runner_absent(tmp_path: Path):
@@ -292,7 +305,7 @@ def test_plan_force_includes_warns_when_build_stamp_absent(tmp_path: Path):
 def test_plan_force_includes_warns_when_all_absent(tmp_path: Path):
     force, warnings = hatch_build.plan_force_includes(tmp_path)
     assert force == {}
-    assert len(warnings) == 5                                   # SPA+codemap+taskmap+runner+provenance
+    assert len(warnings) == 6                          # SPA+codemap+taskmap+runner+cartes+provenance
 
 
 # -- garde d'INVENTAIRE : « et rien d'autre » (ce qu'une garde de présence ne peut pas dire) ---------------
@@ -302,6 +315,8 @@ _DECLARE = dict(                                                # ce que `git ls
     codemap_files={"__main__.py", "core/graph.py"},
     taskmap_files={"__init__.py"},
     runner_files={"render_check.js", "package.json"},
+    maps_files={"code_map-0.1.0-py3-none-any.whl", "docs_map-0.1.0-py3-none-any.whl",
+                "front_map-0.1.0-py3-none-any.whl", "maps.json"},
 )
 _SAIN = [
     "forgemaster/cli.py",
@@ -311,6 +326,10 @@ _SAIN = [
     "forgemaster/_web_dist/assets/index-D4f2a9.js",             # nom HASHÉ par Vite : admis par préfixe
     "forgemaster/_verify_runner/render_check.js",
     "forgemaster/_verify_runner/package.json",
+    "forgemaster/_maps/maps.json",
+    "forgemaster/_maps/code_map-0.1.0-py3-none-any.whl",
+    "forgemaster/_maps/docs_map-0.1.0-py3-none-any.whl",
+    "forgemaster/_maps/front_map-0.1.0-py3-none-any.whl",
     "codemap/__main__.py",
     "codemap/core/graph.py",
     "codemap/_vendored_from.txt",
@@ -351,3 +370,13 @@ def test_inventaire_refuse_une_racine_inconnue():
 def test_inventaire_nomme_un_module_non_suivi_sous_src():
     names = [*_SAIN, "forgemaster/scratch.py"]                  # un fichier gitignoré qui passerait le walk
     assert hatch_build.unexpected_wheel_members(names, **_DECLARE) == ["forgemaster/scratch.py"]
+
+
+def test_inventaire_ferme_ledition_des_cartes_au_lieu_de_louvrir_par_prefixe():
+    """`_maps/` est une liste FERMÉE, pas un préfixe : le staging d'un build précédent, un wheel de carte
+    renommé, un `.whl` qui traîne — tout ça entrerait par un préfixe. `_web_dist/` reste le SEUL endroit où
+    l'inventaire est ouvert, parce que ses noms sont hashés par le build front et ne se déclarent pas."""
+    names = [*_SAIN, "forgemaster/_maps/task_map-0.1.0-py3-none-any.whl"]
+    assert hatch_build.unexpected_wheel_members(names, **_DECLARE) == [
+        "forgemaster/_maps/task_map-0.1.0-py3-none-any.whl"
+    ]

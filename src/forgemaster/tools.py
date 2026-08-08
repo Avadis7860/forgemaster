@@ -19,15 +19,26 @@ vérif install fraîche, jamais au gate déterministe.
 
 Pas dans le venv du forgemaster (ne pas polluer ses deps ni son PATH systemd) : un venv **séparé** sous
 FORGEMASTER_HOME. Node via **nodeenv** (rootless, pip-natif) → autonome, marche en portée `--user` sans sudo.
-Les 3 cartes sont **publiques** (2026-08-03) : le clone est **ANONYME**, et aucun credential n'entre ici —
-ni `token`, ni `token_ref`, ni `credential_env`. Le chemin d'auth a été retiré plutôt que laissé dormant :
-tant qu'il existait, chaque E2E tournait sous une configuration qu'aucun utilisateur n'aura jamais, donc
-prouvait une fiction. `GIT_TERMINAL_PROMPT=0` **reste** — sans lui, un repo devenu injoignable (renommé,
-re-privatisé) ferait *pendre* pip sur un prompt de credentials jusqu'au timeout, au lieu d'échouer net.
+
+**Les 3 cartes viennent de l'ÉDITION, plus d'une réf mobile** (2026-08-08). Jusqu'ici elles étaient tirées de
+`git+https://…@main` : deux installs à une semaine d'écart posaient deux produits sous le même numéro de
+version, et le critère de l'édition (« deux installs de la même édition posent exactement le même code »)
+était donc invérifiable pour elles. `deploy/build-wheel.sh` les bâtit désormais au SHA du sibling et les
+embarque dans le wheel (`forgemaster/_maps` : 3 wheels + `maps.json`) ; l'install est **hors-ligne**
+(`--no-index`, des chemins de fichiers) et **épinglée**. Ce qui disparaît avec la réf : le chemin git entier,
+donc AUCUN clone, donc plus aucune surface où un credential pourrait entrer — la propriété n'est plus tenue
+par un env de précaution mais par l'absence du chemin.
+
+`toolchain check` suit le même mouvement : il comparait le commit servi au `main` amont (`git ls-remote`) ;
+il compare désormais le commit **servi** au commit que l'**édition installée déclare**. Zéro réseau, exact,
+et il répond à la question qui reste ouverte tant que `update apply` ne repose pas les cartes — *cette
+instance sert-elle les cartes de son édition ?* La question « mon édition est-elle en retard ? » est celle
+du **wheel**, portée par `build_provenance`.
 """
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import shutil
@@ -45,15 +56,27 @@ class ToolPreflightError(RuntimeError):
     """Un binaire déclaré par la facette active (`allowedTools`) ne résout pas sur le PATH du worker.
     Levé AVANT le spawn (fail-loud, actionnable) : le worker ne découvre plus l'absence à l'usage."""
 
-# Les 3 cartes de contenu par-projet, packagées (console_scripts codemap/docsmap/frontmap). Installées depuis
-# leur repo GitHub PUBLIC à une réf suivie, en clone ANONYME — aucun credential sur ce chemin.
-# (task-map exclu : moteur central importé en-process, pas une carte host — cf. docstring du module.)
+
+class EditionMapsError(RuntimeError):
+    """L'édition installée ne porte pas les 3 cartes posables (`forgemaster/_maps` absent, illisible ou
+    incomplet). **Fail-loud, jamais un repli git** : quel mode d'install est actif est une question qui se
+    RÉPOND (phase 4·3), elle ne se pré-répond pas ici par une cascade silencieuse vers une réf mobile."""
+
+# Les 3 cartes de contenu par-projet, packagées (console_scripts codemap/docsmap/frontmap). Posées depuis les
+# wheels que l'ÉDITION embarque (`forgemaster/_maps`) — plus aucun clone, donc aucun credential possible.
+# L'URL reste l'IDENTITÉ de chaque carte (d'où elle vient, ce qu'on lit dans un rapport), pas une source
+# d'install. (task-map exclu : moteur central importé en-process, pas une carte host — cf. docstring.)
 MAP_REPOS: dict[str, str] = {
     "code-map": "https://github.com/Avadis7860/code-map.git",
     "docs-map": "https://github.com/Avadis7860/docs-map.git",
     "front-map": "https://github.com/Avadis7860/front-map.git",
 }
-MAP_REF = "main"
+# Le manifeste de l'édition, écrit par `deploy/build-wheel.sh` à côté des 3 wheels.
+EDITION_MAPS_DIR = "_maps"
+EDITION_MANIFEST = "maps.json"
+# Le tampon posé DANS chaque paquet de carte : après `pip install`, il vit sous `<site-packages>/<pkg>/` et
+# décrit donc CE QUI EST INSTALLÉ — pas ce que l'édition prétend avoir posé.
+VENDORED_FROM = "_vendored_from.txt"
 # Outils qualité Python (extra `forgemaster[dev]`, NON tirés par `pip install <wheel>` — deps runtime seules).
 PY_QUALITY: tuple[str, ...] = ("ruff", "pytest", "mypy")
 # Node LTS via nodeenv (rootless) — prefix autonome sous tools/nodeenv, ses bin symlinkés dans tools/bin.
@@ -166,13 +189,14 @@ def preflight_tools(worktree: Path, settings: Settings, *, env: Mapping[str, str
 
 # -- provenance de l'outillage SERVI (lecture LOCALE, zéro réseau, ne lève jamais) --------------------
 #
-# Une instance tire les 3 cartes UNE FOIS, au provisioning, à `MAP_REF` — une réf MOBILE. Rien ne
-# re-synchronise ensuite, et `preflight_tools` ne teste qu'une PRÉSENCE : l'instance sert donc des cartes
-# qui vieillissent sans que rien ne le dise. Mesuré le 2026-08-03 : un écart né en moins de 4 h.
-#
-# Il n'y a AUCUN tampon à écrire pour le savoir — pip pose déjà `direct_url.json` (PEP 610) dans le
-# `dist-info` à l'install, avec le `commit_id` RÉSOLU. On LIT ce qui existe. Même mécanisme que la
-# provenance de `forgemaster-catalogs` (un mécanisme, deux consommateurs) et même contrat de dégradation que
+# Une instance pose les 3 cartes au provisioning et rien ne les re-synchronise ensuite ; `preflight_tools`
+# ne teste qu'une PRÉSENCE. Elle sert donc des cartes dont l'identité doit être LISIBLE, sans quoi personne
+# ne peut dire ce qui tourne là. Deux sources, dans cet ordre :
+#   1. le tampon `_vendored_from.txt` posé DANS le paquet par `build-wheel.sh` — le mode canonique depuis le
+#      2026-08-08 (les cartes viennent des wheels de l'édition, et un wheel n'a pas de `vcs_info`) ;
+#   2. `direct_url.json` (PEP 610), que pip pose à l'install git avec le `commit_id` RÉSOLU — le mode
+#      historique, encore vivant sur toute instance provisionnée avant cette date.
+# On LIT ce qui existe, on n'écrit aucun registre parallèle. Même contrat de dégradation que
 # `build_provenance.read_stamp` : un `sha=None` s'accompagne TOUJOURS d'un `reason`, jamais d'un silence.
 _SHA_LENGTHS = (40, 64)             # sha1 (défaut de git) et sha256 (transition amont)
 
@@ -224,15 +248,38 @@ def _dist_info(sp: Path, dist_name: str) -> Path | None:
     return None
 
 
+def _stamped_sha(sp: Path, dist: Path) -> str | None:
+    """Le SHA du tampon `_vendored_from.txt` posé DANS le paquet par `build-wheel.sh`, ou None. Ne lève pas.
+
+    Le fichier est localisé par le **`RECORD`** de la distribution — jamais par un nom de paquet deviné
+    depuis le nom de distribution : `code-map` → `codemap` marche, mais c'est une convention, pas une règle
+    (PEP 503 normalise le nom de DISTRIBUTION, il ne dit rien du nom d'IMPORT). Le RECORD, lui, est exigé par
+    le format wheel et énumère exactement ce que l'install a posé."""
+    raw = _read_text(dist / "RECORD")
+    if raw is None:
+        return None
+    for row in csv.reader(raw.splitlines()):
+        if row and row[0].endswith(f"/{VENDORED_FROM}"):
+            stamp = (_read_text(sp / row[0]) or "").strip()
+            return stamp if _looks_like_sha(stamp) else None
+    return None
+
+
 def dist_provenance(sp: Path | None, name: str) -> dict:
     """Provenance d'UNE distribution installée : `{name, sha, requested_ref, source, reason}`. Lecture
-    locale d'un seul fichier, **zéro réseau**, **ne lève jamais**. `source` dit d'où vient la réponse —
-    `vcs` (install git : le seul cas qui porte un SHA), `local-dir` (éditable/répertoire), `unknown` — et
-    tout `sha=None` porte son `reason`. Un SHA faux coûte plus cher qu'un SHA manquant : il retire le doute
-    qui aurait déclenché une vérification.
+    locale, **zéro réseau**, **ne lève jamais**. `source` dit d'où vient la réponse — `edition` (le tampon
+    posé dans le paquet par `build-wheel.sh`), `vcs` (install git), `local-dir` (éditable/répertoire),
+    `unknown` — et tout `sha=None` porte son `reason`. Un SHA faux coûte plus cher qu'un SHA manquant : il
+    retire le doute qui aurait déclenché une vérification.
 
-    Nommée `dist_*` et non `map_*` : elle ne lit rien de spécifique aux cartes — juste PEP 610 dans un
-    `.dist-info`. Le serveur MCP co-installé (`mcp.local.server_provenance`) l'appelle telle quelle, plutôt
+    **Le tampon est lu EN PREMIER, et ce n'est pas un ordre de convenance** : une carte posée depuis un
+    wheel de l'édition n'a plus de `vcs_info` (PEP 610 n'enregistre alors qu'un `archive_info`, sans SHA
+    git), donc s'en tenir à PEP 610 rendrait `sha=None` sur exactement le mode qu'on vient de rendre
+    canonique. La cascade PEP 610 reste **derrière**, inchangée : une instance encore installée en
+    `git+…@main` continue de répondre `vcs`, et c'est précisément ce qui distingue les deux modes.
+
+    Nommée `dist_*` et non `map_*` : elle ne lit rien de spécifique aux cartes — un `.dist-info`, et rien
+    d'autre. Le serveur MCP co-installé (`mcp.local.server_provenance`) l'appelle telle quelle, plutôt
     que d'entretenir une seconde lecture du même format qui divergerait au premier cas tordu."""
     out: dict = {"name": name, "sha": None, "requested_ref": None, "source": "unknown", "reason": None}
     if sp is None:
@@ -241,6 +288,10 @@ def dist_provenance(sp: Path | None, name: str) -> dict:
     dist = _dist_info(sp, name)
     if dist is None:
         out["reason"] = f"`{name}` n'est pas installée dans le venv d'outils"
+        return out
+    stamp = _stamped_sha(sp, dist)
+    if stamp is not None:
+        out["sha"], out["source"] = stamp, "edition"
         return out
     raw = _read_text(dist / "direct_url.json")
     if raw is None:
@@ -274,66 +325,79 @@ def dist_provenance(sp: Path | None, name: str) -> dict:
 def maps_provenance(settings: Settings) -> list[dict]:
     """Les 3 cartes hôte que cette instance SERT, dans l'ordre de `MAP_REPOS`. Lecture locale, **zéro
     réseau**, **ne lève jamais** → utilisable depuis une sonde HTTP (`GET /api/version`) sans risque de 500
-    ni d'attente. Dire ce qu'on SERT est local ; savoir si c'est à JOUR demande l'amont (`check_tools`)."""
+    ni d'attente. Dire ce qu'on SERT est une chose ; savoir si c'est **ce que l'édition déclare** en est une
+    autre, et c'est `check_tools` — local lui aussi désormais."""
     sp = site_packages(settings)
     return [dist_provenance(sp, name) for name in MAP_REPOS]
 
 
-# -- sonde de fraîcheur : comparaison à l'amont (réseau EXPLICITE, jamais au dispatch) ----------------
-#
-# La comparaison n'est PAS faite dans `preflight_tools`, et la raison N'EST PAS « l'instance peut être hors
-# réseau » : les 3 appelants du preflight (`dispatch/{worker,reviewer,woaw}.py`) spawnent tous `claude`, qui
-# exige l'API Anthropic. Un dispatch hors ligne n'existe pas ici.
-#
-# La vraie raison est : QUE FERAIT LE DISPATCH DE LA RÉPONSE ? `MAP_REF` est une réf MOBILE et la dérive
-# commence en quelques heures (mesuré : 4 h sur la VM 9311). Un preflight qui REFUSE bloquerait donc presque
-# tous les spawns passé la demi-journée — un check qui s'allume sur ce qui est normal PAR CONSTRUCTION. Un
-# preflight qui AVERTIT donne au worker un fait sur lequel il ne peut rien : il ne peut pas réinstaller son
-# outillage en vol (et muter les outils sous un worker qui tourne est précisément ce qu'on a écarté).
-# Accessoirement, GitHub est un SECOND fournisseur, indépendant d'Anthropic : une panne GitHub deviendrait un
-# motif neuf de ne pas pouvoir dispatcher. La comparaison va donc là où quelqu'un peut AGIR dessus — une
-# commande d'opérateur — et le produit se contente de dire localement ce qu'il sert.
-_LS_REMOTE_TIMEOUT_S = 30       # une réf, pas un clone : borné court (le dispatch, lui, ne l'appelle pas).
+# -- l'édition posable : les 3 wheels de cartes embarqués dans le wheel (lecture locale, zéro réseau) ----
 
 
-def check_plan(settings: Settings) -> list[dict]:
-    """Étapes `{name, argv}` de la sonde : un `git ls-remote <url> <ref>` par carte (PUR — construit les
-    argv, n'exécute rien). `ls-remote` ne transfère AUCUN objet : il rend la réf, pas l'historique."""
-    return [{"name": name, "argv": ["git", "ls-remote", url, MAP_REF]}
-            for name, url in MAP_REPOS.items()]
+def edition_maps_dir() -> Path:
+    """Le dossier `forgemaster/_maps` du forgemaster INSTALLÉ (3 wheels de cartes + `maps.json`), tel que
+    `deploy/build-wheel.sh` l'a embarqué. Composition de chemin, **PUR** : le dossier peut ne pas exister —
+    c'est le cas NORMAL d'un checkout dev/editable, et `read_edition` le dit alors franchement."""
+    return Path(__file__).resolve().parent / EDITION_MAPS_DIR
 
 
-def parse_ls_remote(stdout: str, ref: str = MAP_REF) -> str | None:
-    """Le SHA de `ref` dans une sortie `git ls-remote` (`<sha>\\trefs/heads/<ref>`), ou None si la réf n'y
-    est pas / la ligne n'est pas exploitable. PUR. On n'accepte que ce qui a la FORME d'un SHA."""
-    for line in stdout.splitlines():
-        sha, _, name = line.partition("\t")
-        sha = sha.strip()
-        if name.strip() in (f"refs/heads/{ref}", ref) and _looks_like_sha(sha):
-            return sha
-    return None
+def read_edition(maps_dir: Path | None = None) -> list[dict]:
+    """Ce que l'édition installée DÉCLARE : `[{name, wheel, sha, committed_at}]` dans l'ordre de
+    `MAP_REPOS`. Lève `EditionMapsError` — jamais un repli, jamais une liste vide muette.
+
+    Trois refus distincts, parce qu'ils n'ont pas le même remède : dossier absent (wheel dégradé ou install
+    editable) · manifeste illisible · une carte de `MAP_REPOS` non déclarée ou dont le wheel manque (une
+    édition **amputée** poserait 2 cartes sur 3 en rendant rc 0, exactement le demi-provisioning que
+    `install_tools` refuse déjà ailleurs)."""
+    d = Path(maps_dir) if maps_dir is not None else edition_maps_dir()
+    raw = _read_text(d / EDITION_MANIFEST)
+    if raw is None:
+        raise EditionMapsError(
+            f"l'édition installée ne porte pas les cartes ({d / EDITION_MANIFEST} absent) — un wheel de "
+            f"release les embarque (`deploy/build-wheel.sh`). En checkout dev, les cartes viennent des "
+            f"siblings éditables, pas de ce chemin.")
+    try:
+        par_nom = {m["name"]: {"name": m["name"], "wheel": m["wheel"], "sha": m.get("sha"),
+                               "committed_at": m.get("committed_at")}
+                   for m in json.loads(raw)["maps"]}
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        # Le manifeste est décodé ENTIÈREMENT ici, champs compris : un `KeyError` qui s'échapperait plus bas
+        # remonterait BRUT à `check_tools`, dont le contrat est de ne jamais lever.
+        raise EditionMapsError(f"{d / EDITION_MANIFEST} illisible ({exc}) — édition non exploitable") from exc
+    out: list[dict] = []
+    for name in MAP_REPOS:
+        m = par_nom.get(name)
+        if m is None:
+            raise EditionMapsError(f"l'édition ne déclare pas `{name}` — édition AMPUTÉE, on ne pose pas "
+                                   f"{len(par_nom)} cartes sur {len(MAP_REPOS)} en rendant vert")
+        if not (d / m["wheel"]).is_file():
+            raise EditionMapsError(f"`{name}` est déclarée mais son wheel manque ({d / m['wheel']}) — "
+                                   f"édition incohérente")
+        out.append(m)
+    return out
 
 
-def compare(served: list[dict], remote: Mapping[str, str | None]) -> list[dict]:
-    """Fonction **PURE** (zéro I/O) : confronte le commit SERVI de chaque carte à celui de `MAP_REF` en
-    amont. Les faits viennent de l'appelant (résolveurs injectables), comme `build_provenance.staleness`.
+def compare(served: list[dict], attendu: Mapping[str, str | None]) -> list[dict]:
+    """Fonction **PURE** (zéro I/O) : confronte le commit SERVI de chaque carte à celui que l'ÉDITION
+    installée déclare. Les faits viennent de l'appelant (résolveurs injectables), comme
+    `build_provenance.staleness`.
 
     Trois états, jamais un faux-vert : `up-to-date` · `differs` (les DEUX SHA écrits) · `unknown` (+ son
-    `reason` : carte non installée, ou amont injoignable). **On ne dit jamais « en retard de N commits »** :
-    `ls-remote` ne rend que des réfs, compter exigerait de rapatrier les objets. Un compte inventé retirerait
-    le doute qui doit justement déclencher la vérification."""
+    `reason` : carte non installée, ou édition muette sur elle). **On ne dit jamais « en retard de N
+    commits »** : deux SHA ne se soustraient pas sans l'historique, et un compte inventé retirerait le doute
+    qui doit justement déclencher la vérification."""
     out: list[dict] = []
     for m in served:
         name = m["name"]
-        upstream = remote.get(name)
-        entry: dict = {"name": name, "served": m["sha"], "remote": upstream,
+        cible = attendu.get(name)
+        entry: dict = {"name": name, "served": m["sha"], "edition": cible,
                        "state": "unknown", "reason": None}
         if m["sha"] is None:
             entry["reason"] = m["reason"]
-        elif upstream is None:
-            entry["reason"] = f"réf `{MAP_REF}` illisible en amont — comparaison impossible"
+        elif cible is None:
+            entry["reason"] = "l'édition installée ne déclare rien pour cette carte — comparaison impossible"
         else:
-            entry["state"] = "up-to-date" if m["sha"] == upstream else "differs"
+            entry["state"] = "up-to-date" if m["sha"] == cible else "differs"
         out.append(entry)
     return out
 
@@ -356,29 +420,33 @@ def _symlink_sources(settings: Settings) -> dict[str, Path]:
     return srcs
 
 
-def install_plan(settings: Settings) -> list[dict[str, object]]:
-    """Étapes ordonnées `{name, argv}` de l'install (PUR — construit les argv, n'exécute rien) : les 3 cartes
-    (`git+<url>@<ref>`) + les outils qualité py, puis l'**épinglage forcé** des cartes, puis nodeenv, Node.
+def install_plan(settings: Settings, *, maps_dir: Path | None = None) -> list[dict[str, object]]:
+    """Étapes ordonnées `{name, argv}` de l'install (PUR au sens du subprocess — construit les argv, n'exécute
+    rien ; il LIT le manifeste de l'édition) : les 3 cartes depuis leurs **wheels embarqués**, puis les outils
+    qualité py, puis nodeenv, puis Node. Lève `EditionMapsError` si l'édition n'est pas posable.
 
-    **Pourquoi DEUX passes sur les cartes** — le piège pip-git-SHA, vu en vrai sur la VM 9311 le 2026-08-03 :
-    `pip install --upgrade git+<url>@main` clone, **résout `main` au bon commit**, prépare les métadonnées…
-    puis **saute l'install** parce que la version installée est identique. Les cartes sont figées à `0.1.0`,
-    donc la version ne discrimine JAMAIS : cette commande ne remet rien à niveau et rend pourtant rc 0. Un
-    `forgemaster toolchain install` répondait « 🟢 » sans avoir bougé une ligne — le faux-vert exact que la
-    sonde
-    `check_tools` a attrapé (elle est restée rouge après le « remède », et c'est comme ça qu'on l'a su).
+    **Les cartes en PREMIER, et c'est délibéré** : c'est la seule étape hors-ligne. Quand le réseau manque,
+    les 3 cartes sont posées et l'échec porte le nom de ce qui exigeait vraiment le réseau, au lieu de tout
+    faire tomber d'un bloc.
 
-    La 1ʳᵉ passe reste `--upgrade` : c'est elle qui résout les **dépendances** (correcte sur une install
-    fraîche). La 2ᵈᵉ force le **code des cartes** à la réf demandée sans retoucher aux deps
-    (`--force-reinstall --no-deps`) — même parade que le cutover de `forgemaster-catalogs`. Retirer la 2ᵈᵉ
-    passe
-    rétablit le no-op silencieux ; un test la verrouille."""
+    **`--no-index`** : la garantie hors-ligne est dans l'argv, pas dans une intention — pip ne peut pas
+    « compléter » depuis PyPI une carte qu'il trouverait insuffisante.
+
+    **`--force-reinstall` reste, le piège pip no-op a survécu au changement de source.** Vu en vrai sur la
+    VM 9311 le 2026-08-03 avec `git+…@main` : pip résout, prépare les métadonnées, puis **saute l'install**
+    parce que la version installée est identique. Les cartes sont figées à `0.1.0`, donc la version ne
+    discrimine JAMAIS — fichier ou pas. Sans ce drapeau, `toolchain install` rend « 🟢 » sans avoir bougé une
+    ligne. Un test le verrouille.
+
+    **`--no-deps` n'est PAS repris** (il l'était sur la 2ᵈᵉ passe git, pour ne pas retoucher aux deps déjà
+    résolues) : les 3 cartes ont `dependencies = []` aujourd'hui, et le jour où l'une en gagne une, une
+    install hors-ligne doit **échouer bruyamment** plutôt que poser une carte amputée en rendant rc 0."""
     pip = str(tools_venv(settings) / "bin" / "pip")
-    map_specs = [f"git+{url}@{MAP_REF}" for url in MAP_REPOS.values()]
+    d = Path(maps_dir) if maps_dir is not None else edition_maps_dir()
+    wheels = [str(d / m["wheel"]) for m in read_edition(d)]
     return [
-        {"name": "pip-tools", "argv": [pip, "install", "--upgrade", *map_specs, *PY_QUALITY]},
-        {"name": "pip-maps-pin",
-         "argv": [pip, "install", "--force-reinstall", "--no-deps", *map_specs]},
+        {"name": "pip-maps", "argv": [pip, "install", "--no-index", "--force-reinstall", *wheels]},
+        {"name": "pip-quality", "argv": [pip, "install", "--upgrade", *PY_QUALITY]},
         {"name": "pip-nodeenv", "argv": [pip, "install", "--upgrade", "nodeenv"]},
         {"name": "nodeenv", "argv": [str(tools_venv(settings) / "bin" / "nodeenv"),
                                      f"--node={NODE_VERSION}", "--force", str(nodeenv_prefix(settings))]},
@@ -392,23 +460,31 @@ def _default_runner(argv: list[str], *, env: Mapping[str, str] | None, timeout: 
 
 
 def anonymous_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
-    """L'env des clones git de pip : l'ambiant, **sans aucun credential**, et `GIT_TERMINAL_PROMPT=0`.
+    """L'env d'un clone git de pip : l'ambiant, **sans aucun credential**, et `GIT_TERMINAL_PROMPT=0`.
 
-    Les 3 cartes sont publiques → le clone est anonyme. Ce seam existe pour que ça reste vrai : il ne
-    compose aucun `url.…insteadOf`, donc aucun token ne peut se glisser dans l'env d'un enfant git (le test
-    l'asserte). Le `GIT_TERMINAL_PROMPT=0` n'est pas décoratif — un repo renommé ou re-privatisé fait
-    *pendre* git sur un prompt jusqu'au timeout de 900 s, au lieu de rendre une erreur lisible."""
+    Le seam existe pour que ça reste vrai : il ne compose aucun `url.…insteadOf`, donc aucun token ne peut
+    se glisser dans l'env d'un enfant git (le test l'asserte). Le `GIT_TERMINAL_PROMPT=0` n'est pas
+    décoratif — un repo renommé ou re-privatisé fait *pendre* git sur un prompt jusqu'au timeout, au lieu de
+    rendre une erreur lisible.
+
+    **Son consommateur n'est plus `install_tools`** (2026-08-08) : les cartes viennent de l'édition, plus
+    d'un clone, donc ce chemin-là n'a plus de git à garder. Le co-install du serveur MCP (`mcp.local`), lui,
+    clone toujours — le seam reste vivant pour lui, chez son seul appelant réel."""
     env = dict(base if base is not None else os.environ)
     env["GIT_TERMINAL_PROMPT"] = "0"
     return env
 
 
-def install_tools(settings: Settings, *, runner: Runner | None = None) -> dict:
+def install_tools(settings: Settings, *, runner: Runner | None = None,
+                  maps_dir: Path | None = None) -> dict:
     """Provisionne l'outillage hôte-niveau (IDEMPOTENT, FAIL-LOUD). Crée le venv d'outils, installe les 3
-    cartes + qualité py + Node (nodeenv), puis symlinke chaque exécutable dans `tools/bin`. Les cartes sont
-    publiques : clone **anonyme**, aucun credential n'entre par ici. Une étape rouge (rc≠0) **abandonne**
-    (jamais un demi-provisioning) et retourne `{ok:False, steps, error}`. Retour
+    cartes **depuis les wheels de l'édition** (hors-ligne) + qualité py + Node (nodeenv), puis symlinke
+    chaque exécutable dans `tools/bin`. Une étape rouge (rc≠0) **abandonne** (jamais un demi-provisioning)
+    et retourne `{ok:False, steps, error}`. Retour
     `{ok, steps:[{name, ok, exit_code, error?}], symlinks:[nom]}`.
+
+    Plus aucun credential ne peut entrer ici, et ce n'est plus tenu par un env de précaution mais par
+    l'absence du chemin : il n'y a plus d'URL dans le plan, donc plus de clone.
     """
     runner = runner or _default_runner
     root = tools_root(settings)
@@ -423,11 +499,19 @@ def install_tools(settings: Settings, *, runner: Runner | None = None) -> dict:
         report["error"] = "création du venv d'outils échouée"
         return report
 
-    # 2. env des clones git de pip : anonyme, aucun credential (les 3 cartes sont publiques).
-    env = anonymous_env()
+    # 2. env : l'ambiant, tel quel. Le `GIT_TERMINAL_PROMPT=0` d'avant gardait les clones git de pip ; il
+    #    n'y a plus de clone ici, donc plus rien à garder (il vit toujours chez `mcp.local`, qui clone).
+    env = dict(os.environ)
 
-    # 3. installs (fail-loud : abandon au 1er rouge).
-    for step in install_plan(settings):
+    # 3. installs (fail-loud : abandon au 1er rouge). Le plan LIT l'édition — une édition non posable est un
+    #    refus AVANT toute écriture, pas un demi-provisioning.
+    try:
+        plan = install_plan(settings, maps_dir=maps_dir)
+    except EditionMapsError as exc:
+        report["ok"] = False
+        report["error"] = str(exc)
+        return report
+    for step in plan:
         if not run_step(runner, step, env=env, steps=steps):
             report["ok"] = False
             report["error"] = f"étape {step['name']} échouée"
@@ -472,37 +556,35 @@ def run_step(runner: Runner, step: dict, *, env: Mapping[str, str], steps: list[
     return bool(entry["ok"])
 
 
-def check_tools(settings: Settings, *, runner: Runner | None = None) -> dict:
-    """Sonde de fraîcheur des 3 cartes servies (IMPUR : un `git ls-remote` par carte, via le runner injecté).
-    **Ne lève pas** — un amont injoignable devient un état `unknown` porteur de sa raison, jamais une
-    exception ni un vert. Clone ANONYME (`anonymous_env`) : les cartes sont publiques, aucun credential
-    n'entre ici. Retour `{ref, state, maps:[{name, served, remote, state, reason}]}`."""
-    from forgemaster.core.run import RunError, RunTimeout
-    runner = runner or _default_runner
+def check_tools(settings: Settings, *, maps_dir: Path | None = None) -> dict:
+    """L'instance sert-elle les cartes de son ÉDITION ? Lecture **strictement locale, zéro réseau, zéro
+    subprocess** — **ne lève pas** : une édition illisible devient `unknown` porteur de sa raison, jamais une
+    exception ni un vert. Retour `{edition_dir, reason, state, maps:[{name, served, edition, state,
+    reason}]}` — `edition_dir` est **où** le manifeste a été lu (diagnostic), l'`edition` de chaque entrée
+    est le **SHA** qu'il déclare pour cette carte.
+
+    Elle comparait le commit servi au `main` amont (`git ls-remote`). Ce n'était pas la bonne question une
+    fois les cartes épinglées : « suis-je en retard sur upstream ? » est la question du **wheel** (portée par
+    `build_provenance`, puis par le canal servi de la phase 5). Celle qui reste, et qui n'avait aucune
+    réponse, est **« mes cartes sont-elles celles de mon édition ? »** — elle se pose exactement quand une
+    instance a monté d'édition sans reposer son outillage, et elle se répond sans réseau."""
     served = maps_provenance(settings)
-    # Une carte qu'on ne sert PAS n'a rien à comparer : la raison est déjà locale. Ne pas interroger l'amont
-    # pour elle évite d'attendre le réseau (jusqu'au timeout, hors ligne) pour une réponse déjà connue.
-    comparable = {m["name"] for m in served if m["sha"] is not None}
-    env = anonymous_env()
-    remote: dict[str, str | None] = {}
-    for step in check_plan(settings):
-        name = str(step["name"])
-        if name not in comparable:
-            continue
-        try:
-            r = runner(step["argv"], env=env, timeout=_LS_REMOTE_TIMEOUT_S)
-        except (RunTimeout, RunError, OSError):
-            remote[name] = None
-            continue
-        remote[name] = parse_ls_remote(r.stdout) if r.ok else None
-    entries = compare(served, remote)
-    return {"ref": MAP_REF, "state": overall_state(entries), "maps": entries}
+    d = Path(maps_dir) if maps_dir is not None else edition_maps_dir()
+    attendu: dict[str, str | None] = {}
+    note: str | None = None
+    try:
+        attendu = {m["name"]: m.get("sha") for m in read_edition(d)}
+    except EditionMapsError as exc:
+        note = str(exc)
+    entries = compare(served, attendu)
+    return {"edition_dir": str(d) if note is None else None, "reason": note,
+            "state": overall_state(entries), "maps": entries}
 
 
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
-    """Route `forgemaster toolchain <install|check>`. Aucun credential sur aucune des deux — les 3 cartes sont
-    publiques, le clone est anonyme (le `--token-file` d'avant a été RETIRÉ, pas rendu optionnel : un
-    drapeau accepté-et-ignoré ferait croire qu'il sert encore)."""
+    """Route `forgemaster toolchain <install|check>`. Aucun credential sur aucune des deux — les cartes
+    viennent des wheels de l'édition, il n'y a plus de clone du tout (le `--token-file` d'avant a été RETIRÉ,
+    pas rendu optionnel : un drapeau accepté-et-ignoré ferait croire qu'il sert encore)."""
     if getattr(args, "action", None) == "check":
         return _cli_check(settings)
     report = install_tools(settings)
@@ -525,28 +607,27 @@ _CHECK_EXITS = {"up-to-date": 0, "differs": 1, "unknown": 2}
 
 
 def _cli_check(settings: Settings) -> int:
-    """Rend l'écart entre les cartes SERVIES et `MAP_REF` en amont. Sortie **1** si au moins une diffère,
-    **2** si aucune ne diffère mais qu'au moins une n'a pas pu être comparée, **0** seulement quand les
-    trois sont vérifiées à jour. Le geste de remise à niveau est EXPLICITE (`forgemaster toolchain install`,
-    idempotent) : cette commande rapporte, elle ne mute rien."""
+    """Rend l'écart entre les cartes SERVIES et celles que l'ÉDITION installée déclare. Sortie **1** si au
+    moins une diffère, **2** si aucune ne diffère mais qu'au moins une n'a pas pu être comparée, **0**
+    seulement quand les trois sont vérifiées conformes. Le geste de remise à niveau est EXPLICITE
+    (`forgemaster toolchain install`, idempotent, hors-ligne) : cette commande rapporte, elle ne mute rien."""
     report = check_tools(settings)
     for e in report["maps"]:
         mark = _CHECK_MARKS.get(e["state"], "🟡")
         if e["state"] == "differs":
-            detail = f"servie {e['served'][:12]} · amont {e['remote'][:12]} — DIFFÈRE"
+            detail = f"servie {e['served'][:12]} · édition {e['edition'][:12]} — DIFFÈRE"
         elif e["state"] == "up-to-date":
-            detail = f"servie {e['served'][:12]} — à jour"
+            detail = f"servie {e['served'][:12]} — conforme"
         else:
             detail = f"non comparée ({e['reason']})"
         print(f"  {mark} {e['name']:<10} {detail}")
     state = str(report["state"])
     if state == "differs":
-        print(f"🔴 au moins une carte diffère de `{report['ref']}` — `forgemaster toolchain install` "
-              f"les remet à niveau (idempotent). Le nombre de commits d'écart n'est pas mesurable sans "
-              f"rapatrier "
-              f"l'historique : la sonde dit LESQUELLES ont bougé, pas de combien.")
+        print("🔴 au moins une carte n'est pas celle de cette édition — `forgemaster toolchain install` "
+              "la repose (idempotent, hors-ligne). Le nombre de commits d'écart n'est pas mesurable sans "
+              "l'historique : la sonde dit LESQUELLES diffèrent, pas de combien.")
     elif state == "unknown":
-        print("🟡 fraîcheur NON vérifiée (amont injoignable ou carte absente) — ce n'est pas un vert.")
+        print(f"🟡 conformité NON vérifiée — ce n'est pas un vert. {report['reason'] or ''}".rstrip())
     else:
-        print(f"🟢 les {len(report['maps'])} cartes servies sont à jour sur `{report['ref']}`.")
+        print(f"🟢 les {len(report['maps'])} cartes servies sont celles de l'édition installée.")
     return _CHECK_EXITS.get(state, 2)

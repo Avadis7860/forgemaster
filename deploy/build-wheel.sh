@@ -8,9 +8,18 @@
 # `task-map @ git+…` à cloner au `pip install` sur l'hôte cible). Sortie :
 # `dist/forgemaster-<version>-py3-none-any.whl`, prêt à copier sur un hôte vierge et à donner à `provision-ct.sh`.
 #
+# Le wheel porte AUSSI l'**édition des 3 cartes hôte** (`forgemaster/_maps` : code-map, docs-map, front-map
+# bâties en wheels + leur manifeste). Avant, `forgemaster toolchain install` les tirait de
+# `git+https://…@main` — une réf MOBILE : deux installs à une semaine d'écart posaient deux produits sous le
+# même numéro de version. Elles voyagent désormais DANS l'artefact, épinglées au SHA du sibling qui a servi
+# à les bâtir, et leur install est hors-ligne.
+#
 # Usage : deploy/build-wheel.sh   (depuis n'importe où dans le checkout ; Node ≥ 18 + npm requis)
 #   FORGEMASTER_VENDOR_CODEMAP_SRC=<chemin> / FORGEMASTER_VENDOR_TASKMAP_SRC=<chemin> pour pointer un checkout hors
-#   sibling (défauts ../code-map, ../task-map).
+#   sibling (défauts ../code-map, ../task-map). Idem FORGEMASTER_VENDOR_DOCSMAP_SRC /
+#   FORGEMASTER_VENDOR_FRONTMAP_SRC (défauts ../docs-map, ../front-map) ; code-map n'a qu'UN pointeur
+#   (FORGEMASTER_VENDOR_CODEMAP_SRC) pour ses DEUX usages — le paquet `codemap` vendoré au wheel et la carte
+#   `code-map` de l'édition sortent ainsi du MÊME commit, au lieu de pouvoir diverger en silence.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # racine du checkout
@@ -84,6 +93,60 @@ build_sha="$(git -C "$root" rev-parse HEAD)" || { echo "✗ git rev-parse HEAD �
 build_committed_at="$(git -C "$root" show -s --format=%cI HEAD)" || { echo "✗ git show HEAD échoue" >&2; exit 1; }
 printf '{"sha": "%s", "committed_at": "%s"}\n' "$build_sha" "$build_committed_at" > "$root/src/forgemaster/_build.json"
 
+echo "→ [2c/4] édition des 3 cartes hôte → build/vendor/edition-maps/*.whl + maps.json"
+# Les 3 cartes (code-map/docs-map/front-map) étaient tirées de `git+<url>@main` par `toolchain install` — une
+# réf MOBILE. Elles sont désormais BÂTIES ICI, au SHA du sibling, et voyagent dans le wheel : l'install
+# devient hors-ligne ET épinglée. On stage le repo ENTIER (et pas seulement `src/`) parce que bâtir un wheel
+# exige aussi `pyproject.toml`, le README (`readme =`) et les `license-files` — mais seul `src/<pkg>` entre
+# dans le wheel bâti (`packages = [...]` de chaque carte).
+#
+# Le tampon de provenance est posé DANS le paquet (`src/<pkg>/_vendored_from.txt`), pas à côté : après
+# `pip install`, il vit sous `<site-packages>/<pkg>/` et décrit donc CE QUI EST INSTALLÉ. `maps.json`, lui,
+# dit ce que l'ÉDITION DÉCLARE. Deux fichiers, deux questions — c'est leur ÉCART qui rend lisible une
+# instance qui a monté sans reposer ses cartes.
+maps_out="build/vendor/edition-maps"
+rm -rf "$maps_out" build/vendor/maps; mkdir -p "$maps_out" build/vendor/maps
+maps_json="[]"
+build_map_wheel() {
+  local name="$1" pkg="$2" src="$3" staged sha at whl
+  test -f "$src/pyproject.toml" || {
+    echo "✗ carte '$name' introuvable à '$src' — clone-la à côté du forgemaster, ou pointe la variable" >&2
+    echo "  d'environnement dédiée (cf. l'en-tête de ce script). Sans elle, l'édition serait AMPUTÉE." >&2
+    exit 1; }
+  staged="build/vendor/maps/$name"
+  stage_tracked "$src" "." "$staged"
+  sha="$(git -C "$src" rev-parse HEAD)"
+  at="$(git -C "$src" show -s --format=%cI HEAD)"
+  printf '%s\n' "$sha" > "$staged/src/$pkg/_vendored_from.txt"
+  # Bâti dans un dossier VIDE puis déplacé : le nom du wheel est alors le SEUL fichier présent, au lieu
+  # d'être deviné par un `ls -t` que deux builds dans la même seconde départageraient au hasard.
+  rm -rf "$maps_out/.tmp"; mkdir -p "$maps_out/.tmp"
+  python3 -m pip wheel --no-deps --quiet "$staged" -w "$maps_out/.tmp"
+  whl="$(cd "$maps_out/.tmp" && ls -1)"
+  [ "$(printf '%s\n' "$whl" | wc -l)" -eq 1 ] || {
+    echo "✗ '$name' a produit ${whl:-0} artefact(s) au lieu d'un seul wheel — build non concluant." >&2
+    exit 1; }
+  mv "$maps_out/.tmp/$whl" "$maps_out/$whl"; rmdir "$maps_out/.tmp"
+  # Le tampon est-il DANS le wheel bâti ? Toute la provenance des cartes servies repose dessus
+  # (`tools.dist_provenance` le lit par le RECORD) : s'il manquait, l'instance rendrait `sha=null` avec une
+  # raison honnête — donc en silence, du point de vue du build. Une claim se vérifie là où on l'émet.
+  python3 -c "import sys,zipfile; n=zipfile.ZipFile(sys.argv[1]).namelist(); sys.exit(0 if sys.argv[2] in n \
+    else f'✗ tampon {sys.argv[2]} absent du wheel {sys.argv[1]} — provenance de carte muette')" \
+    "$maps_out/$whl" "$pkg/_vendored_from.txt"
+  maps_json="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); d.append(dict(zip(("name","wheel","sha","committed_at"), sys.argv[2:]))); print(json.dumps(d))' \
+    "$maps_json" "$name" "$whl" "$sha" "$at")"
+  echo "   $name → $whl (@ ${sha:0:12})"
+}
+# code-map : MÊME source que le paquet `codemap` vendoré ci-dessus — un seul pointeur, donc un seul commit.
+build_map_wheel "code-map"  "codemap"  "$cm_src"
+build_map_wheel "docs-map"  "docsmap"  "${FORGEMASTER_VENDOR_DOCSMAP_SRC:-$root/../docs-map}"
+build_map_wheel "front-map" "frontmap" "${FORGEMASTER_VENDOR_FRONTMAP_SRC:-$root/../front-map}"
+python3 -c 'import json,sys; print(json.dumps({"maps": json.loads(sys.argv[1])}, indent=2, sort_keys=True))' \
+  "$maps_json" > "$maps_out/maps.json"
+# La liste DÉCLARÉE de l'édition : écrite ici, consommée par la garde d'inventaire (4/4). Même discipline que
+# `stage_tracked` — un seul foyer de vérité, ce qui est posé et ce qui est admis ne peuvent pas diverger.
+( cd "$maps_out" && ls -1 ) > build/declared/edition-maps.txt
+
 echo "→ [3/4] build du wheel (le hook hatch embarque web/dist → forgemaster/_web_dist, codemap → codemap, taskmap → taskmap)"
 rm -f dist/forgemaster-*-py3-none-any.whl
 python3 -m pip wheel --no-deps . -w dist/
@@ -116,6 +179,11 @@ assert "forgemaster/_ui_contract.json" in names, \
 assert "forgemaster/_build.json" in names, \
     f"provenance de build absente du wheel {whl} — src/forgemaster/_build.json non embarqué (le signal de " \
     f"fraîcheur serait aveugle : c'est le faux-vert qu'on corrige)"
+edition = sorted(n for n in names if n.startswith("forgemaster/_maps/"))
+assert "forgemaster/_maps/maps.json" in edition and len(edition) == 4, \
+    f"édition des cartes absente ou incomplète dans {whl} : {len(edition)} membre(s) sous " \
+    f"forgemaster/_maps/ au lieu de 4 (3 wheels + maps.json). `forgemaster toolchain install` REFUSE de " \
+    f"poser sans elle — l'instance resterait sans code-map/docs-map/frontmap."
 # Le wheel est un artefact COMPOSITE : AGPL-3.0 dans son ensemble, avec `codemap/` et `taskmap/` sous
 # Apache-2.0. §4(a) exige de livrer une copie de la licence Apache au destinataire, §4(d) d'y propager le
 # NOTICE. Sans ces deux fichiers, le wheel embarque du code sans son attribution — la symétrie du garde-fou
@@ -140,6 +208,7 @@ trop = unexpected_wheel_members(
     codemap_files=lire("codemap.txt"),
     taskmap_files=lire("taskmap.txt"),
     runner_files=lire("verify-runner.txt"),
+    maps_files=lire("edition-maps.txt"),
 )
 if trop:
     for n in trop[:10]:
@@ -156,5 +225,5 @@ if trop:
 print(f"   ✓ inventaire clos : {len(names)} membres, tous déclarés")
 PY
 
-echo "✓ wheel prêt : $whl  (UI + code-map + taskmap + leur attribution embarqués)"
+echo "✓ wheel prêt : $whl  (UI + code-map + taskmap + les 3 cartes de l'édition + leur attribution)"
 echo "  → copie-le sur l'hôte cible avec deploy/{provision-ct.sh,bootstrap.yaml}, puis lance provision-ct.sh."

@@ -192,7 +192,8 @@ install_login_path() {
 
 # Prérequis OS de l'install ELLE-MÊME (avant le venv) : une image cloud MINIMALE (Ubuntu/Debian genericcloud)
 # n'inclut PAS python3-venv → `python3 -m venv` échoue (« ensurepip is not available »), NI git (bootstrap clone
-# les 5 outils + toolchain install fait des pip git+https), NI forcément curl (install de Claude). Idempotent (skip
+# les 5 outils — `toolchain install`, lui, ne clone plus rien depuis le 2026-08-08 : les 3 cartes viennent des
+# wheels de l'édition), NI forcément curl (install de Claude). Idempotent (skip
 # si tout présent), fail-loud. apt exige root → `sudo` sinon. Ne PAS supposer un hôte pré-outillé (un vrai user
 # part d'une image nue). cf. install.md (prérequis) + fix-shipped-product (le CT dev-base masquait ce trou).
 ensure_base_deps() {

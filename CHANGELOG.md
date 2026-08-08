@@ -9,6 +9,46 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Les 3 cartes hôte entrent dans l'édition — la réf mobile est morte
+
+**`forgemaster toolchain install` tirait `code-map`, `docs-map` et `front-map` de `git+https://…@main`.**
+`main` est une réf **mobile** : deux installs à une semaine d'écart posaient deux produits différents sous le
+même numéro de version, et le critère de l'édition — *deux installs de la même édition posent exactement le
+même code* — était donc invérifiable pour elles. Mesuré le 2026-08-03 sur la VM 9311 : les 3 cartes d'une
+instance provisionnée à 00:34 différaient déjà de leur amont à 04:19. La dérive commençait à la première heure.
+
+- **Les cartes voyagent dans le wheel.** `deploy/build-wheel.sh` les bâtit au SHA du sibling et les embarque
+  sous `forgemaster/_maps` (3 wheels + `maps.json`), sur le patron exact de `_verify_runner` : l'artefact
+  reste **unique et auto-contenu**, `provision-ct.sh` n'a rien à câbler.
+- **L'install des cartes est hors-ligne** — `pip install --no-index --force-reinstall <chemins>`. Plus aucune
+  URL sur ce chemin, donc plus de clone, donc **plus rien à authentifier** : la propriété « aucun credential
+  n'entre ici » n'est plus tenue par un env de précaution, elle l'est par l'absence du chemin. C'est aussi la
+  **première** étape, la seule sans réseau : réseau coupé, les cartes sont posées et l'échec porte le nom de
+  ce qui en avait vraiment besoin (`ruff`/`pytest`/`mypy`, `nodeenv`, le tarball Node).
+- **`--force-reinstall` reste, `--no-deps` est abandonné.** Le no-op de pip a survécu au changement de source
+  (les cartes sont figées à `0.1.0`, donc la version ne discrimine jamais, fichier ou pas) ; en revanche, le
+  jour où une carte gagne une dépendance, une install hors-ligne doit **échouer bruyamment** plutôt que poser
+  une carte amputée en rendant rc 0.
+- **Édition non posable ⇒ refus fail-loud**, jamais un repli git : dossier absent, manifeste illisible, carte
+  non déclarée, wheel manquant — **quatre** refus distincts, parce qu'ils n'ont pas le même remède. Une
+  cascade silencieuse vers `@main` remettrait la dérive qu'on vient de fermer.
+- **La provenance survit au changement de source.** Un wheel n'a pas de `vcs_info` : s'en tenir à PEP 610
+  aurait rendu `sha=null` sur exactement le mode devenu canonique. Le SHA vit désormais dans un tampon
+  `_vendored_from.txt` posé **dans le paquet**, localisé par le `RECORD` de la distribution — donc il décrit
+  *ce qui est installé*, pas ce que l'édition prétend avoir posé. `GET /api/version` gagne la valeur
+  `source: "edition"` (additif : CHANGELOG, **pas** de bump `SCHEMA_VERSION`), et c'est elle qui **discrimine
+  les deux modes** d'install, l'historique `vcs` restant lisible tel quel.
+- **`forgemaster toolchain check` devient local, exact, sans réseau.** Il comparait le commit servi au `main`
+  amont (`git ls-remote`) ; cette question est devenue celle du **wheel**. Celle qui reste, et qui n'avait
+  aucune réponse, est *mes cartes sont-elles celles de mon édition ?* — elle se pose exactement quand une
+  instance a monté d'édition sans reposer son outillage, puisque `update apply` ne touche pas `tools/`. Les
+  trois issues (0 conforme · 1 diffère · 2 non vérifié) sont inchangées.
+- **Mesuré** : wheel 355 → **359 membres**, 1,68 → **1,84 Mo** (+156 ko pour les 3 cartes). Le déterminisme
+  de l'entrée précédente **survit** : les wheels de cartes sont reproductibles au **contenu**, indépendamment
+  des mtimes du checkout (vérifié en re-bâtissant depuis une copie aux dates neuves — même `sha256`).
+- **Ce que ça ne fait pas, et c'est dit** : `update apply` ne repose pas les cartes. Une instance mise à jour
+  garde celles de son édition précédente jusqu'à un `toolchain install` explicite — mais elle ne le tait plus.
+
 ### Le wheel ne dépend plus du poste qui l'a bâti
 
 **Les wheels publiés jusqu'ici embarquaient ~12,7 Mo de `node_modules` mort** — 135 membres sous

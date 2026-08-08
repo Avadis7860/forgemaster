@@ -9,23 +9,31 @@ même convention forge : seams **purs** testables sans subprocess + exécution i
 en argv.
 
 ## tools.preflight_tools() / install_tools() — gate de présence + provisionnement hôte-niveau
-`src/forgemaster/tools.py:154` (`preflight_tools`) · `src/forgemaster/tools.py:406` (`install_tools`) · appelés par le
+`src/forgemaster/tools.py:177` (`preflight_tools`) · `src/forgemaster/tools.py:475` (`install_tools`) · appelés par le
 gate de dispatch (preflight avant spawn) et `forgemaster toolchain install` (cli_dispatch).
 `preflight_tools` vérifie que tout binaire déclaré par la facette active (`<worktree>/.claude/settings.local.json`)
-résout sur le PATH worker (`tools_env`) et lève `ToolPreflightError` (`:44`) AVANT le spawn — ne gate QUE
+résout sur le PATH worker (`tools_env`) et lève `ToolPreflightError` (`:55`) AVANT le spawn — ne gate QUE
 `declared & HOST_TOOLS` (outils hôte-provisionnés). `install_tools` est idempotent/fail-loud : crée le venv
 d'outils, installe les **3** cartes (`task-map` est vendoré au wheel, pas une carte hôte) + qualité py + Node
 via nodeenv (`install_plan`), symlinke chaque exécutable dans `tools/bin` ; une étape rouge abandonne (jamais
-un demi-provisioning). **Les cartes se posent en DEUX passes** — `--upgrade` (qui résout les dépendances) puis
-`--force-reinstall --no-deps` (qui force leur code à la réf demandée) : sans la seconde, `pip` clone, résout
-`main` au bon commit, **puis saute l'install** à version égale, et l'outillage ne bouge pas alors que la
-commande rend rc 0. Les cartes sont figées à `0.1.0`, donc la version ne discrimine jamais. Constaté en vrai
-sur la VM 9311 le 2026-08-03, attrapé par `check_tools` restée rouge après le prétendu remède.
-**Aucun credential** : les 3 dépôts sont publics, le clone est anonyme — `anonymous_env` n'ajoute que
-`GIT_TERMINAL_PROMPT=0`, sans quoi un dépôt injoignable ferait *pendre* pip 900 s sur un prompt.
+un demi-provisioning).
+**Les cartes viennent de l'ÉDITION** (2026-08-08) : `deploy/build-wheel.sh` les bâtit au SHA du sibling et les
+embarque dans le wheel (`forgemaster/_maps` — 3 wheels + `maps.json`), et `install_plan` les pose par
+`pip install --no-index --force-reinstall <chemins>`. Avant, elles venaient de `git+<url>@main`, une réf
+**mobile** : deux installs à une semaine d'écart posaient deux produits sous le même numéro de version.
+`--no-index` met la garantie hors-ligne dans l'argv ; `--force-reinstall` reste parce que le no-op de pip a
+survécu au changement de source (les cartes sont figées à `0.1.0`, donc la version ne discrimine jamais,
+fichier ou pas — constaté en vrai sur la VM 9311 le 2026-08-03) ; `--no-deps` n'est **pas** repris, pour
+qu'une carte qui gagnerait une dépendance échoue bruyamment au lieu d'être posée amputée.
+**Édition non posable ⇒ refus fail-loud** (`EditionMapsError`), jamais un repli git : dossier absent,
+manifeste illisible, carte non déclarée ou wheel manquant sont **quatre** refus distincts, parce qu'ils
+n'ont pas le même remède.
+**Aucun credential** : il n'y a plus d'URL dans le plan, donc plus de clone, donc plus rien à authentifier —
+la propriété n'est plus tenue par un env de précaution mais par l'absence du chemin. (`anonymous_env` reste,
+pour son seul appelant réel : `mcp.local`, qui clone.)
 
 ## tools.missing_bins() — quels binaires ne résolvent pas
-`src/forgemaster/tools.py:148` · appelé par `preflight_tools`, `doctor.scan`.
+`src/forgemaster/tools.py:171` · appelé par `preflight_tools`, `doctor.scan`.
 Seam **pur** : sous-ensemble trié de `bins` que `shutil.which` ne trouve pas via `env["PATH"]`. C'est la vérité
 unique partagée entre le gate de dispatch et la sonde `doctor` — aucune duplication de logique de présence.
 
@@ -64,62 +72,62 @@ Idempotent **sans relancer pip** (`pip install -e` reconstruit un wheel à chaqu
 paierait × 4 pour rien). Le chemin **wheel** (code-map vendoré, aucun sibling) est inchangé.
 
 Frontière : ceci couvre le venv d'un **checkout de dev**. Sur une instance provisionnée, les cartes viennent de
-`tools.install_plan()` (`pip install --upgrade git+…@main` dans `tools/venv`), figées à l'install — le preflight
-n'y vérifie qu'une **présence**, jamais une version. Ce que cette instance sert, et si ça a dérivé, se lit
-désormais par `maps_provenance` / `check_tools` (section suivante).
+`tools.install_plan()` — depuis le 2026-08-08, des **wheels de l'édition** (`pip install --no-index` dans
+`tools/venv`) et non plus de `git+…@main` : elles sont épinglées à l'artefact, plus figées au jour de
+l'install. Le preflight n'y vérifie toujours qu'une **présence**, jamais une identité. Ce que cette instance
+sert, et si c'est bien ce que son édition déclare, se lit par `maps_provenance` / `check_tools` (ci-dessous).
 
 ## tools.maps_provenance() — quelles cartes cette instance sert-elle
-`src/forgemaster/tools.py:274` (`maps_provenance`) · `src/forgemaster/tools.py:227` (`dist_provenance`) ·
-`src/forgemaster/tools.py:194` (`venv_site_packages`) · consommé par `build_provenance.provenance` →
+`src/forgemaster/tools.py:325` (`maps_provenance`) · `src/forgemaster/tools.py:268` (`dist_provenance`) ·
+`src/forgemaster/tools.py:218` (`venv_site_packages`) · consommé par `build_provenance.provenance` →
 `GET /api/version`. `dist_provenance` s'appelait `map_provenance` : elle ne lit pourtant rien de spécifique
 aux cartes (juste PEP 610 dans un `.dist-info`), et le serveur MCP co-installé (`mcp.local.server_provenance`)
 l'appelle **telle quelle** plutôt que d'entretenir une seconde lecture du même format.
 
-**Il n'y a aucun tampon à écrire.** `pip install git+<url>@<ref>` pose déjà `direct_url.json` (PEP 610) dans le
-`dist-info`, avec le `commit_id` **résolu** — écrit par la machine, à l'install. On le **lit**. C'est le même
-mécanisme que la provenance de `forgemaster-catalogs` : un mécanisme, deux consommateurs. (Le forgemaster, lui, doit
-tamponner son `_build.json` parce qu'il **construit un wheel** — cf. `build_provenance` ; ce n'est pas le cas ici.)
+**Deux sources, dans un ordre qui compte.** ① Le tampon `_vendored_from.txt`, posé **dans le paquet** par
+`deploy/build-wheel.sh` et localisé par le **`RECORD`** de la distribution — jamais par un nom de paquet
+deviné depuis le nom de distribution (`code-map` → `codemap` est une convention, pas une règle : PEP 503
+normalise le nom de *distribution* et ne dit rien du nom d'*import*). C'est le mode canonique depuis le
+2026-08-08, et il est lu **en premier** parce qu'une carte posée depuis un wheel n'a pas de `vcs_info` : s'en
+tenir à PEP 610 rendrait `sha=None` sur exactement le mode qu'on vient de rendre canonique. ② `direct_url.json`
+(PEP 610), que `pip install git+<url>@<ref>` pose avec le `commit_id` **résolu** — le mode historique, encore
+vivant sur toute instance provisionnée avant cette date, et c'est précisément ce qui **distingue les deux
+modes**. Aucun registre parallèle n'est écrit : on lit ce que l'install a laissé.
 
 Lecture **locale, zéro réseau, qui ne lève jamais** — d'où son usage sûr depuis une sonde HTTP. Contrat de
 dégradation identique à `read_stamp` : un `sha=None` s'accompagne **toujours** d'un `reason`, et `source` dit
-d'où vient la réponse (`vcs` — le seul cas porteur d'un SHA · `local-dir` · `unknown`). Un `commit_id` qui n'a
-pas la forme d'un SHA est **refusé** plutôt que servi comme identité : un SHA faux coûte plus cher qu'un SHA
-manquant, il retire le doute qui aurait déclenché la vérification.
+d'où vient la réponse (`edition` · `vcs` · `local-dir` · `unknown`). Un SHA qui n'a pas la **forme** d'un SHA
+— tampon corrompu comme `commit_id` douteux — est **refusé** plutôt que servi comme identité : un SHA faux
+coûte plus cher qu'un SHA manquant, il retire le doute qui aurait déclenché la vérification.
 
-Mesure du 2026-08-03 (VM 9311) : instance provisionnée à 00:34, les 3 cartes déjà différentes de leur amont à
-04:19. Le figeage n'attend pas des semaines — il commence à la première heure.
+Mesure du 2026-08-03 (VM 9311), qui a motivé l'épinglage : instance provisionnée à 00:34, les 3 cartes déjà
+différentes de leur amont à 04:19. La dérive n'attendait pas des semaines — elle commençait à la première
+heure. C'est cette dérive-là que l'édition ferme.
 
-## tools.check_tools() — les cartes servies ont-elles dérivé de leur amont
-`src/forgemaster/tools.py:475` (`check_tools`) · `src/forgemaster/tools.py:313` (`compare`, PUR) ·
-`src/forgemaster/tools.py:295` (`check_plan`, PUR) · `src/forgemaster/tools.py:337` (`overall_state`, PUR) ·
-`src/forgemaster/tools.py:527` (`_cli_check`) · appelé par `forgemaster toolchain check`.
+## tools.check_tools() — les cartes servies sont-elles celles de l'ÉDITION
+`src/forgemaster/tools.py:556` (`check_tools`) · `src/forgemaster/tools.py:313` (`compare`, PUR) ·
+`src/forgemaster/tools.py:344` (`read_edition`) · `src/forgemaster/tools.py:337` (`overall_state`, PUR) ·
+`src/forgemaster/tools.py:604` (`_cli_check`) · appelé par `forgemaster toolchain check`.
 
-Un `git ls-remote <url> <MAP_REF>` par carte (aucun objet transféré), sous `anonymous_env` — la sonde tape les
-mêmes dépôts publics que l'install et n'a donc **pas le droit** d'y ajouter un credential (un test l'asserte).
-Une carte qu'on ne sert pas n'est **pas** interrogée : sa raison est déjà locale, et l'interroger ferait attendre
-le réseau pour une réponse connue.
+**La question a changé avec l'épinglage (2026-08-08).** La sonde comparait le commit servi au `main` amont
+(`git ls-remote` par carte). Ce n'est plus la bonne question : les cartes ne suivent plus une réf mobile, donc
+« suis-je en retard sur upstream ? » est devenue la question du **wheel** — portée par `build_provenance`
+contre le miroir SoT local, puis par le canal servi de la phase 5. Celle qui reste, et qui n'avait **aucune**
+réponse, est *mes cartes sont-elles celles de mon édition ?* Elle se pose exactement quand une instance a
+monté d'édition sans reposer son outillage — `update apply` ne touche pas `tools/` — et elle se répond
+**sans réseau** : le tampon servi (`_vendored_from.txt`, dans le paquet) contre le SHA déclaré
+(`forgemaster/_maps/maps.json`). Zéro subprocess, zéro timeout, et le mode d'échec le plus fréquent de
+l'ancienne sonde (réseau coupé) a disparu avec elle.
 
-**Pourquoi pas dans `preflight_tools`** — et **pas** parce que « l'instance peut être hors réseau » : les 3
-appelants du preflight (`dispatch/{worker,reviewer,woaw}.py`) spawnent tous `claude`, qui exige l'API
-Anthropic. Un dispatch hors ligne n'existe pas ici.
-
-La vraie raison est : **que ferait le dispatch de la réponse ?** `MAP_REF` est une réf **mobile** et la dérive
-commence en quelques heures (mesuré : 4 h). Un preflight qui **refuse** bloquerait presque tous les spawns
-passé la demi-journée — un check qui s'allume sur ce qui est normal **par construction**. Un preflight qui
-**avertit** donne au worker un fait sur lequel il ne peut rien : il ne peut pas réinstaller son outillage en
-vol, et muter les outils sous un worker qui tourne est précisément ce qu'on a écarté. Accessoirement, GitHub
-est un **second** fournisseur, indépendant d'Anthropic : une panne GitHub deviendrait un motif neuf de ne pas
-pouvoir dispatcher. La comparaison va donc là où quelqu'un peut **agir** dessus — une commande d'opérateur —
-et le produit se contente de dire **localement** ce qu'il sert.
-
-Trois issues **distinctes**, et c'est le cœur du contrat — exit **0** à jour · **1** au moins une diffère ·
-**2** rien ne diffère mais au moins une n'a pas pu être comparée. « Je n'ai pas pu vérifier » n'est ni « à
-jour » ni « périmé » ; le confondre avec l'un des deux refait le faux-vert (ou le faux-rouge) que cette sonde
-répare. **On ne dit jamais « en retard de N commits »** : `ls-remote` ne rend que des réfs, compter exigerait de
-rapatrier l'historique — la sonde dit *lesquelles* ont bougé, jamais *de combien*.
+Trois issues **distinctes**, et c'est le cœur du contrat — exit **0** conforme · **1** au moins une diffère ·
+**2** rien ne diffère mais au moins une n'a pas pu être comparée (carte non installée, ou édition qui ne
+déclare rien : checkout dev, wheel dégradé). « Je n'ai pas pu vérifier » n'est ni « conforme » ni « périmé » ;
+le confondre avec l'un des deux refait le faux-vert (ou le faux-rouge) que cette sonde répare. **On ne dit
+jamais « en retard de N commits »** : deux SHA ne se soustraient pas sans l'historique — la sonde dit
+*lesquelles* diffèrent, jamais *de combien*.
 
 `check` **rapporte, ne mute rien**. La remise à niveau reste le geste explicite `forgemaster toolchain install`
-(idempotent, `--upgrade @main`) : une re-sync automatique remplacerait un binaire sous un worker en vol.
+(idempotent, hors-ligne) : une re-sync automatique remplacerait un binaire sous un worker en vol.
 
 ## service.install_service() / render_unit() — unité systemd du daemon
 `src/forgemaster/service.py:158` (`install_service`) · `src/forgemaster/service.py:102` (`render_unit`) · appelés par
@@ -135,7 +143,7 @@ ouvre le `linger` **en premier** — sans lui le gestionnaire systemd de l'utili
 session, et le service avec (mesuré sur vrai systemd le 2026-08-06) ; en portée `system` il ne l'écrit pas.
 
 ## mcp.local.install() — co-installer le serveur de corpus SUR cet hôte
-`src/forgemaster/mcp/local.py:249` (`install`) · `src/forgemaster/mcp/local.py:120` (`install_plan`, pur) · appelés par
+`src/forgemaster/mcp/local.py:250` (`install`) · `src/forgemaster/mcp/local.py:120` (`install_plan`, pur) · appelés par
 `forgemaster mcp install` et l'étape `[8/9]` de `deploy/provision-ct.sh` (`--with-mcp`).
 Pose un venv **dédié** (`$FORGEMASTER_HOME/mcp/venv` — ni celui du forgemaster, ni celui des outils : trois cycles de
 vie distincts), installe `forgemaster-catalogs` au **SHA épinglé** (`SERVER_REF`, pas une réf mobile — §3 de la
@@ -153,7 +161,7 @@ tourne, à chaque appel d'une commande annoncée idempotente. Clone **anonyme** 
 figée à `0.1.0`, donc `--upgrade` seul saute l'install en rendant rc 0.
 
 ## mcp.local.topology() — laquelle des deux topologies cette instance est-elle
-`src/forgemaster/mcp/local.py:202` · consommé par `build_provenance.provenance` → `GET /api/version` (clé `mcp`).
+`src/forgemaster/mcp/local.py:203` · consommé par `build_provenance.provenance` → `GET /api/version` (clé `mcp`).
 Répond à l'exigence du §4 de la décision d'édition : deux topologies déclarées, et l'instance **dit** laquelle.
 Retourne `{topology, sha, endpoint, reason}`, lecture **locale, zéro réseau, qui ne lève jamais**.
 **Déduit du disque, jamais déclaré** — une clé d'env `…_TOPOLOGY` serait un champ qui peut mentir, que rien ne

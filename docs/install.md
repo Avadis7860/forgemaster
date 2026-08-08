@@ -133,9 +133,13 @@ du service** (jamais root pour un service `--user` : la base écrite par le boot
                   --manifest bootstrap.yaml
 ```
 
-**Aucun credential n'est requis pour l'outillage** : les 3 cartes (`code-map`, `docs-map`, `front-map`) sont
-publiques depuis le 2026-08-03, l'étape `[4]` les clone en **anonyme**. `--token-file` ne subsiste que pour
-l'amorçage `[7]`, et seulement si le manifeste déclare un dépôt encore **privé** — cf. § « Le manifeste ».
+**Aucun credential n'est requis pour l'outillage**, et depuis le 2026-08-08 ce n'est plus une politique mais
+une propriété structurelle : les 3 cartes (`code-map`, `docs-map`, `front-map`) voyagent **dans le wheel**
+(`forgemaster/_maps`, bâties au SHA du sibling par `deploy/build-wheel.sh`), et l'étape `[4]` les pose
+**hors-ligne** depuis ces fichiers. Il n'y a plus d'URL sur ce chemin, donc plus de clone, donc plus rien à
+authentifier — et deux installs de la même édition posent le **même** code, ce qu'une réf `@main` ne
+garantissait pas. `--token-file` ne subsiste que pour l'amorçage `[7]`, et seulement si le manifeste déclare
+un dépôt encore **privé** — cf. § « Le manifeste ».
 
 Le script (idempotent, fail-loud, imprime chaque étape `[n/9]`) : `[1]` pose les **prérequis de base**
 (`python3-venv`, `git`, `curl` — absents d'une image cloud minimale) + crée un venv → `[2]` installe le wheel →
@@ -187,9 +191,14 @@ pas une infrastructure cassée. Le rail « Outils » montre l'outil absent, et `
 Deux mécanismes **distincts** peuplent un hôte forgemaster — ne pas les confondre :
 
 - **`forgemaster toolchain install`** (étape `[4/9]`, ci-dessus) — le **toolchain hôte-niveau** que les bundles
-  *déclarent* (`allowedTools`) : maps CLI (`codemap`/`docsmap`/`frontmap`), qualité py (ruff/mypy/pytest) et
-  **Node via nodeenv rootless**, installés dans un venv d'outils dédié sous `$FORGEMASTER_HOME/tools/` (symlinks en
-  `tools/bin`). Idempotent, fail-loud. C'est ce qui rend le contrat d'outillage **réellement présent** sur l'hôte.
+  *déclarent* (`allowedTools`) : maps CLI (`codemap`/`docsmap`/`frontmap`) **depuis les wheels de l'édition**
+  (`--no-index` : la seule étape hors-ligne, et la première, pour qu'un réseau absent ne fasse pas tomber ce
+  qui n'en a pas besoin), qualité py (ruff/mypy/pytest) et **Node via nodeenv rootless** — ces deux-là
+  exigent toujours le réseau. Le tout dans un venv d'outils dédié sous `$FORGEMASTER_HOME/tools/` (symlinks en
+  `tools/bin`). Idempotent, fail-loud. C'est ce qui rend le contrat d'outillage **réellement présent** sur
+  l'hôte. `forgemaster toolchain check` dit ensuite, **sans réseau**, si les cartes servies sont bien celles
+  de l'édition installée — la question qui se pose après une mise à jour, puisque `update apply` ne touche
+  pas `tools/`.
 - **`forgemaster bootstrap`** (étape `[7/9]`) — l'**adoption des 5 dépôts-outils** du framework dans le rail
   « Outils » via leur clone git (donnée du manifeste). Peuple la *surface*, pas le PATH du worker.
 

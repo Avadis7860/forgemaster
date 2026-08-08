@@ -353,12 +353,18 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   **local** et vieillit avec l'instance (wheel ET miroir périmés ⇒ le daemon les voit égaux, donc « frais »),
   donc un verdict qu'on ne peut pas situer n'est pas jugeable. Une référence **joignable** — qui, elle, ne
   vieillit pas avec nous — reste hors de cette route.
-  `maps` = les **3 cartes hôte servies** par `tools/venv`, `[{name, sha, requested_ref, source, reason}]` lues
-  dans `direct_url.json` (PEP 610, posé par pip à l'install) — **transport local** lui aussi. Deuxième moitié
-  de l'identité d'une instance, **étiquetée à part** parce qu'elle bouge indépendamment du wheel (les cartes à
-  `forgemaster toolchain install`, le wheel à la réinjection) : les fondre mentirait dès que l'une bouge seule. `sha`
-  `null` porte **toujours** son `reason` ; `[]` si l'outillage n'est pas lisible (la route ne tombe jamais).
-  Savoir si ces cartes sont **à jour** demande l'amont et reste **hors** de cette route (`forgemaster toolchain check`).
+  `maps` = les **3 cartes hôte servies** par `tools/venv`, `[{name, sha, requested_ref, source, reason}]` —
+  **transport local** lui aussi. Deuxième moitié de l'identité d'une instance, **étiquetée à part** parce
+  qu'elle bouge indépendamment du wheel (les cartes à `forgemaster toolchain install`, le wheel à la
+  réinjection) : les fondre mentirait dès que l'une bouge seule. `sha` `null` porte **toujours** son
+  `reason` ; `[]` si l'outillage n'est pas lisible (la route ne tombe jamais).
+  `source` ∈ `edition` | `vcs` | `local-dir` | `unknown`, et il **discrimine le mode d'install** :
+  `edition` = posée depuis un wheel embarqué au wheel du forgemaster (`forgemaster/_maps`, épinglé au SHA du
+  sibling — le mode canonique depuis le 2026-08-08, SHA lu dans le tampon `_vendored_from.txt` du paquet) ;
+  `vcs` = posée depuis `git+…@main`, une réf **mobile** (le mode historique, encore vivant sur toute instance
+  provisionnée avant cette date, SHA lu dans `direct_url.json`/PEP 610).
+  Savoir si ces cartes sont celles de l'**édition installée** reste **hors** de cette route
+  (`forgemaster toolchain check` — local et sans réseau depuis le 2026-08-08).
   `mcp` = la **topologie du serveur de corpus** que cette instance consomme, `{topology, sha, endpoint,
   reason}` — troisième volet de l'identité, étiqueté à part pour la même raison que `maps` (il bouge à
   l'édition, pas à la réinjection). `topology` ∈ `co-installed` | `remote` | `none` | `unknown`, **déduit du

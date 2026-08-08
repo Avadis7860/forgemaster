@@ -1,7 +1,9 @@
 """hatch_build.py — hook de packaging : embarque dans le wheel les artefacts sibling que la cible
 Python-seule ne pourrait pas se procurer autrement — la **SPA** buildée (`forgemaster/_web_dist`), le package
-**`codemap`** (l'outil code-map, `python -m codemap`) ET le package **`taskmap`** (moteur de graphe importé
-par `roadmap/resolver.py` ; vendoré → wheel auto-contenu, aucune dép git privée à cloner au `pip install`).
+**`codemap`** (l'outil code-map, `python -m codemap`), le package **`taskmap`** (moteur de graphe importé
+par `roadmap/resolver.py` ; vendoré → wheel auto-contenu, aucune dép git privée à cloner au `pip install`)
+ET l'**édition des 3 cartes hôte** (`forgemaster/_maps` : code-map/docs-map/front-map bâties en wheels +
+leur manifeste) — sans quoi `forgemaster toolchain install` les tirerait d'une réf **mobile**.
 
 Distribution turnkey : **l'utilisateur final n'installe que Python** ; l'UI *et* code-map voyagent dans le
 wheel. Le hook est **volontairement minimal** — il *force-include* ce qui est déjà stagé, il ne build/ne
@@ -48,6 +50,11 @@ _WARN_NO_RUNNER = (
     "[forgemaster] build/vendor/verify-runner absent → wheel SANS runner Tier-1.5 (`forgemaster gate verify` "
     "fail-close côté cible). Passe par `deploy/build-wheel.sh` (il stage deploy/runners)."
 )
+_WARN_NO_MAPS = (
+    "[forgemaster] build/vendor/edition-maps absent → wheel SANS l'édition des 3 cartes hôte "
+    "(`forgemaster toolchain install` REFUSE de poser : ni code-map, ni docs-map, ni frontmap). "
+    "Passe par `deploy/build-wheel.sh` (il bâtit les 3 wheels depuis les siblings)."
+)
 _WARN_NO_BUILD = (
     "[forgemaster] src/forgemaster/_build.json absent → wheel SANS provenance de build (le signal de "
     "fraîcheur "
@@ -92,6 +99,13 @@ def plan_force_includes(root: Path) -> tuple[dict[str, str], list[str]]:
         force["build/vendor/verify-runner"] = "forgemaster/_verify_runner"
     else:
         warnings.append(_WARN_NO_RUNNER)
+    # édition des 3 cartes hôte (`deploy/build-wheel.sh` les bâtit depuis les siblings) →
+    # `forgemaster/_maps` : 3 wheels + `maps.json`. Elles étaient tirées de `git+<url>@main` — une réf MOBILE
+    # — par `forgemaster toolchain install` ; embarquées, elles s'installent HORS-LIGNE et ÉPINGLÉES.
+    if (root / "build" / "vendor" / "edition-maps" / "maps.json").is_file():
+        force["build/vendor/edition-maps"] = "forgemaster/_maps"
+    else:
+        warnings.append(_WARN_NO_MAPS)
     # tampon de provenance de build (`deploy/build-wheel.sh` écrit le SHA de HEAD) → `forgemaster/_build.json`
     # :
     # gitignoré (artefact par-build) → EXCLU du walk de package → force-include obligatoire (comme ci-dessus).
@@ -110,6 +124,7 @@ def unexpected_wheel_members(
     codemap_files: set[str],
     taskmap_files: set[str],
     runner_files: set[str],
+    maps_files: set[str],
 ) -> list[str]:
     """Garde d'**inventaire** : les membres du wheel qu'**aucune** règle n'admet.
 
@@ -125,6 +140,9 @@ def unexpected_wheel_members(
       • `forgemaster/_web_dist/…`      — la SPA buildée : noms **hashés** par Vite, donc un préfixe et pas
                                          une liste littérale (le seul endroit où l'inventaire est ouvert) ;
       • `forgemaster/_verify_runner/…` — **exactement** `runner_files` (`deploy/runners` suivi) ;
+      • `forgemaster/_maps/…`          — **exactement** `maps_files` (les 3 wheels de cartes + `maps.json`,
+                                         bâtis par le script) : une liste **fermée**, jamais un préfixe —
+                                         l'édition est ce qu'on déclare, pas ce qui traîne dans le staging ;
       • `forgemaster/_build.json`      — le tampon de provenance (gitignoré, force-inclus) ;
       • `forgemaster/<reste>`          — ssi `<reste>` est suivi sous `src/forgemaster/` ;
       • `codemap/…` · `taskmap/…`      — ssi suivi chez le sibling, ou le tampon `_vendored_from.txt` ;
@@ -151,6 +169,10 @@ def unexpected_wheel_members(
                 continue
             if rest.startswith("_verify_runner/"):
                 if rest[len("_verify_runner/"):] not in runner_files:
+                    unexpected.append(name)
+                continue
+            if rest.startswith("_maps/"):
+                if rest[len("_maps/"):] not in maps_files:
                     unexpected.append(name)
                 continue
             if rest not in src_files:
