@@ -378,6 +378,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="ce que cette instance sait faire — se déployer, revenir — AVANT qu'on le lui demande")
     p_up_ai.add_argument("--system", action="store_true", help="unité systemd système (exige root)")
     p_up_ai.add_argument("--unit", help="chemin de l'unité systemd (défaut : celle de la portée)")
+    # La moitié RÉSEAU, et la seule commande du verbe qui en fasse : elle APPREND qu'une version existe,
+    # elle ne télécharge ni ne pose rien. Elle existe pour l'instance pilotée uniquement en CLI — sans
+    # daemon, personne n'irait jamais voir. Question, donc rc 0 toujours (parité avec `wheels`/`aptitude`).
+    p_up_sub.add_parser(
+        "check", parents=[common],
+        help="lire l'annonce SIGNÉE du canal — apprendre qu'une version existe, ne rien télécharger")
 
     # -- doctor -------------------------------------------------------------------------------------
     sub.add_parser("doctor", parents=[common],
@@ -662,6 +668,12 @@ def _h_snapshot(settings: Settings, args: argparse.Namespace) -> int:
 
 
 def _h_update(settings: Settings, args: argparse.Namespace) -> int:
+    # `check` est la moitié RÉSEAU du cycle ; `update.py` est la moitié hors-ligne. On route ici plutôt que
+    # dans son dispatch pour que les deux modules n'aient AUCUNE référence l'un vers l'autre : la frontière
+    # « pas de réseau dans `update apply` » devient alors une propriété du graphe d'imports, pas une consigne.
+    if args.action == "check":
+        from forgemaster import update_channel
+        return update_channel.cli_check(settings)
     from forgemaster import update
     return update.cli_dispatch(settings, args)
 

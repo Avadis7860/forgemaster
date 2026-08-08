@@ -1,10 +1,14 @@
 # spec — racine de confiance du canal de mise à jour (signature Ed25519)
 
-> **Contrat à implémenter, pas comportement livré.** Aucune vérification de signature n'existe dans le produit
-> à ce jour ; ce document fixe ce qui est verrouillé **avant** qu'une ligne de crypto soit écrite, pour que la
-> phase qui l'écrira n'ait pas à improviser un modèle de confiance.
-> Cibles prévues : `update.py` (le canal), `_keys/` (le jeu de clés embarqué), `build_provenance.py`
-> (`edition`, qui répond déjà « quelle édition tourne ici ? »).
+> **Partiellement livré.** Écrit d'abord comme contrat, **avant** qu'une ligne de crypto existe, pour que la
+> phase qui l'écrirait n'ait pas à improviser un modèle de confiance. Depuis, `src/forgemaster/update_channel.py`
+> implémente la **primitive** (jeu de clés, `key_id` re-dérivé, deux conditions, refus distincts) et
+> `tests/test_update_channel.py` la garde. Restent **non livrés** : la vraie paire de clés (donc
+> `_keys/release-keys.json`, absent — une édition sans racine ne va pas sur le réseau, cf. §8) et le
+> **verdict** rendu à l'utilisateur.
+> Cibles : `update_channel.py` (le canal — **pas** `update.py`, qui est la moitié hors-ligne et n'a aucune
+> référence vers lui), `_keys/` (le jeu de clés embarqué), `build_provenance.py` (`edition`, qui répond déjà
+> « quelle édition tourne ici ? »). Le **format** de ce qui est signé vit dans `update-channel-manifest.md`.
 
 ## Problème tranché
 
@@ -110,12 +114,13 @@ qu'une clé volée permet.
   c'est le chevauchement de rotation, et sans ce test la règle 4 n'est qu'une intention.
 - **Une édition sans jeu de clés ne propose rien et ne lève rien** — elle rend un motif lisible.
 - **Un `key_id` inconnu et une signature invalide produisent des verdicts DISTINCTS** dans le log.
-- **Aucun accès réseau sur le chemin de `update apply`.** À écrire, et il faut le dire : **aucun test
-  n'assure cette propriété aujourd'hui**. Elle est tenue par le contrat du module (`update.py`, docstring) et
-  par l'**étroitesse** de ce qu'il appelle — ce qui est une intention, pas une garde. Le seul garde-fou
-  automatique voisin est la **pureté stdlib** de l'applicateur (`test_apply_ne_depend_de_rien_du_forgemaster`,
-  vérifiée par AST), qui interdit un import, pas une socket. La phase qui branchera le canal doit donc
-  **ajouter** cette garde, pas s'appuyer dessus.
+- **Aucun accès réseau sur le chemin de `update apply`** — **la garde existe désormais**
+  (`test_le_chemin_d_apply_n_ouvre_AUCUNE_socket`) : `socket.socket` et `socket.create_connection` sont rendus
+  impossibles, et le préflight complet doit aller **jusqu'au bout** (rc 0), pas jusqu'au premier refus.
+  Elle a été **ajoutée** par la phase qui a branché le canal, comme ce paragraphe le demandait — la propriété
+  n'était jusque-là tenue que par l'étroitesse du verbe, une intention. Le garde-fou voisin, la **pureté
+  stdlib** de l'applicateur (`test_apply_ne_depend_de_rien_du_forgemaster`, par AST), reste nécessaire mais ne
+  la couvrait pas : il interdit un **import**, et `urllib` est de la stdlib.
 
 ## Ce que cette spec ne tranche pas
 

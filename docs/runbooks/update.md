@@ -1,7 +1,11 @@
 # update — runbook (poser un wheel local en bleu/vert, et revenir — automatiquement ou sur demande)
 
 Le cycle de mise à jour est la **moitié locale et hors-ligne** d'un canal : il pose le `.whl` qu'on lui désigne, rien
-d'autre. Aucune détection de version, aucun manifeste servi, aucune signature, aucun réseau. Deux modules, et la
+d'autre. Aucune détection de version, aucun manifeste servi, aucune signature, **aucun réseau** — et cette dernière
+propriété n'est plus une intention : `test_le_chemin_d_apply_n_ouvre_AUCUNE_socket` rend la socket impossible et
+exige que le préflight aille jusqu'au bout. L'**autre** moitié — apprendre qu'une version existe — vit dans
+`update_channel.py`, décrite plus bas et détaillée par `docs/specs/update-channel-manifest.md` ; les deux modules
+n'ont **aucune référence l'un vers l'autre**. Deux modules ici, et la
 frontière entre eux est un contrat : `update.py` vit dans le paquet, voit la base et git, et porte **tout ce qui
 refuse** ; `apply_update.py` est **stdlib-pur, zéro import `forgemaster`**, copié hors du paquet puis lancé détaché
 sous le `python3` du système — il doit survivre au venv qu'il remplace, et rester jouable à la main quand
@@ -670,6 +674,39 @@ dans un venv portant la commande (checkout `python -m forgemaster`, install syst
 honnêtement plutôt que de basculer un lien qui n'existe pas. Conséquence mesurée le 2026-08-06 sur VM : une
 installation **fraîche** est donc déjà réversible, sans geste de migration préalable ; et le venv ainsi lié étant hors
 de `<home>/venvs/`, il échappe à `_purge_venvs`.
+
+## update_channel — la moitié RÉSEAU : apprendre qu'une version existe, et n'en croire que ce qui vérifie
+`src/forgemaster/update_channel.py` · verbe `forgemaster update check` · tâche de fond du `_lifespan` · spec `docs/specs/update-channel-manifest.md`
+
+Le canal **annonce** — « la version X existe, voici le SHA-256 de son wheel » — et **ne télécharge aucun binaire**.
+C'est ce qui borne le rayon d'explosion d'une clé volée à une **notification mensongère**, jamais à une exécution ; et
+c'est ce qui fait de `update apply <wheel>` la **voie de secours** quand le canal est sourd (rotation non suivie,
+réseau absent). *La voie hors-ligne est la voie de secours de la voie en ligne.*
+
+La lecture se fait en quatre temps, et l'**ordre** est le contrat : `parse_envelope` (`:172`) lit l'enveloppe et
+**décode** le payload sans le parser → `verify_envelope` (`:209`) exige que le `key_id` soit dans le jeu embarqué
+**et** que la signature vérifie sous **cette** clé (jamais « essaie toutes les clés ») → `parse_announce` (`:244`)
+n'est appelée qu'après. C'est *parse-after-verify* : parser d'abord ferait du parseur la première surface d'attaque.
+`trust_root` (`:132`) **re-dérive** le `key_id` de chaque clé et refuse un fichier qui ment — un identifiant dérivé
+qu'on ne recalcule pas n'est qu'un nom.
+
+`refresh` (`:347`) orchestre et **ne lève jamais** : un canal muet ne fait pas tomber un daemon. Il **court-circuite
+avant tout réseau** si la racine de confiance est vide (une édition qui ne peut rien vérifier jetterait la réponse),
+et son état sur disque sépare `last_success` de `last_attempt` — un réseau injoignable fait **vieillir** ce qu'on
+savait, il ne l'efface pas. Sept états, jamais un `error` fourre-tout : `ok`, `unreachable`, `malformed`,
+`unknown-key`, `bad-signature`, `no-trust-root`, `internal`, plus `never` côté lecteur. `unknown-key` et
+`bad-signature` sont **distincts** : le premier est le seul indicateur de compromission — ou de rotation non suivie —
+qu'un système hors-ligne aura jamais.
+
+`run_channel_poll` (`:404`) est l'idiome sleep-loop de `run_reaper`, avec **une** différence structurelle : le tirage
+part dans un thread (`asyncio.to_thread`), parce qu'`urllib` est bloquant et qu'un appel direct gèlerait la boucle
+d'événements — donc tout le daemon — jusqu'au timeout. Le premier tour précède le premier sommeil : un daemon qu'on
+vient de redémarrer est le moment où quelqu'un veut savoir. `cli_check` (`:434`) est le même tirage à la demande, pour
+l'instance pilotée **uniquement en CLI** ; **rc 0 toujours**, comme `wheels` et `aptitude` — c'est une question.
+
+**Non livré, et il faut le dire** : `_keys/release-keys.json` n'existe pas (la paire naît à la cérémonie de
+génération), donc en production le canal **n'émet aucune requête** et le dit. Le **verdict** rendu à l'utilisateur —
+ce qu'une édition non descendante déclenche, ce que voit le panneau — n'est pas non plus écrit.
 
 ## Zones non détaillées
 
