@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "forgemaster"
-version = "0.1.0"
+version = "0.2.0"
 description = "Forge/orchestrateur local : projet → roadmap (features + tasks DAG) → dispatch worker claude en worktree → gate → merge. Spine CLI + daemon FastAPI, édition lightweight WSL (zéro Proxmox/GPU/CT)."
 readme = "README.md"
 requires-python = ">=3.11"
