@@ -127,8 +127,12 @@ def build_app(settings: Settings) -> FastAPI:
         finally:
             # Moitié shutdown (absente jusqu'ici) : couper le reaper puis tuer toute session PTY vivante ou
             # détachée — pas de shell orphelin ni de PTY fuité quand le daemon s'arrête.
+            # On ANNULE les deux d'abord, on attend ensuite : si le premier `await` levait autre chose qu'une
+            # annulation, la seconde tâche ne serait jamais coupée — un thread de tirage survivrait à l'arrêt
+            # du daemon, et `close_all` ne tuerait aucun PTY.
             for tache in (reaper, canal):
                 tache.cancel()
+            for tache in (reaper, canal):
                 with contextlib.suppress(asyncio.CancelledError):
                     await tache
             _app.state.terminals.close_all()
