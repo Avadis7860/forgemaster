@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from forgemaster import build_provenance, onboarding
+from forgemaster import build_provenance, onboarding, update_channel
 from forgemaster.daemon.deps import Deps, get_deps
 
 
@@ -43,12 +43,21 @@ def make_onboarding_router() -> APIRouter:
         """**Quelle édition tourne ici ?** Provenance de build + fraîcheur du wheel (`{version, sha,
         committed_at, comparable, stale, behind_by, missing_types, reference, head}`), **mode d'install**
         (`install`, déduit du disque), les 3 cartes hôte **servies** (`maps`), ce que l'édition installée
-        **déclare** pour elles (`edition`, = `forgemaster toolchain check`) et la topologie du serveur de
-        corpus (`mcp`). Signal honnête, jamais faux-vert : un forgemaster en retard sur son miroir SoT
-        local se déclare (`stale`, `missing_types`) ; sans provenance/miroir, `comparable=False` ; une
-        conformité non vérifiable rend `edition.state = "unknown"`, jamais un vert. Idempotent, sans
-        secret, zéro réseau, I/O-free côté liveness (distinct de `/health`)."""
-        return build_provenance.provenance(deps.settings)
+        **déclare** pour elles (`edition`, = `forgemaster toolchain check`), la topologie du serveur de
+        corpus (`mcp`) et le verdict du **canal servi** (`channel`, lu du cache disque — jamais du réseau).
+        Signal honnête, jamais faux-vert : un forgemaster en retard sur son miroir SoT local se déclare
+        (`stale`, `missing_types`) ; sans provenance/miroir, `comparable=False` ; une conformité non
+        vérifiable rend `edition.state = "unknown"`, jamais un vert. Idempotent, sans secret, zéro réseau,
+        I/O-free côté liveness (distinct de `/health`).
+
+        Les deux volets sont **composés ici**, et pas dans `build_provenance` : ce module porte dans son
+        propre en-tête la contrainte « aucun accès réseau », qui est aujourd'hui une propriété du graphe
+        d'imports. Lui faire importer le canal la dégraderait en affaire de confiance — et les 4 autres
+        appelants de `provenance()` (snapshot, registre, onboarding) gagneraient un volet dont ils n'ont
+        que faire."""
+        prov = build_provenance.provenance(deps.settings)
+        return {**prov,
+                "channel": update_channel.read_verdict(deps.settings, build_sha=prov["sha"])}
 
     @router.post("/api/projects/{project}/credential")
     def link_credential(project: str, body: CredentialLink, deps: Deps = Depends(get_deps)) -> dict:

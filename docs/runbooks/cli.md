@@ -27,7 +27,7 @@ sorte que `--help` marche et que le parser se construit même quand les couches 
 `src/forgemaster/cli.py:437` · point d'entrée console_scripts
 Séquence : `build_parser().parse_args(argv)` → `_autoload_env(args)` (parité CLI ↔ service) →
 `settings = _settings(args)` → lookup `handler = _HANDLERS[args.command]` → `return handler(settings, args)`, sous un `try` qui attrape `SchemaTooNew` (rc 1 + message) : c'est le seul endroit qui voit tous les verbes, et une base trop neuve est un état de l'instance, pas la panne d'un verbe.
-Le cœur du dispatch est la **table `_HANDLERS`** (`cli.py:697`), un dict `command → _h_*` : chaque `_h_*`
+Le cœur du dispatch est la **table `_HANDLERS`** (`cli.py:700`), un dict `command → _h_*` : chaque `_h_*`
 reçoit `(settings, args)`, importe SA couche en **import paresseux** (jamais au niveau module) et délègue à
 son `cli_dispatch(settings, args)` en retournant le code de sortie. Ce pattern « handler mince =
 délégateur » est ce qui garde `build_parser` léger : aucune couche n'est tirée tant que la sous-commande
@@ -59,6 +59,6 @@ même priorité que `_settings` (flag `--home` > `$FORGEMASTER_HOME` > `DEFAULT_
   `_h_merge`→`gate.merge` · `_h_onboard`→`onboarding` · `_h_bootstrap`→`bootstrap` · `_h_serve`→`daemon.app`
   (`serve`) · `_h_setup`→`webbuild` · `_h_install_service`→`service` · `_h_doctor`→`doctor` ·
   `_h_mcp`→`provision.mcp`.
-- **La table `_HANDLERS`** (`cli.py:697`) : le mapping `command → _h_*`, décrit dans la section `main()`.
+- **La table `_HANDLERS`** (`cli.py:700`) : le mapping `command → _h_*`, décrit dans la section `main()`.
 - **Le détail des sous-parsers/arguments** de chaque sous-commande (flags, `choices`, `nargs`) : lire
   directement `build_parser` (`cli.py:24`–384) — c'est de la déclaration argposée, pas de la logique.

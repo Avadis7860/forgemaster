@@ -9,6 +9,30 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Le canal de mise à jour — l'instance APPREND qu'une version existe, et dit ce qu'il faut en faire (1 champ additif)
+
+**Ce qui manquait n'était pas un calcul, c'était une référence joignable.** La fraîcheur se mesurait contre un
+miroir bare **local** — absent chez l'utilisateur distribué, et vieillissant **avec** l'instance chez nous. Le
+canal lit une annonce **signée** servie en asset de Release, et c'est la première référence de ce cycle qui ne
+vieillit pas avec celui qui la lit.
+
+- **Le canal ANNONCE, il ne télécharge rien** (`update_channel.py`, verbe `forgemaster update check`, tâche de
+  fond du daemon). Enveloppe Ed25519 d'un seul fichier, *parse-after-verify*, `key_id` re-dérivé, deux schémas
+  versionnés séparément. Rayon d'explosion d'une clé volée : une notification mensongère, jamais une exécution.
+- **`GET /api/version` gagne le volet `channel`** — champ **additif**, aucun bump de schéma SQLite (cf.
+  `docs/schema-contract.md` §Politique de versionnage). `{state, reason, from_attempt, attempt, verified_at,
+  announced}`, lu du **cache disque** : la route reste une sonde, zéro réseau.
+- **Sept verdicts, et aucun ne verdit par défaut.** `available` est le **seul** qui propose, et il exige que le
+  SHA de build soit **dans la lignée** annoncée. `cannot-situate` est un **aveu** — trois causes produisent la
+  même absence (instance hors fenêtre, wheel bâti maison, divergence réelle), donc rien n'est proposé **et rien
+  n'est reproché**. Une signature invalide est **ignorée côté produit** et **bruyante côté log** (ERROR, là où
+  un réseau injoignable reste en INFO).
+- **Un seul rappel poussé** dans le centre de notifications : le canal l'emporte dès qu'il a **authentifié**
+  quelque chose, le miroir local reprend la parole quand le canal est muet. Deux lignes pour le même fait, sur
+  une machine qui a les deux références, est la façon la plus sûre d'apprendre à ignorer un centre d'alertes.
+- **`_keys/release-keys.json` n'existe pas encore** : sans racine de confiance embarquée, le canal **n'émet
+  aucune requête** et le dit. La paire naît à la cérémonie de génération, hors de ce dépôt.
+
 ### Une édition monte ENTIÈRE, et redescend entière — les cartes suivent le wheel
 
 **Le critère de l'édition portait un astérisque.** « Deux installs de la même édition posent exactement le

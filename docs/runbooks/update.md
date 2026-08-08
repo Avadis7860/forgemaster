@@ -690,7 +690,7 @@ n'est appelée qu'après. C'est *parse-after-verify* : parser d'abord ferait du 
 `trust_root` (`:138`) **re-dérive** le `key_id` de chaque clé et refuse un fichier qui ment — un identifiant dérivé
 qu'on ne recalcule pas n'est qu'un nom.
 
-`refresh` (`:372`) orchestre et **ne lève jamais** : un canal muet ne fait pas tomber un daemon. Il **court-circuite
+`refresh` (`:386`) orchestre et **ne lève jamais** : un canal muet ne fait pas tomber un daemon. Il **court-circuite
 avant tout réseau** si la racine de confiance est vide (une édition qui ne peut rien vérifier jetterait la réponse),
 et son état sur disque sépare `last_success` de `last_attempt` — un réseau injoignable fait **vieillir** ce qu'on
 savait, il ne l'efface pas. Sept états, jamais un `error` fourre-tout : `ok`, `unreachable`, `malformed`,
@@ -698,15 +698,53 @@ savait, il ne l'efface pas. Sept états, jamais un `error` fourre-tout : `ok`, `
 `bad-signature` sont **distincts** : le premier est le seul indicateur de compromission — ou de rotation non suivie —
 qu'un système hors-ligne aura jamais.
 
-`run_channel_poll` (`:430`) est l'idiome sleep-loop de `run_reaper`, avec **une** différence structurelle : le tirage
+`run_channel_poll` (`:445`) est l'idiome sleep-loop de `run_reaper`, avec **une** différence structurelle : le tirage
 part dans un thread (`asyncio.to_thread`), parce qu'`urllib` est bloquant et qu'un appel direct gèlerait la boucle
 d'événements — donc tout le daemon — jusqu'au timeout. Le premier tour précède le premier sommeil : un daemon qu'on
-vient de redémarrer est le moment où quelqu'un veut savoir. `cli_check` (`:460`) est le même tirage à la demande, pour
+vient de redémarrer est le moment où quelqu'un veut savoir. `cli_check` (`:608`) est le même tirage à la demande, pour
 l'instance pilotée **uniquement en CLI** ; **rc 0 toujours**, comme `wheels` et `aptitude` — c'est une question.
 
+Le **niveau de log est gradué**, et pas décoratif (`_NIVEAU`) : `bad-signature` sort en **ERROR** — quelqu'un a servi
+des octets en se réclamant d'une clé qu'on accepte, le seul indicateur de compromission qu'un système hors-ligne
+aura jamais — `unknown-key` / `malformed` / `internal` en **WARNING**, et un réseau injoignable reste en **INFO** :
+un train qui ne passe pas n'est pas une alarme.
+
 **Non livré, et il faut le dire** : `_keys/release-keys.json` n'existe pas (la paire naît à la cérémonie de
-génération), donc en production le canal **n'émet aucune requête** et le dit. Le **verdict** rendu à l'utilisateur —
-ce qu'une édition non descendante déclenche, ce que voit le panneau — n'est pas non plus écrit.
+génération), donc en production le canal **n'émet aucune requête** et le dit.
+
+## verdict() / situer() / channel_volet() — de l'état à ce qu'on en FAIT
+`update_channel.py` · volet `channel` de `GET /api/version` · `web/src/lib/channelVerdict.ts` (le rendu)
+
+L'état d'un tour dit ce qui **s'est passé** ; le verdict dit ce qu'on en **fait**. Les fondre condamnerait l'un des
+deux à mentir — « injoignable » n'est pas une réponse à *dois-je mettre à jour ?* — donc les deux voyagent ensemble
+dans le volet : `state` (le verdict) **et** `attempt` (le dernier tour, toujours rendu).
+
+Sept issues, et **aucune ne verdit par défaut** : `never` · `no-trust-root` (capacité absente, pas panne) ·
+`unverified` · `unreachable` · `up-to-date` · `available` · `cannot-situate`.
+
+L'ordre de priorité est le contrat. **`no-trust-root` d'abord** (une capacité absente présentée comme un échec de
+vérification enverrait chercher une panne inexistante) ; puis l'échec **DUR** — `unverified` l'emporte **même sur une
+annonce déjà vérifiée**, parce que des octets qui se réclament d'une clé qu'on accepte sont plus urgents qu'une bonne
+nouvelle d'hier (laquelle reste rendue à côté, avec son âge) ; puis, sans rien de vérifié, **lequel** des deux
+silences ; sinon on **situe**, y compris quand le dernier tour a échoué **mollement**. *Un réseau qui tombe fait
+vieillir, une signature qui ment interrompt* — sans cette asymétrie, une panne de wifi produirait une amnésie.
+
+`situer` (**pur**) rend les trois issues qui décident du sort de l'annonce, en cherchant le SHA de build **dans la
+lignée** — c'est ce qui rend la divergence classe B décidable **sans miroir git**, chez qui n'en a pas. Son absence
+est un **AVEU** (« je ne peux pas te situer »), jamais un verdict de divergence : trois causes distinctes la
+produisent — instance plus ancienne que la fenêtre publiée, wheel bâti maison, divergence réelle — et on ne les
+distingue pas, donc on ne choisit pas. C'est aussi pourquoi ce verdict **ne rougit pas**.
+
+`channel_volet` reçoit le `build_sha` en argument, sans défaut : il appartient à `build_provenance`, et la
+composition vit chez l'appelant — la route (`daemon/routes/onboarding.py`) et `cli.py` — pour que les deux modules
+n'aient **aucune arête** entre eux. Un défaut d'argument, lui, ferait rendre « non situable » à une instance
+parfaitement tamponnée dont l'appelant aurait oublié le paramètre.
+
+Côté surface, `rappelInstance` (`web/src/lib/channelVerdict.ts`) arbitre **qui pousse** un rappel dans le centre de
+notifications : **le canal l'emporte dès qu'il fait autorité** — c'est-à-dire dès qu'il a authentifié quelque chose,
+`available` comme `cannot-situate`. Le miroir local reprend la parole quand le canal est muet, injoignable ou non
+vérifié. Une seule ligne, jamais deux : sur une machine qui a les deux références, en afficher deux pour le même
+fait est la façon la plus sûre d'apprendre à ignorer un centre de notifications.
 
 ## Zones non détaillées
 

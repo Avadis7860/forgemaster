@@ -382,8 +382,11 @@ def test_un_cache_de_SCHEMA_INCONNU_se_lit_comme_absent(live: Settings, capsys):
                              "last_success": {"forme": "inconnue"}}), encoding="utf-8")
     vue = uc.read_state(live)
     assert vue["last_success"] is None and vue["last_attempt"]["state"] == "never"
-    assert uc.cli_check(live) == 0, "une CLI est tombée sur un cache écrit par une autre version"
-    assert "Aucune annonce" in capsys.readouterr().out
+    assert uc.cli_check(live, build_sha="9" * 40) == 0, (
+        "une CLI est tombée sur un cache écrit par une autre version")
+    # Ce que la CLI dit ici dépend de ce que CE checkout embarque (pas de `_keys/` : capacité absente).
+    # Ce qui est gardé est qu'elle DIT quelque chose d'honnête et reste debout — jamais qu'elle verdit.
+    assert "○" in capsys.readouterr().out
 
 
 def test_le_meme_key_id_declare_deux_fois_est_refuse(tmp_path: Path):
@@ -473,9 +476,9 @@ def test_update_check_rend_TOUJOURS_rc_0(live: Settings, tmp_path: Path, monkeyp
     """Une QUESTION, pas un geste — parité stricte avec `update wheels` et `update aptitude`. Un réseau
     injoignable n'est pas un échec de la commande : c'est une réponse, et elle s'affiche."""
     monkeypatch.setattr(uc, "trust_root", lambda *_a, **_k: [])
-    assert uc.cli_check(live) == 0
+    assert uc.cli_check(live, build_sha="f" * 40) == 0
     sortie = capsys.readouterr().out
-    assert "no-trust-root" in sortie and "Aucune annonce" in sortie
+    assert "capacité absente" in sortie and "aucune racine de confiance" in sortie
 
 
 def test_update_check_dit_que_le_canal_ANNONCE_et_ne_pose_rien(live: Settings, tmp_path: Path,
@@ -491,7 +494,192 @@ def test_update_check_dit_que_le_canal_ANNONCE_et_ne_pose_rien(live: Settings, t
     monkeypatch.setattr(uc, "fetch", _Compteur(_enveloppe(_annonce(), (priv, kid))))
     monkeypatch.setenv(uc.ENV_URL, "https://exemple.invalide/c.json")
 
-    assert uc.cli_check(live) == 0
+    # Le SHA de build est PRIS DANS LA LIGNÉE de l'annonce : c'est la seule configuration où proposer est
+    # fondé, donc la seule où cette phrase a le droit de s'afficher.
+    assert uc.cli_check(live, build_sha="d" * 40) == 0
     sortie = capsys.readouterr().out
     assert "0.2.0" in sortie
     assert "ANNONCE" in sortie and "update apply" in sortie
+
+
+# --- 7. le verdict : de l'état à ce qu'on en FAIT -----------------------------------------------------
+#
+# L'état d'un tour dit ce qui s'est passé ; le verdict dit ce qu'on en fait. Ces tests gardent la
+# distinction, et surtout les deux règles qui empêchent le verdict de mentir : un échec DUR (la
+# vérification) prend la tête, un échec MOU (le réseau) fait seulement VIEILLIR — et une absence de la
+# lignée est un AVEU, jamais un verdict de divergence.
+
+
+def _etat(annonce_sha: str = "a" * 40, lignee: list[str] | None = None, *,
+          tour: str = "ok", raison: str = "") -> dict:
+    """Un état de cache tel que `read_state` le rendrait — sans passer par le réseau ni le disque : le
+    verdict est PUR, et le tester à la table est ce qui rend ses sept issues énumérables."""
+    succes = {"at": "2026-08-08T10:00:00+00:00",
+              "announce": json.loads(_annonce(edition={
+                  "version": "0.2.0", "sha": annonce_sha, "committed_at": "2026-08-08T09:00:00+00:00",
+                  "wheel": {"name": "f-0.2.0.whl", "sha256": "b" * 64, "size": 12}},
+                  lineage=lignee if lignee is not None else ["d" * 40, "e" * 40]).decode())}
+    return {"last_success": succes,
+            "last_attempt": {"at": "2026-08-08T11:00:00+00:00", "state": tour, "reason": raison}}
+
+
+def test_le_SHA_annonce_egal_au_notre_rend_a_jour():
+    v = uc.verdict(_etat(annonce_sha="9" * 40), build_sha="9" * 40)
+    assert v["state"] == "up-to-date"
+    assert v["announced"]["version"] == "0.2.0"
+
+
+def test_notre_SHA_DANS_la_lignee_rend_disponible_car_lannonce_DESCEND_de_nous():
+    """La seule configuration où proposer une mise à jour est fondé : l'édition annoncée a été publiée
+    APRÈS la nôtre, donc elle en descend. C'est ce que la lignée bornée sert à décider — sans miroir git,
+    chez qui n'en a pas."""
+    v = uc.verdict(_etat(lignee=["d" * 40, "9" * 40]), build_sha="9" * 40)
+    assert v["state"] == "available"
+
+
+def test_notre_SHA_ABSENT_de_la_lignee_est_un_AVEU_et_ne_propose_RIEN():
+    """Trois causes produisent exactement cette absence — instance plus ancienne que la fenêtre, wheel bâti
+    maison, divergence réelle. On ne les distingue pas, DONC on ne choisit pas : le verdict dit qu'il ne
+    peut pas situer, il n'accuse pas de divergence et il ne propose pas."""
+    v = uc.verdict(_etat(lignee=["d" * 40, "e" * 40]), build_sha="9" * 40)
+    assert v["state"] == "cannot-situate"
+    assert "trois causes" in v["reason"]
+    # Le mot qui n'a PAS le droit d'être prononcé sur une absence : ce serait un verdict, pas un aveu.
+    assert "as divergé" not in v["reason"]
+
+
+def test_sans_tampon_de_build_on_ne_se_situe_pas_non_plus():
+    """Même aveu, autre cause : on ne sait pas d'où l'on vient, donc on ne peut pas dire où l'on est. Le
+    replier sur « à jour » ou sur « en retard » serait un verdict tiré au sort."""
+    v = uc.verdict(_etat(), build_sha=None)
+    assert v["state"] == "cannot-situate"
+    assert "tampon de build" in v["reason"]
+
+
+def test_une_signature_INVALIDE_prend_la_tete_meme_sur_une_annonce_deja_verifiee():
+    """L'échec DUR l'emporte : quelqu'un sert des octets en se réclamant d'une clé qu'on accepte, et c'est
+    plus urgent qu'une bonne nouvelle d'hier. L'annonce d'hier n'est pas effacée pour autant — elle est
+    rendue à côté, avec sa date."""
+    v = uc.verdict(_etat(tour="bad-signature", raison="les octets ne sont pas ceux qu'on a lus"),
+                   build_sha="9" * 40)
+    assert v["state"] == "unverified"
+    assert v["announced"] is not None and v["verified_at"] == "2026-08-08T10:00:00+00:00"
+
+
+def test_un_reseau_injoignable_NE_DEGRADE_PAS_le_verdict_il_le_fait_VIEILLIR():
+    """La contrepartie exacte de la survie de `last_success` : si un tour raté écrasait le verdict, une
+    panne de wifi produirait une amnésie — le produit oublierait une édition déjà vérifiée. Le tour raté
+    n'est pas caché pour autant : il voyage dans `attempt`."""
+    v = uc.verdict(_etat(lignee=["9" * 40], tour="unreachable", raison="HTTP 503"), build_sha="9" * 40)
+    assert v["state"] == "available"                    # le verdict SITUE quand même
+    assert v["attempt"]["state"] == "unreachable"       # et l'échec du jour est dit, pas dissimulé
+    assert v["attempt"]["reason"] == "HTTP 503"
+
+
+def test_sans_rien_de_verifie_on_dit_LEQUEL_des_deux_silences():
+    """« Je n'ai jamais regardé » et « je n'ai pas pu lire » n'appellent pas la même réparation. Les fondre
+    en un seul silence obligerait l'utilisateur à deviner s'il doit attendre ou vérifier son réseau."""
+    jamais = {"last_success": None, "last_attempt": dict(uc._JAMAIS)}
+    assert uc.verdict(jamais, build_sha="9" * 40)["state"] == "never"
+    muet = {"last_success": None,
+            "last_attempt": {"at": "2026-08-08T11:00:00+00:00", "state": "unreachable", "reason": "DNS"}}
+    assert uc.verdict(muet, build_sha="9" * 40)["state"] == "unreachable"
+
+
+def test_une_edition_SANS_racine_de_confiance_dit_une_CAPACITE_ABSENTE_pas_un_echec():
+    """Absence n'est pas panne. Et c'est le verdict le plus prioritaire de tous : présenter « aucune clé
+    embarquée » comme un échec de vérification enverrait chercher une panne là où il n'y a rien de cassé."""
+    etat = {"last_success": None,
+            "last_attempt": {"at": "x", "state": "no-trust-root", "reason": "aucune racine embarquée"}}
+    assert uc.verdict(etat, build_sha="9" * 40)["state"] == "no-trust-root"
+
+
+def test_le_volet_ne_rend_PAS_le_manifeste_entier():
+    """Un volet d'API qui recopie le document d'un tiers fait dépendre son propre contrat de la forme de ce
+    document. On rend ce qu'une surface a besoin de nommer, et rien de plus."""
+    v = uc.verdict(_etat(), build_sha="9" * 40)
+    assert set(v["announced"]) == {"version", "sha", "committed_at", "wheel_name", "wheel_sha256",
+                                   "lineage_len"}
+    assert "schema" not in v["announced"] and "maps" not in v["announced"]
+
+
+def test_une_signature_invalide_est_BRUYANTE_la_ou_un_reseau_absent_est_DISCRET(live: Settings,
+                                                                                tmp_path: Path,
+                                                                                monkeypatch, caplog):
+    """§12 de la spec de racine de confiance : *un vérificateur PRÉSENT qui échoue est un ÉCHEC, bruyant
+    côté log*. Le test mesure le NIVEAU, pas le message — un test qui n'assertait que le texte resterait
+    vert si tout retombait en `info`, c'est-à-dire si la règle cessait d'être tenue."""
+    import logging as _log
+
+    priv, pub, kid = _paire()
+    autre, _, _ = _paire()
+    racine = _racine(tmp_path / "keys.json", (pub, kid))
+    vraie = uc.trust_root
+    monkeypatch.setattr(uc, "trust_root", lambda *_a, **_k: vraie(racine))
+    monkeypatch.setenv(uc.ENV_URL, "https://exemple.invalide/c.json")
+
+    # ① signature invalide : les octets se réclament d'une clé qu'on accepte → ERROR.
+    monkeypatch.setattr(uc, "fetch", _Compteur(_enveloppe(_annonce(), (autre, kid))))
+    with caplog.at_level(_log.DEBUG, logger="forgemaster"):
+        uc.refresh(live)
+    dur = [r for r in caplog.records if "bad-signature" in r.getMessage()]
+    assert dur and dur[0].levelno == _log.ERROR
+
+    # ② réseau injoignable : un train qui ne passe pas n'est pas une alarme → INFO.
+    caplog.clear()
+    monkeypatch.setattr(uc, "fetch", _Compteur(uc.ChannelUnreachable("HTTP 503")))
+    with caplog.at_level(_log.DEBUG, logger="forgemaster"):
+        uc.refresh(live)
+    mou = [r for r in caplog.records if "unreachable" in r.getMessage()]
+    assert mou and mou[0].levelno == _log.INFO
+    assert priv is not None                       # la paire légitime existe : c'est ce qui rend ① probant
+
+
+def test_la_lecture_du_verdict_NE_VA_PAS_sur_le_reseau(live: Settings, monkeypatch):
+    """Il est posé sur `/api/version`, une sonde qui ne doit ni pendre ni rendre 500. Prouvé en rendant le
+    tirage IMPOSSIBLE : s'il était appelé, le volet lèverait au lieu de rendre un état honnête."""
+    def _interdit(*_a, **_k):
+        raise AssertionError("le volet a émis une requête — il ne lit QUE le cache disque")
+
+    monkeypatch.setattr(uc, "fetch", _interdit)
+    monkeypatch.setattr(uc, "refresh", _interdit)
+    vue = uc.read_verdict(live, build_sha="9" * 40)
+    assert vue["state"] == "never"
+
+
+def test_update_check_reste_rc_0_sur_LES_TROIS_verdicts_situes(live: Settings, tmp_path: Path,
+                                                               monkeypatch, capsys):
+    """Parité stricte avec `wheels`/`aptitude` : c'est une question. Un rc non nul sur « je ne peux pas te
+    situer » ferait échouer un script d'exploitation sur un état parfaitement normal.
+
+    Le nom dit **trois** et non « chaque » : ce banc joue les issues qui dépendent du SHA de build, celles
+    qu'un même manifeste peut produire. Les quatre autres se jouent ailleurs (`no-trust-root`, `never`,
+    cache inconnu) ou n'ont pas de titre à part — et l'exhaustivité, elle, est gardée par le test suivant,
+    qui la mesure au lieu de la promettre."""
+    priv, pub, kid = _paire()
+    racine = _racine(tmp_path / "keys.json", (pub, kid))
+    vraie = uc.trust_root
+    monkeypatch.setattr(uc, "trust_root", lambda *_a, **_k: vraie(racine))
+    monkeypatch.setattr(uc, "fetch", _Compteur(_enveloppe(_annonce(), (priv, kid))))
+    monkeypatch.setenv(uc.ENV_URL, "https://exemple.invalide/c.json")
+    for sha, attendu in (("a" * 40, "à jour"), ("d" * 40, "plus récente"), ("9" * 40, "NON PROPOSÉE")):
+        assert uc.cli_check(live, build_sha=sha) == 0
+        assert attendu in capsys.readouterr().out
+
+
+def test_chaque_verdict_possible_a_son_TITRE_dans_la_CLI():
+    """Garde d'EXHAUSTIVITÉ, et pas de politesse : `cli_check` indexe `_TITRE` par le verdict. Un huitième
+    état ajouté à `verdict()` sans son titre ferait lever une `KeyError` dans une commande qui PROMET rc 0
+    — le défaut ne serait vu qu'en production, et sur l'état neuf, c'est-à-dire le moins joué.
+
+    On mesure ici l'ensemble des issues que `verdict` peut réellement produire, plutôt que de recopier une
+    liste : une liste recopiée resterait verte le jour où la fonction en rend une de plus."""
+    etats = set()
+    for tour in ("never", "ok", "unreachable", "malformed", "internal",
+                 "unknown-key", "bad-signature", "no-trust-root"):
+        for succes in (None, {"at": "x", "announce": json.loads(_annonce().decode())}):
+            for sha in (None, "a" * 40, "d" * 40, "9" * 40):
+                etat = {"last_success": succes,
+                        "last_attempt": {"at": "x", "state": tour, "reason": "r"}}
+                etats.add(uc.verdict(etat, build_sha=sha)["state"])
+    assert etats == set(uc._TITRE), f"verdicts sans titre : {etats - set(uc._TITRE)}"

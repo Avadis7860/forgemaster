@@ -3,9 +3,10 @@
 > **Partiellement livré.** Écrit d'abord comme contrat, **avant** qu'une ligne de crypto existe, pour que la
 > phase qui l'écrirait n'ait pas à improviser un modèle de confiance. Depuis, `src/forgemaster/update_channel.py`
 > implémente la **primitive** (jeu de clés, `key_id` re-dérivé, deux conditions, refus distincts) et
-> `tests/test_update_channel.py` la garde. Restent **non livrés** : la vraie paire de clés (donc
-> `_keys/release-keys.json`, absent — une édition sans racine ne va pas sur le réseau, cf. §8) et le
-> **verdict** rendu à l'utilisateur.
+> `tests/test_update_channel.py` la garde. Le **verdict** l'est aussi depuis le 2026-08-08 — dont la
+> conduite en dégradé de la règle 12, qui n'était jusque-là qu'écrite (cf. `update-channel-manifest.md`
+> §« Le verdict »). Reste **non livrée** : la vraie paire de clés (donc `_keys/release-keys.json`, absent
+> — une édition sans racine ne va pas sur le réseau, cf. §8).
 > Cibles : `update_channel.py` (le canal — **pas** `update.py`, qui est la moitié hors-ligne et n'a aucune
 > référence vers lui), `_keys/` (le jeu de clés embarqué), `build_provenance.py` (`edition`, qui répond déjà
 > « quelle édition tourne ici ? »). Le **format** de ce qui est signé vit dans `update-channel-manifest.md`.
@@ -72,8 +73,10 @@ détiennent toutes deux le secret par droit) ; il est disqualifié dès que le v
 12. **Conduite en dégradé — reprise de `apply_update` verbatim, pas réinventée** : *absence n'est pas panne ;
     un juge **présent** qui plante est un ÉCHEC.*
     - édition **sans** jeu de clés (checkout de dev, édition antérieure au câblage) → **ne propose rien** et
-      le **dit**. Capacité absente, pas panne ;
-    - vérificateur **présent** qui échoue → **échec**, bruyant côté log ;
+      le **dit**. Capacité absente, pas panne — verdict `no-trust-root`, prioritaire sur tous les autres ;
+    - vérificateur **présent** qui échoue → **échec**, bruyant côté log. **Tenu depuis le 2026-08-08**, et
+      pas seulement écrit : `bad-signature` sort en **ERROR**, `unknown-key` en WARNING, un réseau
+      injoignable reste en INFO. Côté produit, l'annonce est **ignorée** — rien n'est proposé ;
     - `key_id` **inconnu** ≠ signature **invalide**. Le premier dit « une rotation a eu lieu, ou quelqu'un
       sonde » ; le second dit « ces octets ne sont pas de nous ». Les confondre fait perdre le seul indicateur
       de compromission qu'un système hors-ligne aura jamais.
@@ -126,4 +129,6 @@ qu'une clé volée permet.
 
 L'**hébergement** du manifeste, son **schéma complet** au-delà de l'enveloppe et de la liste de signatures, la
 **lecture périodique** (démarrage puis intervalle, sans jamais bloquer le daemon) et le **verdict d'interface**
-appartiennent aux phases suivantes du canal.
+appartiennent aux phases suivantes du canal — **toutes livrées depuis**, et décrites par
+`update-channel-manifest.md`. Reste hors de ces deux specs : la **cérémonie de génération** de la paire, la
+publication de la première Release, et la **proposition/consentement** (accepter, différer, refuser).

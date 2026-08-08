@@ -1205,6 +1205,43 @@ export const InstallModeSchema = z.object({
   reason: z.string().nullable(),
 })
 
+// Le verdict du CANAL servi — la référence JOIGNABLE, celle qui ne vieillit pas avec l'instance (là où le
+// miroir local, lui, vieillit avec elle). Lu du cache disque, jamais du réseau : cette route est une sonde.
+//
+// Deux champs qui ne se remplacent PAS l'un l'autre, et c'est le cœur du contrat : `state` dit ce qu'on en
+// FAIT, `attempt` dit ce qui s'est PASSÉ au dernier tour. « Injoignable » n'est pas une réponse à « dois-je
+// mettre à jour ? », et « une édition existe » n'est pas une réponse à « mon contrôle a-t-il abouti ? ».
+// `cannot-situate` est un AVEU, jamais un verdict de divergence : trois causes donnent la même absence.
+export const ChannelAttemptSchema = z.object({
+  state: z.enum(['never', 'ok', 'unreachable', 'malformed', 'unknown-key', 'bad-signature',
+                 'no-trust-root', 'internal']),
+  at: z.string().nullable(),
+  reason: z.string(),
+})
+
+export const ChannelAnnouncedSchema = z.object({
+  version: z.string().nullable(),
+  sha: z.string().nullable(),
+  committed_at: z.string().nullable(),
+  wheel_name: z.string().nullable(),
+  wheel_sha256: z.string().nullable(),
+  lineage_len: z.number(),
+})
+
+export const ChannelSchema = z.object({
+  state: z.enum(['never', 'no-trust-root', 'unverified', 'unreachable',
+                 'up-to-date', 'available', 'cannot-situate']),
+  reason: z.string(),
+  // D'OÙ vient le verdict : du dernier tour, ou d'un succès antérieur. Fait du domaine, pas indice
+  // d'affichage — c'est lui qui évite que la règle « ne pas redire le tour quand il EST le sujet » soit
+  // recopiée ici ET dans la CLI, où les deux copies finiraient par ne plus lister les mêmes états.
+  from_attempt: z.boolean(),
+  attempt: ChannelAttemptSchema,
+  verified_at: z.string().nullable(),
+  announced: ChannelAnnouncedSchema.nullable(),
+})
+export type Channel = z.infer<typeof ChannelSchema>
+
 // Provenance de BUILD de l'instance + l'identité de ses QUATRE pièces. Consommée pour son IDENTITÉ
 // (`version`/`sha`/`committed_at` : la version de paquet ne bouge pas d'un wheel à l'autre, le SHA de build
 // si — c'est donc lui qui prouve qu'une bascule a eu lieu), pour sa FRAÎCHEUR (`comparable`/`stale`/… ,
@@ -1230,6 +1267,7 @@ export const VersionSchema = z.object({
   maps: z.array(ServedMapSchema),           // les 3 cartes hôte SERVIES
   edition: EditionSchema,                   // ce que l'édition installée DÉCLARE pour elles
   mcp: McpTopologySchema,                   // le serveur de corpus consommé
+  channel: ChannelSchema,                   // le verdict du canal servi (cache disque, zéro réseau)
 })
 export type Version = z.infer<typeof VersionSchema>
 
