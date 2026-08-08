@@ -110,7 +110,12 @@ qu'une clé volée permet.
   c'est le chevauchement de rotation, et sans ce test la règle 4 n'est qu'une intention.
 - **Une édition sans jeu de clés ne propose rien et ne lève rien** — elle rend un motif lisible.
 - **Un `key_id` inconnu et une signature invalide produisent des verdicts DISTINCTS** dans le log.
-- **Aucun accès réseau sur le chemin de `update apply`** — la garde existante ne doit pas régresser.
+- **Aucun accès réseau sur le chemin de `update apply`.** À écrire, et il faut le dire : **aucun test
+  n'assure cette propriété aujourd'hui**. Elle est tenue par le contrat du module (`update.py`, docstring) et
+  par l'**étroitesse** de ce qu'il appelle — ce qui est une intention, pas une garde. Le seul garde-fou
+  automatique voisin est la **pureté stdlib** de l'applicateur (`test_apply_ne_depend_de_rien_du_forgemaster`,
+  vérifiée par AST), qui interdit un import, pas une socket. La phase qui branchera le canal doit donc
+  **ajouter** cette garde, pas s'appuyer dessus.
 
 ## Ce que cette spec ne tranche pas
 
