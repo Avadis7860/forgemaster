@@ -126,7 +126,11 @@ def preflight(settings: Settings, *, wheel: str, unit: str | None, scope: str,
     _refuse_uncommitted_work(authority or [], geste="cette MAJ")
     _refuse_busy_dispatch(in_flight or [], geste="cette MAJ")
     _refuse_busy_update(updates_in_flight or [], geste="cette MAJ")
-    return {**socle, "wheel": whl, "authority": authority or [], "sessions": sessions or []}
+    # Ce qu'on saura faire des CARTES, dit avant le geste — même levier que `ui_check` : le plan le porte,
+    # `describe` l'affiche, donc le panneau le montre dans sa prévisualisation, sans une ligne de front. La
+    # source est le wheel lui-même (son index zip), donc la lecture reste strictement idempotente.
+    return {**socle, "wheel": whl, "authority": authority or [], "sessions": sessions or [],
+            "maps_check": apply_update.annonce_maps_wheel(whl)}
 
 
 def _preflight_service(settings: Settings, *, unit: str | None, scope: str) -> dict:
@@ -285,7 +289,10 @@ def preflight_rollback(settings: Settings, *, snapshot: str | None, unit: str | 
             raise UpdateRefused(motif)
 
     return {**socle, "snapshot": Path(cible["path"]), "snapshot_name": cible["name"],
-            "target_venv": venv, "authority": authority or [], "sessions": sessions or []}
+            "target_venv": venv, "authority": authority or [], "sessions": sessions or [],
+            # Côté retour, la source de l'annonce est le venv CIBLE — déjà sur le disque, donc interrogeable
+            # sans rien poser. Une cible qui ne sait pas reposer ses cartes ne bloque pas : elle se dit.
+            "maps_check": apply_update.annonce_maps_venv(venv)}
 
 
 def _resolution_cible(settings: Settings, *, snaps: list[dict], actuel: Path,
@@ -514,8 +521,10 @@ def describe(plan: dict) -> list[str]:
         f"sonde en vivant : {plan['base_url']}/health (readiness : 503 = elle dit pourquoi) puis "
         f"/api/version",
         plan.get("ui_check", ""),
+        plan.get("maps_check", ""),
         "déroulé         : venv neuf à côté → sonde en isolation → arrêt + instantané à froid → "
-        "bascule du lien → vérification en vivant → retour arrière automatique si elle échoue",
+        "bascule du lien → repose des cartes de l'édition → vérification en vivant → retour arrière "
+        "automatique si elle échoue",
     ]
     lines.extend(_a_savoir(plan))
     return [ln for ln in lines if ln]
@@ -556,8 +565,10 @@ def describe_rollback(plan: dict) -> list[str]:
         f"sonde en vivant : {plan['base_url']}/health (readiness : 503 = elle dit pourquoi) puis "
         f"/api/version",
         plan.get("ui_check", ""),
+        plan.get("maps_check", ""),
         "déroulé         : sonde du binaire cible en isolation → arrêt + instantané de SÛRETÉ à froid → "
-        "bascule du lien PUIS restauration → vérification en vivant → retour du retour si elle échoue",
+        "bascule du lien PUIS restauration → repose des cartes de la cible → vérification en vivant → "
+        "retour du retour si elle échoue",
     ]
     lines.extend(_a_savoir(plan))
     return [ln for ln in lines if ln]

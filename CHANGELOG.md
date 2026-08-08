@@ -9,6 +9,39 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 
 ## [Unreleased]
 
+### Une édition monte ENTIÈRE, et redescend entière — les cartes suivent le wheel
+
+**Le critère de l'édition portait un astérisque.** « Deux installs de la même édition posent exactement le
+même code » n'était strictement vrai qu'à l'**install fraîche** : `update apply` basculait le wheel et
+laissait `tools/venv` intact, donc une instance montée de N à N+1 servait encore les cartes de N — sans que
+rien ne l'ait décidé. Et le piège que ça ouvrait était pire que le trou lui-même : un retour arrière qui ne
+reposerait pas les cartes aurait produit un état que **personne n'a jamais eu** (vieux binaire, cartes
+neuves).
+
+- **`update apply` et `update rollback` reposent les 3 cartes de l'édition qu'ils installent** — l'aller
+  celles du venv neuf, le retour celles de la cible — **après** la bascule et **avant** le verdict (le juge
+  de rendu jugerait sinon une instance mi-montée). Le retour arrière **automatique** repose celles de
+  l'ancien venv, sans quoi il fabriquerait lui-même l'état inédit qu'il existe pour interdire.
+- **C'est le venv qui pose SES cartes**, par sa propre commande : rien n'est composé de l'extérieur, donc
+  l'édition posée est celle de ce paquet-là par construction. Même code dans les deux sens — un retour
+  arrière qui ne partage pas le code de l'aller est un chemin qu'on ne joue qu'en catastrophe.
+- **Zéro réseau sur le chemin de `apply`**, tenu par l'étroitesse du geste et non par une intention : le
+  drapeau `forgemaster toolchain install --maps-only` ne retient que l'étape `--no-index` du plan. Le verbe
+  entier (qualité py, tarball Node) ne franchit pas cette frontière.
+- **Absence n'est pas panne.** Une cible qui ne sait pas reposer ses cartes (édition sans
+  `forgemaster/_maps`, ou antérieure à ce câblage) ne **bloque jamais** le geste — *on exige la preuve pour
+  avancer, pas pour revenir* — et une pose qui échoue ne défait **pas** une instance qui sert : les cartes
+  vivent dans un venv partagé, hors de la bascule. Les deux cas se **disent** au verdict ; seul le second
+  déplace l'`impact`. La dérive résiduelle reste lisible en permanence par le volet `edition` de
+  `GET /api/version`.
+- **Dit avant le geste** : `GET /api/update/plan` annonce ce qu'il saura faire des cartes — lu dans l'index
+  zip du wheel côté aller, dans le venv cible côté retour. La prévisualisation reste strictement idempotente.
+- **Ceci remplace la dernière phrase de l'entrée ci-dessous** (« le geste de remise à niveau reste explicite :
+  `update apply` ne touche pas `tools/` »), écrite la veille. Elle décrivait un état de fait, et cet état de
+  fait était le trou. Ce qui en reste vrai : le verdict et le geste restent DEUX choses — `toolchain check`
+  rapporte, `toolchain install` mute, et `GET /api/version` ne mute jamais rien.
+- **Additif** (une ligne de `describe`, un drapeau CLI) → CHANGELOG, **pas** de bump `SCHEMA_VERSION`.
+
 ### Une instance répond à « quelle édition tourne ici ? » — et l'écart cesse d'être réservé au terminal
 
 **Deux modes d'install coexistaient et rien ne remontait lequel était actif** : un editable-sibling et un

@@ -83,8 +83,14 @@ PY_QUALITY: tuple[str, ...] = ("ruff", "pytest", "mypy")
 NODE_VERSION = "lts"
 # Exécutables exposés sur tools/bin — ceux que le worker et le gate résolvent (par-type : le worker n'utilise
 # que ceux de sa facette, mais on expose tout une fois ; le preflight P1 vérifie la présence par-facette).
-_VENV_BINS: tuple[str, ...] = ("codemap", "docsmap", "frontmap", "ruff", "pytest", "mypy")
+# `_MAP_BINS` est extrait pour être le périmètre EXACT du mode maps-only : les mêmes noms dérivés d'une seule
+# source, jamais deux listes qu'on garderait d'accord à la main.
+_MAP_BINS: tuple[str, ...] = ("codemap", "docsmap", "frontmap")
+_VENV_BINS: tuple[str, ...] = (*_MAP_BINS, "ruff", "pytest", "mypy")
 _NODE_BINS: tuple[str, ...] = ("node", "npm", "npx")
+# Le nom de l'étape hors-ligne du plan — la SEULE que `maps_only` retient. Nommée ici pour que le filtre et
+# le plan ne puissent pas diverger sur une chaîne recopiée.
+MAPS_STEP = "pip-maps"
 # Catalogue des outils que l'HÔTE provisionne (`forgemaster toolchain install` → `tools/bin`) : ceux-là
 # DOIVENT
 # préexister au dispatch → le preflight les gate. Les autres binaires qu'une facette déclare (`eslint`,
@@ -453,7 +459,7 @@ def install_plan(settings: Settings, *, maps_dir: Path | None = None) -> list[di
     d = Path(maps_dir) if maps_dir is not None else edition_maps_dir()
     wheels = [str(d / m["wheel"]) for m in read_edition(d)]
     return [
-        {"name": "pip-maps", "argv": [pip, "install", "--no-index", "--force-reinstall", *wheels]},
+        {"name": MAPS_STEP, "argv": [pip, "install", "--no-index", "--force-reinstall", *wheels]},
         {"name": "pip-quality", "argv": [pip, "install", "--upgrade", *PY_QUALITY]},
         {"name": "pip-nodeenv", "argv": [pip, "install", "--upgrade", "nodeenv"]},
         {"name": "nodeenv", "argv": [str(tools_venv(settings) / "bin" / "nodeenv"),
@@ -484,7 +490,7 @@ def anonymous_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
 
 
 def install_tools(settings: Settings, *, runner: Runner | None = None,
-                  maps_dir: Path | None = None) -> dict:
+                  maps_dir: Path | None = None, maps_only: bool = False) -> dict:
     """Provisionne l'outillage hôte-niveau (IDEMPOTENT, FAIL-LOUD). Crée le venv d'outils, installe les 3
     cartes **depuis les wheels de l'édition** (hors-ligne) + qualité py + Node (nodeenv), puis symlinke
     chaque exécutable dans `tools/bin`. Une étape rouge (rc≠0) **abandonne** (jamais un demi-provisioning)
@@ -493,7 +499,16 @@ def install_tools(settings: Settings, *, runner: Runner | None = None,
 
     Plus aucun credential ne peut entrer ici, et ce n'est plus tenu par un env de précaution mais par
     l'absence du chemin : il n'y a plus d'URL dans le plan, donc plus de clone.
-    """
+
+    **`maps_only` : le mode ÉTROIT du cycle de MAJ** (2026-08-08). `update apply`/`rollback` reposent les
+    cartes de l'édition qu'ils installent, et ils tiennent une frontière verrouillée — **zéro réseau sur le
+    chemin de `apply`**. Le verbe entier ne la respecterait pas : la qualité py et le tarball Node sont
+    réseau (cf. la fiche `tools-install-offline-only-for-maps`). Ce mode retient donc la SEULE étape
+    hors-ligne du plan — celle qui porte `--no-index` — et rien d'autre.
+
+    Les symlinks sont restreints aux 3 cartes dans ce mode, et ce n'est pas une économie : la boucle complète
+    échoue si `ruff` ou `node` manquent, et rendrait donc **rouge** une repose qui a réussi sur une instance
+    où Node n'a jamais été provisionné. On ne juge que ce qu'on vient de poser."""
     runner = runner or _default_runner
     root = tools_root(settings)
     root.mkdir(parents=True, exist_ok=True)
@@ -519,6 +534,8 @@ def install_tools(settings: Settings, *, runner: Runner | None = None,
         report["ok"] = False
         report["error"] = str(exc)
         return report
+    if maps_only:
+        plan = [s for s in plan if s["name"] == MAPS_STEP]
     for step in plan:
         if not run_step(runner, step, env=env, steps=steps):
             report["ok"] = False
@@ -529,7 +546,10 @@ def install_tools(settings: Settings, *, runner: Runner | None = None,
     #    des installs vertes = incohérence → fail-loud.
     bin_dir = tools_bin(settings)
     bin_dir.mkdir(parents=True, exist_ok=True)
-    for name, src in _symlink_sources(settings).items():
+    sources = _symlink_sources(settings)
+    if maps_only:
+        sources = {n: s for n, s in sources.items() if n in _MAP_BINS}
+    for name, src in sources.items():
         if not src.exists():
             report["ok"] = False
             report["error"] = f"exécutable attendu absent après install : {src}"
@@ -598,17 +618,24 @@ def check_tools(settings: Settings, *, maps_dir: Path | None = None,
 def cli_dispatch(settings: Settings, args: argparse.Namespace) -> int:
     """Route `forgemaster toolchain <install|check>`. Aucun credential sur aucune des deux — les cartes
     viennent des wheels de l'édition, il n'y a plus de clone du tout (le `--token-file` d'avant a été RETIRÉ,
-    pas rendu optionnel : un drapeau accepté-et-ignoré ferait croire qu'il sert encore)."""
+    pas rendu optionnel : un drapeau accepté-et-ignoré ferait croire qu'il sert encore).
+
+    `--maps-only` est la surface du mode étroit : c'est le MÊME verbe narrowé, pas un verbe de plus — deux
+    verbes qui disent la même chose finiraient par ne plus la dire pareil. Son appelant réel n'est pas humain
+    (`apply_update.repose_maps`), et c'est aussi pour ça qu'il est un drapeau : un venv cible peut être
+    interrogé sur la présence de cette chaîne dans son propre `cli.py`."""
     if getattr(args, "action", None) == "check":
         return _cli_check(settings)
-    report = install_tools(settings)
+    maps_only = bool(getattr(args, "maps_only", False))
+    report = install_tools(settings, maps_only=maps_only)
     for s in report["steps"]:  # type: ignore[attr-defined]
         mark = "🟢" if s.get("ok") else "🔴"
         extra = f" (exit {s.get('exit_code')}: {s['error']})" if s.get("error") else ""
         print(f"  {mark} {s['name']}{extra}")
     if report["ok"]:
         n = len(report["symlinks"])  # type: ignore[arg-type]
-        print(f"outillage provisionné → {tools_bin(settings)} ({n} exécutable(s) exposé(s)).")
+        quoi = "cartes de l'édition reposées" if maps_only else "outillage provisionné"
+        print(f"{quoi} → {tools_bin(settings)} ({n} exécutable(s) exposé(s)).")
         return 0
     print(f"🔴 échec : {report.get('error')}")
     return 1

@@ -357,8 +357,9 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   vieillit pas avec nous — reste hors de cette route.
   `maps` = les **3 cartes hôte servies** par `tools/venv`, `[{name, sha, requested_ref, source, reason}]` —
   **transport local** lui aussi. Deuxième moitié de l'identité d'une instance, **étiquetée à part** parce
-  qu'elle bouge indépendamment du wheel (les cartes à `forgemaster toolchain install`, le wheel à la
-  réinjection) : les fondre mentirait dès que l'une bouge seule. `sha` `null` porte **toujours** son
+  qu'elle peut diverger du wheel : depuis le 2026-08-08 les deux montent ENSEMBLE sur le chemin de
+  `update apply`/`rollback` (cf. §`update`), mais une instance provisionnée avant ce câblage, ou dont la
+  repose a échoué, sert encore les cartes d'une autre édition — les fondre mentirait exactement là. `sha` `null` porte **toujours** son
   `reason` ; `[]` si l'outillage n'est pas lisible (la route ne tombe jamais).
   `source` ∈ `edition` | `vcs` | `local-dir` | `unknown`, et il **discrimine le mode d'install** :
   `edition` = posée depuis un wheel embarqué au wheel du forgemaster (`forgemaster/_maps`, épinglé au SHA du
@@ -385,8 +386,15 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   *Ce volet était **hors** de cette route jusqu'au 2026-08-08 (« la question du wheel »), et la ligne qui le
   disait est **réécrite ici avec son motif**, pas retournée en silence : un verdict qui ne vit que dans la
   CLI est hors de portée de qui n'a pas de terminal — c'est-à-dire de l'utilisateur distribué pour qui tout
-  le cycle de MAJ existe.* Le **geste** de remise à niveau, lui, reste explicite et manuel
-  (`forgemaster toolchain install`) : `update apply` ne touche pas `tools/`.
+  le cycle de MAJ existe.*
+  *La phrase qui suivait — « le geste de remise à niveau reste explicite et manuel : `update apply` ne touche
+  pas `tools/` » — est **réécrite ici avec son motif** le 2026-08-08, un jour après avoir été écrite, et pour
+  la même raison qu'au-dessus : elle décrivait un état de fait, et cet état de fait était un TROU. Une
+  édition est un jeu de SHA épinglés ; tant que la bascule ne déplaçait que le wheel, « deux installs de la
+  même édition posent le même code » n'était vrai qu'à l'**install fraîche**. `update apply` et
+  `update rollback` reposent désormais les cartes de l'édition qu'ils installent (§`update`). Ce qui reste
+  vrai de la phrase d'origine : le verdict et le geste restent DEUX choses — `toolchain check` rapporte,
+  `toolchain install` mute, et cette route ne mute jamais rien.*
   `mcp` = la **topologie du serveur de corpus** que cette instance consomme, `{topology, sha, endpoint,
   reason}` — troisième volet de l'identité, étiqueté à part pour la même raison que `maps` (il bouge à
   l'édition, pas à la réinjection). `topology` ∈ `co-installed` | `remote` | `none` | `unknown`, **déduit du
@@ -409,6 +417,19 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   n'a pas été touché », « revenu à l'état d'avant (venv + données) ») — les deux ne se déduisent pas l'un de
   l'autre, et `impact` vaut `null` tant qu'aucun verdict n'est écrit (« je n'en sais rien », jamais « rien n'a
   bougé »).
+  **Une édition monte ENTIÈRE et redescend entière** (2026-08-08) : les deux gestes reposent les 3 cartes
+  hôte de l'édition qu'ils installent — l'aller celles du venv neuf, le retour celles de la cible — **après**
+  la bascule et **avant** le verdict (le juge de rendu jugerait sinon une instance mi-montée). C'est le venv
+  qui pose SES cartes, par sa propre commande (`toolchain install --maps-only`), donc l'édition posée est
+  celle de ce paquet-là et rien n'est composé de l'extérieur. **Zéro réseau** : le mode étroit ne retient que
+  l'étape `--no-index` du plan d'install ; le verbe entier (qualité py, Node) ne franchit pas cette
+  frontière. Une cible qui ne sait pas reposer ses cartes (édition sans `forgemaster/_maps`, ou antérieure au
+  câblage) **ne bloque jamais** le geste — *on exige la preuve pour avancer, pas pour revenir* — et une pose
+  qui échoue ne défait **pas** une instance qui sert : les deux se **disent** au `verdict`, et seule la
+  seconde déplace l'`impact`. La dérive résiduelle, elle, reste lisible en permanence par le volet `edition`
+  de `GET /api/version`. `GET /plan` **annonce** ce qu'il saura faire des cartes (ligne de `describe`, lue
+  dans l'index zip du wheel côté aller, dans le venv cible côté retour) : une dégradation annoncée n'est pas
+  un cap silencieux.
   **L'état d'un run se relit du DISQUE**, jamais d'une mémoire : le processus qui répond au `GET` d'après
   n'est ni celui qui a reçu le `POST`, ni même le même binaire. Cinq états, tranchés dans cet ordre —
   `done`/`failed` (`result.json` écrit) · `unknown` (verdict absent, unité non sondée : la liste n'en sonde

@@ -9,7 +9,7 @@ même convention forge : seams **purs** testables sans subprocess + exécution i
 en argv.
 
 ## tools.preflight_tools() / install_tools() — gate de présence + provisionnement hôte-niveau
-`src/forgemaster/tools.py:177` (`preflight_tools`) · `src/forgemaster/tools.py:486` (`install_tools`) · appelés par le
+`src/forgemaster/tools.py:183` (`preflight_tools`) · `src/forgemaster/tools.py:492` (`install_tools`) · appelés par le
 gate de dispatch (preflight avant spawn) et `forgemaster toolchain install` (cli_dispatch).
 `preflight_tools` vérifie que tout binaire déclaré par la facette active (`<worktree>/.claude/settings.local.json`)
 résout sur le PATH worker (`tools_env`) et lève `ToolPreflightError` (`:55`) AVANT le spawn — ne gate QUE
@@ -31,9 +31,18 @@ n'ont pas le même remède.
 **Aucun credential** : il n'y a plus d'URL dans le plan, donc plus de clone, donc plus rien à authentifier —
 la propriété n'est plus tenue par un env de précaution mais par l'absence du chemin. (`anonymous_env` reste,
 pour son seul appelant réel : `mcp.local`, qui clone.)
+**`maps_only` — le mode ÉTROIT du cycle de MAJ** (2026-08-08, drapeau CLI `--maps-only`) : ne joue que
+`MAPS_STEP` (la seule étape `--no-index` du plan) et ne symlinke que `_MAP_BINS`. Il existe parce que
+`update apply` tient une frontière **zéro réseau** que le verbe entier ne respecterait pas — la qualité py et
+le tarball Node sont réseau. Les symlinks restreints ne sont pas une économie : la boucle complète échoue si
+`ruff` ou `node` manquent, et rendrait donc ROUGE une repose qui a réussi sur une instance où Node n'a jamais
+été provisionné — on ne juge que ce qu'on vient de poser. Le mode n'assouplit **rien** d'autre : une édition
+non posable reste un refus fail-loud (c'est `apply_update.repose_maps` qui décide de ne pas bloquer dessus,
+pas ce verbe). Un test verrouille la présence de la chaîne `--maps-only` dans `cli.py` : c'est par elle qu'un
+venv cible est interrogé sur sa capacité, et la renommer en silence ferait répondre « non » pour TOUS.
 
 ## tools.missing_bins() — quels binaires ne résolvent pas
-`src/forgemaster/tools.py:171` · appelé par `preflight_tools`, `doctor.scan`.
+`src/forgemaster/tools.py:177` · appelé par `preflight_tools`, `doctor.scan`.
 Seam **pur** : sous-ensemble trié de `bins` que `shutil.which` ne trouve pas via `env["PATH"]`. C'est la vérité
 unique partagée entre le gate de dispatch et la sonde `doctor` — aucune duplication de logique de présence.
 
@@ -78,8 +87,8 @@ l'install. Le preflight n'y vérifie toujours qu'une **présence**, jamais une i
 sert, et si c'est bien ce que son édition déclare, se lit par `maps_provenance` / `check_tools` (ci-dessous).
 
 ## tools.maps_provenance() — quelles cartes cette instance sert-elle
-`src/forgemaster/tools.py:325` (`maps_provenance`) · `src/forgemaster/tools.py:268` (`dist_provenance`) ·
-`src/forgemaster/tools.py:218` (`venv_site_packages`) · consommé par `build_provenance.provenance` →
+`src/forgemaster/tools.py:331` (`maps_provenance`) · `src/forgemaster/tools.py:274` (`dist_provenance`) ·
+`src/forgemaster/tools.py:224` (`venv_site_packages`) · consommé par `build_provenance.provenance` →
 `GET /api/version`. `dist_provenance` s'appelait `map_provenance` : elle ne lit pourtant rien de spécifique
 aux cartes (juste PEP 610 dans un `.dist-info`), et le serveur MCP co-installé (`mcp.local.server_provenance`)
 l'appelle **telle quelle** plutôt que d'entretenir une seconde lecture du même format.
@@ -105,9 +114,9 @@ différentes de leur amont à 04:19. La dérive n'attendait pas des semaines —
 heure. C'est cette dérive-là que l'édition ferme.
 
 ## tools.check_tools() — les cartes servies sont-elles celles de l'ÉDITION
-`src/forgemaster/tools.py:567` (`check_tools`) · `src/forgemaster/tools.py:313` (`compare`, PUR) ·
-`src/forgemaster/tools.py:344` (`read_edition`) · `src/forgemaster/tools.py:337` (`overall_state`, PUR) ·
-`src/forgemaster/tools.py:623` (`_cli_check`) · appelé par `forgemaster toolchain check`.
+`src/forgemaster/tools.py:587` (`check_tools`) · `src/forgemaster/tools.py:313` (`compare`, PUR) ·
+`src/forgemaster/tools.py:350` (`read_edition`) · `src/forgemaster/tools.py:337` (`overall_state`, PUR) ·
+`src/forgemaster/tools.py:650` (`_cli_check`) · appelé par `forgemaster toolchain check`.
 
 **La question a changé avec l'épinglage (2026-08-08).** La sonde comparait le commit servi au `main` amont
 (`git ls-remote` par carte). Ce n'est plus la bonne question : les cartes ne suivent plus une réf mobile, donc

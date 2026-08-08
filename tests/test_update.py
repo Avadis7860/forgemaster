@@ -26,6 +26,7 @@ import subprocess
 import sys
 import textwrap
 import time
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -436,6 +437,186 @@ def test_un_ancien_forgemaster_qui_ignore_le_verbe_snapshot_fait_echouer_la_MAJ(
     vieux.chmod(0o755)
     with pytest.raises(apply_update.UpdateFailed, match="MAJ annulée"):
         apply_update.take_snapshot(vieux, live.home, lambda _m: None)
+
+
+# --- les cartes suivent leur édition -------------------------------------------------------------------
+#
+# Une édition est un jeu de SHA épinglés : le wheel ET les 3 cartes hôte. Ce que ces tests gardent n'est pas
+# « la repose marche » — c'est la CONDUITE quand elle ne marche pas, parce que c'est là que se trouve l'état
+# inédit (vieux binaire, cartes neuves) que ce câblage existe pour interdire.
+
+def _venv_editionne(racine: Path, *, porte_maps: bool = True, connait_flag: bool = True,
+                    rc: int = 0, trace: Path | None = None) -> Path:
+    """Un venv jouable par `package_dir` : son `bin/python` DIT où il a posé le paquet (jamais un chemin
+    composé), et son `bin/forgemaster` note ce qu'on lui demande avant de sortir avec le code voulu."""
+    pkg = racine / "lib" / "forgemaster"
+    pkg.mkdir(parents=True)
+    (pkg / "cli.py").write_text(f"# {apply_update.MAPS_FLAG}\n" if connait_flag else "# rien\n",
+                                encoding="utf-8")
+    if porte_maps:
+        (pkg / "_maps").mkdir()
+        (pkg / "_maps" / "maps.json").write_text('{"maps": []}', encoding="utf-8")
+    binaires = racine / "bin"
+    binaires.mkdir(parents=True, exist_ok=True)
+    (binaires / "python").write_text(f"#!/bin/sh\necho {pkg}\n", encoding="utf-8")
+    # Le shim note l'argv ET l'env qu'on lui passe : deux défauts mesurés sur un VRAI disque le 2026-08-08
+    # (un argv que le vrai parser refuse, un `PYTHONPATH` hérité qui fait poser les cartes d'un AUTRE
+    # paquet) ne pouvaient pas se voir sur un shim qui accepte tout et n'inspecte rien.
+    note = "".join(f'echo "{ligne}" >> {trace}\n' for ligne in (
+        "ARGV $@", "PYTHONPATH=${PYTHONPATH-(absent)}",
+        "FORGEMASTER_HOME=${FORGEMASTER_HOME-(absent)}")) if trace is not None else ""
+    (binaires / "forgemaster").write_text(f"#!/bin/sh\n{note}exit {rc}\n", encoding="utf-8")
+    for nom in ("python", "forgemaster"):
+        (binaires / nom).chmod(0o755)
+    return racine
+
+
+def test_une_edition_sans_ses_cartes_est_un_refus_MOTIVE_pas_un_silence(tmp_path: Path):
+    """Trois incapacités DISTINCTES parce qu'elles n'ont pas le même remède — et aucune n'est un booléen nu :
+    ce qui remonte au verdict est le motif, sinon l'utilisateur lit « non » sans savoir quoi faire."""
+    sans_maps = _venv_editionne(tmp_path / "a", porte_maps=False)
+    vieille = _venv_editionne(tmp_path / "b", connait_flag=False)
+    complete = _venv_editionne(tmp_path / "c")
+
+    assert "n'embarque pas ses cartes" in (apply_update.edition_posable(sans_maps / "lib" / "forgemaster")
+                                           or "")
+    assert "antérieure au câblage" in (apply_update.edition_posable(vieille / "lib" / "forgemaster") or "")
+    assert apply_update.edition_posable(None), "un venv muet doit rendre un motif, pas None"
+    assert apply_update.edition_posable(complete / "lib" / "forgemaster") is None
+
+
+def test_repose_maps_distingue_POSEES_de_RATE_et_de_NON_MESURE(tmp_path: Path):
+    """Le vocabulaire de `check_ui`, repris à l'identique : `NON_MESURE` = on n'avait pas de quoi agir (on le
+    dit, on ne bloque pas) ; `RATE` = on avait de quoi et ça a échoué. Les confondre effacerait justement la
+    différence entre « cette édition ne sait pas » et « ça vient de casser »."""
+    trace = tmp_path / "appels"
+    vert = _venv_editionne(tmp_path / "ok", rc=0, trace=trace)
+    rouge = _venv_editionne(tmp_path / "ko", rc=3)
+    muet = _venv_editionne(tmp_path / "vieux", connait_flag=False)
+
+    etat, dit = apply_update.repose_maps(vert, tmp_path / "home", lambda _m: None, step="x")
+    assert etat == apply_update.POSEES and "reposées" in dit
+    assert apply_update.MAPS_FLAG in trace.read_text(encoding="utf-8"), "le geste ÉTROIT n'a pas été demandé"
+
+    etat, dit = apply_update.repose_maps(rouge, tmp_path / "home", lambda _m: None, step="x")
+    assert etat == apply_update.RATE and "rc=3" in dit and "toolchain install" in dit
+
+    etat, dit = apply_update.repose_maps(muet, tmp_path / "home", lambda _m: None, step="x")
+    assert etat == apply_update.NON_MESURE and "antérieure au câblage" in dit
+
+
+def test_largv_de_la_repose_est_ACCEPTE_par_le_vrai_parser(tmp_path: Path):
+    """MESURÉ SUR UN VRAI DISQUE, PAS RELU. La première forme composée était
+    `forgemaster --home <p> toolchain install --maps-only` — refusée en rc 2 par argparse, parce que
+    `--home` appartient aux SOUS-commandes (il vit dans le parent `common`), pas au parser racine. Un shim
+    qui accepte tout ne pouvait pas le voir : c'est le VRAI parser qui doit juger l'argv, pas un `/bin/sh`
+    complaisant."""
+    from forgemaster.cli import build_parser
+
+    trace = tmp_path / "appels"
+    apply_update.repose_maps(_venv_editionne(tmp_path / "v", trace=trace), tmp_path / "home",
+                             lambda _m: None, step="x")
+    argv = next(ligne[len("ARGV "):] for ligne in trace.read_text(encoding="utf-8").splitlines()
+                if ligne.startswith("ARGV ")).split()
+
+    args = build_parser().parse_args(argv)          # lève SystemExit si la forme est fausse
+    assert (args.command, args.action, args.maps_only) == ("toolchain", "install", True)
+
+
+def test_la_repose_ne_laisse_PAS_lappelant_choisir_le_paquet_importe(tmp_path: Path, monkeypatch):
+    """LE défaut le plus grave des trois, parce qu'il ne contredit pas un diagnostic mais la PRÉMISSE du
+    geste — *c'est le venv qui pose SES cartes*. Un `PYTHONPATH` hérité passe devant le `pyvenv.cfg` : le
+    forgemaster lancé importait alors le paquet de l'APPELANT et posait les cartes d'une autre édition.
+    `restore._probe_env` avait déjà payé exactement ça le 2026-08-06 ; le garde manquait ici."""
+    monkeypatch.setenv("PYTHONPATH", "/un/checkout/qui/traine/src")
+    monkeypatch.setenv("PYTHONHOME", "/un/prefix/qui/traine")
+    trace = tmp_path / "appels"
+
+    apply_update.repose_maps(_venv_editionne(tmp_path / "v", trace=trace), tmp_path / "maison",
+                             lambda _m: None, step="x")
+
+    vu = trace.read_text(encoding="utf-8")
+    assert "PYTHONPATH=(absent)" in vu, "l'enfant a hérité d'un PYTHONPATH — il peut importer un AUTRE paquet"
+    assert str(tmp_path / "maison") in vu, "le home ne voyage pas par l'env, donc il ne voyage pas du tout"
+    assert "PYTHONHOME" not in apply_update.env_du_venv()
+
+
+def test_une_repose_RATEE_ne_defait_PAS_une_instance_qui_sert(live: Settings, tmp_path: Path, monkeypatch):
+    """L'ARBITRAGE du 2026-08-08, gardé sur les deux moitiés. Les cartes vivent dans un venv PARTAGÉ, hors de
+    la bascule : revenir en arrière ne le répare pas, ça ajoute une seconde mutation sur un échec et ça défait
+    une instance qui sert. Mais un rc 0 muet serait un « c'est passé » qui ne l'est pas — le verdict ET
+    l'impact portent donc la réserve."""
+    shim, trace = _systemctl_shim(tmp_path)
+    monkeypatch.setattr(apply_update, "build_blue",
+                        lambda _py, venv_dir, *_a: _venv_editionne(venv_dir, rc=1) / "bin" / "forgemaster")
+    monkeypatch.setattr(apply_update, "probe_isolated", lambda *a, **k: {"version": "9.9", "sha": "beef"})
+    monkeypatch.setattr(apply_update, "take_snapshot", lambda *a, **k: snapshot.create(live))
+    monkeypatch.setattr(apply_update, "_verify_live", lambda *a, **k: (True, "elle sert"))
+
+    rc, verdict, details = apply_update.apply(_args(live, tmp_path, shim), lambda _m: None)
+
+    assert rc == 0, "une repose ratée a défait une MAJ qui, elle, avait réussi"
+    assert details["maps"]["state"] == apply_update.RATE
+    assert "⚠" in verdict and "édition quittée" in verdict
+    assert "tools/venv" in details["impact"], "l'impact ne dit pas CE QUI est resté en arrière"
+    assert _trace(trace) == ["stop", "start"], "un retour arrière a été déclenché pour un venv d'outils"
+
+
+def test_le_retour_arriere_automatique_REPOSE_les_cartes_de_lancien_venv(
+        live: Settings, tmp_path: Path, monkeypatch):
+    """Le cas que la fiche appelle le vrai sujet. Le lien revient sur l'ancien binaire ; si ses cartes ne
+    reviennent pas avec lui, l'instance sert un état que PERSONNE n'a jamais eu — vieux binaire, cartes
+    neuves — c'est-à-dire pire que la panne qu'on répare."""
+    shim, _t = _systemctl_shim(tmp_path)
+    appels = tmp_path / "appels-ancien"
+    ancien = (live.home / "current").resolve()
+    _venv_editionne(ancien, rc=0, trace=appels)
+    monkeypatch.setattr(apply_update, "build_blue",
+                        lambda _py, venv_dir, *_a: _venv_editionne(venv_dir) / "bin" / "forgemaster")
+    monkeypatch.setattr(apply_update, "probe_isolated", lambda *a, **k: {"version": "9.9", "sha": "beef"})
+    monkeypatch.setattr(apply_update, "take_snapshot", lambda *a, **k: snapshot.create(live))
+    monkeypatch.setattr(apply_update, "_verify_live", lambda *a, **k: (False, "le daemon ne répond pas"))
+    monkeypatch.setattr(apply_update, "_restore", lambda *a, **k: True)
+    monkeypatch.setattr(apply_update, "_wait_health", lambda *a, **k: (True, ""))
+
+    rc, _verdict, details = apply_update.apply(_args(live, tmp_path, shim), lambda _m: None)
+
+    assert rc == 1
+    assert (live.home / "current").resolve() == ancien
+    assert details["maps"]["state"] == apply_update.POSEES
+    assert apply_update.MAPS_FLAG in appels.read_text(encoding="utf-8"), (
+        "le retour a ramené le binaire sans ses cartes — l'état inédit que ce câblage interdit")
+
+
+def test_les_cartes_sont_reposees_AVANT_le_verdict_et_lordre_est_lu_DANS_LE_CODE():
+    """Un mock ne garde que l'appel du jour. Ce test LIT le code, comme le garde d'ordre `swap`/`_restore` :
+    reposer APRÈS `_verify_live` ferait juger au juge de rendu une instance mi-montée — binaire neuf,
+    outillage de l'édition quittée — et la « simplification » qui échangera deux lignes ne se verra pas."""
+    arbre = ast.parse(Path(apply_update.__file__).read_text(encoding="utf-8"))
+    for verbe in ("apply", "rollback"):
+        fn = next(n for n in ast.walk(arbre) if isinstance(n, ast.FunctionDef) and n.name == verbe)
+        appels = sorted((n.lineno, n.func.id) for n in ast.walk(fn)
+                        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                        and n.func.id in ("repose_maps", "_verify_live"))
+        assert [nom for _l, nom in appels[:2]] == ["repose_maps", "_verify_live"], (
+            f"dans `{verbe}`, la repose des cartes ne précède plus le verdict : {appels[:2]}")
+
+
+def test_lannonce_dit_AVANT_le_geste_ce_quon_saura_faire_des_cartes(tmp_path: Path):
+    """Même levier qu'`annonce_verification` : le plan porte la ligne, `describe` l'affiche, donc le panneau
+    la montre dans sa prévisualisation. La source est l'index zip du wheel — lire ne pose rien, la
+    prévisualisation reste strictement idempotente."""
+    complet, nu = tmp_path / "complet.whl", tmp_path / "nu.whl"
+    with zipfile.ZipFile(complet, "w") as zf:
+        zf.writestr("forgemaster/cli.py", f"# {apply_update.MAPS_FLAG}\n")
+        zf.writestr(f"forgemaster/{apply_update.EDITION_MANIFEST}", '{"maps": []}')
+    with zipfile.ZipFile(nu, "w") as zf:
+        zf.writestr("forgemaster/cli.py", f"# {apply_update.MAPS_FLAG}\n")
+
+    assert "seront reposées" in apply_update.annonce_maps_wheel(complet)
+    dit = apply_update.annonce_maps_wheel(nu)
+    assert "NE seront PAS reposées" in dit and "n'embarque pas ses cartes" in dit
+    assert "ILLISIBLES" in apply_update.annonce_maps_wheel(tmp_path / "absent.whl")
 
 
 # --- le script autonome ------------------------------------------------------------------------------
@@ -1691,6 +1872,10 @@ def test_le_plan_annonce_la_verification_dinterface_donc_le_panneau_aussi(live: 
     assert plan["ui_check"].startswith("vérification UI :")
     assert plan["ui_check"] in update.describe(plan)
     assert "" not in update.describe(plan), "une ligne vide dans le plan serait du bruit rendu à l'écran"
+    # Même chaîne, deuxième annonce : ce qu'on saura faire des CARTES. Ce wheel-là est vide (`b""`), donc
+    # illisible en zip — et c'est le cas qui compte : une prévisualisation qui ne sait pas le DIT.
+    assert plan["maps_check"].startswith("cartes de l'édition :")
+    assert plan["maps_check"] in update.describe(plan)
 
 
 def test_un_contrat_mal_type_degrade_au_lieu_de_faire_PLANTER_lapplicateur(tmp_path: Path):
