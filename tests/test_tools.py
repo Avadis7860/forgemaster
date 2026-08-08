@@ -1,8 +1,12 @@
 """Tests de `forgemaster.tools` — provisionnement hôte-niveau de l'outillage déclaré par les bundles.
 
 Seams PURS (chemins/PATH/plan) testés sans subprocess ; `install_tools` avec un runner INJECTÉ qui
-matérialise les binaires attendus, pour prouver symlinks, idempotence, fail-loud et clone anonyme —
-jamais un vrai pip/nodeenv (lents, réseau : prouvés à la vérif install fraîche)."""
+matérialise les binaires attendus, pour prouver symlinks, idempotence et fail-loud — jamais un vrai
+pip/nodeenv (lents, réseau : prouvés à la vérif install fraîche).
+
+Depuis le 2026-08-08 les 3 cartes viennent des **wheels de l'édition** (`forgemaster/_maps`), plus d'un
+`git+…@main`. Le dossier d'édition est donc INJECTÉ dans les tests (`maps_dir=`), jamais celui du paquet
+installé : un test qui lirait l'édition réelle passerait ou tomberait selon que le checkout a été buildé."""
 from __future__ import annotations
 
 import json
@@ -15,10 +19,39 @@ from forgemaster import tools
 from forgemaster.config import Settings
 from forgemaster.core.run import RunResult
 
+_SHA_A = "775117a03d761abe80652a30cceae30f989be82e"      # relevé sur la VM 9311 le 2026-08-03
+_SHA_B = "d04c2770000000000000000000000000000000aa"
+
 
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
     return Settings.resolve(home=tmp_path / "home", projects_root=tmp_path / "projects")
+
+
+def _seed_edition(tmp_path: Path, shas: dict | None = None, *, omettre: str | None = None,
+                  wheel_manquant: str | None = None) -> Path:
+    """Un `forgemaster/_maps` crédible : 3 wheels (vides — seule leur PRÉSENCE compte pour le plan) et le
+    `maps.json` que `deploy/build-wheel.sh` écrit. `omettre` retire une carte du manifeste (édition
+    amputée) ; `wheel_manquant` déclare une carte dont le fichier n'existe pas (édition incohérente)."""
+    shas = shas or dict.fromkeys(tools.MAP_REPOS, _SHA_A)
+    d = tmp_path / "edition-maps"
+    d.mkdir(parents=True, exist_ok=True)
+    maps = []
+    for name in tools.MAP_REPOS:
+        if name == omettre:
+            continue
+        wheel = f"{name.replace('-', '_')}-0.1.0-py3-none-any.whl"
+        if name != wheel_manquant:
+            (d / wheel).write_bytes(b"PK\x03\x04")
+        maps.append({"name": name, "wheel": wheel, "sha": shas[name],
+                     "committed_at": "2026-08-08T00:00:00+00:00"})
+    (d / tools.EDITION_MANIFEST).write_text(json.dumps({"maps": maps}), encoding="utf-8")
+    return d
+
+
+@pytest.fixture
+def edition(tmp_path: Path) -> Path:
+    return _seed_edition(tmp_path)
 
 
 # -- seams PURS -------------------------------------------------------------------------------------
@@ -44,40 +77,69 @@ def test_tools_env_empty_path(settings):
     assert env["PATH"] == f"{tools.tools_bin(settings)}:/home/x/.local/bin"   # bin + local/bin
 
 
-def test_install_plan_covers_maps_quality_and_node(settings):
-    plan = tools.install_plan(settings)
+def test_install_plan_covers_maps_quality_and_node(settings, edition):
+    plan = tools.install_plan(settings, maps_dir=edition)
     names = [s["name"] for s in plan]
-    assert names == ["pip-tools", "pip-maps-pin", "pip-nodeenv", "nodeenv"]
-    pip_tools = plan[0]["argv"]
-    # les 3 cartes en git+<url>@main + les 3 outils qualité, tous dans un seul pip install
-    for repo_url in tools.MAP_REPOS.values():
-        assert f"git+{repo_url}@{tools.MAP_REF}" in pip_tools
+    assert names == ["pip-maps", "pip-quality", "pip-nodeenv", "nodeenv"]
+    pip_maps = plan[0]["argv"]
+    # les 3 cartes en CHEMINS DE FICHIERS — plus aucune URL, donc plus aucun clone, donc plus aucune
+    # surface où un credential pourrait entrer : la propriété est structurelle, pas gardée par un env.
+    assert not any(a.startswith(("git+", "http://", "https://")) for a in pip_maps)
+    for m in json.loads((edition / tools.EDITION_MANIFEST).read_text())["maps"]:
+        assert str(edition / m["wheel"]) in pip_maps
+    quality = next(s for s in plan if s["name"] == "pip-quality")["argv"]
     for q in tools.PY_QUALITY:
-        assert q in pip_tools
+        assert q in quality
     node_step = next(s for s in plan if s["name"] == "nodeenv")
     assert node_step["argv"][0].endswith("/nodeenv") and f"--node={tools.NODE_VERSION}" in node_step["argv"]
 
 
-def test_install_plan_forces_the_maps_past_the_pip_git_sha_trap(settings):
-    """Le verrou du no-op silencieux. `pip install --upgrade git+<url>@main` résout le bon commit puis SAUTE
-    l'install à version égale — et les cartes sont figées à `0.1.0`, donc la version ne discrimine jamais.
-    Vu en vrai le 2026-08-03 : `forgemaster toolchain install` répondait 🟢 sans avoir bougé une ligne.
-
-    La 2ᵈᵉ passe force le CODE des cartes sans retoucher aux deps (que la 1ʳᵉ a résolues). Retirer
-    `--force-reinstall`, `--no-deps`, ou l'étape entière, rétablit le faux-vert."""
-    pin = next(s for s in tools.install_plan(settings) if s["name"] == "pip-maps-pin")
-    assert "--force-reinstall" in pin["argv"] and "--no-deps" in pin["argv"]
-    for repo_url in tools.MAP_REPOS.values():
-        assert f"git+{repo_url}@{tools.MAP_REF}" in pin["argv"]
-    for q in tools.PY_QUALITY:            # les deps/outils qualité ne passent PAS par --no-deps
-        assert q not in pin["argv"]
+def test_install_plan_poses_the_maps_offline(settings, edition):
+    """`--no-index` : la garantie hors-ligne est dans l'argv, pas dans une intention. Sans lui, pip pourrait
+    « compléter » depuis PyPI une carte qu'il jugerait insuffisante — et l'install cesserait d'être posable
+    sur une machine sans réseau, sans que rien ne le dise."""
+    pip_maps = next(s for s in tools.install_plan(settings, maps_dir=edition) if s["name"] == "pip-maps")
+    assert "--no-index" in pip_maps["argv"]
 
 
-def test_install_plan_pins_the_maps_after_resolving_their_deps(settings):
-    """L'ORDRE est load-bearing : `--no-deps` seul n'installerait aucune dépendance sur une machine vierge.
-    L'épinglage forcé doit donc suivre la passe `--upgrade`, jamais la remplacer."""
-    names = [s["name"] for s in tools.install_plan(settings)]
-    assert names.index("pip-tools") < names.index("pip-maps-pin")
+def test_install_plan_forces_the_maps_past_the_pip_no_op_trap(settings, edition):
+    """Le verrou du no-op silencieux, qui a SURVÉCU au changement de source. Vu en vrai le 2026-08-03 avec
+    `git+…@main` : pip résout, prépare les métadonnées, puis SAUTE l'install à version égale — et les cartes
+    sont figées à `0.1.0`, donc la version ne discrimine jamais, fichier ou pas. Retirer `--force-reinstall`
+    rétablit le 🟢 sans qu'une ligne ait bougé.
+
+    `--no-deps` n'est PAS repris : deps `[]` aujourd'hui, et le jour où une carte en gagne une, l'install
+    hors-ligne doit ÉCHOUER plutôt que poser une carte amputée en rendant rc 0."""
+    pip_maps = next(s for s in tools.install_plan(settings, maps_dir=edition) if s["name"] == "pip-maps")
+    assert "--force-reinstall" in pip_maps["argv"]
+    assert "--no-deps" not in pip_maps["argv"]
+
+
+def test_install_plan_poses_the_offline_step_first(settings, edition):
+    """L'ORDRE est load-bearing : les cartes sont la SEULE étape hors-ligne. Réseau coupé, elles sont posées
+    et l'échec porte le nom de ce qui exigeait vraiment le réseau, au lieu de tout faire tomber d'un bloc."""
+    names = [s["name"] for s in tools.install_plan(settings, maps_dir=edition)]
+    assert names[0] == "pip-maps"
+
+
+def test_install_plan_refuses_an_edition_that_is_absent(settings, tmp_path):
+    """Aucun repli git. Quel mode d'install est actif est une question qui se RÉPOND ; une cascade
+    silencieuse vers une réf mobile la pré-répondrait, et remettrait la dérive qu'on vient de fermer."""
+    with pytest.raises(tools.EditionMapsError, match="ne porte pas les cartes"):
+        tools.install_plan(settings, maps_dir=tmp_path / "vide")
+
+
+def test_install_plan_refuses_an_amputated_edition(settings, tmp_path):
+    """2 cartes sur 3 en rendant rc 0 serait le demi-provisioning que `install_tools` refuse déjà ailleurs."""
+    with pytest.raises(tools.EditionMapsError, match="AMPUTÉE"):
+        tools.install_plan(settings, maps_dir=_seed_edition(tmp_path, omettre="docs-map"))
+
+
+def test_install_plan_refuses_a_declared_wheel_that_is_missing(settings, tmp_path):
+    """Déclarée au manifeste mais absente du disque : l'incohérence se dit AVANT le premier pip, pas au
+    milieu de l'install."""
+    with pytest.raises(tools.EditionMapsError, match="son wheel manque"):
+        tools.install_plan(settings, maps_dir=_seed_edition(tmp_path, wheel_manquant="front-map"))
 
 
 def test_symlink_sources_split_venv_and_node(settings):
@@ -115,16 +177,19 @@ def _materializing_runner(settings, *, captured_envs=None, fail_on=None):
         step = ("venv" if "venv" in argv and "-m" in argv
                 else "nodeenv" if exe.endswith("/nodeenv")
                 else "pip-nodeenv" if "nodeenv" in argv
-                else "pip-maps-pin" if "--force-reinstall" in argv
-                else "pip-tools")
+                else "pip-maps" if "--no-index" in argv
+                else "pip-quality")
         if captured_envs is not None:
             captured_envs[step] = env
         if fail_on == step:
             return RunResult(argv=list(argv), returncode=1, stdout="", stderr="boom")
         if step == "venv":
             venv_bin.mkdir(parents=True, exist_ok=True)
-        elif step == "pip-tools":
-            for name in ("codemap", "docsmap", "frontmap", "ruff", "pytest", "mypy"):
+        elif step == "pip-maps":
+            for name in ("codemap", "docsmap", "frontmap"):
+                touch(venv_bin / name)
+        elif step == "pip-quality":
+            for name in ("ruff", "pytest", "mypy"):
                 touch(venv_bin / name)
         elif step == "pip-nodeenv":
             touch(venv_bin / "nodeenv")
@@ -136,8 +201,8 @@ def _materializing_runner(settings, *, captured_envs=None, fail_on=None):
     return runner
 
 
-def test_install_tools_happy_path_exposes_all_bins(settings):
-    report = tools.install_tools(settings, runner=_materializing_runner(settings))
+def test_install_tools_happy_path_exposes_all_bins(settings, edition):
+    report = tools.install_tools(settings, runner=_materializing_runner(settings), maps_dir=edition)
     assert report["ok"] is True
     bin_dir = tools.tools_bin(settings)
     for name in ("codemap", "docsmap", "frontmap", "ruff", "pytest", "mypy", "node", "npm", "npx"):
@@ -146,54 +211,65 @@ def test_install_tools_happy_path_exposes_all_bins(settings):
     assert set(report["symlinks"]) == set(tools._symlink_sources(settings))
 
 
-def test_install_tools_is_idempotent(settings):
-    r1 = tools.install_tools(settings, runner=_materializing_runner(settings))
+def test_install_tools_is_idempotent(settings, edition):
+    r1 = tools.install_tools(settings, runner=_materializing_runner(settings), maps_dir=edition)
     # 2e run : remplace les symlinks existants sans erreur
-    r2 = tools.install_tools(settings, runner=_materializing_runner(settings))
+    r2 = tools.install_tools(settings, runner=_materializing_runner(settings), maps_dir=edition)
     assert r1["ok"] and r2["ok"]
     assert (tools.tools_bin(settings) / "codemap").is_symlink()
 
 
-def test_install_tools_fail_loud_aborts_before_symlink(settings):
-    report = tools.install_tools(settings, runner=_materializing_runner(settings, fail_on="pip-tools"))
+def test_install_tools_fail_loud_aborts_before_symlink(settings, edition):
+    report = tools.install_tools(settings, runner=_materializing_runner(settings, fail_on="pip-maps"),
+                                 maps_dir=edition)
     assert report["ok"] is False
-    assert "pip-tools" in report["error"]
+    assert "pip-maps" in report["error"]
     assert not (tools.tools_bin(settings) / "codemap").exists()   # pas de symlink sur un demi-provisioning
     failed = [s for s in report["steps"] if not s["ok"]]
-    assert failed and failed[0]["name"] == "pip-tools"
+    assert failed and failed[0]["name"] == "pip-maps"
 
 
-def test_install_tools_missing_binary_after_green_install_is_loud(settings):
+def test_install_tools_missing_binary_after_green_install_is_loud(settings, edition):
     """Étapes vertes mais une source absente (install incohérente) → fail-loud, pas de faux-vert."""
     def runner(argv, *, env=None, timeout=None):
         if "venv" in argv and "-m" in argv:
             (tools.tools_venv(settings) / "bin").mkdir(parents=True, exist_ok=True)
         return RunResult(argv=list(argv), returncode=0, stdout="ok", stderr="")   # ne matérialise AUCUN bin
-    report = tools.install_tools(settings, runner=runner)
+    report = tools.install_tools(settings, runner=runner, maps_dir=edition)
     assert report["ok"] is False and "absent après install" in report["error"]
 
 
-def test_install_tools_adds_nothing_but_the_prompt_guard(settings):
-    """Les 3 cartes sont PUBLIQUES : l'install n'AJOUTE aucun credential — elle ajoute `GIT_TERMINAL_PROMPT`
-    et rien d'autre.
+def test_install_tools_refuses_before_touching_anything_when_the_edition_is_absent(settings, tmp_path):
+    """Une édition non posable est un refus AVANT le premier pip — et le venv n'a pas encore été peuplé.
+    C'est la même règle que partout ici : jamais un demi-provisioning."""
+    report = tools.install_tools(settings, runner=_materializing_runner(settings),
+                                 maps_dir=tmp_path / "vide")
+    assert report["ok"] is False and "ne porte pas les cartes" in report["error"]
+    assert not (tools.tools_bin(settings) / "codemap").exists()
+    assert [s["name"] for s in report["steps"]] == ["venv"]      # le venv, et rien d'autre
 
-    Garde de non-régression du chemin d'install. L'assertion porte sur le **delta** avec l'ambiant, pas sur
-    l'absence de tout token dans l'env : ce que git lit du `.gitconfig` de l'utilisateur reste à lui. Ce qui
-    est interdit, c'est que le forgemaster compose un `insteadOf` — tant que c'était possible, chaque E2E
-    tournait sous une configuration qu'aucun utilisateur n'aura jamais."""
+
+def test_install_tools_adds_nothing_to_the_environment(settings, edition):
+    """L'install n'AJOUTE rien à l'env ambiant — donc aucun credential.
+
+    Le `GIT_TERMINAL_PROMPT=0` d'avant gardait les clones git de pip ; il n'y a plus de clone ici, donc
+    plus rien à garder (le seam vit toujours chez `mcp.local`, qui clone). L'assertion porte sur le
+    **delta** avec l'ambiant, pas sur l'absence de tout token dans l'env : ce que l'utilisateur a dans son
+    shell reste à lui. Ce qui est interdit, c'est que le forgemaster compose quoi que ce soit."""
     envs: dict = {}
-    tools.install_tools(settings, runner=_materializing_runner(settings, captured_envs=envs))
+    tools.install_tools(settings, runner=_materializing_runner(settings, captured_envs=envs),
+                        maps_dir=edition)
     for name, env in envs.items():
         added = {k: v for k, v in env.items() if os.environ.get(k) != v}
-        assert set(added) <= {"GIT_TERMINAL_PROMPT"}, f"l'étape {name} ajoute à l'env : {sorted(added)}"
+        assert not added, f"l'étape {name} ajoute à l'env : {sorted(added)}"
 
 
-def test_install_tools_disables_git_prompt(settings):
-    """`GIT_TERMINAL_PROMPT=0` sur les étapes pip : un repo injoignable échoue NET au lieu de pendre sur un
-    prompt de credentials jusqu'au timeout de 900 s (le mode d'échec le plus opaque de cette install)."""
-    envs: dict = {}
-    tools.install_tools(settings, runner=_materializing_runner(settings, captured_envs=envs))
-    assert envs["pip-tools"].get("GIT_TERMINAL_PROMPT") == "0"
+def test_install_tools_has_no_url_left_to_authenticate(settings, edition):
+    """La propriété « aucun credential n'entre ici » n'est plus tenue par un env de précaution mais par
+    l'ABSENCE DU CHEMIN : aucune étape ne porte d'URL, donc il n'y a plus rien à authentifier."""
+    for step in tools.install_plan(settings, maps_dir=edition):
+        urls = [a for a in step["argv"] if a.startswith(("git+", "http://", "https://"))]
+        assert not urls, f"l'étape {step['name']} porte une URL : {urls}"
 
 
 def test_install_tools_takes_no_credential_argument(settings):
@@ -203,21 +279,30 @@ def test_install_tools_takes_no_credential_argument(settings):
     assert "token" not in params and "token_ref" not in params
 
 
-# -- provenance des cartes SERVIES (lecture locale de direct_url.json, zéro réseau) -------------------
+# -- provenance des cartes SERVIES (lecture locale : tampon d'édition, puis PEP 610 ; zéro réseau) -----
 
-_SHA_A = "775117a03d761abe80652a30cceae30f989be82e"      # relevé sur la VM 9311 le 2026-08-03
-_SHA_B = "d04c2770000000000000000000000000000000aa"
+_PKG = {"code-map": "codemap", "docs-map": "docsmap", "front-map": "frontmap"}
 
 
-def _seed_dist(settings, name: str, payload, *, version: str = "0.1.0") -> Path:
+def _seed_dist(settings, name: str, payload, *, version: str = "0.1.0", stamp: str | None = None,
+               record_pkg: str | None = None) -> Path:
     """Matérialise `<name>-<version>.dist-info` dans le site-packages du venv d'outils. `payload` : un dict
-    (sérialisé), une str (écrite telle quelle — JSON invalide), ou None (aucun `direct_url.json`)."""
+    (sérialisé), une str (écrite telle quelle — JSON invalide), ou None (aucun `direct_url.json`).
+    `stamp` pose le tampon `_vendored_from.txt` DANS le paquet et le déclare au `RECORD`, exactement comme
+    un `pip install` d'un wheel de l'édition. `record_pkg` force le nom de paquet écrit au RECORD (pour
+    prouver qu'on le LIT au lieu de le deviner depuis le nom de distribution)."""
     sp = tools.tools_venv(settings) / "lib" / "python3.12" / "site-packages"
     d = sp / f"{name.replace('-', '_')}-{version}.dist-info"
     d.mkdir(parents=True, exist_ok=True)
     if payload is not None:
         body = json.dumps(payload) if isinstance(payload, dict) else payload
         (d / "direct_url.json").write_text(body, encoding="utf-8")
+    if stamp is not None:
+        pkg = record_pkg or _PKG[name]
+        (sp / pkg).mkdir(parents=True, exist_ok=True)
+        (sp / pkg / tools.VENDORED_FROM).write_text(f"{stamp}\n", encoding="utf-8")
+        (d / "RECORD").write_text(f"{pkg}/__init__.py,sha256=x,12\n"
+                                  f"{pkg}/{tools.VENDORED_FROM},sha256=y,41\n", encoding="utf-8")
     return d
 
 
@@ -226,9 +311,35 @@ def _vcs(sha: str, ref: str = "main") -> dict:
             "vcs_info": {"commit_id": sha, "requested_revision": ref, "vcs": "git"}}
 
 
+def test_maps_provenance_reads_the_edition_stamp(settings):
+    """Le mode CANONIQUE depuis le 2026-08-08 : la carte vient d'un wheel de l'édition, et son SHA vit dans
+    le tampon posé DANS le paquet. Un wheel n'a pas de `vcs_info` — s'en tenir à PEP 610 rendrait `sha=None`
+    sur exactement le mode qu'on vient de rendre canonique."""
+    _seed_dist(settings, "code-map", {"url": "file:///tmp/x.whl", "archive_info": {}}, stamp=_SHA_A)
+    entry = next(m for m in tools.maps_provenance(settings) if m["name"] == "code-map")
+    assert entry["sha"] == _SHA_A and entry["source"] == "edition" and entry["reason"] is None
+
+
+def test_maps_provenance_finds_the_stamp_through_the_record_not_by_guessing(settings):
+    """`code-map` → `codemap` est une CONVENTION, pas une règle : PEP 503 normalise le nom de DISTRIBUTION
+    et ne dit rien du nom d'IMPORT. Le tampon se localise par le `RECORD`, exigé par le format wheel."""
+    _seed_dist(settings, "docs-map", None, stamp=_SHA_B, record_pkg="un_nom_qui_ne_se_devine_pas")
+    entry = next(m for m in tools.maps_provenance(settings) if m["name"] == "docs-map")
+    assert entry["sha"] == _SHA_B and entry["source"] == "edition"
+
+
+def test_maps_provenance_rejects_a_stamp_that_is_not_a_sha(settings):
+    """Un tampon corrompu ne devient pas une identité : on retombe sur la cascade PEP 610, et si elle n'a
+    rien non plus, `sha=None` AVEC sa raison. Un SHA faux retire le doute qui déclenche la vérification."""
+    _seed_dist(settings, "front-map", None, stamp="pas-un-sha")
+    entry = next(m for m in tools.maps_provenance(settings) if m["name"] == "front-map")
+    assert entry["sha"] is None and entry["reason"]
+
+
 def test_maps_provenance_reads_the_served_commit(settings):
-    """Le cas réel : pip a posé `direct_url.json` à l'install, on LIT le `commit_id` résolu. Aucun tampon
-    n'est écrit par le forgemaster — la provenance existait déjà sur la machine."""
+    """Le mode HISTORIQUE, encore vivant sur toute instance provisionnée avant le 2026-08-08 : pip a posé
+    `direct_url.json` à l'install git, on LIT le `commit_id` résolu. C'est ce qui distingue les deux modes —
+    et le distinguer est précisément ce que la phase 4·3 rendra visible."""
     _seed_dist(settings, "code-map", _vcs(_SHA_A))
     entry = next(m for m in tools.maps_provenance(settings) if m["name"] == "code-map")
     assert entry["sha"] == _SHA_A
@@ -289,28 +400,27 @@ def test_no_branch_ever_returns_a_silent_none(settings):
         assert entry["sha"] is not None or entry["reason"], entry
 
 
-# -- sonde de fraîcheur : seams purs ------------------------------------------------------------------
+# -- conformité à l'édition : seams purs --------------------------------------------------------------
 
-def test_check_plan_is_one_ls_remote_per_map_and_pure(settings):
-    plan = tools.check_plan(settings)
-    assert [s["name"] for s in plan] == list(tools.MAP_REPOS)
-    for step in plan:
-        assert step["argv"][:2] == ["git", "ls-remote"]
-        assert step["argv"][-1] == tools.MAP_REF
-    assert not tools.tools_venv(settings).exists()          # PUR : n'a rien créé
+def test_read_edition_returns_the_three_maps_in_order(settings, edition):
+    declared = tools.read_edition(edition)
+    assert [m["name"] for m in declared] == list(tools.MAP_REPOS)
+    assert all(m["sha"] == _SHA_A for m in declared)
 
 
-def test_parse_ls_remote_finds_the_ref(settings):
-    out = f"{_SHA_A}\trefs/heads/main\n{_SHA_B}\trefs/heads/dev\n"
-    assert tools.parse_ls_remote(out) == _SHA_A
+def test_read_edition_refuses_an_unreadable_manifest(settings, tmp_path):
+    d = tmp_path / "ed"
+    d.mkdir()
+    (d / tools.EDITION_MANIFEST).write_text("{pas du json", encoding="utf-8")
+    with pytest.raises(tools.EditionMapsError, match="illisible"):
+        tools.read_edition(d)
 
 
-def test_parse_ls_remote_absent_ref_is_none(settings):
-    assert tools.parse_ls_remote(f"{_SHA_A}\trefs/heads/dev\n") is None
-
-
-def test_parse_ls_remote_rejects_a_non_sha(settings):
-    assert tools.parse_ls_remote("pouet\trefs/heads/main\n") is None
+def test_edition_maps_dir_sits_inside_the_installed_package(settings):
+    """Le dossier voyage DANS le wheel (`forgemaster/_maps`), comme `_verify_runner` : `provision-ct.sh`
+    n'a rien à câbler, l'artefact est auto-contenu."""
+    import forgemaster
+    assert tools.edition_maps_dir() == Path(forgemaster.__file__).resolve().parent / "_maps"
 
 
 def test_compare_up_to_date(settings):
@@ -322,19 +432,20 @@ def test_compare_differs_writes_both_shas(settings):
     """Le verdict porte les DEUX SHA : c'est ce qui rend l'écart actionnable sans ssh sur la machine."""
     served = [{"name": "code-map", "sha": _SHA_A, "reason": None}]
     e = tools.compare(served, {"code-map": _SHA_B})[0]
-    assert e["state"] == "differs" and e["served"] == _SHA_A and e["remote"] == _SHA_B
+    assert e["state"] == "differs" and e["served"] == _SHA_A and e["edition"] == _SHA_B
 
 
 def test_compare_never_invents_a_commit_count(settings):
-    """`ls-remote` ne rend que des réfs — compter exigerait de rapatrier l'historique. On dit LESQUELLES
-    ont bougé, jamais « de N commits ». Un chiffre faux retirerait le doute qui doit déclencher la vérif."""
+    """Deux SHA ne se soustraient pas sans l'historique. On dit LESQUELLES diffèrent, jamais « de N
+    commits ». Un chiffre faux retirerait le doute qui doit déclencher la vérification."""
     served = [{"name": "code-map", "sha": _SHA_A, "reason": None}]
     e = tools.compare(served, {"code-map": _SHA_B})[0]
     assert not {"behind_by", "behind", "count", "commits"} & set(e)
 
 
-def test_compare_unreachable_upstream_is_unknown_not_up_to_date(settings):
-    """Le faux-vert qu'on refuse : amont injoignable ⇒ « pas pu vérifier », JAMAIS « à jour »."""
+def test_compare_a_silent_edition_is_unknown_not_up_to_date(settings):
+    """Le faux-vert qu'on refuse : édition muette sur cette carte ⇒ « pas pu comparer », JAMAIS
+    « conforme »."""
     served = [{"name": "code-map", "sha": _SHA_A, "reason": None}]
     e = tools.compare(served, {"code-map": None})[0]
     assert e["state"] == "unknown" and e["reason"]
@@ -360,76 +471,66 @@ def test_overall_state_all_verified(settings):
     assert tools.overall_state([{"state": "up-to-date"}] * 3) == "up-to-date"
 
 
-# -- sonde de fraîcheur : exécution (runner injecté) --------------------------------------------------
+# -- conformité à l'édition : la sonde, désormais LOCALE ----------------------------------------------
 
-def _ls_remote_runner(shas: dict, *, captured_envs=None, boom: bool = False):
-    """Runner fake pour `check_tools` : rend un `ls-remote` par carte. `shas[name] is None` → rc 1."""
-    def runner(argv, *, env=None, timeout=None):
-        url = argv[2]
-        name = next(n for n, u in tools.MAP_REPOS.items() if u == url)
-        if captured_envs is not None:
-            captured_envs[name] = env
-        if boom:
-            raise OSError("git introuvable")
-        sha = shas.get(name)
-        if sha is None:
-            return RunResult(argv=list(argv), returncode=1, stdout="", stderr="could not read")
-        return RunResult(argv=list(argv), returncode=0, stdout=f"{sha}\trefs/heads/main\n", stderr="")
-    return runner
-
-
-def test_check_tools_reports_a_drifted_map(settings):
-    _seed_dist(settings, "code-map", _vcs(_SHA_A))
-    _seed_dist(settings, "docs-map", _vcs(_SHA_A))
-    _seed_dist(settings, "front-map", _vcs(_SHA_A))
-    report = tools.check_tools(settings, runner=_ls_remote_runner(
-        {"code-map": _SHA_B, "docs-map": _SHA_A, "front-map": _SHA_A}))
-    assert report["state"] == "differs" and report["ref"] == tools.MAP_REF
+def test_check_tools_reports_a_map_that_is_not_the_editions(settings, edition):
+    """La question a changé avec l'épinglage. Ce n'est plus « suis-je en retard sur upstream ? » — c'est la
+    question du WHEEL — mais « mes cartes sont-elles celles de mon édition ? », qui se pose exactement quand
+    une instance a monté d'édition sans reposer son outillage, et qui n'avait aucune réponse."""
+    _seed_dist(settings, "code-map", None, stamp=_SHA_B)
+    _seed_dist(settings, "docs-map", None, stamp=_SHA_A)
+    _seed_dist(settings, "front-map", None, stamp=_SHA_A)
+    report = tools.check_tools(settings, maps_dir=edition)
+    assert report["state"] == "differs" and report["edition_dir"] == str(edition)
     drifted = [m for m in report["maps"] if m["state"] == "differs"]
     assert [m["name"] for m in drifted] == ["code-map"]
+    assert drifted[0]["served"] == _SHA_B and drifted[0]["edition"] == _SHA_A
 
 
-def test_check_tools_all_fresh_is_green(settings):
+def test_check_tools_conformant_is_green(settings, edition):
     for n in tools.MAP_REPOS:
-        _seed_dist(settings, n, _vcs(_SHA_A))
-    report = tools.check_tools(settings, runner=_ls_remote_runner(dict.fromkeys(tools.MAP_REPOS, _SHA_A)))
-    assert report["state"] == "up-to-date"
+        _seed_dist(settings, n, None, stamp=_SHA_A)
+    assert tools.check_tools(settings, maps_dir=edition)["state"] == "up-to-date"
 
 
-def test_check_tools_transport_failure_degrades_without_raising(settings):
-    """`git` absent / réseau coupé : la sonde rend `unknown`, elle ne lève pas et ne verdit pas. Une sonde
-    qui explose hors réseau serait un check défaillant — il s'allumerait sur un état parfaitement normal."""
+def test_check_tools_takes_no_runner_and_makes_no_subprocess(settings, edition):
+    """Elle ne prend plus de runner : il n'y a plus rien à exécuter. Une sonde purement locale ne peut plus
+    échouer parce que le réseau est coupé — le mode d'échec le plus fréquent de l'ancienne a disparu."""
+    import inspect
+    assert "runner" not in inspect.signature(tools.check_tools).parameters
+
+
+def test_check_tools_without_an_edition_is_unknown_not_green(settings, tmp_path):
+    """Checkout dev / wheel dégradé : l'édition ne déclare rien. C'est `unknown` AVEC sa raison — jamais
+    « conforme » (il n'y a rien à quoi se conformer), jamais une exception depuis une sonde."""
     for n in tools.MAP_REPOS:
-        _seed_dist(settings, n, _vcs(_SHA_A))
-    report = tools.check_tools(settings, runner=_ls_remote_runner({}, boom=True))
-    assert report["state"] == "unknown"
+        _seed_dist(settings, n, None, stamp=_SHA_A)
+    report = tools.check_tools(settings, maps_dir=tmp_path / "vide")
+    assert report["state"] == "unknown" and report["edition_dir"] is None and report["reason"]
     assert all(m["state"] == "unknown" and m["reason"] for m in report["maps"])
 
 
-def test_check_tools_clones_anonymously(settings):
-    """La sonde tape les mêmes repos que l'install : elle n'a PAS le droit d'y ajouter un credential."""
-    envs: dict = {}
-    for n in tools.MAP_REPOS:
-        _seed_dist(settings, n, _vcs(_SHA_A))
-    tools.check_tools(settings, runner=_ls_remote_runner(
-        dict.fromkeys(tools.MAP_REPOS, _SHA_A), captured_envs=envs))
-    for name, env in envs.items():
-        added = {k: v for k, v in env.items() if os.environ.get(k) != v}
-        assert set(added) <= {"GIT_TERMINAL_PROMPT"}, f"la sonde {name} ajoute à l'env : {sorted(added)}"
-
-
-def test_check_tools_does_not_probe_upstream_for_a_map_it_does_not_serve(settings):
-    """Rien à comparer ⇒ aucun appel réseau : la raison est déjà locale. Sans ça, une instance hors ligne
-    attendrait le timeout pour trois réponses qu'elle connaissait avant de décrocher."""
-    _seed_dist(settings, "code-map", _vcs(_SHA_A))                     # seule carte servie
-    probed: dict = {}
-    report = tools.check_tools(settings, runner=_ls_remote_runner(
-        {"code-map": _SHA_A}, captured_envs=probed))
-    assert set(probed) == {"code-map"}
+def test_check_tools_a_map_not_installed_stays_unknown(settings, edition):
+    """Rien de servi ⇒ rien à comparer : la raison est locale et déjà connue. Elle remonte telle quelle."""
+    _seed_dist(settings, "code-map", None, stamp=_SHA_A)                # seule carte servie
+    report = tools.check_tools(settings, maps_dir=edition)
     assert report["state"] == "unknown"                                 # les 2 autres restent non vérifiées
+    assert [m["state"] for m in report["maps"]] == ["up-to-date", "unknown", "unknown"]
 
 
 def test_check_exit_codes_keep_the_three_issues_distinct(settings):
     """« pas pu vérifier » (2) n'est ni « à jour » (0) ni « périmé » (1). Les confondre, c'est refaire le
     faux-vert que cette fiche répare — dans un sens ou dans l'autre."""
     assert tools._CHECK_EXITS == {"up-to-date": 0, "differs": 1, "unknown": 2}
+
+
+def test_read_edition_refuses_an_entry_missing_a_field(settings, tmp_path):
+    """Un `KeyError` qui s'échapperait d'ici remonterait BRUT à `check_tools`, dont le contrat est de ne
+    JAMAIS lever — la sonde tomberait au lieu de rendre `unknown`. Le manifeste est donc décodé entièrement,
+    champs compris, dans le seul endroit qui sait le refuser."""
+    d = tmp_path / "ed"
+    d.mkdir()
+    (d / tools.EDITION_MANIFEST).write_text(json.dumps({"maps": [{"name": "code-map"}]}), encoding="utf-8")
+    with pytest.raises(tools.EditionMapsError, match="illisible"):
+        tools.read_edition(d)
+    assert tools.check_tools(settings, maps_dir=d)["state"] == "unknown"      # la sonde, elle, tient
