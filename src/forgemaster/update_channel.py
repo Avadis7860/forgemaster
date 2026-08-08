@@ -369,6 +369,20 @@ def read_state(settings: Settings) -> dict:
             "last_attempt": tentative if isinstance(tentative, dict) else dict(_JAMAIS)}
 
 
+# Un état d'échec n'a pas le même POIDS qu'un autre, et un niveau de log unique le nierait. Le partage n'est
+# pas esthétique : `bad-signature` dit que quelqu'un a servi des octets en se réclamant d'une clé qu'on
+# accepte — le seul indicateur de compromission qu'un système hors-ligne aura jamais (§12 de la spec de
+# racine de confiance : *un vérificateur PRÉSENT qui échoue est un ÉCHEC, bruyant côté log*). Un réseau
+# injoignable, lui, est une non-nouvelle : un train qui ne passe pas n'est pas une alarme.
+_NIVEAU = {
+    "bad-signature": logging.ERROR,
+    "unknown-key": logging.WARNING,
+    "malformed": logging.WARNING,      # le manifeste servi n'a pas la forme publiée : côté PUBLICATION, pas
+    #                                    côté réseau — quelqu'un doit le réparer, ce n'est pas de l'attente.
+    "internal": logging.WARNING,       # défaut de CE module ; discret, il ne serait jamais vu.
+}
+
+
 def refresh(settings: Settings, *, url: str | None = None, fetcher=None,
             keys_path: Path | None = None, now: datetime | None = None) -> dict:
     """Un tour de canal : lire, vérifier, écrire. **Ne lève jamais** — un canal muet ne fait pas tomber un
@@ -419,7 +433,8 @@ def refresh(settings: Settings, *, url: str | None = None, fetcher=None,
     if etat == "ok":
         succes = {"at": horodatage, "announce": annonce}
     else:
-        logging.getLogger("forgemaster").info("canal de MAJ — %s : %s", etat, raison)
+        logging.getLogger("forgemaster").log(_NIVEAU.get(etat, logging.INFO),
+                                             "canal de MAJ — %s : %s", etat, raison)
     out = {"last_success": succes, "last_attempt": {"at": horodatage, "state": etat, "reason": raison}}
     # Le `schema` est posé à l'ÉCRITURE seulement : ce qu'on rend à l'appelant est la même vue que
     # `read_state`, sinon deux lecteurs du même état verraient deux formes.
@@ -454,33 +469,178 @@ async def run_channel_poll(settings: Settings, *, interval_s: float = POLL_INTER
         await asyncio.sleep(interval_s)
 
 
+# --- verdict -----------------------------------------------------------------------------------------
+#
+# L'état d'un tour dit ce qui S'EST PASSÉ ; le verdict dit ce qu'on en FAIT. Ce sont deux questions, et les
+# fondre en une seule condamnerait l'une des deux à mentir : « injoignable » n'est pas une réponse à « dois-je
+# mettre à jour ? », et « une édition existe » n'est pas une réponse à « mon dernier contrôle a-t-il
+# abouti ? ».
+# Les deux voyagent donc ensemble dans le volet, jamais l'une à la place de l'autre.
+
+# Un échec DUR (la vérification) prend la tête ; un échec MOU (le réseau) fait seulement VIEILLIR ce qu'on
+# savait. La distinction est la doctrine même du canal, appliquée au verdict : un réseau qui tombe fait
+# vieillir, une signature qui ment interrompt. Sans elle, une panne de wifi effacerait une annonce déjà
+# vérifiée (amnésie) — ou, symétriquement, une signature falsifiée passerait sous une vieille bonne nouvelle.
+_DUR = ("bad-signature", "unknown-key")
+_MOU = ("unreachable", "malformed", "internal")
+
+
+def situate(announce: dict, build_sha: str | None) -> tuple[str, str]:
+    """L'instance, située par rapport à l'édition annoncée — **PURE**. Rend `(état, raison)`.
+
+    Trois issues, et la troisième est celle qui empêche les deux autres de mentir :
+
+    - `up-to-date` — le SHA annoncé est le nôtre ;
+    - `available` — notre SHA est **dans la lignée**, donc l'édition annoncée **descend** de ce qu'on
+      exécute. C'est la seule configuration où proposer une mise à jour est fondé ;
+    - `cannot-situate` — notre SHA est **absent** de la lignée. **Trois** causes distinctes produisent
+      exactement cette absence : une instance plus ancienne que la fenêtre publiée, un wheel bâti maison
+      depuis un commit jamais publié, ou une vraie divergence. On ne les distingue pas, **donc on ne choisit
+      pas** : c'est un aveu (« je ne peux pas te situer »), jamais un verdict de divergence. C'est aussi
+      pourquoi il ne rougit pas — accuser sur une absence serait le faux verdict que la lignée bornée
+      existe précisément pour éviter.
+
+    Le cas sans tampon de build tombe dans le même aveu, et pour la même raison de fond : on ne sait pas
+    d'où l'on vient, donc on ne peut pas dire où l'on est."""
+    ed = announce.get("edition") or {}
+    annonce_sha = ed.get("sha")
+    if not build_sha:
+        return "cannot-situate", (
+            "cette instance n'a pas de tampon de build (checkout éditable, ou wheel bâti sans tampon) — "
+            "sans SHA d'origine, rien ne permet de la situer dans la lignée publiée")
+    if build_sha == annonce_sha:
+        return "up-to-date", ""
+    lignee = announce.get("lineage") or []
+    if build_sha in lignee:
+        return "available", ""
+    return "cannot-situate", (
+        f"le SHA de cette instance ({build_sha[:12]}) n'apparaît pas dans la lignée publiée "
+        f"({len(lignee)} édition(s)) — trois causes donnent cette même absence : instance plus ancienne "
+        f"que la fenêtre publiée, wheel bâti maison depuis un commit jamais publié, ou divergence réelle. "
+        f"On ne les distingue pas, donc rien n'est proposé et rien n'est reproché")
+
+
+def verdict(state: dict, *, build_sha: str | None) -> dict:
+    """Ce que le produit FAIT de ce que le canal a lu — **PURE**, testable à la table.
+
+    Sept issues, et **aucune ne verdit par défaut** : `never` · `no-trust-root` · `unverified` ·
+    `unreachable` · `up-to-date` · `available` · `cannot-situate`.
+
+    Ordre de priorité, et son motif :
+
+    1. **`no-trust-root` d'abord** — une capacité absente n'est pas un échec de vérification, et la
+       présenter comme tel enverrait chercher une panne là où il n'y a qu'une édition sans clé.
+    2. **Un échec DUR ensuite** (`unverified`) : il l'emporte même sur une annonce déjà vérifiée. Quelqu'un
+       sert des octets qui se réclament d'une clé qu'on accepte — c'est plus urgent qu'une bonne nouvelle
+       d'hier, et l'annonce d'hier reste rendue à côté, avec son âge.
+    3. **Sans rien de vérifié**, on dit lequel des deux silences : `never` (aucun tour) ou `unreachable`.
+    4. **Sinon on SITUE** — y compris quand le dernier tour a échoué mollement. C'est la contrepartie exacte
+       de la survie de `last_success` : un réseau injoignable fait vieillir ce qu'on savait, il ne le rend
+       pas faux. Le tour raté n'est pas caché pour autant — il voyage dans `attempt`.
+
+    Le volet rendu porte **toujours** le dernier tour (`attempt`) à côté du verdict : une surface qui ne
+    montrerait que le verdict ne pourrait pas dire de QUAND il date, ni que le contrôle d'aujourd'hui a
+    échoué."""
+    tentative = state.get("last_attempt") or dict(_JAMAIS)
+    succes = state.get("last_success")
+    brut = tentative.get("state") or "never"
+    vue = {"attempt": {"state": brut, "at": tentative.get("at"),
+                       "reason": tentative.get("reason") or ""},
+           "verified_at": (succes or {}).get("at"),
+           "announced": _announced(succes)}
+    # `from_attempt` dit d'OÙ vient le verdict : du dernier tour, ou d'un succès antérieur. C'est un fait
+    # du domaine et non un indice d'affichage — et c'est ce qui évite que la règle « ne pas redire le tour
+    # quand il EST déjà le sujet » soit recopiée dans chaque surface, où les deux copies finiraient par ne
+    # plus lister les mêmes états.
+    depuis_le_tour = {**vue, "from_attempt": True}
+    if brut == "no-trust-root":
+        return {**depuis_le_tour, "state": "no-trust-root", "reason": tentative.get("reason") or ""}
+    if brut in _DUR:
+        return {**depuis_le_tour, "state": "unverified", "reason": tentative.get("reason") or ""}
+    if not succes or not isinstance(succes.get("announce"), dict):
+        if brut in _MOU:
+            return {**depuis_le_tour, "state": "unreachable", "reason": tentative.get("reason") or ""}
+        return {**depuis_le_tour, "state": "never",
+                "reason": "aucune annonce n'a encore été vérifiée sur cette instance"}
+    etat, raison = situate(succes["announce"], build_sha)
+    return {**vue, "from_attempt": False, "state": etat, "reason": raison}
+
+
+def read_verdict(settings: Settings, *, build_sha: str | None) -> dict:
+    """Le volet `channel` de « quelle édition tourne ici ? » : l'état sur DISQUE, transformé en verdict.
+
+    **Aucun réseau** — c'est une lecture de cache, et c'est ce qui la rend posable sur une sonde qui ne doit
+    ni pendre ni rendre 500. Le `build_sha` est **passé**, jamais relu ici : il appartient à
+    `build_provenance`, et l'importer ferait de ce module un voisin du sien alors que leur seule relation
+    est d'être composés par un appelant. La composition vit donc chez l'appelant (route ou CLI), là où elle
+    ne crée aucune arête dans le graphe d'imports."""
+    return verdict(read_state(settings), build_sha=build_sha)
+
+
+def _announced(succes: dict | None) -> dict | None:
+    """Ce qu'une surface a besoin de savoir de l'annonce vérifiée, et **rien de plus**. On ne renvoie pas le
+    document entier : une surface qui reçoit tout finit par afficher ce qu'elle n'a pas su nommer, et le
+    contrat d'API se met alors à dépendre de la forme du manifeste d'un tiers."""
+    if not succes or not isinstance(succes.get("announce"), dict):
+        return None
+    ed = succes["announce"].get("edition") or {}
+    wheel = ed.get("wheel") or {}
+    return {"version": ed.get("version"), "sha": ed.get("sha"),
+            "committed_at": ed.get("committed_at"),
+            "wheel_name": wheel.get("name"), "wheel_sha256": wheel.get("sha256"),
+            "lineage_len": len(succes["announce"].get("lineage") or [])}
+
+
 # --- CLI ---------------------------------------------------------------------------------------------
 
 
-def cli_check(settings: Settings) -> int:
-    """`forgemaster update check` — tirer maintenant, et dire ce qu'on a compris.
+_TITRE = {
+    "never":          "○ aucune annonce vérifiée sur cette instance",
+    "no-trust-root":  "○ capacité absente — cette édition n'embarque aucune racine de confiance",
+    "unverified":     "✗ ANNONCE NON VÉRIFIÉE — le manifeste servi n'est pas authentifiable",
+    "unreachable":    "○ canal injoignable — rien n'a pu être lu",
+    "up-to-date":     "✓ à jour avec l'édition annoncée",
+    "available":      "▲ une édition plus récente est annoncée",
+    "cannot-situate": "○ édition annoncée NON PROPOSÉE — cette instance n'est pas situable",
+}
+
+
+def cli_check(settings: Settings, *, build_sha: str | None) -> int:
+    """`forgemaster update check` — tirer maintenant, et dire **ce qu'il faut en faire**.
 
     **Toujours rc 0**, comme `update wheels` et `update aptitude` : c'est une QUESTION, pas un geste. Un
     réseau injoignable n'est pas un échec de la commande — c'est une réponse, et elle s'affiche.
 
     Ce verbe existe parce qu'une instance pilotée **uniquement en CLI** n'a aucun daemon pour aller voir :
-    sans lui, la moitié réseau de « savoir » ne la couvrirait pas."""
-    vue = refresh(settings)
-    tentative, succes = vue["last_attempt"], vue["last_success"]
-    if tentative["state"] == "ok":
-        ed = succes["announce"]["edition"]
-        print(f"✓ édition annoncée — {ed['version']} @ {ed['sha'][:12]}")
-        print(f"  wheel {ed['wheel'].get('name', '?')} · sha256 {ed['wheel']['sha256'][:16]}…")
-        print(f"  lignée : {len(succes['announce'].get('lineage', []))} édition(s) publiée(s) avant elle")
+    sans lui, la moitié réseau de « savoir » ne la couvrirait pas. Il rend le **même** verdict que la
+    surface (`verdict`, un seul foyer) : deux implémentations de « à jour » finiraient par ne plus vouloir
+    dire la même chose.
+
+    `build_sha` est **exigé**, sans valeur par défaut : un défaut ferait rendre « non situable » à une
+    instance parfaitement tamponnée dont l'appelant aurait oublié l'argument — un verdict faux produit par
+    un oubli silencieux, exactement ce qu'un `None` par défaut rend indétectable."""
+    vue = verdict(refresh(settings), build_sha=build_sha)
+    print(_TITRE[vue["state"]])
+    if vue["reason"]:
+        print(f"  {vue['reason']}")
+    ann = vue["announced"]
+    if ann:
+        # L'annonce vérifiée est rendue MÊME quand le verdict ne s'appuie pas dessus (`unverified`) : elle a
+        # été authentifiée un jour, et la cacher reviendrait à effacer ce qu'on savait au lieu de le vieillir.
+        print(f"\n  Annonce vérifiée le {vue['verified_at']} — {ann['version']} @ "
+              f"{(ann['sha'] or '?')[:12]}")
+        print(f"  wheel {ann['wheel_name'] or '?'} · sha256 {(ann['wheel_sha256'] or '?')[:16]}…")
+        print(f"  lignée : {ann['lineage_len']} édition(s) publiée(s) avant elle")
+    tent = vue["attempt"]
+    # Le dernier tour n'est redit QUE s'il n'est pas déjà le sujet — `from_attempt` le dit, plutôt qu'une
+    # liste d'états recopiée ici et une seconde fois dans le rendu web. Sur `unverified`/`unreachable`/
+    # `no-trust-root`, le verdict EST ce tour et sa raison a déjà été imprimée : la répéter en dessous
+    # ferait passer une seule cause pour deux faits distincts.
+    if tent["state"] != "ok" and not vue["from_attempt"]:
+        print(f"\n  Dernier contrôle ({tent['at'] or 'jamais'}) : {tent['state']} — {tent['reason']}")
+    if vue["state"] == "available":
         print("\nLe canal ANNONCE — il ne télécharge rien et ne pose rien. "
               "`forgemaster update apply --wheel <fichier>` reste le seul geste, et il est à vous.")
-        return 0
-    print(f"✗ rien de vérifié — {tentative['state']} : {tentative['reason']}")
-    if succes:
-        print(f"\nDernière annonce vérifiée : {succes['announce']['edition']['version']} "
-              f"(lue le {succes['at']}) — elle n'est pas effacée par cet échec, elle vieillit.")
-    else:
-        print("\nAucune annonce n'a jamais été vérifiée sur cette instance.")
     return 0
 
 

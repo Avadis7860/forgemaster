@@ -6,6 +6,7 @@ import {
 } from '@/lib/queries'
 import { fraicheur } from '@/lib/instanceFreshness'
 import { corpus, edition, shaCourt } from '@/lib/instanceEdition'
+import { verdictCanal } from '@/lib/channelVerdict'
 import { enVol, liaison } from '@/lib/updateLiaison'
 import { RunFollow, RunRow } from './RunFollow'
 import { UpdatePreview } from './UpdatePreview'
@@ -119,6 +120,7 @@ export function UpdatePanel() {
   const sha = version.data?.sha
   const bascule = Boolean(shaAvant && sha && shaAvant !== sha)
   const etat = version.data ? fraicheur(version.data) : null
+  const canal = version.data ? verdictCanal(version.data.channel) : null
   const ed = version.data ? edition(version.data) : null
   const corpusMcp = version.data ? corpus(version.data) : null
   const echecLancement = poser.error ?? revenir.error
@@ -172,6 +174,26 @@ export function UpdatePanel() {
               types apparus depuis : {etat.manquants.join(', ')}
             </p>
           )}
+        </div>
+      )}
+
+      {/* LE CANAL SERVI — la première référence JOIGNABLE, sous celle du miroir local et jamais à sa place :
+          l'une vieillit AVEC l'instance, l'autre non, et c'est justement l'écart entre les deux qui se lit.
+          Le verdict se décide dans `lib/channelVerdict` (pur, testé à la table) ; ici on ne fait que le
+          rendre. Deux tons méritent leur motif : `cannot-situate` reste NEUTRE — le rouge dirait « tu as
+          divergé », le seul verdict que trois causes indistinguables interdisent de rendre — et
+          `unverified` est le seul `danger` de ce bloc, parce qu'une signature qui ment n'est pas une
+          non-nouvelle. */}
+      {canal && (
+        <div className="-mt-2 space-y-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
+            <Badge tone={canal.ton} dot>{canal.etiquette}</Badge>
+            <span>{canal.titre}</span>
+          </div>
+          {canal.detail && <p className="break-all text-xs text-faint">{canal.detail}</p>}
+          {/* Le dernier contrôle n'est dit QUE s'il n'est pas déjà le sujet : sinon une cause unique
+              s'afficherait deux fois et passerait pour deux faits distincts. */}
+          {canal.tentative && <p className="text-xs text-faint">{canal.tentative}</p>}
         </div>
       )}
 

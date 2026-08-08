@@ -74,6 +74,10 @@ function version(over: Partial<Version> = {}): Version {
                                   reason: null })),
     },
     mcp: { topology: 'none', sha: null, endpoint: null, reason: 'aucun endpoint MCP configuré' },
+    // Le volet CANAL — muet par défaut dans ces décors : `never` est l'état honnête d'une instance
+    // qui n'a jamais interrogé, et c'est celui qui laisse le miroir local parler comme avant.
+    channel: { state: 'never', reason: '', from_attempt: true, verified_at: null, announced: null,
+               attempt: { state: 'never', at: null, reason: '' } },
     ...over,
   }
 }

@@ -341,7 +341,7 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
 - **version** — `GET /api/version` — **« quelle édition tourne ici ? »** : provenance de build +
   **fraîcheur honnête** du wheel installé + l'identité des **quatre pièces** et leur conformité à l'édition :
   `{version, sha, committed_at, comparable, stale, behind_by, missing_types, reference, head, install, maps,
-  edition, mcp}`.
+  edition, mcp, channel}`.
   Le SHA vient du tampon
   `forgemaster/_build.json` embarqué au build (`deploy/build-wheel.sh`, jamais mtime) ; `stale`/`behind_by`/
   `missing_types` se calculent **par SHA** contre le HEAD du miroir SoT **local** de forgemaster — **transport
@@ -353,8 +353,8 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   lisible, build inconnu), et `reference` reste nommée quand le miroir existe mais n'a pas pu être lu — « il
   y a bien un miroir là, je n'ai pas su le lire » ≠ « il n'y a pas de miroir ». Motif : ce miroir est
   **local** et vieillit avec l'instance (wheel ET miroir périmés ⇒ le daemon les voit égaux, donc « frais »),
-  donc un verdict qu'on ne peut pas situer n'est pas jugeable. Une référence **joignable** — qui, elle, ne
-  vieillit pas avec nous — reste hors de cette route.
+  donc un verdict qu'on ne peut pas situer n'est pas jugeable. La référence **joignable** — qui, elle, ne
+  vieillit pas avec nous — est le volet `channel`, ajouté le 2026-08-08 et décrit plus bas.
   `maps` = les **3 cartes hôte servies** par `tools/venv`, `[{name, sha, requested_ref, source, reason}]` —
   **transport local** lui aussi. Deuxième moitié de l'identité d'une instance, **étiquetée à part** parce
   qu'elle peut diverger du wheel : depuis le 2026-08-08 les deux montent ENSEMBLE sur le chemin de
@@ -366,6 +366,18 @@ globalement (`KeyError`→404, `ValueError`→400 ; validation body → 422). Ro
   sibling — le mode canonique depuis le 2026-08-08, SHA lu dans le tampon `_vendored_from.txt` du paquet) ;
   `vcs` = posée depuis `git+…@main`, une réf **mobile** (le mode historique, encore vivant sur toute instance
   provisionnée avant cette date, SHA lu dans `direct_url.json`/PEP 610).
+  `channel` = le **verdict du canal servi**, `{state, reason, from_attempt, attempt:{state,at,reason},
+  verified_at, announced}` — la première référence **joignable** de cette route, et la seule qui ne vieillit
+  pas avec l'instance. **Lu du cache disque** (`<home>/channel/last.json`, écrit par la tâche de fond ou par
+  `forgemaster update check`) : **zéro réseau**, la route reste une sonde. `state` ∈ `never` |
+  `no-trust-root` | `unverified` | `unreachable` | `up-to-date` | `available` | `cannot-situate`.
+  `attempt` porte le **dernier tour** et n'est pas remplaçable par `state` : « injoignable » n'est pas une
+  réponse à *dois-je mettre à jour ?*, et « une édition existe » n'est pas une réponse à *mon contrôle
+  a-t-il abouti ?*. `from_attempt` dit **d'où vient le verdict** — du dernier tour, ou d'un succès
+  antérieur ; c'est ce qui permet aux surfaces de ne pas redire un tour qui EST déjà le sujet, sans recopier
+  une liste d'états. `available` est le **seul** état qui propose, et il exige que le SHA de build soit
+  **dans la lignée** annoncée ; `cannot-situate` est un **aveu**, jamais un verdict de divergence (trois
+  causes produisent la même absence). Détail et invariants : `docs/specs/update-channel-manifest.md`.
   `install` = **de quel mode d'install cette instance vient**, `{mode, reason}` avec `mode` ∈ `edition` |
   `wheel` | `checkout` | `unknown`. **Déduit du disque** — le wheel porte-t-il son tampon `_build.json` ?
   l'édition `forgemaster/_maps/maps.json` est-elle lisible ? — et **jamais déclaré** par une clé d'env, qui

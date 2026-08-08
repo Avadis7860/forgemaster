@@ -1,8 +1,10 @@
 # spec — le manifeste servi du canal de mise à jour (format, tirage, cache)
 
 > **Livré.** `src/forgemaster/update_channel.py` implémente ce contrat ; `tests/test_update_channel.py` le
-> garde. Ce qui n'est **pas** livré et reste explicite ci-dessous : la vraie paire de clés (donc
-> `_keys/release-keys.json`), la publication d'une Release, et le **verdict** rendu à l'utilisateur.
+> garde. Le **verdict** rendu à l'utilisateur est livré depuis le 2026-08-08 (§« Le verdict » plus bas) et
+> se lit sur `GET /api/version` (volet `channel`) comme dans `forgemaster update check`. Ce qui n'est
+> **pas** livré et reste explicite ci-dessous : la vraie paire de clés (donc `_keys/release-keys.json`) et
+> la publication d'une Release.
 > Frère de `update-channel-trust-root.md`, qui fixe **comment on signe** ; celui-ci fixe **ce qu'on signe,
 > où on le trouve et quand on va le chercher**.
 
@@ -132,10 +134,49 @@ raison d'avoir, et il est limité en débit ; le **téléchargement** d'un asset
 Écarté : un fichier suivi sur `main`. Publier une annonce deviendrait un **commit sur `main`**, que ce dépôt
 n'avance que promu depuis un `dev` vert — la publication entrerait en collision avec la règle de branche.
 
+## Le verdict — de l'état à ce qu'on en FAIT
+
+L'état d'un tour dit ce qui **s'est passé** ; le verdict dit ce qu'on en **fait**. Les fondre condamnerait
+l'un des deux à mentir : « injoignable » n'est pas une réponse à *dois-je mettre à jour ?*, et « une édition
+existe » n'est pas une réponse à *mon dernier contrôle a-t-il abouti ?*. Le volet rend donc **les deux** —
+`state` (le verdict) et `attempt` (le dernier tour) — jamais l'un à la place de l'autre.
+
+19. **Sept issues, et aucune ne verdit par défaut** : `never` · `no-trust-root` · `unverified` ·
+    `unreachable` · `up-to-date` · `available` · `cannot-situate`.
+20. **`no-trust-root` est prioritaire sur tout.** Une capacité absente n'est pas un échec de vérification ;
+    la présenter comme tel enverrait chercher une panne là où il n'y a qu'une édition sans clé.
+21. **Un échec DUR l'emporte, un échec MOU fait seulement VIEILLIR.** `bad-signature` / `unknown-key`
+    prennent la tête **même sur une annonce déjà vérifiée** — des octets qui se réclament d'une clé qu'on
+    accepte sont plus urgents qu'une bonne nouvelle d'hier. Un réseau injoignable, lui, ne dégrade **pas**
+    le verdict : c'est la contrepartie exacte de la survie de `last_success` (règle 13), sans quoi une panne
+    de wifi produirait une amnésie. L'annonce vieillie reste rendue dans les deux cas, avec sa date.
+22. **`available` est le SEUL état qui propose**, et il exige que le SHA de build soit **dans la lignée** :
+    l'édition annoncée doit **descendre** de ce qu'on exécute. C'est ce qui rend la divergence classe B
+    décidable **sans miroir git**, chez qui n'en a pas.
+23. **`cannot-situate` est un AVEU, jamais un verdict de divergence.** Trois causes distinctes produisent la
+    même absence de la lignée — instance plus ancienne que la fenêtre publiée, wheel bâti maison depuis un
+    commit jamais publié, divergence réelle. On ne les distingue pas, **donc on ne choisit pas** : rien
+    n'est proposé, rien n'est reproché, et **le ton ne rougit pas**. Une instance sans tampon de build tombe
+    dans le même aveu — on ne sait pas d'où elle vient, donc on ne peut pas dire où elle est.
+24. **Une signature invalide est IGNORÉE côté produit et BRUYANTE côté log.** Les deux ne se contredisent
+    pas : l'un refuse d'agir sur des octets non authentifiés, l'autre refuse de les taire. Le niveau est
+    **gradué** — `bad-signature` en ERROR, `unknown-key` / `malformed` / `internal` en WARNING, un réseau
+    injoignable en INFO. Un niveau unique nierait que ces états n'ont pas le même poids.
+25. **Le volet ne rend pas le manifeste entier**, seulement ce qu'une surface a besoin de nommer. Un volet
+    d'API qui recopie le document d'un tiers fait dépendre son propre contrat de la forme de ce document.
+26. **Le verdict est composé chez l'APPELANT** (la route HTTP, la CLI), pas dans `build_provenance` : ce
+    module porte la contrainte « aucun accès réseau » comme propriété de son graphe d'imports, et lui faire
+    importer le canal la dégraderait en affaire de confiance. Le `build_sha` est **passé**, sans valeur par
+    défaut — un défaut ferait rendre « non situable » à une instance tamponnée dont l'appelant aurait oublié
+    l'argument.
+27. **Un seul rappel poussé, et le canal l'emporte dès qu'il fait autorité.** Le canal est la référence que
+    l'utilisateur visé peut joindre et qui ne vieillit pas avec son instance ; le miroir local vieillit avec
+    elle. « Faire autorité » n'est pas « exister » : un canal muet, injoignable ou non vérifié ne fait taire
+    personne. Sur une machine qui a les deux références, deux rappels pour le même fait apprennent à ignorer
+    le centre de notifications.
+
 ## Ce que cette spec ne décide PAS
 
-- **Le verdict** : ce que l'utilisateur voit, ce qu'une édition non descendante déclenche, ce qui est écrit
-  au log. Le module rend un état ; personne ne le lit encore.
 - **La cérémonie de génération de la paire** et la publication de la première Release.
 - **La proposition et le consentement** — accepter / différer / refuser est une autre pièce.
 
@@ -161,6 +202,18 @@ Ce que `tests/test_update_channel.py` garde, et qu'aucune évolution ne doit ren
 - chaque panne rend son **propre** état, chacun porteur d'une raison non vide ;
 - la boucle tire **avant** le premier sommeil, **ne bloque pas** la boucle d'événements (battement mesuré
   pendant un tirage bloquant), et **survit** à un tour qui lève ;
+- **le verdict** : `up-to-date` / `available` / `cannot-situate` décidés à la table sur les trois formes de
+  lignée · `unverified` l'emportant sur un `last_success` présent · un `unreachable` qui **ne dégrade pas**
+  le verdict et voyage dans `attempt` · les trois silences (`never`, `unreachable`, `no-trust-root`)
+  **distincts** · le volet qui ne rend PAS le manifeste entier ;
+- **le niveau de log MESURÉ** (`levelno`, pas le message) : `bad-signature` ⇒ ERROR, injoignable ⇒ INFO. Un
+  test qui n'assertait que le texte resterait vert si tout retombait en `info` ;
+- **le volet n'émet aucune requête** — `fetch` et `refresh` rendus explosifs, la sonde reste debout ;
+- **les DEUX tâches de fond du `_lifespan` démarrent et sont coupées au shutdown**, falsifié par mutation
+  tâche par tâche (`tests/test_daemon.py`) — le module était couvert, le **branchement** ne l'était pas ;
+- **côté surface** : l'arbitrage du rappel (le canal fait taire le miroir dès qu'il fait autorité, le miroir
+  reprend la parole quand le canal est muet) et un `ChannelSchema` qui **refuse** un état inconnu au parse
+  plutôt que de le laisser prendre l'apparence du cas par défaut ;
 - **et, côté `update.py` : le chemin complet de `apply --dry-run` n'ouvre AUCUNE socket** — `socket.socket`
   et `socket.create_connection` rendus impossibles, `rc 0` exigé. C'est la garde que
   `update-channel-trust-root.md` annonçait manquante ; elle existe désormais.

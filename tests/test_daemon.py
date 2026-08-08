@@ -458,6 +458,50 @@ def test_lifespan_reconciles_orphan_running_jobs_at_boot(tmp_path):
         conn.close()
 
 
+def test_lifespan_DEMARRE_puis_COUPE_ses_deux_taches_de_fond(tmp_path, monkeypatch):
+    """**Le raccord, pas la plomberie.** Les deux tâches de fond du daemon — le reaper de sessions PTY et le
+    canal de mise à jour — sont finement couvertes chacune dans leur module. Leur **branchement** ne l'était
+    par rien : mesuré par mutation le 2026-08-08, débrancher le canal du `_lifespan` laissait **1401 tests
+    verts**. Une capacité livrée dont le branchement n'est gardé par rien est une capacité qu'un refactor
+    retire en silence.
+
+    Le piège de forme, qui explique pourquoi le trou a pu rester invisible : le `_lifespan` n'est joué que
+    par le `__enter__` d'un `TestClient`, et le dépôt n'en comptait que **deux**. Presque aucun test ne
+    *regardait*.
+
+    La moitié shutdown est gardée avec la même exigence : une tâche de fond qui survit à l'arrêt du daemon
+    est un thread orphelin qui tire sur le réseau, pas un détail de propreté."""
+    import threading
+
+    demarrees: dict[str, threading.Event] = {"reaper": threading.Event(), "canal": threading.Event()}
+    coupees: dict[str, threading.Event] = {"reaper": threading.Event(), "canal": threading.Event()}
+
+    def _sonde(nom: str):
+        async def _tache(*_a, **_k):
+            demarrees[nom].set()
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                coupees[nom].set()
+                raise
+        return _tache
+
+    # Les deux imports du `_lifespan` sont PARESSEUX (le socle reste importable sans fastapi) : on remplace
+    # donc les noms là où ils vivent, pas sur `app_mod` où ils n'existent pas encore au moment du patch.
+    from forgemaster import update_channel as uc_mod
+
+    monkeypatch.setattr(term_reg, "run_reaper", _sonde("reaper"))
+    monkeypatch.setattr(uc_mod, "run_channel_poll", _sonde("canal"))
+
+    settings = Settings.resolve(home=tmp_path / "home", projects_root=tmp_path / "projects")
+    with TestClient(app_mod.build_app(settings)) as c:
+        c.get("/health")                                  # un aller-retour : la boucle a tourné
+        for nom, ev in demarrees.items():
+            assert ev.wait(5), f"la tâche de fond « {nom} » n'a jamais démarré — elle n'est pas branchée"
+    for nom, ev in coupees.items():
+        assert ev.wait(5), f"la tâche de fond « {nom} » a survécu au shutdown du daemon"
+
+
 def test_dispatch_ws_streams_normalized_transcript_then_terminal_frame(client, tmp_path):
     c, settings = client
     log = tmp_path / "transcript.jsonl"                  # transcript JETABLE (jamais un vrai `claude`)
@@ -1031,6 +1075,30 @@ def test_api_version_porte_le_verdict_dedition_sans_jamais_verdir_a_vide(client)
     ed = r.json()["edition"]
     assert set(ed) == {"edition_dir", "reason", "state", "maps"}
     assert ed["state"] == "unknown" and ed["reason"] and ed["edition_dir"] is None
+
+
+def test_api_version_porte_le_verdict_du_canal_sans_toucher_au_reseau(client, monkeypatch):
+    """Le canal a un cache depuis la session F ; personne ne le lisait. Il est ici, en volet ÉTIQUETÉ à
+    côté des quatre autres — parce que les cinq vieillissent séparément et qu'un verdict unique mentirait
+    dès que l'un bouge seul.
+
+    Le volet est composé DANS LA ROUTE, pas dans `build_provenance` : ce module porte la contrainte
+    « aucun accès réseau » comme propriété de son graphe d'imports, et lui faire importer le canal la
+    dégraderait en affaire de confiance. Ce test garde la conséquence observable — la sonde ne parle à
+    personne, même si le tirage est rendu explosif."""
+    from forgemaster import update_channel as uc_mod
+
+    def _interdit(*_a, **_k):
+        raise AssertionError("/api/version a émis une requête réseau — c'est une sonde, pas un client")
+
+    monkeypatch.setattr(uc_mod, "fetch", _interdit)
+    monkeypatch.setattr(uc_mod, "refresh", _interdit)
+    c, _ = client
+    ch = c.get("/api/version").json()["channel"]
+    assert set(ch) == {"state", "reason", "attempt", "verified_at", "announced", "from_attempt"}
+    # Aucune racine de confiance n'est embarquée dans un checkout : « jamais interrogé » est donc l'état
+    # honnête, et surtout ce n'est PAS un vert. Un `ok` ici voudrait dire qu'on a cru quelque chose.
+    assert ch["state"] == "never" and ch["announced"] is None
 
 
 # -- terminal PTY local ----------------------------------------------------------------------------

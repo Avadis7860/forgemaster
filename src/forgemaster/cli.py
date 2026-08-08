@@ -672,8 +672,11 @@ def _h_update(settings: Settings, args: argparse.Namespace) -> int:
     # dans son dispatch pour que les deux modules n'aient AUCUNE référence l'un vers l'autre : la frontière
     # « pas de réseau dans `update apply` » devient alors une propriété du graphe d'imports, pas une consigne.
     if args.action == "check":
-        from forgemaster import update_channel
-        return update_channel.cli_check(settings)
+        # Le SHA de build est résolu ICI et passé : c'est `build_provenance` qui sait le lire, et le canal
+        # n'a aucune raison de le savoir. La composition vit dans la CLI — le point du programme dont c'est
+        # le métier — plutôt qu'en arête entre deux modules qui n'ont rien à se dire.
+        from forgemaster import build_provenance, update_channel
+        return update_channel.cli_check(settings, build_sha=build_provenance.read_stamp()["sha"])
     from forgemaster import update
     return update.cli_dispatch(settings, args)
 

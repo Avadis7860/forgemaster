@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { Alert, Badge, Button, EmptyState, LoadingState } from '@/components/ui'
-import { fraicheur } from '@/lib/instanceFreshness'
+import { rappelInstance } from '@/lib/channelVerdict'
 import type { Tone } from '@/lib/statusTone'
 import { useAckAlert, useAlerts, useInstanceFreshness } from '@/lib/queries'
 import type { Alert as AlertRow } from '@/lib/schemas'
@@ -100,7 +100,10 @@ const CLE_IGNORE = 'forgemaster:instance-stale-dismissed'
 /** Le SHA de référence rangé au dernier `✕`. Une **préférence de client**, jamais un état de produit — la
  *  doctrine « rien de l'état d'un geste ne vit ici » vise ce que le SERVEUR possède et relit du disque ;
  *  ceci ne survit qu'au navigateur de celui qui a cliqué, et ne change rien à ce que l'instance rapporte.
- *  Clé = la référence : un nouveau commit dessus ramène le rappel de lui-même, sans rien à ré-armer. */
+ *  Clé = la référence de la source qui a parlé — le SHA annoncé par le canal, ou le HEAD du miroir local.
+ *  Un nouveau SHA la change, donc le rappel revient de lui-même, sans rien à ré-armer. Une seule clé pour
+ *  les deux sources est juste ici et non un raccourci : elle range « ce SHA-là », et une source qui prend
+ *  la parole avec un autre SHA a bien quelque chose de neuf à dire. */
 function lireIgnore(): string | null {
   try {
     return window.localStorage.getItem(CLE_IGNORE)
@@ -112,7 +115,7 @@ function lireIgnore(): string | null {
 /** La ligne d'instance. Volontairement bâtie sur les MÊMES primitives que `AlertItem` (même `Alert`, même
  *  ✕, même deep-link) : c'est le même geste de lecture pour l'utilisateur, quelle que soit la source. */
 function InstanceItem({ etat, onIgnorer, onGo }: {
-  etat: ReturnType<typeof fraicheur>
+  etat: NonNullable<ReturnType<typeof rappelInstance>>
   onIgnorer: () => void
   onGo: () => void
 }) {
@@ -150,22 +153,29 @@ export function NotificationCenter() {
   const version = useInstanceFreshness()
   const [ignore, setIgnore] = useState<string | null>(lireIgnore)
 
-  const etat = version.data ? fraicheur(version.data) : null
-  // Trois conditions, et la troisième est celle qui rend le badge crédible : on ne pousse QUE sur un retard
-  // avéré (`pousse`), jamais sur un « je ne peux pas savoir ». Un centre qui s'allume pour dire qu'il ne
-  // sait pas est un centre qu'on apprend à ignorer.
-  const instance = etat?.pousse && etat.head !== ignore ? etat : null
+  // La SOURCE est arbitrée dans le cœur pur (`rappelInstance`), pas ici : le canal servi l'emporte dès
+  // qu'il fait autorité, le miroir local reprend la parole quand le canal est muet. Une seule ligne, jamais
+  // deux — sur une machine qui a les deux références, en afficher deux pour le même fait est la façon la
+  // plus sûre d'apprendre à ignorer un centre de notifications.
+  //
+  // Ce qui rend le badge crédible n'a pas changé : on ne pousse QUE sur un fait avéré, jamais sur un « je
+  // ne peux pas savoir » — cette condition vit désormais dans le cœur, qui la décide pour les deux sources.
+  const etat = version.data ? rappelInstance(version.data) : null
+  // Un rappel SANS clé ne peut pas être rangé — il s'affiche donc, il ne disparaît pas en silence. Écrit
+  // explicitement parce que le repli naturel (`etat.cle !== ignore`) fait exactement l'inverse quand les
+  // deux valent `null` : le rappel serait avalé, sans que personne ait cliqué sur quoi que ce soit.
+  const instance = etat && (etat.cle === null || etat.cle !== ignore) ? etat : null
 
   function ignorer() {
-    if (!instance?.head) return
+    if (!instance?.cle) return
     try {
-      window.localStorage.setItem(CLE_IGNORE, instance.head)
+      window.localStorage.setItem(CLE_IGNORE, instance.cle)
     } catch {
       // Rangement impossible : la ligne se range quand même pour cette vie de page. Refuser le geste parce
       // que le navigateur refuse la persistance punirait l'utilisateur d'une contrainte qui n'est pas la
       // sienne.
     }
-    setIgnore(instance.head)
+    setIgnore(instance.cle)
   }
   // Tri par sévérité (blocker en tête) — le motif qui rend le badge rouge domine la liste (axe 1).
   const alerts = [...(data?.alerts ?? [])].sort(
