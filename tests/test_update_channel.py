@@ -371,6 +371,33 @@ def test_un_etat_tronque_se_lit_comme_absent_sans_lever(live: Settings):
     assert uc.read_state(live)["last_attempt"]["state"] == "never"
 
 
+def test_un_cache_de_SCHEMA_INCONNU_se_lit_comme_absent(live: Settings, capsys):
+    """**Le cas qu'on oublie.** Ce fichier est écrit par le binaire d'AVANT une mise à jour et relu par
+    celui d'APRÈS : contrairement à `_maps/maps.json`, il ne voyage PAS avec son lecteur. Le lire au jugé
+    ferait planter une CLI sur une clé absente ; le REFUSER inventerait une panne. On le jette — l'état se
+    reconstruit au tour suivant — et la CLI reste debout."""
+    p = uc.state_path(live)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"schema": "forgemaster-update-channel-state/9",
+                             "last_success": {"forme": "inconnue"}}), encoding="utf-8")
+    vue = uc.read_state(live)
+    assert vue["last_success"] is None and vue["last_attempt"]["state"] == "never"
+    assert uc.cli_check(live) == 0, "une CLI est tombée sur un cache écrit par une autre version"
+    assert "Aucune annonce" in capsys.readouterr().out
+
+
+def test_le_meme_key_id_declare_deux_fois_est_refuse(tmp_path: Path):
+    """La vérification indexe PAR `key_id` : deux clés sous le même identifiant, et l'une des deux serait
+    ignorée en silence. Une clé qu'on croit accepter sans l'accepter est le pire état d'une rotation — on
+    refuse le jeu entier plutôt que d'en garder la moitié."""
+    _priv, pub, kid = _paire()
+    doublon = tmp_path / "doublon.json"
+    doublon.write_text(json.dumps({"keys": [{"key_id": kid, "public": _b64(pub)},
+                                            {"key_id": kid, "public": _b64(pub)}]}), encoding="utf-8")
+    with pytest.raises(uc.ChannelMalformed, match="deux fois"):
+        uc.trust_root(doublon)
+
+
 def test_la_boucle_tire_AU_DEMARRAGE_puis_a_intervalle(live: Settings):
     """Le reaper dort d'abord — il n'a rien à réaper au boot. Le canal, si : un daemon qu'on vient de
     redémarrer est précisément le moment où quelqu'un veut savoir."""

@@ -86,6 +86,12 @@ ENV_URL = "FORGEMASTER_UPDATE_CHANNEL_URL"
 
 CHANNEL = "channel"          # `settings.home / channel /` — même convention que `updates` et `wheels`
 CHANNEL_STATE = "last.json"
+# Le cache est versionné pour la MÊME raison que le manifeste servi, et c'est facile à manquer : il est écrit
+# par le binaire d'AVANT une mise à jour et relu par celui d'APRÈS. Contrairement à `_maps/maps.json`, il ne
+# voyage PAS avec son lecteur — l'asymétrie qui dispense l'un de se versionner condamne l'autre à le faire.
+# Un cache de schéma inconnu se lit comme ABSENT (« jamais interrogé ») : c'est de l'état reconstructible au
+# tour suivant, donc le jeter est honnête là où refuser serait une panne inventée.
+STATE_SCHEMA = "forgemaster-update-channel-state/1"
 KEYS_DIR = "_keys"           # embarqué au wheel comme SOURCE SUIVIE (porte `packages` de hatch), pas comme
 KEYS_FILE = "release-keys.json"  # artefact de build : une clé publique n'est pas produite par le build.
 
@@ -165,6 +171,13 @@ def trust_root(keys_path: Path | None = None) -> list[dict]:
             raise ChannelMalformed(
                 f"{p} : clé #{i} annonce le key_id {declared!r} mais ses octets donnent {derived!r} — "
                 f"un key_id DÉRIVÉ qu'on ne re-dérive pas n'est qu'un nom, et celui-ci ment")
+        # Deux clés sous le même `key_id` ne peuvent pas coexister : la vérification indexe PAR `key_id`,
+        # donc l'une des deux serait silencieusement ignorée — et une clé qu'on croit accepter sans
+        # l'accepter est le pire état d'une rotation. On refuse le jeu entier plutôt que d'en garder la
+        # moitié.
+        if any(k["key_id"] == derived for k in out):
+            raise ChannelMalformed(f"{p} : le key_id {derived!r} est déclaré deux fois — l'une des deux "
+                                   f"clés serait ignorée en silence")
         out.append({"key_id": derived, "public": pub})
     return out
 
@@ -216,8 +229,10 @@ def verify_envelope(envelope: dict, keys: list[dict]) -> bytes:
 
     Une enveloppe peut porter plusieurs signatures — c'est le chevauchement de rotation. **Une seule**
     valide suffit : pendant la fenêtre, une instance ne connaît qu'une des deux clés, par construction.
-    Un `key_id` inconnu n'est retenu comme verdict que si **aucune** signature n'a vérifié : sinon on
-    signalerait une rotation là où la vérification a réussi."""
+
+    Ordre des verdicts quand rien ne vérifie : une signature qui désignait une clé **connue** et a échoué
+    l'emporte sur un `key_id` inconnu. C'est le signal le plus fort — quelqu'un a prétendu détenir une clé
+    qu'on accepte — et le noyer sous « rotation non suivie » ferait chercher la mauvaise réparation."""
     if not keys:
         raise ChannelUnknownKey("cette édition n'embarque aucune racine de confiance — elle ne peut "
                                 "vérifier aucun manifeste, et ne prétend donc rien")
@@ -328,20 +343,30 @@ def state_path(settings: Settings) -> Path:
     return settings.home / CHANNEL / CHANNEL_STATE
 
 
+_JAMAIS = {"at": None, "state": "never", "reason": "le canal n'a encore rien lu"}
+
+
 def read_state(settings: Settings) -> dict:
     """Ce que le canal sait, **sans réseau et sans jamais lever**. Un état absent est un état valide : « je
-    n'ai jamais regardé » n'est pas « rien n'existe », et les confondre serait un faux-vert."""
+    n'ai jamais regardé » n'est pas « rien n'existe », et les confondre serait un faux-vert.
+
+    Un cache de **schéma inconnu** est lu comme absent. C'est le cas de figure qu'on oublie : ce fichier est
+    écrit par le binaire d'AVANT une mise à jour et relu par celui d'APRÈS — il ne voyage pas avec son
+    lecteur. Le jeter est honnête (l'état se reconstruit au tour suivant) là où refuser inventerait une
+    panne, et là où le lire au jugé ferait planter une CLI sur une clé absente."""
     data = None
     try:
         data = json.loads(state_path(settings).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         data = None
-    if not isinstance(data, dict):
-        return {"last_success": None,
-                "last_attempt": {"at": None, "state": "never", "reason": "le canal n'a encore rien lu"}}
-    return {"last_success": data.get("last_success"),
-            "last_attempt": data.get("last_attempt") or {
-                "at": None, "state": "never", "reason": "le canal n'a encore rien lu"}}
+    if not isinstance(data, dict) or data.get("schema") != STATE_SCHEMA:
+        return {"last_success": None, "last_attempt": dict(_JAMAIS)}
+    succes = data.get("last_success")
+    if succes is not None and not isinstance(succes, dict):
+        succes = None
+    tentative = data.get("last_attempt")
+    return {"last_success": succes,
+            "last_attempt": tentative if isinstance(tentative, dict) else dict(_JAMAIS)}
 
 
 def refresh(settings: Settings, *, url: str | None = None, fetcher=None,
@@ -395,9 +420,10 @@ def refresh(settings: Settings, *, url: str | None = None, fetcher=None,
         succes = {"at": horodatage, "announce": annonce}
     else:
         logging.getLogger("forgemaster").info("canal de MAJ — %s : %s", etat, raison)
-    out = {"last_success": succes,
-           "last_attempt": {"at": horodatage, "state": etat, "reason": raison}}
-    _write_state(settings, out)
+    out = {"last_success": succes, "last_attempt": {"at": horodatage, "state": etat, "reason": raison}}
+    # Le `schema` est posé à l'ÉCRITURE seulement : ce qu'on rend à l'appelant est la même vue que
+    # `read_state`, sinon deux lecteurs du même état verraient deux formes.
+    _write_state(settings, {"schema": STATE_SCHEMA, **out})
     return out
 
 

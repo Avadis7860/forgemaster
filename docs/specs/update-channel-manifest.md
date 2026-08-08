@@ -73,14 +73,25 @@ consigne dans un commentaire.
     injoignable fait **vieillir** ce qu'on savait, il ne l'efface pas. La raison est celle déjà payée par
     `update.run_state` : le processus qui répond à la question n'est ni celui qui a mesuré, ni forcément le
     même binaire.
-14. **Chaque façon d'échouer a son PROPRE état** — `unreachable`, `malformed`, `unknown-key`,
-    `bad-signature`, `no-trust-root`, `internal`, `never`. Elles n'appellent pas les mêmes réparations, et
-    un `error` unique obligerait à lire un message libre pour savoir quoi faire. En particulier
-    `unknown-key` ≠ `bad-signature` (cf. `update-channel-trust-root.md` §8) et `never` ≠ `ok`.
-15. **`refresh` ne lève jamais** — un canal muet ne fait pas tomber un daemon. Le filet de dernier recours
+14. **Le cache est VERSIONNÉ, et un cache de schéma inconnu se lit comme ABSENT.** Il est écrit par le
+    binaire d'avant une mise à jour et relu par celui d'après : contrairement à `_maps/maps.json`, il ne
+    voyage **pas** avec son lecteur — l'asymétrie qui dispense l'un de se versionner condamne l'autre à le
+    faire. Le jeter est honnête (l'état se reconstruit au tour suivant) là où refuser inventerait une panne
+    et où le lire au jugé ferait planter une CLI sur une clé absente.
+15. **Chaque façon d'échouer a son PROPRE état** — `unreachable`, `malformed`, `unknown-key`,
+    `bad-signature`, `no-trust-root`, `internal` pour un tour de canal, plus `never` que seul le **lecteur**
+    produit (aucun tour n'a encore eu lieu, ou le cache était illisible). Elles n'appellent pas les mêmes
+    réparations, et un `error` unique obligerait à lire un message libre pour savoir quoi faire. En
+    particulier `unknown-key` ≠ `bad-signature` (cf. `update-channel-trust-root.md` §8) et `never` ≠ `ok`.
+    Quand rien ne vérifie, `bad-signature` **l'emporte** sur `unknown-key` : quelqu'un qui prétend détenir
+    une clé qu'on accepte est un signal plus fort qu'une rotation non suivie.
+16. **Un `key_id` déclaré deux fois dans la racine est refusé** — la vérification indexe par `key_id`, donc
+    l'une des deux clés serait ignorée en silence. Une clé qu'on croit accepter sans l'accepter est le pire
+    état possible d'une rotation.
+17. **`refresh` ne lève jamais** — un canal muet ne fait pas tomber un daemon. Le filet de dernier recours
     rend l'état **dédié** `internal` plutôt que de se déguiser en panne réseau : avaler un défaut de code
     sous « injoignable » ferait chercher une panne d'infrastructure.
-16. **`update check` rend toujours rc 0** — c'est une question, pas un geste (parité avec `update wheels` et
+18. **`update check` rend toujours rc 0** — c'est une question, pas un geste (parité avec `update wheels` et
     `update aptitude`). Un réseau injoignable est une **réponse**, pas un échec de commande.
 
 ## Les deux documents
@@ -141,6 +152,8 @@ Ce que `tests/test_update_channel.py` garde, et qu'aucune évolution ne doit ren
 - une signature qui désigne A mais vérifie sous B ⇒ **refus** ;
 - deux signatures, une seule clé connue ⇒ **vérifie** (chevauchement de rotation) ;
 - une racine **absente** rend `[]` ; une racine **présente** dont le `key_id` ne se re-dérive pas ⇒ **lève** ;
+  un `key_id` déclaré **deux fois** ⇒ **lève** ;
+- un cache de **schéma inconnu** est lu comme absent, et `update check` reste **debout** dessus (rc 0) ;
 - racine vide ⇒ **zéro appel** au tirage (compté, pas déduit de l'état final) ;
 - corps au-delà du plafond ⇒ refus, et la lecture elle-même n'a demandé que `plafond + 1` ;
 - schéma d'URL non http(s) ⇒ refus ;
