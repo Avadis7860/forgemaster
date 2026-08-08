@@ -52,9 +52,9 @@ def make_onboarding_router() -> APIRouter:
 
         Les deux volets sont **composés ici**, et pas dans `build_provenance` : ce module porte dans son
         propre en-tête la contrainte « aucun accès réseau », qui est aujourd'hui une propriété du graphe
-        d'imports. Lui faire importer le canal la dégraderait en affaire de confiance — et les 4 autres
-        appelants de `provenance()` (snapshot, registre, onboarding) gagneraient un volet dont ils n'ont
-        que faire."""
+        d'imports. Lui faire importer le canal la dégraderait en affaire de confiance — et l'autre appelant
+        de production de `provenance()`, la sonde `/api/onboarding` (`onboarding.py`), gagnerait un volet
+        dont elle n'a que faire."""
         prov = build_provenance.provenance(deps.settings)
         return {**prov,
                 "channel": update_channel.read_verdict(deps.settings, build_sha=prov["sha"])}
