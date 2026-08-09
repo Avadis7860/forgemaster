@@ -104,12 +104,23 @@ outils adoptés au 1er démarrage portaient `mirror_remote = source_url` (recopi
 jamais fournissable chez un tiers (`complete:false` à vie). `_migrate_v20_...` efface cette copie sur les
 seules lignes où elle est reconnaissable (`kind='tool'` ET `mirror_remote = source_url`) : un miroir posé
 par l'utilisateur (valeur ≠ provenance) est **épargné**, et la bannière continue d'avoir raison pour lui.
+v21 (proposition de MAJ) = table neuve `update_proposals` — l'état, PAR VERSION, de ce que l'utilisateur a
+répondu à une proposition de mise à jour. Table neuve → `CREATE IF NOT EXISTS` (précédent v17 `alerts`, v18
+`merge_outcomes`) ; ni rebuild ni `ensure_columns`. **Elle vit en base et pas dans un fichier de `home`
+précisément pour être couverte par l'instantané** (`snapshot.ENTRIES` prend `forgemaster.db` en
+`vacuum-into`) : sans ça un retour arrière ressusciterait une proposition refusée, ou effacerait le refus.
+**L'enum des états est encodé EN PLEIN dès la v21** — `proposed|deferred|declined|accepted` — bien que seul
+`proposed` soit écrit à cette version : SQLite ne sait pas `ALTER` un `CHECK`, donc l'ajouter plus tard
+coûterait un rebuild de table (leçon v11 sur `dispatch_jobs.kind`, rebuilds v8/v15/v16/v19). La clé est la
+**version** (« jamais cette version-là », décision `propose-consent-preserve` §1) et le `sha` annoncé voyage
+à côté : une re-publication sous la même version change le `sha`, donc **rouvre** la proposition — un
+`declined` ne couvre jamais des octets que l'utilisateur n'a pas vus.
 """
 from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 
 # Ordre = ordre de création (les FK pointent vers des tables déjà créées). Chaque table porte les
 # invariants durs en contraintes SQL (NOT NULL, UNIQUE, FK, CHECK sur les enums de statut).
@@ -285,6 +296,17 @@ DDL: tuple[str, ...] = (
         merged_at   TEXT NOT NULL,                 -- instant du merge vert (dénominateur + partition signal)
         updated_at  TEXT NOT NULL,                 -- dernière écriture (record/mark)
         marked_at   TEXT                           -- instant de la marque adverse ; NULL tant que 'held'
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS update_proposals (
+        version       TEXT PRIMARY KEY,            -- « cette version-là » : la clé de la proposition
+        sha           TEXT NOT NULL,               -- SHA annoncé — ce qui rend la proposition vérifiable
+        state         TEXT NOT NULL DEFAULT 'proposed'
+                          CHECK (state IN ('proposed', 'deferred', 'declined', 'accepted')),
+        first_seen_at TEXT NOT NULL,               -- 1re annonce vérifiée (ts INJECTÉ, jamais _now() ici)
+        decided_at    TEXT,                        -- instant du choix ; NULL tant que 'proposed'
+        updated_at    TEXT NOT NULL                -- dernière écriture (ré-annonce ou décision)
     )
     """,
 )

@@ -89,7 +89,8 @@ def test_db_schema_creates_all_tables(tmp_path: Path):
     names = sorted(r[0] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'"))
     assert names == ["alerts", "deployments", "dispatch_jobs", "features", "gate_verdicts",
-                     "merge_outcomes", "non_runs", "port_reservations", "projects", "tasks"]
+                     "merge_outcomes", "non_runs", "port_reservations", "projects", "tasks",
+                     "update_proposals"]
     assert schema.schema_version(conn) == schema.SCHEMA_VERSION
 
 

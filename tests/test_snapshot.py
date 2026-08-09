@@ -15,7 +15,7 @@ import pytest
 
 from forgemaster import snapshot
 from forgemaster.config import Settings
-from forgemaster.db import schema, store
+from forgemaster.db import proposals, schema, store
 from forgemaster.secrets.file_store import EncryptedFileStore
 
 
@@ -106,6 +106,30 @@ def test_la_base_copiee_est_lisible_et_de_meme_version(live: Settings):
     assert schema.schema_version(copie) == schema.SCHEMA_VERSION
     assert [r[0] for r in copie.execute("SELECT slug FROM projects")] == ["atelier-fictif"]
     copie.close()
+
+
+def test_le_choix_de_lutilisateur_sur_une_MAJ_voyage_dans_linstantane(live: Settings):
+    """L'invariant que la v21 achète, VÉRIFIÉ et non déduit de `ENTRIES`.
+
+    Un « ne plus proposer cette version » est une décision de l'utilisateur. Si elle vivait hors de la base
+    — un fichier de `home` non déclaré, le `localStorage` d'un navigateur — un retour arrière la perdrait ou
+    ressusciterait une proposition déjà refusée. Le seul fait qui l'empêche est que la table soit **dans**
+    `forgemaster.db`, la seule entrée prise en `vacuum-into`. On le mesure : on décide, on prend, on relit
+    dans la copie."""
+    vivant = store.open_db(live)
+    proposals.enregistre(vivant, version="0.4.0", sha="a" * 40, now="2026-08-09T10:00:00+00:00")
+    proposals.decide(vivant, version="0.4.0", sha="a" * 40, state="declined",
+                     now="2026-08-09T10:05:00+00:00")
+    vivant.close()
+
+    dest = snapshot.create(live)
+
+    copie = sqlite3.connect(str(dest / "forgemaster.db"))
+    copie.row_factory = sqlite3.Row
+    lu = proposals.etat(copie, version="0.4.0", sha="a" * 40)
+    copie.close()
+    assert lu is not None and lu["state"] == "declined"
+    assert lu["decided_at"] == "2026-08-09T10:05:00+00:00"
 
 
 def test_prise_a_chaud_emporte_le_valide_qui_vit_encore_dans_le_wal(live: Settings):
