@@ -4,7 +4,7 @@ Trois schémas sont un **contrat** : une couche produit, une autre consomme. On 
 librement ; changer un **schéma** exige une entrée CHANGELOG + un bump. Un schéma partiel qui se dit complet
 est un bug (jamais de cap silencieux).
 
-## 1. Schéma SQLite (`db/schema.py`, `SCHEMA_VERSION` = **11**)
+## 1. Schéma SQLite (`db/schema.py`, `SCHEMA_VERSION` = **21**)
 
 Base unique sous `settings.db_path` (`$FORGEMASTER_HOME/forgemaster.db`). Modèle **feature-groupe-des-tasks**.
 
@@ -57,6 +57,23 @@ Base unique sous `settings.db_path` (`$FORGEMASTER_HOME/forgemaster.db`). Modèl
   `created_at`. Là où `write_verdict` faisait un `write_text` qui **écrasait** (un rouge à T1 puis vert à T2
   perdait T1) ; l'historique par SHA préserve chaque passage. `merge` (fait-de-merge, GO humain daté) posé dans
   l'enum dès maintenant.
+- **`update_proposals`** (**v21** — le consentement à une MAJ) — `version` (**PK** : « cette version-là »),
+  `sha` (SHA annoncé — **pas** la clé : il dit si la proposition porte encore sur les mêmes octets),
+  `state` (`proposed`|`deferred`|`declined`|`accepted`, défaut `proposed` ; **enum complet dès la v21**, un
+  `ALTER` SQLite ne re-porte pas un `CHECK`), `first_seen_at`, `decided_at` (`NULL` tant que `proposed`),
+  `updated_at`. Une re-publication sous la même version change le `sha` et **rouvre** la proposition : un
+  refus ne couvre jamais des octets que l'utilisateur n'a pas vus. Elle vit **en base** et pas dans un
+  fichier de `home` pour une seule raison — l'instantané pris avant une MAJ prend `forgemaster.db`
+  (`snapshot.ENTRIES`), donc le choix de l'utilisateur voyage avec, et un retour arrière ne le perd ni ne le
+  ressuscite.
+
+> **Cette liste est incomplète, et le dire vaut mieux que la laisser croire complète.** Mesuré le
+> 2026-08-09 : elle porte **9 des 11** tables du `DDL` — `alerts` (v17) et `merge_outcomes` (v18) n'y ont
+> jamais été ajoutées — et les narratifs de migration ci-dessous s'arrêtent à **v11→v12** alors que le code
+> est monté jusqu'à la v21. L'historique complet des versions v10→v21 vit dans le docstring de
+> `db/schema.py`, qui, lui, est à jour. La remise à niveau du présent document est fichée à part
+> (`schema-contract-names-a-version-that-no-longer-exists`) : la faire au passage, sans re-vérifier huit
+> migrations contre le code, produirait exactement le genre de doc qui a mené ici.
 
 Invariants durs portés par le SQL : FK + `ON DELETE CASCADE`, `CHECK` sur chaque enum de statut, `UNIQUE`
 sur les slugs scopés. `PRAGMA foreign_keys=ON`, `journal_mode=WAL` (concurrence CLI↔daemon).
@@ -143,6 +160,16 @@ re-porte pas le CHECK → l'invariant `mode∈{headless,interactive}` est tenu p
 (`model.add_task`). Le hint naît de la **graine** (le socle semé marque `cadrage`/`interview` `interactive`), lu
 par le **dispatch générique** — zéro heuristique métier dans le moteur. Ajout **non-breaking** (le bump déclenche
 la migration).
+
+*(v12→v20 : narratifs absents de ce document — cf. l'encadré ci-dessus ; ils vivent dans le docstring de
+`db/schema.py`.)*
+
+**Migration v20→v21** (proposition de MAJ) : **table neuve** `update_proposals`, créée sur une base existante
+par `CREATE TABLE IF NOT EXISTS` (même chemin que `non_runs`/`gate_verdicts` en v11, `alerts` en v17), donc
+**aucune entrée `ensure_columns`** et **aucun rebuild**. Ajout **non-breaking** — et le bump reste obligatoire :
+c'est lui qui déclenche la migration, une base scellée à v20 ne re-rentrerait jamais dans `create_schema` et la
+table n'apparaîtrait sur aucune install existante. Les deux issues sont mesurées plutôt que supposées
+(`tests/test_proposals.py` : la table arrive sur une base d'avant · sans bump elle n'arrive jamais).
 
 ## 2. Schéma `.forgemaster/roadmap.yaml` (in-repo, `roadmap/model.py`)
 

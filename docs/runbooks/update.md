@@ -822,6 +822,52 @@ deploy/build-wheel.sh                                   # le wheel annoncé, gar
   --notes-file <notes.md> --asset channel.json --asset dist/forgemaster-<v>-py3-none-any.whl
 ```
 
+## db.proposals — le choix de l'utilisateur sur une MAJ, en base parce qu'il doit survivre à un retour arrière
+`src/forgemaster/db/proposals.py` · table `update_proposals`, schéma **v21** · décision
+`propose-consent-preserve` §1
+
+**Ce qui est livré ici est la donnée, pas la surface.** Aucun écran, aucun choix pris, aucune application. La règle
+du cycle est intacte : *le daemon recueille un consentement, il n'applique jamais lui-même* — **noter n'est pas
+consentir**.
+
+**Pourquoi en base.** Un choix de l'utilisateur est de la donnée utilisateur : il doit voyager dans l'instantané pris
+avant une MAJ, sinon un retour arrière le perd ou ressuscite une proposition déjà refusée. `snapshot.ENTRIES` prend
+`forgemaster.db` en `vacuum-into`, donc **toute table de cette base est couverte par construction** — et c'est
+*vérifié* (`tests/test_snapshot.py`), pas déduit de la liste des entrées. *Le consentement est SOUS l'invariant, pas
+à côté.*
+
+**La clé est la version, le SHA ne l'est pas.** La décision dit « jamais **cette version-là** ». Le `sha` annoncé
+voyage à côté et répond à une autre question : le choix porte-t-il encore sur les **mêmes octets** ? `etat` (`:60`)
+rend `None` quand il a changé, `enregistre` (`:70`) **rouvre** la proposition (`state` → `proposed`, `decided_at`
+effacé, `first_seen_at` conservé : c'est la date d'apparition de la version, pas celle de la proposition en cours).
+Un `declined` ne couvre jamais du code que l'utilisateur n'a pas vu.
+
+**Best-effort au fond, jamais à la mutation** — même partage que `db/alerts.py` (`emit_alert` best-effort /
+`ack_alert` lève). `enregistre` est appelée une fois par tour de canal : la rater ne doit pas tuer la boucle, et
+l'annonce repassera. `decide` (`:107`) et `revoque` (`:128`) sont des gestes de l'utilisateur : elles **lèvent**.
+Le cas qui compte est le troisième refus de `decide` — répondre à une proposition dont les octets ont bougé pendant
+qu'on regardait l'écran. `revoque` ne porte que sur `declined` : révoquer un report ou une acceptation ne veut rien
+dire, et le faire en silence serait un cap silencieux.
+
+**L'enum des quatre états est encodé en plein dès la v21** bien que seul `proposed` soit écrit à cette version :
+SQLite ne sait pas `ALTER` un `CHECK` (leçon v11, rebuilds v8/v15/v16/v19). Pour la même raison, les quatre verbes
+arrivent ensemble — découper le cycle de vie entre deux PR rouvrirait le contrat de la table à la seconde.
+
+## update_proposals — le pont, pour que le réseau et la base n'aient pas à se connaître
+`src/forgemaster/update_proposals.py` · injecté en `refresher` du poll du `_lifespan`
+
+`update_channel` reste **sans** import de `db` (sa frontière réseau/hors-ligne est écrite dans sa spec), et
+`db.proposals` reste **sans** import réseau. La composition vit donc à l'étage du dessus — même motif que le
+`build_sha` de `read_verdict`, composé par l'appelant plutôt que relu par le module. `tour` (`:69`) est la forme
+qu'attend `run_channel_poll(refresher=…)` : le daemon l'injecte et gagne la mémoire de ce qui a été annoncé sans
+rien savoir de la base.
+
+**Un seul des sept verdicts propose** (`PROPOSABLE`, `:37`), et la règle est écrite en **inclusion**, jamais en
+liste d'exclusions : un huitième état, un jour, ne proposera rien par défaut. Les six autres se taisent chacun pour
+son motif — rien à proposer, octets non authentifiés (`unverified` est ignoré **par doctrine**), aveu plutôt que
+divergence (`cannot-situate` n'accuse pas), ou pure ignorance. `note_verdict` (`:40`) est **pure de réseau** : le
+verdict lui est passé, donc elle se rejoue sur un verdict lu du cache sans rien contacter.
+
 ## Zones non détaillées
 
 - **`main()`** (`apply_update.py:746`) — point d'entrée du script figé : ouvre `journal.log`, route vers `apply` ou

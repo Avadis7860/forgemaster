@@ -7,6 +7,36 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 > décrivent des faits qui ont eu lieu sous lui, et un changelog qu'on réécrit n'est plus un changelog.
 > Motif du renommage et périmètre : voir l'entrée du 2026-08-04 ci-dessous.
 
+## [Unreleased]
+
+### Le choix de l'utilisateur sur une MAJ devient de la donnée — schéma **v20 → v21**
+
+**Ce qui manquait n'est pas une surface, c'est un endroit où poser une réponse.** La décision du canal
+s'appelle *propose-consent-preserve* ; `preserve` est construit (instantané, retour arrière), `propose` ne
+l'était pas — `update apply` est une commande d'**opérateur**, elle exécute et ne demande rien. Cette entrée
+pose la **donnée** du consentement, et rien d'autre : aucune surface, aucun choix pris, aucune application.
+
+- **Table `update_proposals`** (`db/schema.py`, `SCHEMA_VERSION` **20 → 21**) — un état **par version**
+  (`proposed`|`deferred`|`declined`|`accepted`), son SHA annoncé et ses horodatages. Table neuve →
+  `CREATE TABLE IF NOT EXISTS`, **aucune** entrée `ensure_columns`, **aucun** rebuild. Ajout non-breaking, le
+  bump restant obligatoire : c'est lui qui déclenche la migration sur une install existante.
+- **Elle vit en base, et c'est tout l'enjeu.** Un choix de l'utilisateur doit voyager dans l'instantané pris
+  avant une MAJ — sinon un retour arrière le perd, ou ressuscite une proposition déjà refusée. `snapshot`
+  prend `forgemaster.db` en `vacuum-into`, donc toute table de cette base est couverte ; c'est **vérifié**
+  (`tests/test_snapshot.py`), pas déduit de la liste des entrées.
+- **L'enum est encodé en plein dès la v21** bien que seul `proposed` soit écrit à cette version : SQLite ne
+  sait pas `ALTER` un `CHECK`, et l'ajouter plus tard coûterait un rebuild de table (leçon v11).
+- **Une re-publication sous la même version rouvre la proposition** — le `sha` annoncé n'est pas la clé, il
+  dit si le choix porte encore sur les mêmes octets. Un `declined` ne couvre jamais du code que l'utilisateur
+  n'a pas vu.
+- **Premier écrivain : le tour du canal** (`update_proposals.tour`, branché en `refresher` du poll du
+  daemon). Il note qu'une édition **vérifiée et plus récente** est annoncée — un seul des sept verdicts,
+  `available`, fait naître une proposition. **Noter n'est pas consentir** : le daemon recueille, il
+  n'applique jamais. `update_channel` ne gagne aucun import de `db`, et `db.proposals` aucun import réseau.
+- **Documenté** : `docs/schema-contract.md` §1 (table + migration v20→v21), dont le **titre annonçait encore
+  `SCHEMA_VERSION` = 11** — recalé, avec l'aveu mesuré de ce qui manque encore à ce document (2 tables et les
+  narratifs v12→v20, fichés à part plutôt que reconstitués au passage).
+
 ## [0.3.0] — 2026-08-09
 
 **La première édition publiée.** `v0.3.0` est la première Release de ce dépôt : un `channel.json` signé par
