@@ -139,8 +139,9 @@ def key_id(public_bytes: bytes) -> str:
 
 def keys_dir() -> Path:
     """Le dossier `forgemaster/_keys` de l'édition INSTALLÉE. Composition de chemin, **PURE** : il peut ne
-    pas exister — c'est le cas normal tant que la cérémonie de génération n'a pas eu lieu, et `trust_root`
-    le dit alors franchement plutôt que d'inventer une confiance."""
+    pas exister — c'est le cas des éditions **antérieures à la cérémonie du 2026-08-08**, qui restent
+    installées et légitimes ; `trust_root` le dit alors franchement plutôt que d'inventer une confiance.
+    Les éditions bâties depuis le portent (garde d'inventaire de `deploy/build-wheel.sh`)."""
     return Path(__file__).resolve().parent / KEYS_DIR
 
 
