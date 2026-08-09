@@ -789,6 +789,39 @@ symptôme, chez lui, serait `unverified` : le pire verdict, celui qui apprend à
 `lignee()` mesure l'**ascendance** de l'édition annoncée (`git rev-list --first-parent`), bornée au plafond **à la
 publication** comme elle l'est **à la lecture** : un plafond qu'on ne vérifie que d'un côté n'est pas un plafond.
 
+## La première publication — 2026-08-09, `v0.3.0`
+
+La première Release de ce dépôt. Ce qui y est servi : **`channel.json`** (l'annonce signée) et le **wheel**
+qu'elle décrit, à `https://github.com/Avadis7860/forgemaster/releases/latest/download/…` — l'URL par défaut
+compilée dans chaque édition (`update_channel.DEFAULT_URL`). Signée sous `key_id` `a9121c5cdc09abd6`, la
+racine née la veille et embarquée depuis **0.2.0**.
+
+**Pourquoi la première Release n'est pas 0.2.0.** 0.2.0 est la première édition qui *sait vérifier* ; par
+construction, aucune édition antérieure ne peut la croire, puisqu'aucune ne porte la racine. Un canal ne se
+démontre donc qu'à partir de la **seconde** édition keyée — il faut un lecteur qui vérifie **et** un objet
+strictement plus récent à lui apprendre. Ce n'est pas un artefact de notre calendrier : n'importe quel
+produit qui introduit une racine de confiance a cette marche à monter une fois.
+
+**Release normale, jamais pre-release.** `releases/latest/download/` **exclut** les pre-releases. Comme
+cette URL est compilée dans toutes les éditions déjà distribuées, une annonce publiée en pre-release y
+produirait un 404 **permanent**, chez tout le monde, sans moyen de correction côté client. Le publieur
+(`release_publish.py`, vault) porte `prerelease: False` **en dur** et n'expose aucun drapeau.
+
+**La preuve est l'état effectif, pas le 201.** La publication se vérifie en tirant l'**URL publique
+anonyme** — celle que le produit lira — et en comparant le SHA-256 à l'artefact local. Un POST accepté ne
+dit rien de ce qui est servi.
+
+Rejouer la séquence pour une édition suivante :
+
+```
+deploy/build-wheel.sh                                   # le wheel annoncé, garde de racine incluse
+.claude/scripts/.venv/bin/python .claude/scripts/bws_secret.py <uuid> --raw \
+  | python scripts/publish_channel.py --wheel dist/forgemaster-<v>-py3-none-any.whl --out channel.json
+.claude/scripts/.venv/bin/python .claude/scripts/github/release_publish.py \
+  --repo Avadis7860/forgemaster --tag v<v> --target <sha> --title "<titre>" \
+  --notes-file <notes.md> --asset channel.json --asset dist/forgemaster-<v>-py3-none-any.whl
+```
+
 ## Zones non détaillées
 
 - **`main()`** (`apply_update.py:746`) — point d'entrée du script figé : ouvre `journal.log`, route vers `apply` ou

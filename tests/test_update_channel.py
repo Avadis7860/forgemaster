@@ -257,10 +257,11 @@ def test_la_racine_EMBARQUEE_dans_ce_depot_est_lisible_et_re_derivee():
     keys = uc.trust_root()
     assert keys, ("aucune racine de confiance embarquée : la cérémonie du 2026-08-08 l'a posée, une édition "
                   "bâtie d'ici sans elle cesserait de vérifier les annonces SANS le dire")
-    assert len(keys) == 1, f"{len(keys)} clés embarquées — aucune rotation n'a été jouée, une seule est attendue"
+    assert len(keys) == 1, f"{len(keys)} clés embarquées — aucune rotation jouée, une seule est attendue"
     (k,) = keys
     assert len(k["public"]) == 32, f"publique de {len(k['public'])} octets — Ed25519 en fait 32"
-    assert k["key_id"] == uc.key_id(k["public"])   # ceinture : `trust_root` l'exige déjà, on ne le suppose pas
+    # ceinture : `trust_root` l'exige déjà, on ne le suppose pas.
+    assert k["key_id"] == uc.key_id(k["public"])
 
 
 # --- 4. le tirage : plafond, injoignable, et ce qui n'a PAS été demandé --------------------------------
