@@ -7,6 +7,27 @@ Format [Keep a Changelog](https://keepachangelog.com/). Un changement de **sché
 > décrivent des faits qui ont eu lieu sous lui, et un changelog qu'on réécrit n'est plus un changelog.
 > Motif du renommage et périmètre : voir l'entrée du 2026-08-04 ci-dessous.
 
+## [0.3.0] — 2026-08-09
+
+**La première édition publiée.** `v0.3.0` est la première Release de ce dépôt : un `channel.json` signé par
+la racine de confiance née la veille (`key_id` `a9121c5cdc09abd6`) et le wheel qu'il annonce, servis à
+`releases/latest/download/`.
+
+Le numéro mérite son explication, parce qu'il ne porte presque pas de code. **0.2.0 est la première édition
+capable de vérifier une annonce ; elle ne pouvait donc être annoncée à personne** — toutes les éditions
+antérieures sont sans racine de confiance et refusent, à raison, de croire quoi que ce soit. Un canal ne
+devient démontrable qu'à partir de la **seconde** édition keyée : il faut une instance qui sache vérifier
+**et** quelque chose de strictement plus récent à lui apprendre. C'est ce que 0.3.0 est. On ne pouvait pas
+l'éviter en publiant 0.2.0 : une édition ne s'annonce pas à elle-même.
+
+- **Release `v0.3.0`** — assets `channel.json` (annonce signée Ed25519) et le wheel. Release **normale**,
+  jamais pre-release : `releases/latest/download/` exclut les pre-releases, et c'est l'URL compilée dans
+  **toutes** les éditions déjà distribuées — une annonce publiée en pre-release y ferait un 404 permanent.
+- **Documenté** : `docs/runbooks/update.md` §« La première publication » (ce qui a été publié, sous quelle
+  clé, ce que la lignée contient) · `docs/specs/update-channel-trust-root.md` §« La cérémonie, jouée ».
+
+Aucun changement de comportement, aucun changement de schéma (cf. `docs/schema-contract.md`).
+
 ## [0.2.0] — 2026-08-08
 
 **Première édition qui sait apprendre qu'une autre existe.** Le numéro bouge de 0.1.0 à 0.2.0 parce que le

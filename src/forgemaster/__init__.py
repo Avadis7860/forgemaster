@@ -6,4 +6,4 @@ importe les décisions distillées comme specs (docs/specs/), on ne copie pas le
 """
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
